@@ -91,6 +91,14 @@ class TradingRetrievalHit:
     evidence_refs: list[str] = field(default_factory=list)
     retrieval_mode: str = "lexical"
     embeddings_semantic: bool | None = None
+    # StrategyMemory provenance (advisory — never authority over RiskGuard).
+    strategy_id: str | None = None
+    strategy_version: int | None = None
+    rejected: bool | None = None
+    origin: str | None = None
+    epistemic_state: str | None = None
+    validation_stage: str | None = None
+    contradictory: bool = False
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -109,6 +117,13 @@ class TradingRetrievalHit:
             "evidenceRefs": list(self.evidence_refs),
             "retrievalMode": self.retrieval_mode,
             "embeddingsSemantic": self.embeddings_semantic,
+            "strategyId": self.strategy_id,
+            "strategyVersion": self.strategy_version,
+            "rejected": self.rejected,
+            "origin": self.origin,
+            "epistemicState": self.epistemic_state,
+            "validationStage": self.validation_stage,
+            "contradictory": self.contradictory,
             # Compatibility keys for epistemic firewall / BrainFacade hits.
             "source": self.source_kind,
             "document_id": self.document_id,
@@ -170,6 +185,7 @@ class TradingBrainAdapter:
         memory_search: Callable[..., list[Any]] | None = None,
         evidence_search: Callable[..., list[Any]] | None = None,
         neuro_assess: Callable[[str], Any] | None = None,
+        strategy_memory_lister: Callable[..., list[dict[str, Any]]] | None = None,
     ) -> None:
         self.brain_access = brain_access
         self.hybrid_retriever = hybrid_retriever
@@ -178,12 +194,15 @@ class TradingBrainAdapter:
         self.memory_search = memory_search
         self.evidence_search = evidence_search
         self.neuro_assess = neuro_assess
+        # StrategyMemory is experience evidence — advisory only; never execution authority.
+        self.strategy_memory_lister = strategy_memory_lister
 
     def retrieve(
         self,
         request: TradingRetrievalRequest,
         *,
         firewall: EpistemicFirewall | None = None,
+        prefer_negative: bool = False,
     ) -> TradingRetrievalResult:
         notes: list[str] = []
         mode = "lexical"
@@ -298,6 +317,12 @@ class TradingBrainAdapter:
             except Exception as exc:  # noqa: BLE001
                 notes.append(f"memory_error:{exc}")
 
+        # StrategyMemory (successes + failures) — PIT via available_at / decision_as_of.
+        strategy_hits = self._strategy_memory_hits(request, limit=limit, prefer_negative=prefer_negative)
+        if strategy_hits:
+            notes.append(f"strategy_memory_hits={len(strategy_hits)}")
+            hits.extend(strategy_hits)
+
         # Temporal firewall — fail-closed for missing timestamps on time-sensitive content.
         boundary = request.decision_as_of
         if firewall is not None:
@@ -333,6 +358,9 @@ class TradingBrainAdapter:
                     + str([r.public_dict() for r in receipts[:12]])
                 )
 
+        if prefer_negative:
+            hits.sort(key=lambda h: (0 if h.rejected or h.contradictory else 1, -(h.score or 0.0)))
+
         return TradingRetrievalResult(
             hits=hits[:limit],
             retrieval_mode=mode,
@@ -341,6 +369,115 @@ class TradingBrainAdapter:
             miss=len(hits) == 0,
             request=request.public_dict(),
         )
+
+    def _strategy_memory_hits(
+        self,
+        request: TradingRetrievalRequest,
+        *,
+        limit: int,
+        prefer_negative: bool = False,
+    ) -> list[TradingRetrievalHit]:
+        if self.strategy_memory_lister is None:
+            return []
+        try:
+            rows = self.strategy_memory_lister(
+                as_of_ts=request.decision_as_of,
+                strategy_id=None,
+                limit=max(limit * 4, 24),
+            )
+        except TypeError:
+            try:
+                rows = self.strategy_memory_lister(  # type: ignore[misc]
+                    request.decision_as_of, max(limit * 4, 24)
+                )
+            except Exception:  # noqa: BLE001
+                return []
+        except Exception:  # noqa: BLE001
+            return []
+
+        query_tokens = {
+            t.lower()
+            for t in (request.query + " " + (request.regime or "") + " " + (request.strategy_family or "")).split()
+            if len(t) > 2
+        }
+        scored: list[tuple[float, TradingRetrievalHit]] = []
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            hit = strategy_memory_to_hit(row, mode="strategy_memory")
+            blob = " ".join(
+                [
+                    str(hit.content_excerpt or ""),
+                    str(hit.title or ""),
+                    str((row.get("features") or {})),
+                    str((row.get("applicability") or {})),
+                    str((row.get("outcome_summary") or "")),
+                ]
+            ).lower()
+            score = 0.0
+            for tok in query_tokens:
+                if tok in blob:
+                    score += 1.0
+            if request.regime and str(request.regime).lower() in blob:
+                score += 2.0
+            if prefer_negative and (hit.rejected or hit.contradictory):
+                score += 3.0
+            hit.score = score
+            scored.append((score, hit))
+        scored.sort(key=lambda x: -x[0])
+        # Keep zero-score rejected memories when prefer_negative (negative results are first-class).
+        out: list[TradingRetrievalHit] = []
+        for score, hit in scored:
+            if score > 0 or (prefer_negative and (hit.rejected or hit.contradictory)):
+                out.append(hit)
+            if len(out) >= limit:
+                break
+        return out
+
+
+def strategy_memory_to_hit(row: dict[str, Any], *, mode: str = "strategy_memory") -> TradingRetrievalHit:
+    """Map a durable StrategyMemory row into an advisory TradingRetrievalHit."""
+    meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    rejected = bool(row.get("rejected"))
+    origin = str(meta.get("origin") or row.get("origin") or "strategy_memory")
+    epistemic = str(
+        meta.get("epistemic_state")
+        or meta.get("epistemicState")
+        or ("REJECTED" if rejected else "MEASURED")
+    )
+    stage = meta.get("validation_stage") or meta.get("validationStage") or meta.get("split_role")
+    summary = str(row.get("outcome_summary") or "")
+    features = row.get("features") if isinstance(row.get("features"), dict) else {}
+    applicability = row.get("applicability") if isinstance(row.get("applicability"), dict) else {}
+    title = f"strategy_memory:{row.get('strategy_id')}:v{row.get('strategy_version')}"
+    if rejected:
+        title = f"REJECTED:{title}"
+    excerpt_parts = [summary]
+    if features:
+        excerpt_parts.append(f"features={features}")
+    if applicability:
+        excerpt_parts.append(f"applicability={applicability}")
+    mid = str(row.get("memory_id") or "")
+    return TradingRetrievalHit(
+        source_kind="strategy_memory",
+        document_id=mid or None,
+        title=title,
+        content_excerpt=" | ".join(excerpt_parts)[:800],
+        available_at=row.get("available_at"),
+        published_at=row.get("created_at"),
+        trust="strategy_memory",
+        evidence_refs=[mid] if mid else [],
+        retrieval_mode=mode,
+        embeddings_semantic=False,
+        strategy_id=str(row.get("strategy_id") or "") or None,
+        strategy_version=int(row["strategy_version"]) if row.get("strategy_version") is not None else None,
+        rejected=rejected,
+        origin=origin,
+        epistemic_state=epistemic,
+        validation_stage=str(stage) if stage is not None else None,
+        contradictory=rejected or epistemic.upper() in {"REJECTED", "NEGATIVE", "FAILED"},
+        score=1.0 if rejected else 0.5,
+    )
 
 
 def _hit_from_retrieval_hit(hit: Any, *, mode: str, semantic: bool | None) -> TradingRetrievalHit:
@@ -433,6 +570,7 @@ def adapt_canonical_knowledge(
     hybrid_retriever: Any | None = None,
     staged_retriever: Any | None = None,
     brain_access: Any | None = None,
+    strategy_memory_lister: Callable[..., list[dict[str, Any]]] | None = None,
 ) -> KnowledgeSearcher:
     """KnowledgeSearcher that uses canonical Brain/Knowledge stack when available."""
 
@@ -441,9 +579,12 @@ def adapt_canonical_knowledge(
         hybrid_retriever=hybrid_retriever,
         staged_retriever=staged_retriever,
         knowledge_store=knowledge_store,
+        strategy_memory_lister=strategy_memory_lister,
     )
 
     class Adapter:
+        trading_adapter = adapter
+
         def search(self, query: str, *, limit: int = 3) -> list[dict[str, Any]]:
             result = adapter.retrieve(
                 TradingRetrievalRequest(query=query, max_hits=limit, prefer_semantic=True)

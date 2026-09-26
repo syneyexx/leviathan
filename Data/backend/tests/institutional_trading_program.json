@@ -5,8 +5,8 @@
   "baseline_commit": "98eb37d669561c5edbc4a99cb8bea362f5881103",
   "last_verified_commit": "95b4d2b3a915b27261cf46aca30d8ab3a3b94026",
   "branch": "cursor/institutional-runtime-w73-w108-a85d",
-  "active_wave": "W108",
-  "notes": "W37-W72 merged as domain foundation (PARTIAL runtime). W73+ Institutional Runtime Completion: InstitutionalRuntime wires persistence, mandate gates, IBOR/subledger on paper fills, recon/audit/control room. Migration head 56. Live trading BLOCKED. CI may be BLOCKED_EXTERNAL (billing).",
+  "active_wave": "W140",
+  "notes": "W37-W72 merged as domain foundation (PARTIAL runtime). W73+ Institutional Runtime Completion. W119-W135 learning loop: StrategyMemory\u2194TradingBrainAdapter\u2194RoleAware\u2194Orchestra\u2194Paper\u2194Postmortem. Migration head 56 (no new migration). Live trading BLOCKED. W109-W140 research+learning closed-loop local PASS; live trading BLOCKED.",
   "status_vocabulary": [
     "BLOCKED_EXTERNAL",
     "DOMAIN_PRESENT",
@@ -2592,11 +2592,84 @@
         "remaining_integration_depth"
       ],
       "notes": "Local verifier PASS; remaining PARTIAL waves documented honestly in ledger; live BLOCKED; CI likely BLOCKED_EXTERNAL"
+    },
+    {
+      "id": "W109-W118",
+      "title": "Internet research: readiness, provider chain, evidence, live verifier",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "EXISTING_TABLES",
+      "verification_state": "PASS",
+      "release_state": "PASS",
+      "owner": "ResearchService + WebResearchProvider chain + SourceIngestor + EvidenceLedger",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_research_web_w109_w118.py",
+        "scripts/verify_research_web_live.py"
+      ],
+      "evidence": [
+        "ChainedWebProvider: configured \u2192 BEST_EFFORT_PUBLIC_SEARCH (DDG HTML GET)",
+        "GET /api/research/web/readiness + POST /api/research/web/probe",
+        "search hit \u2260 evidence; fetched provenance persisted",
+        "zero-evidence allow_web quality gate INSUFFICIENT_EVIDENCE",
+        "live verifier PASS: discovery+fetch+source+evidence+citation URL"
+      ],
+      "blockers": [],
+      "notes": "Keyless fallback labeled BEST_EFFORT_PUBLIC_SEARCH; configured providers preferred"
+    },
+    {
+      "id": "W119-W135",
+      "title": "Learning loop: StrategyMemory \u2194 Brain \u2194 Orchestra \u2194 Paper \u2194 Postmortem",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "EXISTING_TABLES",
+      "verification_state": "PASS",
+      "release_state": "PASS",
+      "owner": "StrategyMemory + TradingBrainAdapter + RoleAwareTradingKnowledge + TradingOrchestra + PortfolioService",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_learning_loop_w119_w135.py"
+      ],
+      "evidence": [
+        "TradingBrainAdapter retrieves StrategyMemory (success+failure) with provenance",
+        "RoleAwareTradingKnowledge wired into orchestra DecisionRecord evidenceRefs",
+        "learning_runtime._append_trial writes durable StrategyMemory (available_at=when learned)",
+        "Orchestra paper_router \u2192 PortfolioService.place_order; live BLOCKED",
+        "Postmortem AGENT_PROPOSED \u2192 Memory + StrategyMemory; predictionError on paper fills",
+        "RiskGuard remains authority; knowledge cannot bypass",
+        "migration head remains 56 (no new tables)"
+      ],
+      "blockers": [],
+      "notes": "Negative results first-class; PIT via available_at; no parallel LearningRuntime/ExperienceBrain"
+    },
+    {
+      "id": "W127-W128",
+      "title": "Paper drift governance + Trading\u2192Research gap bridge",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "EXISTING_TABLES",
+      "verification_state": "PASS",
+      "release_state": "PASS",
+      "owner": "paper_forward_drift + trading_research_bridge + ResearchService",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_learning_drift_research_bridge_w127_w128.py"
+      ],
+      "evidence": [
+        "insufficient sample \u2192 UNMEASURED (no fabricated drift)",
+        "drift ticket \u2192 PAPER_OBSERVED StrategyMemory; no auto-disable/promote",
+        "urgent research gap \u2192 HOLD / INSUFFICIENT_EVIDENCE; async ResearchService only"
+      ],
+      "blockers": [],
+      "notes": "Does not sync-crawl in order-critical path"
     }
   ],
   "final_gate": {
     "byStatus": {
-      "PASS": 59,
+      "PASS": 62,
       "PARTIAL": 49,
       "IN_PROGRESS": 1
     },

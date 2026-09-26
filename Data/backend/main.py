@@ -1198,12 +1198,25 @@ cognition_runtime.perception.brain_access = brain_access
 try:
     from Data.modules.market_sim.brain_hooks import attach_trading_brain_adapter
 
+    def _strategy_memory_lister(
+        *,
+        as_of_ts: str | None = None,
+        strategy_id: str | None = None,
+        limit: int = 50,
+    ):
+        return market_sim_service.store.list_strategy_memories(
+            strategy_id=strategy_id,
+            as_of_ts=as_of_ts,
+            limit=limit,
+        )
+
     attach_trading_brain_adapter(
         market_sim_service.brain,
         knowledge_store=knowledge,
         hybrid_retriever=retriever,
         staged_retriever=staged_retriever,
         brain_access=brain_access,
+        strategy_memory_lister=_strategy_memory_lister,
     )
 except Exception:  # noqa: BLE001 — market_sim may be disabled/unbound in some boots
     pass
@@ -1229,6 +1242,7 @@ from Data.modules.market_sim.orchestra import TradingOrchestraService
 from Data.modules.market_sim.orchestra.model_adapter import TradingModelAdapter
 from Data.modules.market_sim.orchestra.store import OrchestraStore
 
+_trading_brain_adapter = getattr(getattr(market_sim_service, "brain", None), "trading_brain_adapter", None)
 trading_orchestra_service = TradingOrchestraService(
     store=OrchestraStore(settings.database_path),
     market_plane=market_sim_service,
@@ -1236,6 +1250,7 @@ trading_orchestra_service = TradingOrchestraService(
     job_runtime=job_runtime,
     approval_service=approval_service,
     memory=memory_store,
+    trading_brain_adapter=_trading_brain_adapter,
     enabled=bool(settings.features.market_sim_enabled),
 )
 

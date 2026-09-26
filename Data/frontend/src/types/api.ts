@@ -1284,6 +1284,39 @@ export type ResearchCoverage = {
   notes: string[];
 };
 
+export type ResearchWebReadiness = {
+  outbound_network: boolean;
+  search_available: boolean;
+  direct_fetch_available: boolean;
+  provider_name: string;
+  provider_type: string;
+  endpoint_configured: boolean;
+  api_key_configured: boolean;
+  fallback_enabled: boolean;
+  fallback_status: string;
+  robots_policy: string;
+  worker_provider_ready: boolean;
+  search_mode: string;
+  operator_summary: string;
+  last_probe_at?: string | null;
+  last_probe_status?: string | null;
+  last_error_code?: string | null;
+  last_error_message?: string | null;
+  reason_codes?: string[];
+  truth?: Record<string, unknown>;
+};
+
+export type ResearchWebProbe = {
+  status: string;
+  query?: string;
+  search?: { count: number; results: Array<Record<string, unknown>> } | null;
+  fetch?: Record<string, unknown> | null;
+  provider?: string;
+  error_code?: string;
+  error?: string;
+  truth?: Record<string, unknown>;
+};
+
 export type ResearchProject = {
   project_id: string;
   title: string;

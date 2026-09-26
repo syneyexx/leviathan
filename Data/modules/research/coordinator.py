@@ -1274,148 +1274,216 @@ class ResearchCoordinator:
                     remaining -= 1
 
         # Web round for this worker's queries.
+        # Search unavailability must NOT block direct URL fetch of seed sources.
         if project.allow_web and not self._cancelled(project_id):
             reason = web_unavailable_reason(
                 allow_web=True,
                 allow_outbound=self.allow_outbound,
                 provider=self.web,
             )
-            if reason:
+            search_ready = bool(getattr(self.web, "search_configured", lambda: False)())
+            fetch_ready = bool(self.allow_outbound and self.web.configured())
+            if reason and not search_ready:
                 self.store.add_event(
                     project_id,
                     "query_completed",
-                    f"Web research unavailable: {reason}",
+                    f"Web search unavailable: {reason}",
                     {
                         "channel": "web",
-                        "status": "unavailable",
+                        "status": "search_unavailable",
                         "reason": reason,
+                        "direct_fetch_available": fetch_ready,
                         "worker_id": worker.worker_id,
                     },
                 )
-            else:
-                search_ready = getattr(self.web, "search_configured", lambda: False)()
-                remaining = budget.max_sources - len(self.store.list_sources(project_id))
-                if search_ready and remaining > 0:
-                    for query in queries[: budget.search_queries]:
-                        if remaining <= 0 or self._cancelled(project_id):
-                            break
-                        worker.status = WorkerStatus.SEARCHING_WEB
-                        worker.phase = "searching_web"
-                        worker.current_query = query
-                        worker.heartbeat_at = utc_now()
-                        self.store.upsert_worker(worker)
-                        self.store.add_event(
-                            project_id,
-                            "worker_phase_changed",
-                            f"Worker {worker.worker_index} searching_web",
-                            {
-                                "worker_id": worker.worker_id,
-                                "worker_index": worker.worker_index,
-                                "phase": "searching_web",
-                                "round": round_number,
-                                "total_rounds": total_rounds,
-                                "query": query,
-                            },
-                        )
-                        try:
-                            results = self.web.search(query, limit=budget.urls_per_query)
-                        except Exception as exc:  # noqa: BLE001
-                            self.store.add_event(
-                                project_id,
-                                "query_completed",
-                                f"Web search failed: {exc}",
-                                {"channel": "web", "error": str(exc), "worker_id": worker.worker_id},
-                            )
-                            continue
-                        for result in results:
-                            if remaining <= 0:
-                                break
-                            self.sources.from_web_search(project_id, result)
-                            worker.status = WorkerStatus.FETCHING_SOURCE
-                            worker.phase = "fetching_source"
-                            worker.current_task = result.url
-                            self.store.upsert_worker(worker)
-                            try:
-                                page = self.web.fetch_page(
-                                    result.url,
-                                    respect_robots_txt=project.respect_robots_txt,
-                                )
-                            except Exception as exc:  # noqa: BLE001
-                                self.store.add_event(
-                                    project_id,
-                                    "source_parse_failed",
-                                    str(exc),
-                                    {"url": result.url, "worker_id": worker.worker_id},
-                                )
-                                continue
-                            worker.status = WorkerStatus.PARSING_SOURCE
-                            worker.phase = "parsing_source"
-                            self.store.upsert_worker(worker)
-                            source, content = self.sources.from_web_page(project_id, page)
-                            self.store.add_event(
-                                project_id,
-                                "source_fetched",
-                                source.title or source.canonical_uri or "",
-                                {"source_id": source.source_id, "worker_id": worker.worker_id},
-                            )
-                            worker.status = WorkerStatus.EXTRACTING_EVIDENCE
-                            worker.phase = "extracting_evidence"
-                            self.store.upsert_worker(worker)
-                            for span in self._select_spans(
-                                content, query, limit=budget.max_evidence_per_source
-                            ):
-                                self.evidence.add_span(
-                                    project_id=project_id,
-                                    source_id=source.source_id,
-                                    span_text=span,
-                                    retrieval_method="web_fetch",
-                                    metadata={
-                                        "url": page.canonical_url,
-                                        "query": query,
-                                        "worker_index": worker.worker_index,
-                                    },
-                                )
-                            remaining -= 1
+            remaining = budget.max_sources - len(self.store.list_sources(project_id))
+            if search_ready and remaining > 0:
+                for query in queries[: budget.search_queries]:
+                    if remaining <= 0 or self._cancelled(project_id):
+                        break
+                    worker.status = WorkerStatus.SEARCHING_WEB
+                    worker.phase = "searching_web"
+                    worker.current_query = query
+                    worker.heartbeat_at = utc_now()
+                    self.store.upsert_worker(worker)
+                    self.store.add_event(
+                        project_id,
+                        "worker_phase_changed",
+                        f"Worker {worker.worker_index} searching_web",
+                        {
+                            "worker_id": worker.worker_id,
+                            "worker_index": worker.worker_index,
+                            "phase": "searching_web",
+                            "round": round_number,
+                            "total_rounds": total_rounds,
+                            "query": query,
+                        },
+                    )
+                    try:
+                        results = self.web.search(query, limit=budget.urls_per_query)
+                    except Exception as exc:  # noqa: BLE001 — observable failure
                         self.store.add_event(
                             project_id,
                             "query_completed",
-                            f"Web results: {len(results)}",
+                            f"Web search failed: {exc}",
                             {
                                 "channel": "web",
-                                "query": query,
+                                "error": str(exc),
                                 "worker_id": worker.worker_id,
                             },
                         )
-                elif worker.worker_index == 1 and round_number == 1:
-                    # Seed URL fetches on first worker only.
-                    remaining = budget.max_sources - len(self.store.list_sources(project_id))
-                    for seed in project.seed_sources:
+                        continue
+                    provider_label = getattr(
+                        self.web, "_last_search_provider", None
+                    ) or getattr(self.web, "active_provider_type", None)
+                    for rank, result in enumerate(results, start=1):
                         if remaining <= 0:
                             break
-                        if not (seed.startswith("http://") or seed.startswith("https://")):
-                            continue
+                        discovered = self.sources.from_web_search(
+                            project_id,
+                            result,
+                            query=query,
+                            rank=rank,
+                        )
+                        worker.status = WorkerStatus.FETCHING_SOURCE
+                        worker.phase = "fetching_source"
+                        worker.current_task = result.url
+                        self.store.upsert_worker(worker)
                         try:
                             page = self.web.fetch_page(
-                                seed,
+                                result.url,
                                 respect_robots_txt=project.respect_robots_txt,
                             )
                         except Exception as exc:  # noqa: BLE001
+                            err = str(exc)
+                            status = "fetch_failed"
+                            if "robots_txt" in err.lower():
+                                status = "robots_blocked"
+                            self.sources.mark_discovery_unverified(
+                                discovered,
+                                retrieval_status=status,
+                                error=err,
+                            )
                             self.store.add_event(
                                 project_id,
                                 "source_parse_failed",
-                                str(exc),
-                                {"url": seed},
+                                err,
+                                {
+                                    "url": result.url,
+                                    "source_id": discovered.source_id,
+                                    "retrieval_status": status,
+                                    "worker_id": worker.worker_id,
+                                },
                             )
                             continue
-                        source, content = self.sources.from_web_page(project_id, page)
-                        for span in self._select_spans(content, project.topic, limit=2):
+                        worker.status = WorkerStatus.PARSING_SOURCE
+                        worker.phase = "parsing_source"
+                        self.store.upsert_worker(worker)
+                        source, content = self.sources.from_web_page(
+                            project_id,
+                            page,
+                            discovery=discovered,
+                            query=query,
+                            rank=rank,
+                            provider=provider_label,
+                        )
+                        self.store.add_event(
+                            project_id,
+                            "source_fetched",
+                            source.title or source.canonical_uri or "",
+                            {
+                                "source_id": source.source_id,
+                                "discovered_source_id": discovered.source_id,
+                                "worker_id": worker.worker_id,
+                                "provider": provider_label,
+                            },
+                        )
+                        if not (content or "").strip():
+                            self.store.add_event(
+                                project_id,
+                                "source_parse_failed",
+                                "SOURCES_UNREADABLE: empty extracted text",
+                                {
+                                    "source_id": source.source_id,
+                                    "url": page.canonical_url,
+                                    "worker_id": worker.worker_id,
+                                },
+                            )
+                            remaining -= 1
+                            continue
+                        worker.status = WorkerStatus.EXTRACTING_EVIDENCE
+                        worker.phase = "extracting_evidence"
+                        self.store.upsert_worker(worker)
+                        spans = self._select_spans(
+                            content, query, limit=budget.max_evidence_per_source
+                        )
+                        if not spans:
+                            self.store.add_event(
+                                project_id,
+                                "query_completed",
+                                "NO_EVIDENCE_EXTRACTED from fetched source",
+                                {
+                                    "source_id": source.source_id,
+                                    "url": page.canonical_url,
+                                    "worker_id": worker.worker_id,
+                                },
+                            )
+                        for span in spans:
                             self.evidence.add_span(
                                 project_id=project_id,
                                 source_id=source.source_id,
                                 span_text=span,
-                                retrieval_method="web_seed_fetch",
+                                retrieval_method="web_fetch",
+                                metadata={
+                                    "url": page.canonical_url,
+                                    "query": query,
+                                    "rank": rank,
+                                    "provider": provider_label,
+                                    "worker_index": worker.worker_index,
+                                },
                             )
                         remaining -= 1
+                    self.store.add_event(
+                        project_id,
+                        "query_completed",
+                        f"Web results: {len(results)}",
+                        {
+                            "channel": "web",
+                            "query": query,
+                            "provider": provider_label,
+                            "worker_id": worker.worker_id,
+                        },
+                    )
+            if worker.worker_index == 1 and round_number == 1 and fetch_ready:
+                # Seed URL fetches on first worker only (works even when search is unavailable).
+                remaining = budget.max_sources - len(self.store.list_sources(project_id))
+                for seed in project.seed_sources:
+                    if remaining <= 0:
+                        break
+                    if not (seed.startswith("http://") or seed.startswith("https://")):
+                        continue
+                    try:
+                        page = self.web.fetch_page(
+                            seed,
+                            respect_robots_txt=project.respect_robots_txt,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        self.store.add_event(
+                            project_id,
+                            "source_parse_failed",
+                            str(exc),
+                            {"url": seed},
+                        )
+                        continue
+                    source, content = self.sources.from_web_page(project_id, page)
+                    for span in self._select_spans(content, project.topic, limit=2):
+                        self.evidence.add_span(
+                            project_id=project_id,
+                            source_id=source.source_id,
+                            span_text=span,
+                            retrieval_method="web_seed_fetch",
+                        )
+                    remaining -= 1
 
         sources_after = len(self.store.list_sources(project_id))
         evidence_after = len(self.store.list_evidence(project_id))

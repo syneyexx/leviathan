@@ -80,6 +80,20 @@ def build_research_router(service: ResearchService) -> APIRouter:
     def budgets() -> dict:
         return service.budget_catalog()
 
+    @router.get("/api/research/web/readiness")
+    def web_readiness() -> dict:
+        return {"readiness": service.web_readiness()}
+
+    class WebProbeRequest(BaseModel):
+        query: str = "SQLite WAL mode"
+        limit: int = Field(default=3, ge=1, le=5)
+
+    @router.post("/api/research/web/probe")
+    def web_probe(payload: WebProbeRequest | None = None) -> dict:
+        query = payload.query if payload else "SQLite WAL mode"
+        limit = payload.limit if payload else 3
+        return {"probe": service.probe_web_research(query=query, limit=limit)}
+
     @router.get("/api/research")
     def list_projects(limit: int = Query(100, ge=1, le=500)) -> dict:
         projects = [p.public_dict() for p in service.list_projects(limit=limit)]

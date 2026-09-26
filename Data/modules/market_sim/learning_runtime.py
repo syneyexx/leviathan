@@ -228,6 +228,57 @@ def _append_trial(
             },
         }
     )
+    # Durable StrategyMemory for successes AND failures (available_at = when learned).
+    try:
+        from .experiments import build_strategy_memory_record
+
+        rejected = str(status).lower() in {
+            "rejected",
+            "failed",
+            "fail",
+            "no_qualify",
+            "error",
+        } or bool(error)
+        failure_cats = list((fitness_payload or {}).get("failure_categories") or [])
+        metrics = dict((episode or {}).get("metrics") or {})
+        features = dict(metrics.get("features") or {})
+        if not features and candidate.family:
+            features = {"family": candidate.family, "regime": "unknown"}
+        learned_at = utc_now()
+        summary = error or (
+            f"{status}: fitness={((fitness_payload or {}).get('fitness_score'))}"
+            if fitness_payload
+            else status
+        )
+        if failure_cats:
+            summary = f"{summary}; failures={failure_cats[:4]}"
+        plane.store.save_strategy_memory(
+            build_strategy_memory_record(
+                strategy_id=candidate.strategy_id,
+                strategy_version=candidate.strategy_version,
+                outcome_summary=str(summary)[:500],
+                rejected=rejected,
+                available_at=learned_at,
+                created_at=learned_at,
+                trial_id=trial_id,
+                features=features,
+                applicability={
+                    "family": candidate.family,
+                    "regimes": [features["regime"]] if features.get("regime") else [],
+                },
+                origin="learning_trial",
+                epistemic_state="REJECTED" if rejected else "MEASURED",
+                validation_stage=str(split_role or "train").lower(),
+                extra_metadata={
+                    "learning_run_id": run.learning_run_id,
+                    "candidate_id": candidate.candidate_id,
+                    "hypothesis": candidate.hypothesis[:300],
+                    "failure_categories": failure_cats[:8],
+                },
+            )
+        )
+    except Exception:  # noqa: BLE001 — memory write must not abort learning
+        pass
     return trial_id
 
 
@@ -872,3 +923,31 @@ def _maybe_add_lesson(
     lessons.append(lesson.public_dict())
     lab["lessons"] = lessons
     plane.store.upsert_agent_lab(lab)
+    # Also durable StrategyMemory (AGENT_PROPOSED) — available_at = when learned.
+    try:
+        from .experiments import build_strategy_memory_record
+
+        learned_at = utc_now()
+        plane.store.save_strategy_memory(
+            build_strategy_memory_record(
+                strategy_id=f"lab:{run.lab_id}" if run.lab_id else f"learn:{run.learning_run_id}",
+                strategy_version=0,
+                outcome_summary=claim[:500],
+                rejected="no strategy qualified" in claim.lower() or "rejected" in claim.lower(),
+                available_at=learned_at,
+                created_at=learned_at,
+                trial_id=None,
+                features={"origin": "learning_lesson"},
+                applicability={"applies_to": list(applies_to)[:8]},
+                origin="learning_postmortem",
+                epistemic_state="AGENT_PROPOSED",
+                validation_stage="postmortem",
+                extra_metadata={
+                    "learning_run_id": run.learning_run_id,
+                    "evidence_refs": list(evidence_refs)[:12],
+                    "lesson_id": lesson.lesson_id,
+                },
+            )
+        )
+    except Exception:  # noqa: BLE001
+        pass

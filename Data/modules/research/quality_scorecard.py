@@ -320,6 +320,33 @@ def build_quality_scorecard(
         float(dimensions[k].score) * (measured_weights[k] / weight_sum) for k in measured_weights
     )
 
+    # W117: allow_web + external evidence expected must not PASS with zero evidence.
+    evidence_gate: dict[str, Any] = {
+        "external_evidence_expected": bool(getattr(project, "allow_web", False)),
+        "evidence_count": len(evidence),
+        "fetched_web_pages": sum(
+            1
+            for s in sources
+            if getattr(getattr(s, "source_type", None), "value", "") == "web_page"
+            or str(getattr(s, "source_type", "")) == "web_page"
+        ),
+        "status": "OK",
+        "reason": None,
+    }
+    if project.allow_web and len(evidence) == 0:
+        web_reason = getattr(project, "web_unavailable_reason", None)
+        if web_reason:
+            evidence_gate["status"] = "INSUFFICIENT_EVIDENCE"
+            evidence_gate["reason"] = f"WEB_SEARCH_UNAVAILABLE:{web_reason}"
+        elif evidence_gate["fetched_web_pages"] == 0:
+            evidence_gate["status"] = "INSUFFICIENT_EVIDENCE"
+            evidence_gate["reason"] = "NO_SOURCES_FETCHED"
+        else:
+            evidence_gate["status"] = "INSUFFICIENT_EVIDENCE"
+            evidence_gate["reason"] = "NO_EVIDENCE_EXTRACTED"
+        # Cap overall so zero-evidence web research cannot look like high quality.
+        overall = min(overall, 0.35)
+
     return ResearchQualityScorecard(
         project_id=project_id,
         dimensions=dimensions,
@@ -337,6 +364,8 @@ def build_quality_scorecard(
             "conflict_count": len(conflicts),
             "unique_domains": domains,
             "primary_source_count": len(primary),
+            "evidence_quality_gate": evidence_gate,
+            "quality_pass": evidence_gate["status"] == "OK" and overall >= 0.5,
         },
     )
 

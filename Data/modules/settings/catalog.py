@@ -2554,14 +2554,33 @@ def build_catalog() -> tuple[SettingDefinition, ...]:
             label="Web search provider type",
             description=(
                 "Optional search adapter: generic, searxng, or brave. "
-                "Empty = auto-detect from endpoint URL (generic JSON by default)."
+                "Empty = auto-detect from endpoint URL (generic JSON by default). "
+                "When no endpoint is set and mode=auto, LEVIATHAN uses a bounded "
+                "BEST_EFFORT_PUBLIC_SEARCH fallback (not enterprise search)."
             ),
             value_type=SettingType.STRING,
             default="",
             env_name="LEVIATHAN_WEB_SEARCH_PROVIDER",
             path=("research_integration", "web_search_provider"),
             apply_mode=ApplyMode.HOT,
-            consumer="ResearchService / HttpWebProvider",
+            consumer="ResearchService / WebResearchProvider chain",
+            experimental=False,
+        ),
+        SettingDefinition(
+            key="web_search.mode",
+            category="data_research",
+            label="Web search mode",
+            description=(
+                "auto: configured provider first, then bounded keyless public fallback; "
+                "configured_only: never fall back; fallback_only: keyless public only; "
+                "off: disable discovery (direct URL fetch may still work when outbound is on)."
+            ),
+            value_type=SettingType.STRING,
+            default="auto",
+            env_name="LEVIATHAN_WEB_SEARCH_MODE",
+            path=("research_integration", "web_search_mode"),
+            apply_mode=ApplyMode.HOT,
+            consumer="ResearchService / ChainedWebProvider",
             experimental=False,
         ),
         _b(

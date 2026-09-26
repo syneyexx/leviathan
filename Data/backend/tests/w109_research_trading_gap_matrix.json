@@ -1,0 +1,861 @@
+{
+  "program": "w109_research_trading_e2e_audit",
+  "generated": "2026-09-26",
+  "audit_scope": [
+    "Chain A — Research (internet research → evidence → citations → report → brain)",
+    "Chain B — Trading Learning (sim → memory → brain → orchestra → paper → institutional → postmortem)"
+  ],
+  "definition": {
+    "EXIST": "Actual non-test production caller wires A→B",
+    "PARTIAL": "Call path exists but incomplete, optional, or bypassable",
+    "MISSING": "No production callers / stub / disconnected",
+    "ONLY_TEST_CALLER": "Implementation exists; only tests invoke it",
+    "NOT_INTEGRATED": "Domain present without runtime integration"
+  },
+  "meta": {
+    "migration_head": {
+      "version": 56,
+      "name": "institutional_runtime",
+      "file": "Data/backend/migrations.py",
+      "line_range": "4432:4436",
+      "previous": {"version": 55, "name": "institutional_core"}
+    },
+    "institutional_program_json_files": [
+      "Data/backend/tests/institutional_trading_program.json",
+      "Data/backend/tests/institutional_integration_matrix.json",
+      "Data/backend/tests/institutional_runtime_verifier_report.json"
+    ],
+    "institutional_program_active_wave": "W108",
+    "key_settings_web_network": [
+      {
+        "key": "network.allow_outbound",
+        "env": "LEVIATHAN_NETWORK_ALLOW_OUTBOUND",
+        "default": true,
+        "path": "network.allow_outbound",
+        "catalog": "Data/modules/settings/catalog.py:704",
+        "config": "Data/backend/config.py:1420",
+        "hot_apply": "Data/modules/settings/bindings.py:273"
+      },
+      {
+        "key": "web_search.endpoint",
+        "env": "LEVIATHAN_WEB_SEARCH_ENDPOINT",
+        "default": "",
+        "path": "research_integration.web_search_endpoint",
+        "catalog": "Data/modules/settings/catalog.py:2525",
+        "config": "Data/backend/config.py:1430",
+        "hot_apply": "ResearchService.reconfigure_web via bindings.py:276"
+      },
+      {
+        "key": "web_search.api_key",
+        "env": "LEVIATHAN_WEB_SEARCH_API_KEY",
+        "default": "",
+        "secret": true,
+        "catalog": "Data/modules/settings/catalog.py:2538"
+      },
+      {
+        "key": "web_search.provider",
+        "env": "LEVIATHAN_WEB_SEARCH_PROVIDER",
+        "default": "",
+        "values": ["generic", "searxng", "brave", ""],
+        "catalog": "Data/modules/settings/catalog.py:2552",
+        "note": "Empty = auto-detect from endpoint URL"
+      },
+      {
+        "key": "research.auto_promote_verified_knowledge",
+        "env": "LEVIATHAN_RESEARCH_AUTO_PROMOTE_VERIFIED_KNOWLEDGE",
+        "default": true,
+        "catalog": "Data/modules/settings/catalog.py:2579"
+      },
+      {
+        "key": "assistant.auto_web",
+        "env": "LEVIATHAN_ASSISTANT_AUTO_WEB",
+        "default": true,
+        "config": "Data/backend/config.py:1466",
+        "note": "Assistant path; separate from ResearchPage allowWeb"
+      }
+    ],
+    "verify_scripts": [
+      {
+        "path": "scripts/verify_institutional_runtime.py",
+        "scope": "InstitutionalRuntime W75/W108; migration head 56; live blocked",
+        "research": false,
+        "trading": true
+      },
+      {
+        "path": "scripts/verify_trading_100.py",
+        "scope": "trading_gates.json offline completeness",
+        "research": false,
+        "trading": true
+      },
+      {
+        "path": "scripts/verify_leviathan.py",
+        "scope": "frontier + trading verifiers aggregator",
+        "research": false,
+        "trading": true
+      },
+      {
+        "path": "scripts/verify_frontier_reasoning.py",
+        "scope": "frontier reasoning (not research/trading e2e)",
+        "research": false,
+        "trading": false
+      },
+      {
+        "path": null,
+        "note": "NO dedicated scripts/verify_research*.py exists"
+      }
+    ]
+  },
+  "chain_a_research": {
+    "title": "Research e2e: internet research → evidence → citations → report → brain",
+    "steps": [
+      {
+        "id": "A01_ResearchPage",
+        "owner": "frontend ResearchPage",
+        "files": ["Data/frontend/src/pages/ResearchPage.tsx"],
+        "entrypoint": "ResearchPage / onStartResearch (L862)",
+        "persistence": null,
+        "status_semantics": "UI busy/toast; polls ACTIVE project statuses",
+        "failure_behavior": "toast on API error; keeps last known project on poll failure",
+        "arrow_to_next": "EXIST",
+        "callers": [
+          "api.createResearchProject / updateResearchProject / runResearchProject (client.ts)"
+        ],
+        "tests": [],
+        "gaps": [
+          "Does NOT render project.web_unavailable_reason (typed in api.ts:1325, never read in ResearchPage)",
+          "Does NOT render project.wait_reason / kernel_job_id",
+          "Default context.web=true (L405) and templates allowWeb:true (config/research.ts) — UX implies web ready even when provider unconfigured",
+          "Web readiness UX is only Enabled/Disabled toggle (L1508) + generic copy (L1625), not search-endpoint/outbound honesty"
+        ],
+        "refs": {
+          "route": "Data/frontend/src/App.tsx:128",
+          "defaults": "Data/frontend/src/config/research.ts:28",
+          "allowWeb_payload": "ResearchPage.tsx:876"
+        }
+      },
+      {
+        "id": "A02_API",
+        "owner": "backend routes.research",
+        "files": ["Data/backend/routes/research.py"],
+        "entrypoint": "build_research_router → create_project / run_project",
+        "persistence": null,
+        "status_semantics": "HTTP 202 on run/resume/deepen; maps ResearchError → HTTPException",
+        "failure_behavior": "raise_research_error → public_dict detail",
+        "arrow_to_next": "EXIST",
+        "callers": [
+          "main.py include_router(build_research_router(research_service)) ~L2084"
+        ],
+        "tests": [
+          "Data/backend/tests/test_research_system.py",
+          "Data/backend/tests/test_research_external_execution.py"
+        ],
+        "gaps": [
+          "ProjectCreate.allowWeb defaults False (routes/research.py:22) while ResearchPage always sends true by default — mismatch if other clients omit field"
+        ],
+        "refs": {
+          "create": "routes/research.py:88",
+          "run": "routes/research.py:165 → service.run(background=True)"
+        }
+      },
+      {
+        "id": "A03_ResearchService",
+        "owner": "ResearchService",
+        "files": ["Data/modules/research/service.py"],
+        "entrypoint": "ResearchService.create_project / run / enqueue_run / execute_queued_run / from_settings",
+        "persistence": ["research_projects", "research_events", "jobs (via JobRuntime)"],
+        "status_semantics": "draft→planned→queued→researching→synthesizing→completed|failed|cancelled|interrupted; ACTIVE vs TERMINAL in types.py",
+        "failure_behavior": "execute_queued_run catches Exception → FAILED + event; promotion failures swallowed",
+        "arrow_to_next": "EXIST",
+        "callers": [
+          "routes/research.py",
+          "main.py ResearchService.from_settings ~L482",
+          "worker.py process_research_job",
+          "cognition/specialists.py research specialist"
+        ],
+        "tests": [
+          "test_research_system.py",
+          "test_research_external_execution.py",
+          "test_research_hardening.py",
+          "test_research_model_control_plane.py",
+          "test_wave6_coding_research.py",
+          "test_execution_fabric_architecture.py"
+        ],
+        "gaps": [
+          "create_project allow_web default False (service.py:532)",
+          "When externalized and job_runtime None, enqueue may leave QUEUED without durable job"
+        ],
+        "refs": {
+          "from_settings": "service.py:166",
+          "enqueue_run": "service.py:854",
+          "execute_queued_run": "service.py:731",
+          "reconfigure_web": "service.py:224"
+        }
+      },
+      {
+        "id": "A04_JobRuntime",
+        "owner": "JobRuntime + research.advance capability",
+        "files": [
+          "Data/modules/jobs/runtime.py",
+          "Data/modules/research/service.py",
+          "Data/modules/execution/builtins.py"
+        ],
+        "entrypoint": "ResearchService.enqueue_advance → job_runtime.enqueue(capability_id=research.advance)",
+        "persistence": ["jobs"],
+        "status_semantics": "JobState QUEUED/RUNNING/COMPLETED/FAILED; project.kernel_job_id + wait_reason",
+        "failure_behavior": "job FAILED; project can be marked FAILED from service reconciliation",
+        "arrow_to_next": "EXIST",
+        "callers": [
+          "service.enqueue_run when _runners_externalized() and job_runtime bound (service.py:890)",
+          "builtins research.advance registration"
+        ],
+        "tests": [
+          "test_research_external_execution.py",
+          "test_execution_fabric_architecture.py",
+          "test_worker_terminal_events.py"
+        ],
+        "gaps": [
+          "Legacy in-process _spawn_run path when workers not externalized (TEST/LEGACY)"
+        ],
+        "refs": {
+          "capability": "service.py:343",
+          "runtime_allowlist": "jobs/runtime.py:21"
+        }
+      },
+      {
+        "id": "A05_research_worker",
+        "owner": "research worker entrypoint",
+        "files": [
+          "Data/modules/workers/entrypoints/research.py",
+          "Data/modules/research/worker.py",
+          "Data/modules/research/worker_context.py"
+        ],
+        "entrypoint": "process_research_job → execute_queued_run (never service.run for advance)",
+        "persistence": ["jobs", "research_projects", "research_runs", "research_workers"],
+        "status_semantics": "action advance|plan|resume|deepen|verify|fetch_url|regenerate_report",
+        "failure_behavior": "_fail → JobState.FAILED; lease_lost_or_cancel honest fail",
+        "arrow_to_next": "EXIST",
+        "callers": ["workers/entrypoints/research.py:15"],
+        "tests": ["test_research_external_execution.py"],
+        "gaps": [
+          "retrieve/synthesize actions intentionally fail — must use research.advance (worker.py:203)"
+        ],
+        "refs": {
+          "advance": "worker.py:118",
+          "construct": "worker.py:43 / worker_context.py:14"
+        }
+      },
+      {
+        "id": "A06_ResearchRunner",
+        "owner": "ResearchRunner",
+        "files": ["Data/modules/research/runner.py"],
+        "entrypoint": "ResearchRunner.run → coordinator.run",
+        "persistence": null,
+        "status_semantics": "delegates; recover_interrupted marks dead-pid projects INTERRUPTED",
+        "failure_behavior": "bubbles to execute_queued_run",
+        "arrow_to_next": "EXIST",
+        "callers": ["ResearchService.runner (service.py:143)", "execute_queued_run → runner.run (L803)"],
+        "tests": ["test_research_system.py"],
+        "gaps": [],
+        "refs": {"run": "runner.py:134"}
+      },
+      {
+        "id": "A07_ResearchCoordinator",
+        "owner": "ResearchCoordinator",
+        "files": ["Data/modules/research/coordinator.py"],
+        "entrypoint": "ResearchCoordinator.run / worker round loop",
+        "persistence": [
+          "research_runs",
+          "research_workers",
+          "research_sources",
+          "research_evidence",
+          "research_claims",
+          "research_conflicts",
+          "research_reports",
+          "research_events"
+        ],
+        "status_semantics": "RESEARCHING → SYNTHESIZING → COMPLETED; phases LOCAL_RETRIEVAL…BRAIN_SYNC; web_status ok|not_requested|<reason>",
+        "failure_behavior": "web search/fetch exceptions logged as events and continue; cancel → CANCELLED finalize",
+        "arrow_to_next": "EXIST",
+        "callers": ["ResearchRunner.run"],
+        "tests": ["test_research_system.py", "test_research_hardening.py"],
+        "gaps": [
+          "Web path skipped entirely when web_unavailable_reason set (L1277-1294) — still completes report with zero web evidence",
+          "Search skipped if search_configured() false even when allow_web+outbound (fetch-only seed URLs still possible L1389)"
+        ],
+        "refs": {
+          "web_reason": "coordinator.py:332",
+          "web_round": "coordinator.py:1276",
+          "claims": "coordinator.py:613",
+          "report": "coordinator.py:792",
+          "citation_audit": "coordinator.py:803",
+          "brain_sync": "coordinator.py:888"
+        }
+      },
+      {
+        "id": "A08_WebResearchProvider",
+        "owner": "HttpWebProvider / UnconfiguredWebProvider / build_web_provider",
+        "files": [
+          "Data/modules/research/web.py",
+          "Data/modules/research/web_capabilities.py"
+        ],
+        "entrypoint": "HttpWebProvider.search / fetch_page; execute_web_search / execute_web_fetch",
+        "persistence": null,
+        "status_semantics": "web_unavailable_reason codes: outbound_network_disabled | web_provider_unconfigured | web_search_endpoint_unconfigured; WEB_SEARCH_UNAVAILABLE for assistant capabilities",
+        "failure_behavior": "Never fabricates; raises RuntimeError or returns error_code WEB_SEARCH_UNAVAILABLE",
+        "arrow_to_next": "EXIST (when configured)",
+        "callers": [
+          "ResearchCoordinator web round",
+          "functions/web_search + web_fetch → web_capabilities",
+          "execution/builtins web.search/web.fetch",
+          "main.py bind_web_provider ~L1755"
+        ],
+        "tests": [
+          "test_assistant_web.py",
+          "test_assistant_end_to_eend.py",
+          "test_research_system.py (outbound_network_disabled)"
+        ],
+        "provider_matrix": {
+          "UnconfiguredWebProvider": "when allow_outbound false and no endpoint (web.py:484)",
+          "HttpWebProvider.direct_fetch": "configured()=allow_outbound; search needs search_endpoint",
+          "SearxNG": "search_provider=searxng or URL detect (web.py:282)",
+          "Brave": "search_provider=brave; X-Subscription-Token (web.py:284)",
+          "generic_JSON": "default results/items extraction (web.py:291,473)"
+        },
+        "gaps": [
+          "Default deploy: endpoint empty → web_search_endpoint_unconfigured while allowWeb UI true",
+          "Assistant WEB_SEARCH_UNAVAILABLE path separate from ResearchPage UX (no shared readiness banner)"
+        ],
+        "refs": {
+          "HttpWebProvider": "web.py:224",
+          "build_web_provider": "web.py:477",
+          "web_unavailable_reason": "web.py:494",
+          "WEB_SEARCH_UNAVAILABLE": "web_capabilities.py:82"
+        }
+      },
+      {
+        "id": "A09_SourceIngestor",
+        "owner": "SourceIngestor",
+        "files": ["Data/modules/research/sources.py"],
+        "entrypoint": "from_local_hit / from_web_search / from_web_page / from_seed_text",
+        "persistence": ["research_sources", "filesystem research_snapshots"],
+        "status_semantics": "ParseStatus PENDING|OK|FAILED; BrainStatus on sources",
+        "failure_behavior": "caller catches fetch failures; search hits may lack snapshots",
+        "arrow_to_next": "EXIST",
+        "callers": ["ResearchCoordinator", "ResearchService URL/upload paths"],
+        "tests": ["test_source_ingestion.py", "test_research_system.py"],
+        "gaps": [],
+        "refs": {"class": "sources.py:23"}
+      },
+      {
+        "id": "A10_EvidenceLedger",
+        "owner": "EvidenceLedger",
+        "files": ["Data/modules/research/evidence.py", "Data/modules/research/store.py"],
+        "entrypoint": "EvidenceLedger.add_span / resolve_citation",
+        "persistence": ["research_evidence"],
+        "status_semantics": "evidence_count = COUNT(research_evidence) via store._attach_counts (store.py:541)",
+        "failure_behavior": "empty span rejected; unresolved citations rewritten [unresolved:id]",
+        "arrow_to_next": "EXIST",
+        "callers": ["ResearchCoordinator worker rounds"],
+        "tests": ["test_research_system.py", "test_unified_intelligence.py"],
+        "why_evidence_count_can_be_0": [
+          "allow_web=false AND empty knowledge local hits AND no seed_sources",
+          "allow_web=true but web_unavailable_reason set (outbound off / unconfigured / no search endpoint) AND no local hits/seeds",
+          "search_configured false and no http(s) seed URLs — only search-less seed fetch path skipped",
+          "local search returns hits but _select_spans finds no sentence ≥20 chars → no add_span",
+          "budget.max_sources already exhausted before evidence extraction",
+          "project still draft/queued before any round runs"
+        ],
+        "gaps": [
+          "Completed runs with evidence_count=0 are allowed (honest empty report) — UI does not distinguish web-unavailable vs empty-corpus"
+        ],
+        "refs": {"add_span": "evidence.py:29", "counts": "store.py:534"}
+      },
+      {
+        "id": "A11_Claims",
+        "owner": "ClaimAnalyzer + ConflictDetector",
+        "files": [
+          "Data/modules/research/claims.py",
+          "Data/modules/research/conflicts.py"
+        ],
+        "entrypoint": "ClaimAnalyzer.analyze_project; ConflictDetector.detect",
+        "persistence": ["research_claims", "research_conflicts", "research_claim_edges (m29)"],
+        "status_semantics": "ClaimStatus supported|weakly_supported|disputed|unsupported|unresolved",
+        "failure_behavior": "zero evidence → zero claims (deterministic)",
+        "arrow_to_next": "EXIST",
+        "callers": ["ResearchCoordinator after retrieval waves (~L613)"],
+        "tests": ["test_research_system.py", "test_unified_intelligence.py"],
+        "gaps": [],
+        "refs": {"analyze_project": "claims.py:52"}
+      },
+      {
+        "id": "A12_CitationAudit",
+        "owner": "citation_audit.audit_report",
+        "files": ["Data/modules/research/citation_audit.py"],
+        "entrypoint": "audit_report(store, project, body_markdown)",
+        "persistence": ["research_events kind=citation_audit (not dedicated table)"],
+        "status_semantics": "SUPPORTED|PARTIALLY_SUPPORTED|UNCITED|CITATION_MISMATCH|CONTRADICTED|INTERPRETATION",
+        "failure_behavior": "coordinator catches Exception → citation_audit_failed event; run continues",
+        "arrow_to_next": "EXIST",
+        "callers": [
+          "ResearchCoordinator post-report (coordinator.py:803)",
+          "ResearchService.citation_audit API (service.py:1824)",
+          "worker action=verify"
+        ],
+        "tests": ["test_unified_intelligence.py"],
+        "gaps": [
+          "Audit event-only persistence; no first-class citation_audit table",
+          "Critical unsupported does not fail the project status — only notes on coverage"
+        ],
+        "refs": {"audit_report": "citation_audit.py"}
+      },
+      {
+        "id": "A13_Report",
+        "owner": "ReportBuilder",
+        "files": ["Data/modules/research/reports.py"],
+        "entrypoint": "ReportBuilder.generate",
+        "persistence": ["research_reports", "filesystem research_reports"],
+        "status_semantics": "versioned reports; includes Allow web / web unavailable lines",
+        "failure_behavior": "bubbles unless caught higher",
+        "arrow_to_next": "EXIST",
+        "callers": ["ResearchCoordinator L792", "service._regenerate_report_inline"],
+        "tests": ["test_research_system.py", "test_wave6_coding_research.py"],
+        "gaps": [],
+        "refs": {"web_status_in_report": "reports.py:120"}
+      },
+      {
+        "id": "A14_BrainSync",
+        "owner": "ResearchBrainSync + optional KnowledgeAssimilationService",
+        "files": [
+          "Data/modules/research/brain_sync.py",
+          "Data/modules/intelligence/assimilation.py"
+        ],
+        "entrypoint": "ResearchBrainSync.sync_report; _maybe_promote_knowledge → assimilate_research_project",
+        "persistence": ["knowledge_documents/chunks", source.brain_status columns"],
+        "status_semantics": "BrainStatus synced|failed|skipped; assimilation receipt",
+        "failure_behavior": "brain_sync_failed event; run still COMPLETED; promotion exceptions swallowed",
+        "arrow_to_next": "EXIST (report sync); PARTIAL (assimilation depends on service bound + auto_promote)",
+        "callers": [
+          "ResearchService._sync_report → brain.sync_report (wired into runner brain_sync)",
+          "coordinator brain_sync callback",
+          "retry_brain_sync API routes"
+        ],
+        "tests": [
+          "test_intelligence_assimilation.py",
+          "test_intelligence_scenarios.py",
+          "test_intelligence_substrate.py"
+        ],
+        "gaps": [
+          "sync_report raises if KnowledgeStore None",
+          "Source-level brain sync for web pages is separate from report sync (sync_web_page); coordinator report path does not auto sync_web_page for every fetched page in all paths"
+        ],
+        "refs": {
+          "sync_report": "brain_sync.py:107",
+          "promote": "service.py:1171"
+        }
+      }
+    ],
+    "allowWeb_defaults": {
+      "ResearchPage_context_web": true,
+      "RD_TEMPLATES_allowWeb": true,
+      "API_ProjectCreate_allowWeb": false,
+      "ResearchService_create_project_allow_web": false,
+      "DB_research_projects_allow_web_DEFAULT": 0,
+      "web_capabilities_bind_allow_web": true,
+      "assistant_auto_web_env_default": true
+    },
+    "evidence_count_zero_summary": "evidence_count is COUNT(research_evidence). Zero when no local hits, no usable seeds, and web channel unavailable or search-unconfigured without fetchable seed URLs — common default when LEVIATHAN_WEB_SEARCH_ENDPOINT unset despite UI Web=Enabled."
+  },
+  "chain_b_trading_learning": {
+    "title": "Trading Learning e2e",
+    "arrows": [
+      {
+        "from": "MarketSim",
+        "to": "experiment/trial",
+        "status": "EXIST",
+        "owner": "MarketSimControlPlane",
+        "files": ["Data/modules/market_sim/service.py", "Data/modules/market_sim/learning_runtime.py"],
+        "callers": [
+          "propose_experiment / complete_experiment (service.py:2178/2219)",
+          "learning_runtime._append_trial → store.append_trial (learning_runtime.py:184)",
+          "create_gym_episode / run_gym_episode_on_worker from learning_runtime._run_candidate_episode"
+        ],
+        "persistence": ["market_experiments", "market_sim_runs", "market_sim_learning_runs"],
+        "tests": ["test_strategy_learning.py", "test_trading_center.py"],
+        "gap": null
+      },
+      {
+        "from": "experiment/trial",
+        "to": "StrategyMemory",
+        "status": "EXIST",
+        "owner": "MarketSimStore.save_strategy_memory",
+        "files": ["Data/modules/market_sim/service.py", "Data/modules/market_sim/store.py", "Data/modules/market_sim/learning_runtime.py", "Data/modules/market_sim/experiments.py"],
+        "callers": [
+          "EXIST: complete_experiment → save_strategy_memory (service.py)",
+          "EXIST: learning_runtime._append_trial → save_strategy_memory (negatives retained)",
+          "EXIST: learning _maybe_add_lesson → save_strategy_memory (AGENT_PROPOSED)",
+          "EXIST read: MultiAgentEngine.prepare hydrates list_strategy_memories"
+        ],
+        "persistence": ["market_strategy_memories"],
+        "tests": ["test_trading_center.py", "test_learning_loop_w119_w135.py"],
+        "gap": null,
+        "note": "W119+: available_at = when learned; rejected trials retained with provenance metadata"
+      },
+      {
+        "from": "StrategyMemory",
+        "to": "TradingBrainAdapter",
+        "status": "EXIST",
+        "owner": "TradingBrainAdapter.strategy_memory_lister",
+        "files": ["Data/modules/market_sim/trading_brain.py", "Data/modules/market_sim/brain_hooks.py", "Data/backend/main.py"],
+        "callers": [
+          "EXIST: TradingBrainAdapter._strategy_memory_hits via strategy_memory_lister",
+          "EXIST: main.py attach_trading_brain_adapter(..., strategy_memory_lister=store.list_strategy_memories)"
+        ],
+        "persistence": null,
+        "tests": ["test_learning_loop_w119_w135.py", "test_trading_brain_w03.py"],
+        "gap": null
+      },
+      {
+        "from": "TradingBrainAdapter",
+        "to": "RoleAwareTradingKnowledge",
+        "status": "EXIST",
+        "owner": "RoleAwareTradingKnowledge",
+        "files": ["Data/modules/market_sim/role_knowledge.py", "Data/modules/market_sim/orchestra/service.py", "Data/backend/main.py"],
+        "callers": [
+          "EXIST: TradingOrchestraService binds RoleAwareTradingKnowledge(trading_brain_adapter)",
+          "EXIST: main.py passes trading_brain_adapter into TradingOrchestraService"
+        ],
+        "persistence": null,
+        "tests": ["test_role_knowledge_w05.py", "test_learning_loop_w119_w135.py"],
+        "gap": null
+      },
+      {
+        "from": "RoleAwareTradingKnowledge",
+        "to": "TradingOrchestra",
+        "status": "EXIST",
+        "owner": "TradingOrchestraService / executors",
+        "files": [
+          "Data/modules/market_sim/orchestra/service.py",
+          "Data/modules/market_sim/orchestra/executors.py"
+        ],
+        "callers": [
+          "EXIST: ExecutionContext.bind_role_experience → RoleAwareTradingKnowledge.retrieve_for_role",
+          "EXIST: run_critic / run_risk_officer bind evidenceRefs into DecisionRecord"
+        ],
+        "persistence": ["orchestra decisions/signals tables via OrchestraStore"],
+        "tests": ["test_trading_orchestra.py", "test_learning_loop_w119_w135.py"],
+        "gap": null
+      },
+      {
+        "from": "TradingOrchestra",
+        "to": "PaperPortfolio",
+        "status": "EXIST",
+        "owner": "run_execution_agent + TradingOrchestraService.paper_router",
+        "files": [
+          "Data/modules/market_sim/orchestra/executors.py",
+          "Data/modules/market_sim/orchestra/service.py",
+          "Data/modules/market_sim/portefeuille/service.py"
+        ],
+        "callers": [
+          "EXIST: run_execution_agent → paper_router → PortfolioService.place_order when bound",
+          "Fallback: recorded_not_routed when paper_router unbound"
+        ],
+        "persistence": ["orchestra decision records", "portfolio orders/fills"],
+        "tests": ["test_trading_orchestra.py", "test_learning_loop_w119_w135.py"],
+        "gap": null
+      },
+      {
+        "from": "PaperPortfolio",
+        "to": "InstitutionalRuntime",
+        "status": "EXIST",
+        "owner": "PortfolioService.place_order → InstitutionalRuntime.on_paper_fill",
+        "files": [
+          "Data/modules/market_sim/portefeuille/service.py:746",
+          "Data/modules/market_sim/institutional_core/runtime.py:408"
+        ],
+        "callers": ["portefeuille place_order after book fill"],
+        "persistence": [
+          "institutional_ibor_events",
+          "institutional_journal_entries",
+          "institutional_decision_packets",
+          "institutional_audit_chain",
+          "…"
+        ],
+        "tests": ["test_institutional_runtime_w73_plus.py"],
+        "gap": null,
+        "note": "Reachable from Orchestra when paper_router bound to PortfolioService"
+      },
+      {
+        "from": "InstitutionalRuntime",
+        "to": "outcome",
+        "status": "PARTIAL",
+        "owner": "InstitutionalRuntime / learning finalize",
+        "files": [
+          "Data/modules/market_sim/institutional_core/runtime.py",
+          "Data/modules/market_sim/learning_runtime.py"
+        ],
+        "callers": [
+          "Paper fills produce IBOR/subledger/decision packets",
+          "Learning outcomes finalize via _finalize_qualified / _finalize_no_qualify; now also write StrategyMemory"
+        ],
+        "persistence": ["institutional_*", "market_sim_learning_runs", "agent_lab lessons", "market_strategy_memories"],
+        "tests": ["test_institutional_runtime_w73_plus.py", "test_strategy_learning.py", "test_learning_loop_w119_w135.py"],
+        "gap": "Learning Loop outcomes still do not call InstitutionalRuntime directly (sim vs paper worlds remain distinct)"
+      },
+      {
+        "from": "outcome",
+        "to": "postmortem",
+        "status": "EXIST",
+        "owner": "orchestra run_postmortem vs learning _maybe_add_lesson",
+        "files": [
+          "Data/modules/market_sim/orchestra/executors.py",
+          "Data/modules/market_sim/learning_runtime.py"
+        ],
+        "callers": [
+          "EXIST: TradingMissionExecutor POST_MORTEM → run_postmortem (uses actual decisions/fills; predictionError)",
+          "EXIST: learning finalize → LabLesson + StrategyMemory (AGENT_PROPOSED)"
+        ],
+        "persistence": ["orchestra decisions", "agent_lab.lessons JSON", "market_strategy_memories", "memory"],
+        "tests": ["test_trading_orchestra.py", "test_strategy_learning.py", "test_learning_loop_w119_w135.py"],
+        "gap": null
+      },
+      {
+        "from": "postmortem",
+        "to": "Memory",
+        "status": "EXIST",
+        "owner": "TradingOrchestraService.memory_writer",
+        "files": ["Data/modules/market_sim/orchestra/service.py", "Data/modules/market_sim/orchestra/executors.py"],
+        "callers": [
+          "run_postmortem → ctx.memory_writer (AGENT_PROPOSED)"
+        ],
+        "persistence": ["memory table via MemoryStore"],
+        "tests": ["test_trading_orchestra.py", "test_learning_loop_w119_w135.py"],
+        "gap": null
+      },
+      {
+        "from": "postmortem",
+        "to": "Brain",
+        "status": "EXIST",
+        "owner": "TradingBrainAdapter via StrategyMemory",
+        "files": ["Data/modules/market_sim/orchestra/executors.py", "Data/modules/market_sim/trading_brain.py"],
+        "callers": [
+          "run_postmortem → strategy_memory_writer → StrategyMemory → TradingBrainAdapter.retrieve"
+        ],
+        "persistence": ["market_strategy_memories"],
+        "tests": ["test_learning_loop_w119_w135.py"],
+        "gap": null,
+        "note": "Brain path is StrategyMemory retrieval (advisory); no separate Brain upsert table"
+      },
+      {
+        "from": "postmortem",
+        "to": "StrategyMemory",
+        "status": "EXIST",
+        "owner": "run_postmortem + strategy_memory_writer",
+        "files": ["Data/modules/market_sim/orchestra/executors.py", "Data/modules/market_sim/orchestra/service.py"],
+        "callers": [
+          "EXIST: run_postmortem → ctx.strategy_memory_writer (AGENT_PROPOSED provenance)",
+          "EXIST: learning _maybe_add_lesson → save_strategy_memory"
+        ],
+        "persistence": ["market_strategy_memories"],
+        "tests": ["test_learning_loop_w119_w135.py"],
+        "gap": null
+      },
+      {
+        "from": "LearningLoop",
+        "to": "TradingOrchestra",
+        "status": "PARTIAL",
+        "owner": "StrategyMemory shared fabric",
+        "files": ["Data/modules/market_sim/learning_runtime.py", "Data/modules/market_sim/orchestra/"],
+        "callers": [
+          "Learning writes StrategyMemory; Orchestra retrieves via RoleAwareTradingKnowledge (shared memory, not direct call)"
+        ],
+        "persistence": ["market_strategy_memories"],
+        "tests": ["test_learning_loop_w119_w135.py"],
+        "gap": "run_learning_on_worker still does not import orchestra — coupling is via StrategyMemory"
+      },
+      {
+        "from": "LearningLoop",
+        "to": "PaperPortfolio/InstitutionalRuntime",
+        "status": "MISSING",
+        "owner": "learning_runtime",
+        "files": ["Data/modules/market_sim/learning_runtime.py"],
+        "callers": [
+          "Uses gym/sim episodes (MultiAgentEngine fills), not Portefeuille.place_order"
+        ],
+        "persistence": ["market_sim fills/wallets — not institutional_*"],
+        "tests": ["test_strategy_learning.py"],
+        "gap": "Sim fills ≠ institutional paper portfolio fills"
+      }
+    ],
+    "learning_loop_w119_w135": {
+      "status": "PASS",
+      "waves": "W119-W135",
+      "migration_head": 56,
+      "migration_added": null,
+      "tests": ["Data.backend.tests.test_learning_loop_w119_w135"],
+      "arrows_now_exist": [
+        "experiment/trial → StrategyMemory",
+        "StrategyMemory → TradingBrainAdapter",
+        "TradingBrainAdapter → RoleAwareTradingKnowledge",
+        "RoleAwareTradingKnowledge → TradingOrchestra",
+        "TradingOrchestra → PaperPortfolio",
+        "outcome → postmortem",
+        "postmortem → Memory",
+        "postmortem → Brain (via StrategyMemory)",
+        "postmortem → StrategyMemory"
+      ],
+      "invariants": [
+        "live_trading_BLOCKED",
+        "available_at_PIT_no_future_leakage",
+        "negative_results_first_class",
+        "knowledge_not_execution_authority",
+        "RiskGuard_gates_paper"
+      ]
+    },
+    "component_inventory": [
+      {
+        "component": "MarketSimControlPlane",
+        "file": "Data/modules/market_sim/service.py",
+        "runtime_status": "INTEGRATED"
+      },
+      {
+        "component": "StrategyLearningRun / learning_runtime",
+        "file": "Data/modules/market_sim/learning_runtime.py",
+        "runtime_status": "INTEGRATED (worker market_sim.learning_run; writes StrategyMemory)"
+      },
+      {
+        "component": "StrategyMemoryIndex + market_strategy_memories",
+        "file": "Data/modules/market_sim/experiments.py + store.py",
+        "runtime_status": "INTEGRATED (complete_experiment + learning trials + postmortem)"
+      },
+      {
+        "component": "TradingBrainAdapter",
+        "file": "Data/modules/market_sim/trading_brain.py",
+        "runtime_status": "INTEGRATED into BrainFacade.knowledge + StrategyMemory + orchestra roles"
+      },
+      {
+        "component": "RoleAwareTradingKnowledge",
+        "file": "Data/modules/market_sim/role_knowledge.py",
+        "runtime_status": "INTEGRATED (orchestra ExecutionContext)"
+      },
+      {
+        "component": "TradingOrchestraService",
+        "file": "Data/modules/market_sim/orchestra/service.py",
+        "runtime_status": "INTEGRATED (fleet trading missions; paper_router to Portefeuille)"
+      },
+      {
+        "component": "PaperPortfolio / PortfolioService",
+        "file": "Data/modules/market_sim/portefeuille/",
+        "runtime_status": "INTEGRATED"
+      },
+      {
+        "component": "InstitutionalRuntime",
+        "file": "Data/modules/market_sim/institutional_core/runtime.py",
+        "runtime_status": "INTEGRATED (on paper fills)"
+      }
+    ]
+  },
+  "priority_gaps_for_w109": [
+    {
+      "id": "G-R1",
+      "chain": "A",
+      "severity": "high",
+      "summary": "ResearchPage web readiness UX dishonest vs provider: UI Web=Enabled by default; no web_unavailable_reason / endpoint readiness surface",
+      "files": ["Data/frontend/src/pages/ResearchPage.tsx", "Data/frontend/src/config/research.ts"]
+    },
+    {
+      "id": "G-R2",
+      "chain": "A",
+      "severity": "high",
+      "summary": "evidence_count=0 common when LEVIATHAN_WEB_SEARCH_ENDPOINT unset + empty knowledge; run still COMPLETED",
+      "files": ["Data/modules/research/coordinator.py", "Data/modules/research/web.py"]
+    },
+    {
+      "id": "G-R3",
+      "chain": "A",
+      "severity": "medium",
+      "summary": "allowWeb defaults diverge: UI/templates true, API/service/DB default false",
+      "files": ["Data/backend/routes/research.py:22", "Data/modules/research/service.py:532", "Data/modules/research/store.py:99"]
+    },
+    {
+      "id": "G-R4",
+      "chain": "A",
+      "severity": "low",
+      "summary": "No scripts/verify_research*.py; research verified only via unittest suite",
+      "files": ["scripts/"]
+    },
+    {
+      "id": "G-T1",
+      "chain": "B",
+      "severity": "resolved_w119_w135",
+      "summary": "RoleAwareTradingKnowledge wired into orchestra ExecutionContext",
+      "files": ["Data/modules/market_sim/role_knowledge.py", "Data/modules/market_sim/orchestra/"]
+    },
+    {
+      "id": "G-T2",
+      "chain": "B",
+      "severity": "resolved_w119_w135",
+      "summary": "Orchestra → PaperPortfolio via paper_router → PortfolioService.place_order",
+      "files": ["Data/modules/market_sim/orchestra/executors.py", "Data/modules/market_sim/orchestra/service.py"]
+    },
+    {
+      "id": "G-T3",
+      "chain": "B",
+      "severity": "resolved_w119_w135",
+      "summary": "Learning Loop _append_trial writes StrategyMemory (incl. negatives)",
+      "files": ["Data/modules/market_sim/learning_runtime.py"]
+    },
+    {
+      "id": "G-T4",
+      "chain": "B",
+      "severity": "medium",
+      "summary": "Learning Loop still does not call InstitutionalRuntime directly (coupled via StrategyMemory + paper path when orchestra routes)",
+      "files": ["learning_runtime.py", "orchestra/", "institutional_core/runtime.py"]
+    },
+    {
+      "id": "G-T5",
+      "chain": "B",
+      "severity": "resolved_w119_w135",
+      "summary": "postmortem → Memory + StrategyMemory + Brain(via StrategyMemory) EXIST",
+      "files": ["orchestra/executors.py", "orchestra/service.py"]
+    },
+    {
+      "id": "G-T6",
+      "chain": "B",
+      "severity": "resolved_w119_w135",
+      "summary": "StrategyMemory → TradingBrainAdapter → orchestra roles EXIST",
+      "files": ["trading_brain.py", "role_knowledge.py", "orchestra/"]
+    }
+  ],
+  "existing_tests_index": {
+    "research": [
+      "Data/backend/tests/test_research_system.py",
+      "Data/backend/tests/test_research_external_execution.py",
+      "Data/backend/tests/test_research_hardening.py",
+      "Data/backend/tests/test_research_model_control_plane.py",
+      "Data/backend/tests/test_wave6_coding_research.py",
+      "Data/backend/tests/test_coding_research_w10.py",
+      "Data/backend/tests/test_assistant_web.py",
+      "Data/backend/tests/test_assistant_end_to_end.py",
+      "Data/backend/tests/test_source_ingestion.py",
+      "Data/backend/tests/test_unified_intelligence.py",
+      "Data/backend/tests/test_intelligence_assimilation.py"
+    ],
+    "trading_learning": [
+      "Data/backend/tests/test_strategy_learning.py",
+      "Data/backend/tests/test_trading_brain_w03.py",
+      "Data/backend/tests/test_role_knowledge_w05.py",
+      "Data/backend/tests/test_trading_orchestra.py",
+      "Data/backend/tests/test_learning_loop_w119_w135.py",
+      "Data/backend/tests/test_trading_center.py",
+      "Data/backend/tests/test_trading_lab_w13.py",
+      "Data/backend/tests/test_trading_lab_w14.py",
+      "Data/backend/tests/test_trading_lab_w15.py",
+      "Data/backend/tests/test_trading_lab_w16.py",
+      "Data/backend/tests/test_trading_lab_w16_lifecycle.py",
+      "Data/backend/tests/test_trading_lab_w17.py",
+      "Data/backend/tests/test_institutional_runtime_w73_plus.py",
+      "Data/backend/tests/test_institutional_core_w37_w72.py",
+      "Data/backend/tests/test_institutional_core_failure_paths.py"
+    ]
+  }
+}

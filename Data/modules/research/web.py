@@ -1,19 +1,33 @@
-"""Web research provider abstraction — real provider only when configured."""
+"""Web research provider abstraction — configured providers + bounded public fallback.
+
+Search hits are discovery metadata only. Fetched page content is the source.
+Never invents URLs, titles, snippets, or results.
+"""
 
 from __future__ import annotations
 
+import html as html_lib
 import re
 import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Protocol
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
+
 from urllib.robotparser import RobotFileParser
 
 import httpx
 
 from .ssrf import assert_safe_url, validate_url_for_fetch
+
+# Operator search modes (Settings: research.web_search_mode / LEVIATHAN_WEB_SEARCH_MODE).
+WEB_SEARCH_MODES = frozenset({"auto", "configured_only", "fallback_only", "off"})
+BEST_EFFORT_PUBLIC_PROVIDER = "best_effort_public_search"
+DDG_HTML_ENDPOINT = "https://html.duckduckgo.com/html/"
+# Bound keyless fallback traffic.
+_FALLBACK_MAX_QUERIES_PER_MINUTE = 6
+_FALLBACK_MAX_RESULTS = 8
 
 
 def utc_now() -> str:
@@ -474,20 +488,446 @@ def _extract_search_items(payload: Any, *, kind: str) -> list[Any]:
     return items if isinstance(items, list) else []
 
 
+def _unwrap_ddg_url(raw: str) -> str:
+    """Unwrap DuckDuckGo redirect URLs to the destination when present."""
+    url = (raw or "").strip()
+    if not url:
+        return ""
+    if url.startswith("//"):
+        url = "https:" + url
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if "duckduckgo.com" in host and ("/l/" in parsed.path or "uddg=" in (parsed.query or "")):
+        qs = parse_qs(parsed.query)
+        uddg = (qs.get("uddg") or [None])[0]
+        if uddg:
+            return unquote(uddg)
+    return url
+
+
+def _parse_ddg_html_results(body: str, *, limit: int) -> list[dict[str, str]]:
+    """Parse DuckDuckGo HTML/Lite result blocks. Never invents hits."""
+    out: list[dict[str, str]] = []
+    # Primary: result__a anchors (html.duckduckgo.com).
+    for match in re.finditer(
+        r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
+        body,
+        flags=re.I | re.S,
+    ):
+        href = html_lib.unescape(match.group(1).strip())
+        title = re.sub(r"<[^>]+>", " ", html_lib.unescape(match.group(2)))
+        title = re.sub(r"\s+", " ", title).strip()
+        url = _unwrap_ddg_url(href)
+        if not url.startswith(("http://", "https://")):
+            continue
+        # Skip DDG internal chrome.
+        host = (urlparse(url).hostname or "").lower()
+        if "duckduckgo.com" in host:
+            continue
+        # Snippet: nearest result__snippet after this match.
+        snippet = ""
+        tail = body[match.end() : match.end() + 1200]
+        sn = re.search(
+            r'class="result__snippet"[^>]*>(.*?)</(?:a|td|div|span)>',
+            tail,
+            flags=re.I | re.S,
+        )
+        if sn:
+            snippet = re.sub(r"<[^>]+>", " ", html_lib.unescape(sn.group(1)))
+            snippet = re.sub(r"\s+", " ", snippet).strip()[:500]
+        out.append({"title": title or url, "url": url, "snippet": snippet})
+        if len(out) >= limit:
+            break
+    if out:
+        return out
+    # Lite fallback: result-link
+    for match in re.finditer(
+        r'class="result-link"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
+        body,
+        flags=re.I | re.S,
+    ):
+        href = html_lib.unescape(match.group(1).strip())
+        title = re.sub(r"<[^>]+>", " ", html_lib.unescape(match.group(2)))
+        title = re.sub(r"\s+", " ", title).strip()
+        url = _unwrap_ddg_url(href)
+        if not url.startswith(("http://", "https://")):
+            continue
+        host = (urlparse(url).hostname or "").lower()
+        if "duckduckgo.com" in host:
+            continue
+        out.append({"title": title or url, "url": url, "snippet": ""})
+        if len(out) >= limit:
+            break
+    return out
+
+
+class DuckDuckGoHtmlSearchProvider:
+    """Bounded zero-key public discovery via DuckDuckGo HTML (BEST_EFFORT_PUBLIC_SEARCH).
+
+    Not an enterprise search product. Rate-limited, SSRF-validated, no invented hits.
+    Fetch reuses HttpWebProvider page-fetch semantics.
+    """
+
+    name = BEST_EFFORT_PUBLIC_PROVIDER
+    search_provider = BEST_EFFORT_PUBLIC_PROVIDER
+    active_provider_type = BEST_EFFORT_PUBLIC_PROVIDER
+
+    def __init__(
+        self,
+        *,
+        allow_outbound: bool,
+        user_agent: str = "LEVIATHAN-Research/1.0",
+        rate_limiter: HostRateLimiter | None = None,
+        fetch_delegate: HttpWebProvider | None = None,
+    ) -> None:
+        self.allow_outbound = bool(allow_outbound)
+        self.user_agent = user_agent
+        self.rate_limiter = rate_limiter or HostRateLimiter(min_interval_seconds=1.0)
+        self._fetch = fetch_delegate or HttpWebProvider(
+            allow_outbound=allow_outbound,
+            user_agent=user_agent,
+            rate_limiter=self.rate_limiter,
+        )
+        self._query_times: list[float] = []
+        self._query_lock = threading.Lock()
+
+    def configured(self) -> bool:
+        return self.allow_outbound
+
+    def search_configured(self) -> bool:
+        return self.allow_outbound
+
+    def _enforce_query_budget(self) -> None:
+        now = time.monotonic()
+        with self._query_lock:
+            self._query_times = [t for t in self._query_times if now - t < 60.0]
+            if len(self._query_times) >= _FALLBACK_MAX_QUERIES_PER_MINUTE:
+                raise RuntimeError(
+                    "best_effort_public_search_rate_limited:"
+                    f"max_{_FALLBACK_MAX_QUERIES_PER_MINUTE}_queries_per_minute"
+                )
+            self._query_times.append(now)
+
+    def search(self, query: str, *, limit: int = 5) -> list[WebSearchResult]:
+        if not self.allow_outbound:
+            raise RuntimeError("Outbound network disabled (LEVIATHAN_NETWORK_ALLOW_OUTBOUND)")
+        q = (query or "").strip()
+        if not q:
+            return []
+        self._enforce_query_budget()
+        limit = max(1, min(int(limit), _FALLBACK_MAX_RESULTS))
+        headers = {
+            "User-Agent": self.user_agent,
+            "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+        }
+        # Prefer GET on html.duckduckgo.com — POST often returns anomaly/challenge pages.
+        endpoints = (
+            (DDG_HTML_ENDPOINT, "get"),
+            ("https://lite.duckduckgo.com/lite/", "get"),
+        )
+        body = ""
+        last_status = 0
+        last_error = ""
+        with httpx.Client(timeout=20.0, follow_redirects=True) as client:
+            for endpoint, method in endpoints:
+                assert_safe_url(endpoint)
+                host = urlparse(endpoint).hostname or "duckduckgo.com"
+                self.rate_limiter.wait(host)
+                try:
+                    if method == "get":
+                        response = client.get(endpoint, params={"q": q}, headers=headers)
+                    else:
+                        response = client.post(
+                            endpoint,
+                            data={"q": q},
+                            headers={
+                                **headers,
+                                "Content-Type": "application/x-www-form-urlencoded",
+                            },
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    last_error = str(exc)
+                    continue
+                last_status = int(getattr(response, "status_code", 0) or 0)
+                if last_status == 429:
+                    headers_map = getattr(response, "headers", {}) or {}
+                    retry = float(headers_map.get("retry-after") or 2.0)
+                    self.rate_limiter.wait(host, retry_after=retry)
+                    response = client.get(endpoint, params={"q": q}, headers=headers)
+                    last_status = int(getattr(response, "status_code", 0) or 0)
+                if last_status >= 400:
+                    last_error = f"best_effort_public_search_http_{last_status}"
+                    continue
+                text = getattr(response, "text", None)
+                if text is None:
+                    raw = getattr(response, "content", b"") or b""
+                    text = raw.decode("utf-8", errors="replace")
+                lower = text.lower()
+                if "anomaly" in lower and "result__a" not in lower and "result-link" not in lower:
+                    last_error = "best_effort_public_search_challenge"
+                    continue
+                body = text
+                final_url = str(getattr(response, "url", endpoint) or endpoint)
+                host_final = (urlparse(final_url).hostname or "").lower()
+                if "duckduckgo.com" not in host_final:
+                    decision = validate_url_for_fetch(final_url)
+                    if not decision.allowed:
+                        last_error = "best_effort_public_search_redirect_blocked"
+                        body = ""
+                        continue
+                break
+        if not body:
+            raise RuntimeError(
+                last_error or f"best_effort_public_search_http_{last_status or 'unknown'}"
+            )
+        items = _parse_ddg_html_results(body, limit=limit)
+        now = utc_now()
+        out: list[WebSearchResult] = []
+        for item in items:
+            url = item["url"]
+            decision = validate_url_for_fetch(url)
+            if not decision.allowed:
+                continue
+            out.append(
+                WebSearchResult(
+                    title=item["title"],
+                    url=url,
+                    snippet=item.get("snippet") or "",
+                    provider=BEST_EFFORT_PUBLIC_PROVIDER,
+                    retrieved_at=now,
+                )
+            )
+        return out
+
+    def fetch_page(
+        self,
+        url: str,
+        *,
+        timeout_seconds: float = 20.0,
+        max_bytes: int = 2_000_000,
+        respect_robots_txt: bool = True,
+    ) -> WebPageContent:
+        return self._fetch.fetch_page(
+            url,
+            timeout_seconds=timeout_seconds,
+            max_bytes=max_bytes,
+            respect_robots_txt=respect_robots_txt,
+        )
+
+
+def _is_search_availability_error(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    needles = (
+        "not configured",
+        "unavailable",
+        "unconfigured",
+        "timeout",
+        "timed out",
+        "429",
+        "401",
+        "403",
+        "502",
+        "503",
+        "504",
+        "rate_limit",
+        "rate limited",
+        "connection",
+        "http_",
+        "search_http_",
+        "best_effort_public_search_http_",
+        "outbound network disabled",
+    )
+    return any(n in msg for n in needles)
+
+
+class ChainedWebProvider:
+    """Provider selection/failover: configured → Searx/Brave/generic → keyless public.
+
+    Failover only on provider/search availability errors.
+    ``configured_only`` never silently falls back.
+    """
+
+    name = "web_search_chain"
+
+    def __init__(
+        self,
+        *,
+        allow_outbound: bool,
+        search_endpoint: str | None = None,
+        api_key: str | None = None,
+        search_provider: str | None = None,
+        search_mode: str = "auto",
+        user_agent: str = "LEVIATHAN-Research/1.0",
+    ) -> None:
+        self.allow_outbound = bool(allow_outbound)
+        self.search_endpoint = (search_endpoint or "").strip() or None
+        self.api_key = (api_key or "").strip() or None
+        self.search_mode = (search_mode or "auto").strip().lower() or "auto"
+        if self.search_mode not in WEB_SEARCH_MODES:
+            self.search_mode = "auto"
+        self.user_agent = user_agent
+        self.rate_limiter = HostRateLimiter(min_interval_seconds=0.5)
+        self._configured = (
+            HttpWebProvider(
+                allow_outbound=allow_outbound,
+                search_endpoint=self.search_endpoint,
+                api_key=self.api_key,
+                search_provider=search_provider,
+                rate_limiter=self.rate_limiter,
+                user_agent=user_agent,
+            )
+            if allow_outbound or self.search_endpoint
+            else None
+        )
+        self._fallback = DuckDuckGoHtmlSearchProvider(
+            allow_outbound=allow_outbound,
+            user_agent=user_agent,
+            rate_limiter=self.rate_limiter,
+            fetch_delegate=self._configured
+            or HttpWebProvider(
+                allow_outbound=allow_outbound,
+                user_agent=user_agent,
+                rate_limiter=self.rate_limiter,
+            ),
+        )
+        self._last_search_provider: str | None = None
+        self.active_provider_type = self._describe_active_type()
+
+    def _describe_active_type(self) -> str:
+        if self.search_mode == "off":
+            return "off"
+        if self.search_mode == "fallback_only":
+            return BEST_EFFORT_PUBLIC_PROVIDER
+        if self.search_endpoint and self._configured is not None:
+            return f"configured:{self._configured.search_provider}"
+        if self.search_mode in {"auto", "fallback_only"}:
+            return BEST_EFFORT_PUBLIC_PROVIDER
+        return "none"
+
+    def configured(self) -> bool:
+        return bool(self.allow_outbound)
+
+    def search_configured(self) -> bool:
+        if not self.allow_outbound or self.search_mode == "off":
+            return False
+        if self.search_mode == "configured_only":
+            return bool(self._configured and self._configured.search_configured())
+        if self.search_mode == "fallback_only":
+            return self._fallback.search_configured()
+        # auto: configured endpoint OR public fallback
+        if self._configured and self._configured.search_configured():
+            return True
+        return self._fallback.search_configured()
+
+    def search(self, query: str, *, limit: int = 5) -> list[WebSearchResult]:
+        if not self.allow_outbound:
+            raise RuntimeError("Outbound network disabled (LEVIATHAN_NETWORK_ALLOW_OUTBOUND)")
+        if self.search_mode == "off":
+            raise RuntimeError("Web search mode is off (research.web_search_mode=off)")
+
+        errors: list[str] = []
+
+        def _try(provider: Any, label: str) -> list[WebSearchResult] | None:
+            nonlocal errors
+            try:
+                results = provider.search(query, limit=limit)
+                self._last_search_provider = label
+                self.active_provider_type = label
+                return results
+            except Exception as exc:  # noqa: BLE001 — failover decision
+                if not _is_search_availability_error(exc):
+                    raise
+                errors.append(f"{label}:{exc}")
+                return None
+
+        if self.search_mode == "fallback_only":
+            results = _try(self._fallback, BEST_EFFORT_PUBLIC_PROVIDER)
+            if results is not None:
+                return results
+            raise RuntimeError(
+                "WEB_SEARCH_UNAVAILABLE: " + ("; ".join(errors) or "fallback_failed")
+            )
+
+        if self.search_mode == "configured_only":
+            if not self._configured or not self._configured.search_configured():
+                raise RuntimeError(
+                    "Web search endpoint is not configured; set a real search provider endpoint"
+                )
+            results = _try(
+                self._configured,
+                f"configured:{self._configured.search_provider}",
+            )
+            if results is not None:
+                return results
+            raise RuntimeError(
+                "WEB_SEARCH_UNAVAILABLE: " + ("; ".join(errors) or "configured_provider_failed")
+            )
+
+        # auto
+        if self._configured and self._configured.search_configured():
+            results = _try(
+                self._configured,
+                f"configured:{self._configured.search_provider}",
+            )
+            if results is not None:
+                return results
+        results = _try(self._fallback, BEST_EFFORT_PUBLIC_PROVIDER)
+        if results is not None:
+            return results
+        raise RuntimeError(
+            "WEB_SEARCH_UNAVAILABLE: " + ("; ".join(errors) or "no_search_provider_available")
+        )
+
+    def fetch_page(
+        self,
+        url: str,
+        *,
+        timeout_seconds: float = 20.0,
+        max_bytes: int = 2_000_000,
+        respect_robots_txt: bool = True,
+    ) -> WebPageContent:
+        delegate = self._configured or self._fallback
+        return delegate.fetch_page(
+            url,
+            timeout_seconds=timeout_seconds,
+            max_bytes=max_bytes,
+            respect_robots_txt=respect_robots_txt,
+        )
+
+
+def normalize_web_search_mode(raw: str | None) -> str:
+    mode = (raw or "auto").strip().lower() or "auto"
+    return mode if mode in WEB_SEARCH_MODES else "auto"
+
+
 def build_web_provider(
     *,
     allow_outbound: bool,
     search_endpoint: str | None = None,
     api_key: str | None = None,
     search_provider: str | None = None,
+    search_mode: str | None = None,
 ) -> WebResearchProvider:
+    mode = normalize_web_search_mode(search_mode)
+    if mode == "off":
+        # Fetch-only when outbound; search always unavailable.
+        if allow_outbound:
+            return HttpWebProvider(
+                allow_outbound=True,
+                search_endpoint=None,
+                api_key=None,
+                search_provider=search_provider,
+            )
+        return UnconfiguredWebProvider()
     if not allow_outbound and not search_endpoint:
         return UnconfiguredWebProvider()
-    return HttpWebProvider(
+    # Prefer chain so auto mode gets keyless fallback when endpoint unset.
+    return ChainedWebProvider(
         allow_outbound=allow_outbound,
         search_endpoint=search_endpoint,
         api_key=api_key,
         search_provider=search_provider,
+        search_mode=mode,
     )
 
 
@@ -497,6 +937,12 @@ def web_unavailable_reason(
     allow_outbound: bool,
     provider: WebResearchProvider,
 ) -> str | None:
+    """Return reason when *search discovery* is unavailable.
+
+    Direct URL fetch may still work when this returns
+    ``web_search_endpoint_unconfigured`` for legacy http_fetch-only providers.
+    Chained providers with fallback enabled return None when search is ready.
+    """
     if not allow_web:
         return None
     if not allow_outbound:
@@ -504,6 +950,14 @@ def web_unavailable_reason(
     if not provider.configured():
         return "web_provider_unconfigured"
     search_ready = getattr(provider, "search_configured", None)
-    if callable(search_ready) and not search_ready() and provider.name == "http_fetch":
+    if callable(search_ready) and search_ready():
+        return None
+    mode = getattr(provider, "search_mode", None)
+    if mode == "off":
+        return "web_search_mode_off"
+    if mode == "configured_only":
         return "web_search_endpoint_unconfigured"
-    return None
+    # Legacy HttpWebProvider without endpoint / chain without fallback path.
+    if provider.name in {"http_fetch", "web_search_chain", "unconfigured"}:
+        return "web_search_endpoint_unconfigured"
+    return "web_search_unavailable"

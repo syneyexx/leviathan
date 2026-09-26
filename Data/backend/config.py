@@ -547,6 +547,8 @@ class ResearchIntegrationSettings:
     web_search_api_key: str = ""
     # Optional adapter: generic | searxng | brave (auto-detect from endpoint when empty)
     web_search_provider: str = ""
+    # auto | configured_only | fallback_only | off — keyless public fallback when auto
+    web_search_mode: str = "auto"
     training_fixture: bool = False
     corpus_root: str = ""
     auto_promote_verified_knowledge: bool = True
@@ -871,6 +873,7 @@ class Settings:
                     self.research_integration.web_search_api_key.strip()
                 ),
                 "web_search_provider": self.research_integration.web_search_provider or None,
+                "web_search_mode": self.research_integration.web_search_mode or "auto",
                 "training_fixture": self.research_integration.training_fixture,
                 "corpus_root": self.research_integration.corpus_root or None,
                 "auto_promote_verified_knowledge": (
@@ -1433,6 +1436,9 @@ class Settings:
                 web_search_api_key=(_env_raw("LEVIATHAN_WEB_SEARCH_API_KEY", "") or "").strip(),
                 web_search_provider=(
                     (_env_raw("LEVIATHAN_WEB_SEARCH_PROVIDER", "") or "").strip().lower()
+                ),
+                web_search_mode=(
+                    (_env_raw("LEVIATHAN_WEB_SEARCH_MODE", "auto") or "auto").strip().lower()
                 ),
                 training_fixture=_env_bool("LEVIATHAN_TRAINING_FIXTURE", False),
                 corpus_root=(_env_raw("LEVIATHAN_CORPUS_ROOT", "") or "").strip(),

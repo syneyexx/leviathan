@@ -74,6 +74,8 @@ import type {
   ResearchReport,
   ResearchSource,
   ResearchBudgetCatalog,
+  ResearchWebReadiness,
+  ResearchWebProbe,
   ResearchWorker,
   RouterConfig,
   SecurityAuditReport,
@@ -1475,6 +1477,20 @@ export const api = {
 
   researchBudgets(): Promise<ResearchBudgetCatalog> {
     return request("/api/research/budgets");
+  },
+
+  getResearchWebReadiness(): Promise<{ readiness: ResearchWebReadiness }> {
+    return request("/api/research/web/readiness");
+  },
+
+  probeResearchWeb(payload?: {
+    query?: string;
+    limit?: number;
+  }): Promise<{ probe: ResearchWebProbe }> {
+    return request("/api/research/web/probe", {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    });
   },
 
   listResearchProjects(limit = 100): Promise<{ projects: ResearchProject[] }> {

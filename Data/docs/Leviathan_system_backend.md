@@ -829,7 +829,18 @@ LEVIATHAN integrates existing owners into one assistant path — **not** a secon
 - **BehaviorProfile** owns conversational behavior (`SYSTEM_PROMPT`). **AuthorityProfile** / **ExecutionGateway** own technical side effects. They must never merge.
 - **system.inspect** aggregates real provider telemetry; brain percentage is explicitly UNMEASURED (not a metric).
 - **FactualityGate** / claim assessment live under `Data/modules/verification/claims.py`. Fake critic `evidence_refs` cannot PASS.
-- **web.search** / **web.fetch** route through `Data/modules/research/web.py` providers. Unconfigured search returns `WEB_SEARCH_UNAVAILABLE` — never fabricates results.
+- **web.search** / **web.fetch** route through `Data/modules/research/web.py` providers.
+  Provider chain (**CURRENT**, W109–W118): configured SearxNG/Brave/generic JSON endpoint
+  first; when `research.web_search_mode=auto` (default) and no endpoint is set, a bounded
+  **BEST_EFFORT_PUBLIC_SEARCH** DuckDuckGo HTML adapter discovers real public HTTPS URLs
+  (rate-limited, SSRF-validated — never invents hits). Modes:
+  `auto` | `configured_only` | `fallback_only` | `off`.
+  Search hits are discovery metadata only; fetched page content is the source; evidence
+  spans require a fetched source. Zero evidence on `allow_web` runs is an explicit
+  quality failure (`INSUFFICIENT_EVIDENCE`), not a silent PASS.
+  Readiness: `GET /api/research/web/readiness` + `POST /api/research/web/probe`
+  (no secrets). Live smoke: `scripts/verify_research_web_live.py`.
+  Unconfigured *configured_only* search still returns `WEB_SEARCH_UNAVAILABLE` — never fabricates results.
 - **General Intelligence Orchestra** seeds live in AgentFleet (`Data/modules/agents/general_orchestra.py`). Parent Cognition owns the final voice.
 - **PlaywrightBrowserBackend** is READY only after Chromium launch + navigate + observation proof.
 - **BrowserJourneyCrawler** / `LocalUserJourneyCrawler` (`Data/modules/browser/qa_crawler.py`) is localhost-scoped QA; APIs under `/api/browser/qa/*` (gateway) and thin `/api/browser/qa/crawls*` router. No CrawlerRuntime2 / stealth.
@@ -877,6 +888,18 @@ LEVIATHAN integrates existing owners into one assistant path — **not** a secon
 - paper path: `paper_broker.py`;
 - service/store/worker/types/capabilities;
 - `orchestra/` — trading-only orchestration on the existing Agent Fleet and Model Control Plane.
+  **Learning loop (CURRENT, W119–W135):** Market Sim experiments write durable StrategyMemory
+  (`available_at` = when learned; PIT-safe). `TradingBrainAdapter` retrieves successes **and**
+  negative/rejected lessons with provenance. `RoleAwareTradingKnowledge` is bound into Trading
+  Orchestra so Critic/Risk/Postmortem receive challenge evidence; DecisionRecords carry
+  `evidenceRefs`. Paper routing uses `paper_router` → `PortfolioService.place_order`
+  (mandate + RiskGuard); live remains BLOCKED. Postmortems append AGENT_PROPOSED lessons
+  (Memory + StrategyMemory) without rewriting history. Prediction errors are recorded on
+  paper fills when expectations exist. Paper-forward drift (`paper_forward_drift.py`) opens
+  continual-research tickets and may persist PAPER_OBSERVED memory — never auto-promotes or
+  auto-disables. Trading→Research gaps use `trading_research_bridge.request_trading_research`
+  (async ResearchService/JobRuntime; urgent → HOLD / INSUFFICIENT_EVIDENCE, never sync crawl
+  in the order path). Knowledge/memory never authorizes execution.
 
 **Institutional Trading Program:** sequential waves W00–W36 established paper/portfolio foundations (tracked historically in `Data/backend/tests/institutional_trading_program.json`). Waves **W37–W72** delivered the `market_sim/institutional_core/` domain foundation (instrument master, IBOR, subledger, reconciliation, risk, mandates, audit, control room, etc.) plus migration **55** schema — domain present, runtime integration was partial at merge. Waves **W73+** (Institutional Runtime Completion) introduce `InstitutionalRuntime` as the integration fabric: persistent repositories on the canonical SQLite DB (migration **56**), mandate/compliance gates on `PortfolioService.place_order`, IBOR/subledger/decision/audit on paper fills, persisted reconciliation breaks, real Control Room aggregation, maker-checker authority records, bitemporal observations with quarantine, and `scripts/verify_institutional_runtime.py`. Editor/`Data/HADES` remain out of scope. Live trading remains **BLOCKED**. Options and fixed income remain **NOT_IMPLEMENTED** for full trading paths; futures/forex historical-sim labels are honest `NOT_IMPLEMENTED` where the full path is absent.
 

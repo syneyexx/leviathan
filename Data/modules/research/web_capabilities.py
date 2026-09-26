@@ -51,11 +51,17 @@ def _ensure_provider() -> WebResearchProvider | None:
         search_provider = getattr(
             settings.research_integration, "web_search_provider", None
         )
+        search_mode = getattr(
+            settings.research_integration, "web_search_mode", "auto"
+        )
         provider = build_web_provider(
             allow_outbound=allow,
             search_endpoint=endpoint,
             api_key=api_key,
-            search_provider=search_provider,
+            search_provider=None
+            if str(search_provider or "").strip().lower() == "auto" and not endpoint
+            else search_provider,
+            search_mode=search_mode,
         )
         _BOUND_PROVIDER = provider
         _ALLOW_OUTBOUND = allow

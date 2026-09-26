@@ -233,6 +233,7 @@ def adapt_knowledge_store(
     hybrid_retriever: Any | None = None,
     staged_retriever: Any | None = None,
     brain_access: Any | None = None,
+    strategy_memory_lister: Any | None = None,
 ) -> KnowledgeSearcher:
     """Adapt KnowledgeStore (and optional canonical retrievers) for BrainFacade.
 
@@ -248,7 +249,12 @@ def adapt_knowledge_store(
         except Exception:  # noqa: BLE001
             retriever = None
 
-    if retriever is not None or staged_retriever is not None or brain_access is not None:
+    if (
+        retriever is not None
+        or staged_retriever is not None
+        or brain_access is not None
+        or strategy_memory_lister is not None
+    ):
         from .trading_brain import adapt_canonical_knowledge
 
         return adapt_canonical_knowledge(
@@ -256,6 +262,7 @@ def adapt_knowledge_store(
             hybrid_retriever=retriever,
             staged_retriever=staged_retriever,
             brain_access=brain_access,
+            strategy_memory_lister=strategy_memory_lister,
         )
 
     class Adapter:
@@ -294,6 +301,7 @@ def attach_trading_brain_adapter(
     hybrid_retriever: Any | None = None,
     staged_retriever: Any | None = None,
     brain_access: Any | None = None,
+    strategy_memory_lister: Any | None = None,
 ) -> BrainFacade:
     """Replace facade.knowledge with canonical TradingBrainAdapter searcher."""
     facade.knowledge = adapt_knowledge_store(
@@ -301,7 +309,12 @@ def attach_trading_brain_adapter(
         hybrid_retriever=hybrid_retriever,
         staged_retriever=staged_retriever,
         brain_access=brain_access,
+        strategy_memory_lister=strategy_memory_lister,
     )
+    # Expose adapter for RoleAwareTradingKnowledge / orchestra binding.
+    adapter = getattr(facade.knowledge, "trading_adapter", None)
+    if adapter is not None:
+        facade.trading_brain_adapter = adapter  # type: ignore[attr-defined]
     return facade
 
 
