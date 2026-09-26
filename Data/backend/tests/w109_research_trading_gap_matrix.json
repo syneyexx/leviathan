@@ -486,73 +486,82 @@
       {
         "from": "experiment/trial",
         "to": "StrategyMemory",
-        "status": "PARTIAL",
+        "status": "EXIST",
         "owner": "MarketSimStore.save_strategy_memory",
-        "files": ["Data/modules/market_sim/service.py", "Data/modules/market_sim/store.py", "Data/modules/market_sim/multi_engine.py"],
+        "files": ["Data/modules/market_sim/service.py", "Data/modules/market_sim/store.py", "Data/modules/market_sim/learning_runtime.py", "Data/modules/market_sim/experiments.py"],
         "callers": [
-          "EXIST: complete_experiment → save_strategy_memory (service.py:2243)",
-          "EXIST read: MultiAgentEngine.prepare hydrates list_strategy_memories (multi_engine.py:218)"
+          "EXIST: complete_experiment → save_strategy_memory (service.py)",
+          "EXIST: learning_runtime._append_trial → save_strategy_memory (negatives retained)",
+          "EXIST: learning _maybe_add_lesson → save_strategy_memory (AGENT_PROPOSED)",
+          "EXIST read: MultiAgentEngine.prepare hydrates list_strategy_memories"
         ],
         "persistence": ["market_strategy_memories"],
-        "tests": ["test_trading_center.py"],
-        "gap": "learning_runtime._append_trial does NOT call save_strategy_memory or complete_experiment — Strategy Learning Loop writes trials without durable StrategyMemory entries"
+        "tests": ["test_trading_center.py", "test_learning_loop_w119_w135.py"],
+        "gap": null,
+        "note": "W119+: available_at = when learned; rejected trials retained with provenance metadata"
       },
       {
         "from": "StrategyMemory",
         "to": "TradingBrainAdapter",
-        "status": "MISSING",
-        "owner": "TradingBrainAdapter",
-        "files": ["Data/modules/market_sim/trading_brain.py", "Data/modules/market_sim/brain_hooks.py"],
+        "status": "EXIST",
+        "owner": "TradingBrainAdapter.strategy_memory_lister",
+        "files": ["Data/modules/market_sim/trading_brain.py", "Data/modules/market_sim/brain_hooks.py", "Data/backend/main.py"],
         "callers": [
-          "EXIST elsewhere: main.py attach_trading_brain_adapter → BrainFacade.knowledge (main.py:1199)",
-          "NO caller maps StrategyMemory rows into TradingBrainAdapter.retrieve"
+          "EXIST: TradingBrainAdapter._strategy_memory_hits via strategy_memory_lister",
+          "EXIST: main.py attach_trading_brain_adapter(..., strategy_memory_lister=store.list_strategy_memories)"
         ],
         "persistence": null,
-        "tests": ["test_trading_brain_w03.py"],
-        "gap": "StrategyMemory and TradingBrainAdapter are parallel stores; no production arrow between them"
+        "tests": ["test_learning_loop_w119_w135.py", "test_trading_brain_w03.py"],
+        "gap": null
       },
       {
         "from": "TradingBrainAdapter",
         "to": "RoleAwareTradingKnowledge",
-        "status": "ONLY_TEST_CALLER",
+        "status": "EXIST",
         "owner": "RoleAwareTradingKnowledge",
-        "files": ["Data/modules/market_sim/role_knowledge.py"],
+        "files": ["Data/modules/market_sim/role_knowledge.py", "Data/modules/market_sim/orchestra/service.py", "Data/backend/main.py"],
         "callers": [
-          "ONLY tests: test_role_knowledge_w05.py constructs RoleAwareTradingKnowledge(adapter).retrieve_for_role"
+          "EXIST: TradingOrchestraService binds RoleAwareTradingKnowledge(trading_brain_adapter)",
+          "EXIST: main.py passes trading_brain_adapter into TradingOrchestraService"
         ],
         "persistence": null,
-        "tests": ["test_role_knowledge_w05.py"],
-        "gap": "No orchestra/executor/main production import of RoleAwareTradingKnowledge"
+        "tests": ["test_role_knowledge_w05.py", "test_learning_loop_w119_w135.py"],
+        "gap": null
       },
       {
         "from": "RoleAwareTradingKnowledge",
         "to": "TradingOrchestra",
-        "status": "MISSING",
+        "status": "EXIST",
         "owner": "TradingOrchestraService / executors",
         "files": [
           "Data/modules/market_sim/orchestra/service.py",
           "Data/modules/market_sim/orchestra/executors.py"
         ],
-        "callers": [],
+        "callers": [
+          "EXIST: ExecutionContext.bind_role_experience → RoleAwareTradingKnowledge.retrieve_for_role",
+          "EXIST: run_critic / run_risk_officer bind evidenceRefs into DecisionRecord"
+        ],
         "persistence": ["orchestra decisions/signals tables via OrchestraStore"],
-        "tests": ["test_trading_orchestra.py"],
-        "gap": "Orchestra roles use TradingModelAdapter prompts + RiskGuard; zero RoleAwareTradingKnowledge.retrieve_for_role calls in orchestra/"
+        "tests": ["test_trading_orchestra.py", "test_learning_loop_w119_w135.py"],
+        "gap": null
       },
       {
         "from": "TradingOrchestra",
         "to": "PaperPortfolio",
-        "status": "MISSING",
-        "owner": "run_execution_agent",
+        "status": "EXIST",
+        "owner": "run_execution_agent + TradingOrchestraService.paper_router",
         "files": [
-          "Data/modules/market_sim/orchestra/executors.py:495",
+          "Data/modules/market_sim/orchestra/executors.py",
+          "Data/modules/market_sim/orchestra/service.py",
           "Data/modules/market_sim/portefeuille/service.py"
         ],
         "callers": [
-          "run_execution_agent records status=recorded_not_routed, routed=False — does not call PortfolioService.place_order"
+          "EXIST: run_execution_agent → paper_router → PortfolioService.place_order when bound",
+          "Fallback: recorded_not_routed when paper_router unbound"
         ],
-        "persistence": ["orchestra decision records only"],
-        "tests": ["test_trading_orchestra.py"],
-        "gap": "Explicit disconnect: paper intent not routed to Portefeuille/PaperPortfolio"
+        "persistence": ["orchestra decision records", "portfolio orders/fills"],
+        "tests": ["test_trading_orchestra.py", "test_learning_loop_w119_w135.py"],
+        "gap": null
       },
       {
         "from": "PaperPortfolio",
@@ -573,7 +582,7 @@
         ],
         "tests": ["test_institutional_runtime_w73_plus.py"],
         "gap": null,
-        "note": "This EXIST arrow is on Portefeuille path only — not reachable from Orchestra deliberation without a router"
+        "note": "Reachable from Orchestra when paper_router bound to PortfolioService"
       },
       {
         "from": "InstitutionalRuntime",
@@ -586,74 +595,82 @@
         ],
         "callers": [
           "Paper fills produce IBOR/subledger/decision packets",
-          "Learning outcomes finalize via _finalize_qualified / _finalize_no_qualify without InstitutionalRuntime"
+          "Learning outcomes finalize via _finalize_qualified / _finalize_no_qualify; now also write StrategyMemory"
         ],
-        "persistence": ["institutional_*", "market_sim_learning_runs", "agent_lab lessons"],
-        "tests": ["test_institutional_runtime_w73_plus.py", "test_strategy_learning.py"],
-        "gap": "Learning Loop outcomes never call InstitutionalRuntime; two outcome worlds"
+        "persistence": ["institutional_*", "market_sim_learning_runs", "agent_lab lessons", "market_strategy_memories"],
+        "tests": ["test_institutional_runtime_w73_plus.py", "test_strategy_learning.py", "test_learning_loop_w119_w135.py"],
+        "gap": "Learning Loop outcomes still do not call InstitutionalRuntime directly (sim vs paper worlds remain distinct)"
       },
       {
         "from": "outcome",
         "to": "postmortem",
-        "status": "PARTIAL",
+        "status": "EXIST",
         "owner": "orchestra run_postmortem vs learning _maybe_add_lesson",
         "files": [
-          "Data/modules/market_sim/orchestra/executors.py:515",
-          "Data/modules/market_sim/learning_runtime.py:849"
+          "Data/modules/market_sim/orchestra/executors.py",
+          "Data/modules/market_sim/learning_runtime.py"
         ],
         "callers": [
-          "EXIST: TradingMissionExecutor POST_MORTEM → run_postmortem",
-          "EXIST: learning finalize → LabLesson on agent_lab (AGENT_PROPOSED)"
+          "EXIST: TradingMissionExecutor POST_MORTEM → run_postmortem (uses actual decisions/fills; predictionError)",
+          "EXIST: learning finalize → LabLesson + StrategyMemory (AGENT_PROPOSED)"
         ],
-        "persistence": ["orchestra decisions", "agent_lab.lessons JSON"],
-        "tests": ["test_trading_orchestra.py", "test_strategy_learning.py"],
-        "gap": "Learning lessons ≠ orchestra postmortem; no shared postmortem pipeline"
+        "persistence": ["orchestra decisions", "agent_lab.lessons JSON", "market_strategy_memories", "memory"],
+        "tests": ["test_trading_orchestra.py", "test_strategy_learning.py", "test_learning_loop_w119_w135.py"],
+        "gap": null
       },
       {
         "from": "postmortem",
         "to": "Memory",
-        "status": "PARTIAL",
+        "status": "EXIST",
         "owner": "TradingOrchestraService.memory_writer",
-        "files": ["Data/modules/market_sim/orchestra/service.py:603"],
+        "files": ["Data/modules/market_sim/orchestra/service.py", "Data/modules/market_sim/orchestra/executors.py"],
         "callers": [
-          "run_postmortem → ctx.memory_writer when evidenceRefs non-empty (executors.py:540)"
+          "run_postmortem → ctx.memory_writer (AGENT_PROPOSED)"
         ],
         "persistence": ["memory table via MemoryStore"],
-        "tests": ["test_trading_orchestra.py"],
-        "gap": "Learning _maybe_add_lesson does NOT write MemoryStore — only lab.lessons; memory_writer skipped if Memory unbound"
+        "tests": ["test_trading_orchestra.py", "test_learning_loop_w119_w135.py"],
+        "gap": null
       },
       {
         "from": "postmortem",
         "to": "Brain",
-        "status": "MISSING",
-        "owner": null,
-        "files": [],
-        "callers": [],
-        "persistence": null,
-        "tests": [],
-        "gap": "No postmortem → KnowledgeStore/Brain upsert path found"
+        "status": "EXIST",
+        "owner": "TradingBrainAdapter via StrategyMemory",
+        "files": ["Data/modules/market_sim/orchestra/executors.py", "Data/modules/market_sim/trading_brain.py"],
+        "callers": [
+          "run_postmortem → strategy_memory_writer → StrategyMemory → TradingBrainAdapter.retrieve"
+        ],
+        "persistence": ["market_strategy_memories"],
+        "tests": ["test_learning_loop_w119_w135.py"],
+        "gap": null,
+        "note": "Brain path is StrategyMemory retrieval (advisory); no separate Brain upsert table"
       },
       {
         "from": "postmortem",
         "to": "StrategyMemory",
-        "status": "MISSING",
-        "owner": null,
-        "files": [],
-        "callers": [],
-        "persistence": null,
-        "tests": [],
-        "gap": "Neither orchestra postmortem nor learning lessons call save_strategy_memory"
+        "status": "EXIST",
+        "owner": "run_postmortem + strategy_memory_writer",
+        "files": ["Data/modules/market_sim/orchestra/executors.py", "Data/modules/market_sim/orchestra/service.py"],
+        "callers": [
+          "EXIST: run_postmortem → ctx.strategy_memory_writer (AGENT_PROPOSED provenance)",
+          "EXIST: learning _maybe_add_lesson → save_strategy_memory"
+        ],
+        "persistence": ["market_strategy_memories"],
+        "tests": ["test_learning_loop_w119_w135.py"],
+        "gap": null
       },
       {
         "from": "LearningLoop",
         "to": "TradingOrchestra",
-        "status": "MISSING",
-        "owner": "learning_runtime",
-        "files": ["Data/modules/market_sim/learning_runtime.py"],
-        "callers": [],
-        "persistence": null,
-        "tests": ["test_strategy_learning.py"],
-        "gap": "run_learning_on_worker never imports orchestra"
+        "status": "PARTIAL",
+        "owner": "StrategyMemory shared fabric",
+        "files": ["Data/modules/market_sim/learning_runtime.py", "Data/modules/market_sim/orchestra/"],
+        "callers": [
+          "Learning writes StrategyMemory; Orchestra retrieves via RoleAwareTradingKnowledge (shared memory, not direct call)"
+        ],
+        "persistence": ["market_strategy_memories"],
+        "tests": ["test_learning_loop_w119_w135.py"],
+        "gap": "run_learning_on_worker still does not import orchestra — coupling is via StrategyMemory"
       },
       {
         "from": "LearningLoop",
@@ -669,6 +686,31 @@
         "gap": "Sim fills ≠ institutional paper portfolio fills"
       }
     ],
+    "learning_loop_w119_w135": {
+      "status": "PASS",
+      "waves": "W119-W135",
+      "migration_head": 56,
+      "migration_added": null,
+      "tests": ["Data.backend.tests.test_learning_loop_w119_w135"],
+      "arrows_now_exist": [
+        "experiment/trial → StrategyMemory",
+        "StrategyMemory → TradingBrainAdapter",
+        "TradingBrainAdapter → RoleAwareTradingKnowledge",
+        "RoleAwareTradingKnowledge → TradingOrchestra",
+        "TradingOrchestra → PaperPortfolio",
+        "outcome → postmortem",
+        "postmortem → Memory",
+        "postmortem → Brain (via StrategyMemory)",
+        "postmortem → StrategyMemory"
+      ],
+      "invariants": [
+        "live_trading_BLOCKED",
+        "available_at_PIT_no_future_leakage",
+        "negative_results_first_class",
+        "knowledge_not_execution_authority",
+        "RiskGuard_gates_paper"
+      ]
+    },
     "component_inventory": [
       {
         "component": "MarketSimControlPlane",
@@ -678,27 +720,27 @@
       {
         "component": "StrategyLearningRun / learning_runtime",
         "file": "Data/modules/market_sim/learning_runtime.py",
-        "runtime_status": "INTEGRATED (worker market_sim.learning_run)"
+        "runtime_status": "INTEGRATED (worker market_sim.learning_run; writes StrategyMemory)"
       },
       {
         "component": "StrategyMemoryIndex + market_strategy_memories",
         "file": "Data/modules/market_sim/experiments.py + store.py",
-        "runtime_status": "PARTIAL (write via complete_experiment only; hydrate in multi_engine)"
+        "runtime_status": "INTEGRATED (complete_experiment + learning trials + postmortem)"
       },
       {
         "component": "TradingBrainAdapter",
         "file": "Data/modules/market_sim/trading_brain.py",
-        "runtime_status": "INTEGRATED into BrainFacade.knowledge; not into orchestra roles"
+        "runtime_status": "INTEGRATED into BrainFacade.knowledge + StrategyMemory + orchestra roles"
       },
       {
         "component": "RoleAwareTradingKnowledge",
         "file": "Data/modules/market_sim/role_knowledge.py",
-        "runtime_status": "ONLY_TEST_CALLER"
+        "runtime_status": "INTEGRATED (orchestra ExecutionContext)"
       },
       {
         "component": "TradingOrchestraService",
         "file": "Data/modules/market_sim/orchestra/service.py",
-        "runtime_status": "INTEGRATED (fleet trading missions); paper routing MISSING"
+        "runtime_status": "INTEGRATED (fleet trading missions; paper_router to Portefeuille)"
       },
       {
         "component": "PaperPortfolio / PortfolioService",
@@ -744,44 +786,44 @@
     {
       "id": "G-T1",
       "chain": "B",
-      "severity": "critical",
-      "summary": "RoleAwareTradingKnowledge has zero production callers (ONLY_TEST_CALLER)",
-      "files": ["Data/modules/market_sim/role_knowledge.py"]
+      "severity": "resolved_w119_w135",
+      "summary": "RoleAwareTradingKnowledge wired into orchestra ExecutionContext",
+      "files": ["Data/modules/market_sim/role_knowledge.py", "Data/modules/market_sim/orchestra/"]
     },
     {
       "id": "G-T2",
       "chain": "B",
-      "severity": "critical",
-      "summary": "Orchestra → PaperPortfolio disconnected (recorded_not_routed)",
-      "files": ["Data/modules/market_sim/orchestra/executors.py:495"]
+      "severity": "resolved_w119_w135",
+      "summary": "Orchestra → PaperPortfolio via paper_router → PortfolioService.place_order",
+      "files": ["Data/modules/market_sim/orchestra/executors.py", "Data/modules/market_sim/orchestra/service.py"]
     },
     {
       "id": "G-T3",
       "chain": "B",
-      "severity": "high",
-      "summary": "Learning Loop does not write StrategyMemory (append_trial ≠ complete_experiment)",
-      "files": ["Data/modules/market_sim/learning_runtime.py", "Data/modules/market_sim/service.py:2243"]
+      "severity": "resolved_w119_w135",
+      "summary": "Learning Loop _append_trial writes StrategyMemory (incl. negatives)",
+      "files": ["Data/modules/market_sim/learning_runtime.py"]
     },
     {
       "id": "G-T4",
       "chain": "B",
-      "severity": "high",
-      "summary": "Learning Loop / Orchestra / InstitutionalRuntime are three disconnected outcome worlds",
+      "severity": "medium",
+      "summary": "Learning Loop still does not call InstitutionalRuntime directly (coupled via StrategyMemory + paper path when orchestra routes)",
       "files": ["learning_runtime.py", "orchestra/", "institutional_core/runtime.py"]
     },
     {
       "id": "G-T5",
       "chain": "B",
-      "severity": "high",
-      "summary": "postmortem → Brain and postmortem → StrategyMemory missing; Memory only via orchestra memory_writer",
-      "files": ["orchestra/executors.py:515", "orchestra/service.py:603"]
+      "severity": "resolved_w119_w135",
+      "summary": "postmortem → Memory + StrategyMemory + Brain(via StrategyMemory) EXIST",
+      "files": ["orchestra/executors.py", "orchestra/service.py"]
     },
     {
       "id": "G-T6",
       "chain": "B",
-      "severity": "medium",
-      "summary": "StrategyMemory ↛ TradingBrainAdapter; brain adapter not used by orchestra roles",
-      "files": ["trading_brain.py", "multi_engine.py", "orchestra/"]
+      "severity": "resolved_w119_w135",
+      "summary": "StrategyMemory → TradingBrainAdapter → orchestra roles EXIST",
+      "files": ["trading_brain.py", "role_knowledge.py", "orchestra/"]
     }
   ],
   "existing_tests_index": {
@@ -803,6 +845,7 @@
       "Data/backend/tests/test_trading_brain_w03.py",
       "Data/backend/tests/test_role_knowledge_w05.py",
       "Data/backend/tests/test_trading_orchestra.py",
+      "Data/backend/tests/test_learning_loop_w119_w135.py",
       "Data/backend/tests/test_trading_center.py",
       "Data/backend/tests/test_trading_lab_w13.py",
       "Data/backend/tests/test_trading_lab_w14.py",

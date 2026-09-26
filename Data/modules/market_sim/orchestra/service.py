@@ -82,6 +82,8 @@ class TradingOrchestraService:
         memory: Any | None = None,
         feed_fetcher: FeedFetcher | None = None,
         enabled: bool = True,
+        role_knowledge: Any | None = None,
+        trading_brain_adapter: Any | None = None,
     ) -> None:
         self.store = store
         self.fleet = fleet
@@ -92,7 +94,26 @@ class TradingOrchestraService:
         self.memory = memory
         self._feed_fetcher = feed_fetcher
         self.enabled = enabled
+        self.trading_brain_adapter = trading_brain_adapter
+        self.role_knowledge = role_knowledge
+        if self.role_knowledge is None and trading_brain_adapter is not None:
+            try:
+                from Data.modules.market_sim.role_knowledge import RoleAwareTradingKnowledge
+
+                self.role_knowledge = RoleAwareTradingKnowledge(trading_brain_adapter)
+            except Exception:  # noqa: BLE001
+                self.role_knowledge = None
         self.executor = TradingMissionExecutor(self)
+
+    def bind_role_knowledge(self, role_knowledge: Any | None = None, *, trading_brain_adapter: Any | None = None) -> None:
+        if trading_brain_adapter is not None:
+            self.trading_brain_adapter = trading_brain_adapter
+        if role_knowledge is not None:
+            self.role_knowledge = role_knowledge
+        elif self.role_knowledge is None and self.trading_brain_adapter is not None:
+            from Data.modules.market_sim.role_knowledge import RoleAwareTradingKnowledge
+
+            self.role_knowledge = RoleAwareTradingKnowledge(self.trading_brain_adapter)
 
     # ------------------------------------------------------------------ binding
 
@@ -615,16 +636,87 @@ class TradingOrchestraService:
                 tags=["trading", "lesson", "agent_proposed"],
                 metadata={
                     "trust_state": "agent_proposed",
+                    "epistemic_state": "AGENT_PROPOSED",
                     "orchestraId": orchestra_id,
                     "missionId": mission_id,
                     "evidenceRefs": list(lesson.get("evidenceRefs") or []),
                     "appliesTo": list(lesson.get("appliesTo") or []),
                     "confidence": lesson.get("confidence"),
+                    "strategyMemoryId": lesson.get("strategyMemoryId"),
                 },
             )
             return getattr(record, "memory_id", None) or (record.get("memory_id") if isinstance(record, dict) else None)
 
         return _write
+
+    def strategy_memory_writer(self) -> Callable[[dict[str, Any]], dict[str, Any]] | None:
+        plane = self.market_plane
+        store = getattr(plane, "store", None) if plane is not None else None
+        if store is None or not hasattr(store, "save_strategy_memory"):
+            return None
+
+        def _write(entry: dict[str, Any]) -> dict[str, Any]:
+            return store.save_strategy_memory(entry)
+
+        return _write
+
+    def paper_router(self, *, orchestra_id: str) -> Callable[[dict[str, Any]], dict[str, Any]] | None:
+        """Route allowed paper intents to PortfolioService — live remains BLOCKED."""
+        plane = self.market_plane
+        if plane is None or not hasattr(plane, "portfolios"):
+            return None
+        portfolios = plane.portfolios
+
+        def _resolve_portfolio_id() -> str | None:
+            try:
+                rows = portfolios.list_portfolios(limit=50) if hasattr(portfolios, "list_portfolios") else []
+            except Exception:  # noqa: BLE001
+                rows = []
+            for row in rows or []:
+                if str(row.get("orchestra_id") or "") == orchestra_id and str(row.get("mode") or "PAPER").upper() == "PAPER":
+                    return str(row.get("portfolio_id"))
+            # Create a bound paper portfolio lazily when plane supports it.
+            if hasattr(portfolios, "create_portfolio"):
+                try:
+                    capital = 50_000.0
+                    if self.fleet is not None:
+                        try:
+                            orch = self.fleet.get_agent(orchestra_id)
+                            capital = float(self.mandate_of(orch).paper_capital or capital)
+                        except Exception:  # noqa: BLE001
+                            pass
+                    created = portfolios.create_portfolio(
+                        name=f"Orchestra {orchestra_id[:8]} Paper",
+                        initial_equity=capital,
+                        orchestra_id=orchestra_id,
+                        broker_mode="local_paper",
+                    )
+                    pub = created if "portfolio_id" in created else (created.get("portfolio") or created)
+                    return str(pub.get("portfolio_id") or "") or None
+                except Exception:  # noqa: BLE001
+                    return None
+            return None
+
+        def _route(intent: dict[str, Any]) -> dict[str, Any]:
+            pid = _resolve_portfolio_id()
+            if not pid:
+                raise RuntimeError("NO_PAPER_PORTFOLIO_FOR_ORCHESTRA")
+            # Refuse any live-looking mode before place_order.
+            row = portfolios.get_portfolio(pid) if hasattr(portfolios, "get_portfolio") else {}
+            if str((row or {}).get("broker_mode") or "").lower() in {"live", "live_broker"}:
+                raise RuntimeError("LIVE_MONEY_BLOCKED")
+            return portfolios.place_order(
+                pid,
+                symbol=str(intent.get("symbol") or ""),
+                side=str(intent.get("side") or "HOLD"),
+                qty=float(intent.get("qty") or 0),
+                agent_id=intent.get("agent_id"),
+                orchestra_id=orchestra_id,
+                decision_id=intent.get("decision_id"),
+                idempotency_key=intent.get("idempotency_key"),
+            )
+
+        return _route
 
 
 class TradingMissionExecutor:
@@ -712,6 +804,9 @@ class TradingMissionExecutor:
             store=service.store,
             bars_provider=bars,
             memory_writer=service.memory_writer(orchestra_id=orchestra_id, mission_id=mission.mission_id),
+            role_knowledge=service.role_knowledge,
+            paper_router=service.paper_router(orchestra_id=orchestra_id),
+            strategy_memory_writer=service.strategy_memory_writer(),
         )
         base = {
             "missionKind": kind.value,

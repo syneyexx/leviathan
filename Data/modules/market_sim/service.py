@@ -2240,19 +2240,25 @@ class MarketSimControlPlane:
             trial["rejection_reason"] = reason
         self.store.save_experiment(trial)
         # Persist memory (available_at = now — not backdated into past decisions)
+        from .experiments import build_strategy_memory_record
+
+        learned_at = utc_now()
         self.store.save_strategy_memory(
-            {
-                "memory_id": str(uuid.uuid4()),
-                "strategy_id": trial["strategy_id"],
-                "strategy_version": strategy_version or 0,
-                "features": (metrics.get("features") or {}),
-                "applicability": (trial.get("config") or {}).get("applicability") or {},
-                "outcome_summary": reason if not passed else "accepted on holdout",
-                "trial_id": trial_id,
-                "available_at": utc_now(),
-                "created_at": utc_now(),
-                "rejected": not passed,
-            }
+            build_strategy_memory_record(
+                strategy_id=trial["strategy_id"],
+                strategy_version=strategy_version or 0,
+                features=(metrics.get("features") or {}),
+                applicability=(trial.get("config") or {}).get("applicability") or {},
+                outcome_summary=reason if not passed else "accepted on holdout",
+                trial_id=trial_id,
+                available_at=learned_at,
+                created_at=learned_at,
+                rejected=not passed,
+                origin="complete_experiment",
+                epistemic_state="REJECTED" if not passed else "MEASURED",
+                validation_stage="holdout",
+                extra_metadata={"acceptance_reason": reason},
+            )
         )
         return trial
 

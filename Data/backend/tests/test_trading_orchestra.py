@@ -417,8 +417,11 @@ class DeliberationTests(OrchestraTestBase):
         digest = self.service.list_decisions(mission_id=mission["missionId"], stage="digest")
         self.assertEqual(digest[0]["payload"]["status"], "NO_NEW_ITEMS")  # items are in the future for this as_of
         pm = self.service.launch_mission(desk["orchestraId"], kind="post_mortem")
-        self.assertEqual(pm["status"], "failed")
-        self.assertIn("UNAVAILABLE", pm["result"]["status"])
+        # With decision outcomes present, postmortem writes AGENT_PROPOSED even without LLM.
+        self.assertEqual(pm["status"], "completed", pm)
+        self.assertEqual(pm["result"]["lesson"]["trust"], "agent_proposed")
+        self.assertEqual(pm["result"]["lesson"]["epistemicState"], "AGENT_PROPOSED")
+        self.assertFalse(pm["result"]["lesson"].get("historicalDecisionsRewritten", True))
         self.assertEqual(self.store.list_signals(limit=5), [])
 
     def test_model_budget_from_mandate(self) -> None:

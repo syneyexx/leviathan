@@ -5,8 +5,8 @@
   "baseline_commit": "98eb37d669561c5edbc4a99cb8bea362f5881103",
   "last_verified_commit": "95b4d2b3a915b27261cf46aca30d8ab3a3b94026",
   "branch": "cursor/institutional-runtime-w73-w108-a85d",
-  "active_wave": "W108",
-  "notes": "W37-W72 merged as domain foundation (PARTIAL runtime). W73+ Institutional Runtime Completion: InstitutionalRuntime wires persistence, mandate gates, IBOR/subledger on paper fills, recon/audit/control room. Migration head 56. Live trading BLOCKED. CI may be BLOCKED_EXTERNAL (billing).",
+  "active_wave": "W135",
+  "notes": "W37-W72 merged as domain foundation (PARTIAL runtime). W73+ Institutional Runtime Completion. W119-W135 learning loop: StrategyMemory↔TradingBrainAdapter↔RoleAware↔Orchestra↔Paper↔Postmortem. Migration head 56 (no new migration). Live trading BLOCKED.",
   "status_vocabulary": [
     "BLOCKED_EXTERNAL",
     "DOMAIN_PRESENT",
@@ -2592,6 +2592,32 @@
         "remaining_integration_depth"
       ],
       "notes": "Local verifier PASS; remaining PARTIAL waves documented honestly in ledger; live BLOCKED; CI likely BLOCKED_EXTERNAL"
+    },
+    {
+      "id": "W119-W135",
+      "title": "Learning loop: StrategyMemory ↔ Brain ↔ Orchestra ↔ Paper ↔ Postmortem",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "EXISTING_TABLES",
+      "verification_state": "PASS",
+      "release_state": "PASS",
+      "owner": "StrategyMemory + TradingBrainAdapter + RoleAwareTradingKnowledge + TradingOrchestra + PortfolioService",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_learning_loop_w119_w135.py"
+      ],
+      "evidence": [
+        "TradingBrainAdapter retrieves StrategyMemory (success+failure) with provenance",
+        "RoleAwareTradingKnowledge wired into orchestra DecisionRecord evidenceRefs",
+        "learning_runtime._append_trial writes durable StrategyMemory (available_at=when learned)",
+        "Orchestra paper_router → PortfolioService.place_order; live BLOCKED",
+        "Postmortem AGENT_PROPOSED → Memory + StrategyMemory; predictionError on paper fills",
+        "RiskGuard remains authority; knowledge cannot bypass",
+        "migration head remains 56 (no new tables)"
+      ],
+      "blockers": [],
+      "notes": "Negative results first-class; PIT via available_at; no parallel LearningRuntime/ExperienceBrain"
     }
   ],
   "final_gate": {

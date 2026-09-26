@@ -288,6 +288,7 @@ class StrategyMemoryEntry:
     created_at: str
     available_at: str  # causality: not visible before this ts
     rejected: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -301,7 +302,49 @@ class StrategyMemoryEntry:
             "created_at": self.created_at,
             "available_at": self.available_at,
             "rejected": self.rejected,
+            "metadata": dict(self.metadata),
         }
+
+
+def build_strategy_memory_record(
+    *,
+    strategy_id: str,
+    strategy_version: int | None,
+    outcome_summary: str,
+    rejected: bool,
+    available_at: str,
+    created_at: str | None = None,
+    trial_id: str | None = None,
+    features: dict[str, Any] | None = None,
+    applicability: dict[str, Any] | None = None,
+    origin: str,
+    epistemic_state: str | None = None,
+    validation_stage: str | None = None,
+    extra_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Durable StrategyMemory row — available_at is when learned, never backdated to market T."""
+    meta = {
+        "origin": origin,
+        "epistemic_state": epistemic_state
+        or ("REJECTED" if rejected else "MEASURED"),
+        "validation_stage": validation_stage,
+        "rejected": bool(rejected),
+    }
+    if extra_metadata:
+        meta.update(extra_metadata)
+    return {
+        "memory_id": str(uuid.uuid4()),
+        "strategy_id": strategy_id,
+        "strategy_version": int(strategy_version or 0),
+        "features": dict(features or {}),
+        "applicability": dict(applicability or {}),
+        "outcome_summary": outcome_summary,
+        "trial_id": trial_id,
+        "available_at": available_at,
+        "created_at": created_at or available_at,
+        "rejected": bool(rejected),
+        "metadata": meta,
+    }
 
 
 class StrategyMemoryIndex:

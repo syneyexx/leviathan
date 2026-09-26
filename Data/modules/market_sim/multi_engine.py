@@ -235,6 +235,7 @@ class MultiAgentEngine:
                     created_at=str(row.get("created_at") or ""),
                     available_at=str(row.get("available_at") or ""),
                     rejected=bool(row.get("rejected")),
+                    metadata=dict(row.get("metadata") or {}),
                 )
             )
         return state

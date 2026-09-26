@@ -155,6 +155,12 @@ class ExecutionContext:
     """(symbol, as_of) → bars with ts <= as_of (kernel owns the causal cut)."""
     memory_writer: Callable[[dict[str, Any]], str | None] | None = None
     """Optional hook writing a lesson into Memory with trust=agent_proposed; returns memory id."""
+    role_knowledge: Any | None = None
+    """RoleAwareTradingKnowledge — advisory experience retrieval (not authority)."""
+    paper_router: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+    """Optional paper PortfolioService.place_order router; never live."""
+    strategy_memory_writer: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+    """Optional durable StrategyMemory writer for postmortem lessons."""
     model_calls: int = 0
     tokens_estimate: int = 0
     events: list[dict[str, Any]] = field(default_factory=list)
@@ -197,6 +203,41 @@ class ExecutionContext:
                 return validate_schema(extract_json(text2), schema), model_id2 or model_id
             except SchemaViolation as second:
                 raise SchemaViolation(f"schema repair failed: {second} (first: {first})") from second
+
+    def bind_role_experience(
+        self,
+        role: str,
+        query: str,
+        *,
+        symbols: list[str] | None = None,
+        regime: str | None = None,
+    ) -> dict[str, Any]:
+        """Retrieve advisory experience for a role; returns evidence refs for DecisionRecord."""
+        if self.role_knowledge is None:
+            return {
+                "evidenceRefs": [],
+                "negativeExperienceCount": 0,
+                "citations": [],
+                "truth": {"role_knowledge_unbound": True, "knowledge_is_not_execution_authority": True},
+            }
+        try:
+            payload = self.role_knowledge.retrieve_for_role(
+                role,
+                query,
+                symbols=symbols,
+                decision_as_of=self.as_of,
+                max_hits=5,
+                regime=regime,
+            )
+            return payload
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "evidenceRefs": [],
+                "negativeExperienceCount": 0,
+                "citations": [],
+                "error": str(exc)[:200],
+                "truth": {"knowledge_is_not_execution_authority": True},
+            }
 
     def record(
         self,
@@ -402,26 +443,67 @@ def run_news_analyst(ctx: ExecutionContext, agent: Any, *, max_items: int = 10) 
 
 def run_critic(ctx: ExecutionContext, agent: Any, *, proposal: DecisionRecord) -> DecisionRecord:
     role = "critic"
+    instrument = str(proposal.payload.get("instrument") or "")
+    regime = None
+    feats = proposal.payload.get("features") if isinstance(proposal.payload.get("features"), dict) else {}
+    if feats:
+        regime = feats.get("regime") or feats.get("trend")
+    experience = ctx.bind_role_experience(
+        "critic",
+        f"challenge proposal {instrument} confidence={proposal.payload.get('confidence')}",
+        symbols=[instrument] if instrument else None,
+        regime=str(regime) if regime else None,
+    )
+    evidence_refs = list(experience.get("evidenceRefs") or [])
+    negative_n = int(experience.get("negativeExperienceCount") or 0)
     if isinstance(ctx.model, UnavailableTradingModel) or not ctx.budget_left():
-        payload = {"verdict": "weaken" if float(proposal.payload.get("confidence") or 0) < 0.6 else "support",
-                   "counterargument": "tier0_rules: low-confidence proposals are weakened", "riskFlags": [],
-                   "confidenceAdjustment": -0.1 if float(proposal.payload.get("confidence") or 0) < 0.6 else 0.0,
-                   "source": "tier0_rules"}
+        # Negative experience weakens proposals even without an LLM.
+        adj = -0.1 if float(proposal.payload.get("confidence") or 0) < 0.6 else 0.0
+        if negative_n > 0:
+            adj = min(adj, -0.15 * min(negative_n, 3))
+        verdict = "weaken" if adj < 0 or negative_n > 0 else "support"
+        payload = {
+            "verdict": verdict,
+            "counterargument": (
+                "tier0_rules: prior rejected/negative StrategyMemory surfaced"
+                if negative_n > 0
+                else "tier0_rules: low-confidence proposals are weakened"
+            ),
+            "riskFlags": (["prior_negative_experience"] if negative_n > 0 else []),
+            "confidenceAdjustment": adj,
+            "source": "tier0_rules",
+            "evidenceRefs": evidence_refs,
+            "negativeExperienceCount": negative_n,
+            "knowledgeIsNotAuthority": True,
+        }
         return ctx.record(agent_id=agent.agent_id, role=role, stage="critique", payload=payload, parent=proposal.decision_id)
     messages = [
         {"role": "system", "content": UNTRUSTED_PREAMBLE},
         {"role": "user", "content": (
             "Falsify this proposal. Schema: {\"verdict\": support|weaken|reject, \"counterargument\": str, "
-            "\"riskFlags\": [str], \"confidenceAdjustment\": -1..1}.\n" + _reference_block("proposal", proposal.payload))},
+            "\"riskFlags\": [str], \"confidenceAdjustment\": -1..1}.\n"
+            + _reference_block("proposal", proposal.payload)
+            + "\n"
+            + _reference_block("prior_experience_hypothesis_only", {
+                "evidenceRefs": evidence_refs,
+                "negativeExperienceCount": negative_n,
+                "citations": (experience.get("citations") or [])[:5],
+            })
+        )},
     ]
     try:
         data, model_id = ctx.structured(messages, role=role, schema=CRITIQUE_SCHEMA)
         data["source"] = "model"
+        data["evidenceRefs"] = evidence_refs
+        data["negativeExperienceCount"] = negative_n
+        data["knowledgeIsNotAuthority"] = True
         return ctx.record(agent_id=agent.agent_id, role=role, stage="critique", payload=data, parent=proposal.decision_id, model_id=model_id)
     except (SchemaViolation, RuntimeError) as exc:
         return ctx.record(agent_id=agent.agent_id, role=role, stage="critique",
                           payload={"verdict": "weaken", "counterargument": f"critique_failed: {exc}", "riskFlags": ["critic_unavailable"],
-                                   "confidenceAdjustment": -0.2, "source": "failed"}, parent=proposal.decision_id)
+                                   "confidenceAdjustment": -0.2, "source": "failed",
+                                   "evidenceRefs": evidence_refs, "negativeExperienceCount": negative_n,
+                                   "knowledgeIsNotAuthority": True}, parent=proposal.decision_id)
 
 
 def mandate_to_limits(mandate: Mandate) -> RiskLimits:
@@ -447,16 +529,33 @@ def run_risk_officer(
 ) -> DecisionRecord:
     """Deterministic decision. The agent's explanation is optional and never changes the verdict."""
     role = "risk_officer"
+    instrument = str(proposal.payload.get("instrument") or "")
+    experience = ctx.bind_role_experience(
+        "risk_agent",
+        f"assess risk for {instrument} before paper allocation",
+        symbols=[instrument] if instrument else None,
+    )
+    evidence_refs = list(experience.get("evidenceRefs") or [])
+    if critique is not None:
+        for ref in critique.payload.get("evidenceRefs") or []:
+            if ref not in evidence_refs:
+                evidence_refs.append(ref)
+    negative_n = int(experience.get("negativeExperienceCount") or 0)
+    if critique is not None:
+        negative_n = max(negative_n, int(critique.payload.get("negativeExperienceCount") or 0))
+
     confidence = float(proposal.payload.get("confidence") or 0.0)
     if critique is not None:
         confidence = max(0.0, min(1.0, confidence + float(critique.payload.get("confidenceAdjustment") or 0.0)))
         if critique.payload.get("verdict") == "reject":
             confidence = 0.0
+    # Negative experience is advisory for sizing/confidence; RiskGuard remains authority.
+    if negative_n > 0:
+        confidence = max(0.0, confidence - 0.05 * min(negative_n, 4))
     direction = str(proposal.payload.get("direction") or "flat")
     side = "BUY" if direction == "long" and confidence >= 0.55 else ("SELL" if direction in {"flat", "short"} and wallet.position_qty > 0 else "HOLD")
     if direction == "short" and wallet.position_qty <= 0:
         side = "HOLD"  # long-only mandate kernel today; shorts are refused, not simulated
-    instrument = str(proposal.payload.get("instrument") or "")
     guard = RiskGuard(mandate_to_limits(ctx.mandate))
     guard.orders_today = orders_today
     intent = OrderIntent(
@@ -478,6 +577,9 @@ def run_risk_officer(
     else:
         rd = guard.evaluate_intent(intent, wallet=wallet, price=price)
         decision = {"allowed": bool(rd.allowed), "reason": rd.reason, "sizedQty": float(rd.sized_qty or 0.0)}
+    # Record expectation at decision time for later paper prediction-error computation.
+    expected_side = side if decision.get("allowed") else "HOLD"
+    expected_return_sign = 1 if expected_side == "BUY" else (-1 if expected_side == "SELL" else 0)
     payload = {
         **decision,
         "side": side,
@@ -487,62 +589,239 @@ def run_risk_officer(
         "mandateFingerprint": ctx.mandate.fingerprint(),
         "authority": "risk_guard_deterministic",
         "shortRefused": direction == "short",
+        "evidenceRefs": evidence_refs,
+        "negativeExperienceCount": negative_n,
+        "knowledgeIsNotAuthority": True,
+        "expectation": {
+            "side": expected_side,
+            "direction": direction,
+            "confidence": confidence,
+            "expectedReturnSign": expected_return_sign,
+            "priceAtDecision": price,
+            "asOf": ctx.as_of,
+        },
     }
     return ctx.record(agent_id=agent.agent_id, role=role, stage="risk_decision", payload=payload,
                       parent=(critique or proposal).decision_id)
 
 
 def run_execution_agent(ctx: ExecutionContext, agent: Any, *, risk: DecisionRecord) -> DecisionRecord:
-    """Records a paper order intent for an allowed decision. Routing to a broker is a
-    separate, gateway-governed step (PaperForwardRunner); nothing is filled here."""
+    """Records a paper order intent for an allowed decision.
+
+    When ``paper_router`` is bound, routes through PortfolioService.place_order
+    (mandate + RiskGuard already applied). Live trading remains BLOCKED.
+    """
     role = "execution_agent"
     allowed = bool(risk.payload.get("allowed"))
     side = str(risk.payload.get("side") or "HOLD")
-    payload = {
-        "instrument": risk.payload.get("instrument"),
+    qty = float(risk.payload.get("sizedQty") or 0.0) if allowed else 0.0
+    instrument = risk.payload.get("instrument")
+    expectation = dict(risk.payload.get("expectation") or {})
+    payload: dict[str, Any] = {
+        "instrument": instrument,
         "side": side if allowed else "HOLD",
-        "qty": float(risk.payload.get("sizedQty") or 0.0) if allowed else 0.0,
+        "qty": qty,
         "orderType": "MARKET",
         "routed": False,
         "venue": "paper",
         "status": "recorded_not_routed" if allowed and side in {"BUY", "SELL"} else "no_order",
         "liveTrading": "BLOCKED",
         "reason": None if allowed else risk.payload.get("reason"),
+        "evidenceRefs": list(risk.payload.get("evidenceRefs") or []),
+        "expectation": expectation,
+        "parentRiskDecisionId": risk.decision_id,
     }
+    if allowed and side in {"BUY", "SELL"} and qty > 0 and ctx.paper_router is not None:
+        try:
+            route_result = ctx.paper_router(
+                {
+                    "symbol": str(instrument or "").upper(),
+                    "side": side,
+                    "qty": qty,
+                    "orchestra_id": ctx.orchestra_id,
+                    "agent_id": agent.agent_id,
+                    "decision_id": risk.decision_id,
+                    "idempotency_key": f"orch-{risk.decision_id}",
+                }
+            )
+            order = (route_result or {}).get("order") if isinstance(route_result, dict) else None
+            fill_status = str((order or {}).get("status") or "")
+            payload["routed"] = True
+            payload["routeResult"] = {
+                "orderId": (order or {}).get("order_id") or (order or {}).get("orderId"),
+                "status": fill_status,
+                "code": (route_result or {}).get("code") if isinstance(route_result, dict) else None,
+                "portfolioId": (route_result or {}).get("portfolio", {}).get("portfolio_id")
+                if isinstance(route_result, dict)
+                else None,
+            }
+            if fill_status == "filled":
+                payload["status"] = "paper_routed_filled"
+                # Machine-readable prediction error vs expectation (paper outcome).
+                fill_price = float((order or {}).get("avg_price") or (order or {}).get("price") or risk.payload.get("price") or 0)
+                exp_sign = int(expectation.get("expectedReturnSign") or 0)
+                px0 = float(expectation.get("priceAtDecision") or risk.payload.get("price") or 0)
+                realized_sign = 0
+                if px0 > 0 and fill_price > 0 and exp_sign != 0:
+                    # Immediate fill vs decision mark — direction agreement check.
+                    move = fill_price - px0
+                    realized_sign = 1 if move > 0 else (-1 if move < 0 else 0)
+                error = {
+                    "expectationSide": expectation.get("side"),
+                    "expectedReturnSign": exp_sign,
+                    "priceAtDecision": px0,
+                    "fillPrice": fill_price,
+                    "realizedSignAtFill": realized_sign,
+                    "signAgreement": (exp_sign == 0) or (realized_sign == 0) or (exp_sign == realized_sign),
+                    "absolutePriceDelta": abs(fill_price - px0) if px0 and fill_price else None,
+                    "asOf": ctx.as_of,
+                }
+                payload["predictionError"] = error
+            elif fill_status == "blocked" or (route_result or {}).get("code"):
+                payload["status"] = "paper_routed_blocked"
+                payload["reason"] = (order or {}).get("reject_reason") or (route_result or {}).get("code")
+            else:
+                payload["status"] = "paper_routed"
+        except Exception as exc:  # noqa: BLE001
+            payload["status"] = "paper_route_failed"
+            payload["reason"] = str(exc)[:300]
+            payload["routed"] = False
     return ctx.record(agent_id=agent.agent_id, role=role, stage="order_intent", payload=payload, parent=risk.decision_id)
 
 
 def run_postmortem(ctx: ExecutionContext, agent: Any, *, recent: list[DecisionRecord]) -> DecisionRecord:
+    """Write AGENT_PROPOSED lesson from actual decisions/fills — never rewrite history."""
     role = "postmortem_agent"
     summary = [
-        {"stage": r.stage, "role": r.role, "asOf": r.as_of, "payload": {k: v for k, v in r.payload.items() if k != "features"}}
+        {
+            "decisionId": r.decision_id,
+            "stage": r.stage,
+            "role": r.role,
+            "asOf": r.as_of,
+            "payload": {k: v for k, v in r.payload.items() if k != "features"},
+        }
         for r in recent[:40]
     ]
+    fills = [r for r in recent if r.stage == "order_intent"]
+    risks = [r for r in recent if r.stage == "risk_decision"]
+    critiques = [r for r in recent if r.stage == "critique"]
+    known = {r.decision_id for r in recent}
+    experience = ctx.bind_role_experience(
+        "postmortem",
+        "lessons from prior rejected trials and paper outcomes",
+        symbols=list(ctx.mandate.universe)[:4] if ctx.mandate.universe else None,
+    )
+    prior_refs = list(experience.get("evidenceRefs") or [])
+
+    def _persist_lesson(data: dict[str, Any], *, model_id: str | None = None) -> DecisionRecord:
+        data["trust"] = "agent_proposed"
+        data["epistemicState"] = "AGENT_PROPOSED"
+        data["evidenceRefs"] = [ref for ref in data.get("evidenceRefs", []) if ref in known] or [
+            r.decision_id for r in (fills or risks or recent)[:3]
+        ]
+        # Prior StrategyMemory refs are advisory provenance, not rewritten history.
+        data["priorExperienceRefs"] = prior_refs[:8]
+        data["status"] = "RECORDED" if data["evidenceRefs"] else "RECORDED_WITHOUT_EVIDENCE"
+        data["knowledgeIsNotAuthority"] = True
+        data["historicalDecisionsRewritten"] = False
+        if ctx.memory_writer is not None and data["evidenceRefs"]:
+            try:
+                data["memoryId"] = ctx.memory_writer(data)
+            except Exception as exc:  # noqa: BLE001
+                data["memoryError"] = str(exc)[:200]
+        if ctx.strategy_memory_writer is not None and data.get("claim"):
+            try:
+                from Data.modules.market_sim.experiments import build_strategy_memory_record
+
+                learned_at = utc_now()
+                mem = build_strategy_memory_record(
+                    strategy_id=f"orchestra:{ctx.orchestra_id}",
+                    strategy_version=0,
+                    outcome_summary=str(data.get("claim") or "")[:500],
+                    rejected=True if any(
+                        (f.payload.get("predictionError") or {}).get("signAgreement") is False for f in fills
+                    ) or any(c.payload.get("verdict") == "reject" for c in critiques) else False,
+                    available_at=learned_at,
+                    created_at=learned_at,
+                    trial_id=None,
+                    features={"origin": "postmortem"},
+                    applicability={"instruments": list(data.get("appliesTo") or [])[:8]},
+                    origin="orchestra_postmortem",
+                    epistemic_state="AGENT_PROPOSED",
+                    validation_stage="postmortem",
+                    extra_metadata={
+                        "evidenceRefs": list(data.get("evidenceRefs") or []),
+                        "missionId": ctx.mission_id,
+                        "confidence": data.get("confidence"),
+                    },
+                )
+                saved = ctx.strategy_memory_writer(mem)
+                data["strategyMemoryId"] = (saved or mem).get("memory_id") if isinstance(saved or mem, dict) else mem["memory_id"]
+                if data.get("strategyMemoryId"):
+                    data["evidenceRefs"] = list(data["evidenceRefs"]) + [str(data["strategyMemoryId"])]
+            except Exception as exc:  # noqa: BLE001
+                data["strategyMemoryError"] = str(exc)[:200]
+        return ctx.record(agent_id=agent.agent_id, role=role, stage="post_mortem", payload=data, model_id=model_id)
+
     if isinstance(ctx.model, UnavailableTradingModel) or not ctx.budget_left():
-        return ctx.record(agent_id=agent.agent_id, role=role, stage="post_mortem",
-                          payload={"status": "UNAVAILABLE", "reviewed": len(summary), "error": "model unavailable; no lesson fabricated"})
+        # Deterministic lesson only when actual decision/fill outcomes exist — else honest miss.
+        if not (fills or risks or critiques):
+            return ctx.record(
+                agent_id=agent.agent_id,
+                role=role,
+                stage="post_mortem",
+                payload={
+                    "status": "UNAVAILABLE",
+                    "reviewed": len(summary),
+                    "error": "model unavailable; no decision outcomes to form a lesson",
+                },
+            )
+        blocked = [f for f in fills if str(f.payload.get("status") or "").endswith("blocked") or f.payload.get("status") == "no_order"]
+        errors = [f for f in fills if isinstance(f.payload.get("predictionError"), dict)]
+        disagree = [f for f in errors if f.payload["predictionError"].get("signAgreement") is False]
+        neg = int(experience.get("negativeExperienceCount") or 0)
+        if disagree:
+            claim = (
+                f"Paper outcomes disagreed with expectation on {len(disagree)} intent(s); "
+                "treat prior confidence as overstated until measured."
+            )
+            applies = sorted({str(f.payload.get("instrument") or "") for f in disagree if f.payload.get("instrument")})
+        elif blocked:
+            claim = f"RiskGuard/mandate blocked {len(blocked)} paper intent(s); constraints dominate proposals."
+            applies = sorted({str(f.payload.get("instrument") or "") for f in blocked if f.payload.get("instrument")})
+        elif neg > 0:
+            claim = f"Prior rejected StrategyMemory ({neg}) remains relevant; do not treat unmeasured edges as proven."
+            applies = list(ctx.mandate.universe)[:4] if ctx.mandate.universe else []
+        else:
+            claim = f"Reviewed {len(summary)} decision records; no strong failure signal — lesson remains AGENT_PROPOSED."
+            applies = list(ctx.mandate.universe)[:4] if ctx.mandate.universe else []
+        return _persist_lesson(
+            {
+                "claim": claim,
+                "evidenceRefs": [r.decision_id for r in (disagree or blocked or fills or risks)[:5]],
+                "appliesTo": applies,
+                "confidence": 0.35,
+                "source": "tier0_rules",
+            }
+        )
+
     messages = [
         {"role": "system", "content": UNTRUSTED_PREAMBLE},
         {"role": "user", "content": (
             "Write ONE lesson from these decision records. Schema: {\"claim\": str, \"evidenceRefs\": [decisionId], "
             "\"appliesTo\": [instrument|regime], \"confidence\": 0..1}. The lesson is a hypothesis (trust=agent_proposed).\n"
-            + _reference_block("decisions", summary))},
+            + _reference_block("decisions", summary)
+            + "\n"
+            + _reference_block("prior_negative_experience", {"evidenceRefs": prior_refs, "count": experience.get("negativeExperienceCount")})
+        )},
     ]
     try:
         data, model_id = ctx.structured(messages, role=role, schema=LESSON_SCHEMA)
     except (SchemaViolation, RuntimeError) as exc:
         return ctx.record(agent_id=agent.agent_id, role=role, stage="post_mortem",
                           payload={"status": "FAILED", "error": str(exc)[:300], "reviewed": len(summary)})
-    known = {r.decision_id for r in recent}
-    data["evidenceRefs"] = [ref for ref in data.get("evidenceRefs", []) if ref in known]
-    data["trust"] = "agent_proposed"
-    data["status"] = "RECORDED" if data["evidenceRefs"] else "RECORDED_WITHOUT_EVIDENCE"
-    if ctx.memory_writer is not None and data["evidenceRefs"]:
-        try:
-            data["memoryId"] = ctx.memory_writer(data)
-        except Exception as exc:  # noqa: BLE001
-            data["memoryError"] = str(exc)[:200]
-    return ctx.record(agent_id=agent.agent_id, role=role, stage="post_mortem", payload=data, model_id=model_id)
+    data["source"] = "model"
+    return _persist_lesson(data, model_id=model_id)
 
 
 # ----------------------------------------------------------------------------- orchestra protocol
@@ -609,7 +888,12 @@ def run_orchestra_round(
         exec_agent = (by_role.get("execution_agent") or [None])[0]
         if exec_agent is not None:
             intent = run_execution_agent(ctx, exec_agent, risk=risk)
-            if intent.payload.get("status") == "recorded_not_routed":
+            if intent.payload.get("status") in {
+                "recorded_not_routed",
+                "paper_routed",
+                "paper_routed_filled",
+                "paper_routed_blocked",
+            }:
                 orders_today += 1
         per_instrument.append({
             "instrument": instrument,
@@ -619,6 +903,9 @@ def run_orchestra_round(
             "allowed": risk.payload.get("allowed"),
             "reason": risk.payload.get("reason"),
             "intent": intent.decision_id if intent else None,
+            "evidenceRefs": list(risk.payload.get("evidenceRefs") or []),
+            "routed": bool(intent.payload.get("routed")) if intent else False,
+            "predictionError": (intent.payload.get("predictionError") if intent else None),
         })
     return {
         "kind": MissionKind.DELIBERATION_ROUND.value,
