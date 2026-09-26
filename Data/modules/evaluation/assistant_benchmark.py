@@ -115,6 +115,8 @@ class TaskRunResult:
     run_id: str = field(default_factory=lambda: f"arun_{uuid.uuid4().hex[:12]}")
 
     def public_dict(self) -> dict[str, Any]:
+        measured = bool(self.metrics.measured)
+        model_invoked = bool(self.raw_evidence.get("model_invoked"))
         return {
             "run_id": self.run_id,
             "task_id": self.task_id,
@@ -125,8 +127,16 @@ class TaskRunResult:
             "detail": self.detail,
             "raw_evidence": dict(self.raw_evidence),
             "truth": {
-                "end_to_end_task_not_unit_mock": True,
+                # Derived — never a fixed claim that every runner is end-to-end model quality.
+                "end_to_end_task_not_unit_mock": bool(
+                    self.raw_evidence.get("end_to_end_task_not_unit_mock", False)
+                ),
+                "model_quality_measured": measured and model_invoked,
+                "component_check_only": bool(
+                    self.raw_evidence.get("component_check_only", not model_invoked)
+                ),
                 "raw_evidence_stored": True,
+                "unmeasured_is_not_pass": not measured,
             },
         }
 
@@ -348,10 +358,22 @@ class AssistantBenchmarkRunner:
         token_usage: int | None = None
         first_ok: bool | None = None
         retry_ok: bool | None = None
+        measured = True
+        attempts: list[dict[str, Any]] = []
 
         try:
             if task.family == TaskFamily.INSTRUCTION_FOLLOWING:
-                success, detail, tool_calls, token_usage = self._instruction_following(task, evidence)
+                success, detail, tool_calls, token_usage, measured = self._instruction_following(
+                    task, evidence
+                )
+                attempts.append(
+                    {
+                        "attempt": 1,
+                        "success": success,
+                        "detail": detail,
+                        "response": evidence.get("response"),
+                    }
+                )
             elif task.family == TaskFamily.DUTCH_INSTRUCTION:
                 success, detail, tool_calls = self._dutch_instruction(task, evidence)
             elif task.family == TaskFamily.LONG_CONTEXT:
@@ -407,27 +429,43 @@ class AssistantBenchmarkRunner:
             else:
                 detail = f"unknown family {task.family}"
                 success = False
+                measured = False
 
             first_ok = success
-            # Optional single retry for recoverable failures (baseline may skip).
-            if not success and self.profile == "leviathan" and task.family in {
-                TaskFamily.INSTRUCTION_FOLLOWING,
-                TaskFamily.RETRIEVAL,
-            }:
-                retry_ok = success  # already failed; placeholder — real retry below
-                # One controlled retry with stricter caller.
-                if task.family == TaskFamily.INSTRUCTION_FOLLOWING:
-                    success2, detail2, _, tok2 = self._instruction_following(
-                        task, evidence, force_ack=True
+            # Optional single retry — must re-invoke the real execution path (never fabricate ACK).
+            if (
+                not success
+                and measured
+                and self.profile == "leviathan"
+                and task.family == TaskFamily.INSTRUCTION_FOLLOWING
+                and self.model_caller is not None
+            ):
+                budget = dict(task.budget or {})
+                max_attempts = int(budget.get("max_attempts") or 2)
+                if max_attempts >= 2:
+                    success2, detail2, _, tok2, measured2 = self._instruction_following(
+                        task, evidence
                     )
+                    measured = measured and measured2
                     retry_ok = success2
+                    attempts.append(
+                        {
+                            "attempt": 2,
+                            "success": success2,
+                            "detail": detail2,
+                            "response": evidence.get("response"),
+                        }
+                    )
+                    if tok2 is not None:
+                        token_usage = (token_usage or 0) + tok2
+                    tool_calls += 1
                     if success2:
                         success = True
                         detail = f"retry:{detail2}"
-                        token_usage = (token_usage or 0) + (tok2 or 0)
-                        tool_calls += 1
+            evidence["attempts"] = attempts
         except Exception as exc:  # noqa: BLE001
             success = False
+            measured = False
             detail = f"ERROR: {exc}"
             evidence["error"] = str(exc)
 
@@ -437,6 +475,10 @@ class AssistantBenchmarkRunner:
                 false_success = True
                 success = False
                 detail = f"false_success:{detail}"
+
+        # Absent / unmeasured model paths cannot become PASS.
+        if not measured:
+            success = False
 
         latency_ms = round((time.perf_counter() - started) * 1000.0, 3)
         metrics = TaskRunMetrics(
@@ -450,7 +492,7 @@ class AssistantBenchmarkRunner:
             unnecessary_calls=unnecessary,
             citation_precision=citation_precision,
             artifact_validity=artifact_validity,
-            measured=True,
+            measured=measured,
         )
         evidence["metrics"] = metrics.public_dict()
         return TaskRunResult(
@@ -469,16 +511,52 @@ class AssistantBenchmarkRunner:
     # --- family runners (real modules) ---
 
     def _instruction_following(
-        self, task: AssistantTask, evidence: dict[str, Any], *, force_ack: bool = False
-    ) -> tuple[bool, str, int, int]:
+        self, task: AssistantTask, evidence: dict[str, Any]
+    ) -> tuple[bool, str, int, int | None, bool]:
+        """Model-driven exact-ACK check.
+
+        Returns (success, detail, tool_calls, token_usage, measured).
+        Absent model → UNMEASURED (not a fabricated ACK). Token usage is
+        provider-reported when available; never word-count mislabeled as tokens.
+        """
         caller = self.model_caller
-        if force_ack or caller is None:
-            text = "ACK"
+        if caller is None:
+            evidence["model_invoked"] = False
+            evidence["measurement"] = "UNAVAILABLE"
+            evidence["component_check_only"] = False
+            evidence["end_to_end_task_not_unit_mock"] = False
+            return False, "model_caller UNAVAILABLE — instruction-following unmeasured", 0, None, False
+
+        raw = caller(prompt=task.user_request)
+        token_usage: int | None = None
+        if isinstance(raw, dict):
+            text = str(raw.get("text") or raw.get("content") or raw.get("response") or "")
+            usage = raw.get("token_usage")
+            if usage is None:
+                usage = (raw.get("usage") or {}).get("total_tokens") if isinstance(raw.get("usage"), dict) else None
+            if usage is not None:
+                try:
+                    token_usage = int(usage)
+                    evidence["token_usage_source"] = "provider_reported"
+                except (TypeError, ValueError):
+                    token_usage = None
+            estimated = raw.get("estimated_tokens")
+            if token_usage is None and estimated is not None:
+                try:
+                    token_usage = int(estimated)
+                    evidence["token_usage_source"] = "explicit_estimate"
+                except (TypeError, ValueError):
+                    token_usage = None
         else:
-            text = str(caller(prompt=task.user_request) or "")
+            text = str(raw or "")
+
+        evidence["model_invoked"] = True
+        evidence["measurement"] = "MEASURED"
         evidence["response"] = text
+        evidence["end_to_end_task_not_unit_mock"] = True
+        evidence["component_check_only"] = False
         ok = text.strip() == "ACK"
-        return ok, f"response={text!r}", 0, len(text.split())
+        return ok, f"response={text!r}", 0, token_usage, True
 
     def _dutch_instruction(self, task: AssistantTask, evidence: dict[str, Any]) -> tuple[bool, str, int]:
         from Data.modules.cognition.task_model import TaskModelBuilder

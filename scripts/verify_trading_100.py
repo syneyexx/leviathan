@@ -31,7 +31,9 @@ TRADING_OWNED_GLOBS = (
     "Data/modules/trading/**/*.py",
     "scripts/market_sim_worker.py",
     "scripts/verify_trading_100.py",
-    "Data/frontend/src/pages/trading/**/*.{ts,tsx}",
+    # Python pathlib.glob does not expand shell brace patterns — list extensions explicitly.
+    "Data/frontend/src/pages/trading/**/*.ts",
+    "Data/frontend/src/pages/trading/**/*.tsx",
 )
 
 
@@ -103,24 +105,49 @@ def _evaluate_gate(gate_id: str, spec: dict[str, Any], *, run_tests: bool) -> di
     if status == "PASS":
         if not evidence and not checks:
             return {"id": gate_id, "status": "FAIL", "evidence": [], "notes": "PASS claimed without evidence"}
+        executable = 0
+        documentary = 0
         for check in checks:
-            # Documentary string checks are evidence notes, not executable.
+            # Documentary string checks are notes only — never sufficient alone for PASS.
             if isinstance(check, str):
-                evidence.append(f"check:{check}")
+                documentary += 1
+                evidence.append(f"documentary:{check}")
                 continue
             if not isinstance(check, dict):
                 continue
             kind = check.get("kind")
-            if kind == "file_exists" and not (ROOT / check["path"]).is_file():
-                return {"id": gate_id, "status": "FAIL", "evidence": evidence,
-                        "notes": f"missing file {check['path']}"}
-            if kind == "pytest" and run_tests:
-                node_ids = check.get("node_ids") or []
-                code, out = _run([sys.executable, "-m", "pytest", *node_ids, "-q", "--tb=line"],
-                                 timeout=int(check.get("timeout_sec", 300)))
-                evidence.append(f"pytest {node_ids} exit={code}")
-                if code != 0:
-                    return {"id": gate_id, "status": "FAIL", "evidence": evidence, "notes": out[-2000:]}
+            if kind == "file_exists":
+                # File presence is a weak check; record it but do not treat as product readiness.
+                path = check["path"]
+                exists = (ROOT / path).is_file()
+                evidence.append(f"file_exists:{path}:{'ok' if exists else 'missing'}")
+                if not exists:
+                    return {"id": gate_id, "status": "FAIL", "evidence": evidence,
+                            "notes": f"missing file {path}"}
+                documentary += 1
+                continue
+            if kind == "pytest":
+                executable += 1
+                if run_tests:
+                    node_ids = check.get("node_ids") or []
+                    code, out = _run([sys.executable, "-m", "pytest", *node_ids, "-q", "--tb=line"],
+                                     timeout=int(check.get("timeout_sec", 300)))
+                    evidence.append(f"pytest {node_ids} exit={code}")
+                    if code != 0:
+                        return {"id": gate_id, "status": "FAIL", "evidence": evidence, "notes": out[-2000:]}
+                else:
+                    evidence.append("pytest:deferred(--run-tests not set)")
+                continue
+            if kind:
+                executable += 1
+                evidence.append(f"check_kind:{kind}")
+        if checks and executable == 0 and documentary > 0 and not evidence:
+            return {
+                "id": gate_id,
+                "status": "UNMEASURED",
+                "evidence": evidence,
+                "notes": "documentary/file_exists checks alone are not product readiness",
+            }
         return {"id": gate_id, "status": "PASS", "evidence": evidence, "notes": notes}
     return {"id": gate_id, "status": status, "evidence": evidence,
             "notes": notes or f"unknown status {status}"}

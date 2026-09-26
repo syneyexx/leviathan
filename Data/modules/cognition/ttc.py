@@ -130,17 +130,55 @@ class SchemaScorer:
                 return CandidateScore(
                     self.name, 0.0, detail="output is not JSON", hard_fail=True
                 )
-        missing = [
-            k for k in (schema.get("required") or []) if k not in (payload or {})
-        ]
+        ok, detail = _validate_json_schema(payload, schema, path="$")
+        if not ok:
+            return CandidateScore(self.name, 0.0, detail=detail, hard_fail=True)
+        return CandidateScore(self.name, 1.0, detail="schema valid")
+
+
+def _validate_json_schema(payload: Any, schema: dict[str, Any], *, path: str) -> tuple[bool, str]:
+    """Minimal but recursive JSON-schema subset: type, required, properties, enum, minimum/maximum."""
+    if not isinstance(schema, dict):
+        return True, "no schema"
+    expected_type = schema.get("type")
+    if expected_type:
+        type_ok = {
+            "object": isinstance(payload, dict),
+            "array": isinstance(payload, list),
+            "string": isinstance(payload, str),
+            "number": isinstance(payload, (int, float)) and not isinstance(payload, bool),
+            "integer": isinstance(payload, int) and not isinstance(payload, bool),
+            "boolean": isinstance(payload, bool),
+            "null": payload is None,
+        }.get(str(expected_type))
+        if type_ok is False:
+            return False, f"{path}: expected type {expected_type}, got {type(payload).__name__}"
+    if "enum" in schema and payload not in schema["enum"]:
+        return False, f"{path}: value not in enum"
+    if isinstance(payload, (int, float)) and not isinstance(payload, bool):
+        if "minimum" in schema and payload < schema["minimum"]:
+            return False, f"{path}: below minimum"
+        if "maximum" in schema and payload > schema["maximum"]:
+            return False, f"{path}: above maximum"
+    if isinstance(payload, dict):
+        required = list(schema.get("required") or [])
+        missing = [k for k in required if k not in payload]
         if missing:
-            return CandidateScore(
-                self.name,
-                0.2,
-                detail=f"missing required keys: {missing}",
-                hard_fail=True,
-            )
-        return CandidateScore(self.name, 1.0, detail="schema keys present")
+            return False, f"{path}: missing required keys: {missing}"
+        props = dict(schema.get("properties") or {})
+        for key, subschema in props.items():
+            if key not in payload:
+                continue
+            if isinstance(subschema, dict):
+                ok, detail = _validate_json_schema(payload[key], subschema, path=f"{path}.{key}")
+                if not ok:
+                    return False, detail
+    if isinstance(payload, list) and isinstance(schema.get("items"), dict):
+        for i, item in enumerate(payload):
+            ok, detail = _validate_json_schema(item, schema["items"], path=f"{path}[{i}]")
+            if not ok:
+                return False, detail
+    return True, "ok"
 
 
 class GroundingScorer:

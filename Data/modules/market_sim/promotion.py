@@ -39,7 +39,20 @@ def evaluate_promotion(
     gate = may_promote_to(
         current=current,
         target=target,
-        evidence={"accepted": accepted, "sealed_pass": sealed_pass, "acceptance": acceptance},
+        evidence={
+            "accepted": accepted,
+            "sealed_pass": sealed_pass,
+            "acceptance": acceptance,
+            "evaluation_refs": list(
+                (acceptance.get("evaluation_refs") if isinstance(acceptance, dict) else None)
+                or (payload or {}).get("evaluation_refs")
+                or []
+            ),
+            "sealed_attempt_id": (
+                acceptance.get("sealed_attempt_id") if isinstance(acceptance, dict) else None
+            ),
+            "run_id": (payload or {}).get("run_id"),
+        },
     )
     return {
         "promotable": bool(gate.get("allowed")),

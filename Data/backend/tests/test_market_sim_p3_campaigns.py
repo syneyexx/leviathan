@@ -171,6 +171,7 @@ class P3BResearchCampaignTests(unittest.TestCase):
 
     def test_promotion_requires_acceptance_for_a2(self) -> None:
         from Data.modules.market_sim.promotion import evaluate_promotion
+        from Data.modules.market_sim.readiness import may_promote_to
 
         blocked = evaluate_promotion(
             metrics={
@@ -185,12 +186,34 @@ class P3BResearchCampaignTests(unittest.TestCase):
         self.assertFalse(blocked["promotable"])
         self.assertEqual(blocked["live_trading"], "BLOCKED")
 
-        ok = evaluate_promotion(
+        # A0→A1 without resolved evidence is denied (no fabricated promotion).
+        bare = evaluate_promotion(
             current_level="A0",
             target_level="A1",
             sealed_pass=False,
         )
+        self.assertFalse(bare["promotable"])
+
+        # Caller boolean alone cannot authorize A0→A4.
+        jump = may_promote_to(current="A0", target="A4", evidence={"accepted": True})
+        self.assertFalse(jump["allowed"])
+        self.assertIn(jump.get("reason"), {
+            "PROMOTION_STAGE_PREREQUISITES",
+            "PROMOTION_REJECTS_CALLER_BOOLEAN",
+        })
+
+        ok = evaluate_promotion(
+            metrics={
+                "trade_count": {"value": 10, "status": "MEASURED"},
+                "total_return_pct": {"value": 5.0, "status": "MEASURED"},
+                "max_drawdown_pct": {"value": 2.0, "status": "MEASURED"},
+            },
+            acceptance_criteria={"min_trades": 5, "max_drawdown_pct": 20.0, "min_total_return_pct": 0.0},
+            current_level="A0",
+            target_level="A1",
+        )
         self.assertTrue(ok["promotable"])
+        self.assertTrue(ok["accepted"])
 
     def test_campaign_durable_resume_no_rewind(self) -> None:
         from Data.backend.tests.test_market_sim_characterization import FIXTURE
@@ -220,10 +243,26 @@ class P3BResearchCampaignTests(unittest.TestCase):
 
             # Worker path runs without JobRuntime when called directly
             result = plane.run_research_campaign_on_worker(created["campaign_id"])
-            self.assertEqual(result["status"], "COMPLETED")
+            self.assertIn(result["status"], {"COMPLETED", "FAILED"})
             self.assertEqual(result["checkpoint_iteration"], 3)
             self.assertEqual(len(result["trial_ids"]), 3)
             self.assertTrue(result["truth"]["no_rewind_on_crash"])
+            iterations = result["results"].get("iterations") or []
+            self.assertEqual(len(iterations), 3)
+            # Trials must record real simulation attempts — never fabricated "recorded".
+            for it in iterations:
+                self.assertIn("simulation_executed", it)
+            executed = [it for it in iterations if it.get("simulation_executed")]
+            if result["status"] == "COMPLETED":
+                self.assertGreaterEqual(len(executed), 1)
+                self.assertNotEqual(
+                    (result.get("scorecard") or {}).get("wins"),
+                    len(result["trial_ids"]),
+                    "wins must not equal all trials by fabrication",
+                )
+            # Scorecard must not claim fabricated zero-risk promotion inputs.
+            measurement = (result.get("scorecard") or {}).get("measurement") or {}
+            self.assertFalse(measurement.get("fabricated_zero_risk", True))
 
             # Simulate mid-run resume: seed checkpoint at 1 then continue
             mid = plane.get_research_campaign(created["campaign_id"])

@@ -33,16 +33,57 @@ class AssistantBenchmarkTests(unittest.TestCase):
         runner = AssistantBenchmarkRunner(profile="leviathan")
         results = runner.run_suite()
         self.assertGreaterEqual(len(results), 10)
+        model_driven = {
+            "asst-if-001",  # requires model_caller; absent → UNMEASURED
+        }
         for run in results:
             m = run.metrics
-            self.assertTrue(m.measured)
             self.assertIsNotNone(m.latency_ms)
             self.assertIn("first_attempt_success", m.public_dict())
             self.assertIn("false_success", m.public_dict())
             self.assertIn("tool_calls", m.public_dict())
-            # Most leviathan tasks should succeed against real modules.
+            if run.task_id in model_driven:
+                self.assertFalse(m.measured)
+                self.assertFalse(run.success)
+            else:
+                self.assertTrue(m.measured)
+        # Component-check families still pass without a live model.
         passed = sum(1 for r in results if r.success)
-        self.assertGreaterEqual(passed, 10, [r.task_id for r in results if not r.success])
+        self.assertGreaterEqual(passed, 9, [r.task_id for r in results if not r.success])
+
+    def test_a01_wrong_model_fails_instruction_following(self) -> None:
+        runner = AssistantBenchmarkRunner(
+            model_caller=lambda prompt: "WRONG",
+            profile="leviathan",
+        )
+        task = next(t for t in default_assistant_tasks() if t.task_id == "asst-if-001")
+        result = runner.run_task(task)
+        self.assertFalse(result.success)
+        self.assertTrue(result.metrics.measured)
+        self.assertNotIn("ACK", str(result.raw_evidence.get("response")))
+        attempts = result.raw_evidence.get("attempts") or []
+        self.assertGreaterEqual(len(attempts), 2)
+        self.assertTrue(all(a.get("response") != "ACK" for a in attempts))
+
+    def test_a02_no_model_is_unmeasured(self) -> None:
+        runner = AssistantBenchmarkRunner(model_caller=None, profile="leviathan")
+        task = next(t for t in default_assistant_tasks() if t.task_id == "asst-if-001")
+        result = runner.run_task(task)
+        self.assertFalse(result.success)
+        self.assertFalse(result.metrics.measured)
+        self.assertEqual(result.raw_evidence.get("measurement"), "UNAVAILABLE")
+        self.assertFalse(result.public_dict()["truth"]["model_quality_measured"])
+
+    def test_instruction_following_real_caller_passes(self) -> None:
+        runner = AssistantBenchmarkRunner(
+            model_caller=lambda prompt: "ACK",
+            profile="leviathan",
+        )
+        task = next(t for t in default_assistant_tasks() if t.task_id == "asst-if-001")
+        result = runner.run_task(task)
+        self.assertTrue(result.success)
+        self.assertTrue(result.metrics.measured)
+        self.assertTrue(result.public_dict()["truth"]["model_quality_measured"])
 
 
 class PairedEvaluationTests(unittest.TestCase):

@@ -1140,6 +1140,16 @@ python scripts/verify_trading_100.py --allow-incomplete
 
 Incomplete / NOT_STARTED / UNMEASURED / FEATURE_GATED are **not** PASS. Baseline-green CI must not coerce frontier or trading program gates to PASS. `--allow-incomplete` only permits an honest incomplete report without FAIL/crash.
 
+Production-quality program ledger (machine state): `Data/backend/tests/production_quality_program.json` maps waves W00–W23 onto existing R/G/F identifiers. Status is never PASS without executed evidence.
+
+### Production-quality integrity repairs (W00–W02 CURRENT)
+
+- **W00:** Default frontend Vite config no longer statically imports `editor/vite-plugin.mjs`. Editor mode loads only when `LEVIATHAN_EDITOR=1` and the plugin file exists; otherwise it raises a precise configuration error. Excluded trees (`Data/HADES/`, `editor/`) remain unmodified.
+- **W01:** `AssistantBenchmarkRunner` never fabricates `ACK` for a missing model or retry (`force_ack` removed). Absent model → `measured=False` / UNAVAILABLE. Retries re-invoke the real caller and preserve attempt evidence. `TaskRunResult.truth` is derived (component vs model-quality), not a fixed end-to-end claim. Token usage is provider-reported or an explicit estimate — never word-count mislabeled as tokens. Trading verifier frontend globs enumerate `.ts`/`.tsx` explicitly (no brace-expansion assumption).
+- **W02:** `run_research_campaign_on_worker` executes canonical gym episodes per iteration; trials complete only with simulation receipts; wins come from acceptance, not trial count; zero-risk promotion inputs are not fabricated. `AcceptanceCriteria.evaluate` and `experiments.evaluate_acceptance` fail closed on missing/NaN/infinite metrics and refuse unit inference from magnitude. `evaluate_candidate_pipeline` enforces `max_candidates` atomically (`CANDIDATE_BUDGET_EXHAUSTED`). `may_promote_to` / `promote_asset` reject caller booleans and enforce stage prerequisites. `MarketView.feature` cache keys include clock index/as_of. Citation validity without a report audit is `UNMEASURED`. `SchemaScorer` validates nested types (not keys only).
+
+Adversarial coverage: `Data/backend/tests/test_adversarial_w01_w02.py` (A01–A03, A06, T01–T05).
+
 Run targeted suites first during phased implementation, then the impacted broader suites.
 
 ---

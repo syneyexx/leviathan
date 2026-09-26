@@ -35,6 +35,10 @@ npm run preview
 
 Production builds are emitted to `Data/frontend/dist` and served by the FastAPI backend when present.
 
+### Optional layout editor (W00 CURRENT)
+
+`vite.config.ts` does **not** statically import `../../editor/vite-plugin.mjs`. Default `npm run test` / `npm run build` / `npm run typecheck` resolve without the excluded `editor/` tree. Set `LEVIATHAN_EDITOR=1` only when the editor checkout is present; otherwise Vite fails with an explicit configuration error.
+
 ---
 
 # 2. Frontend repository layout

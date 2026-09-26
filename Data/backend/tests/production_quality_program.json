@@ -1,0 +1,160 @@
+{
+  "program": "leviathan_production_quality",
+  "version": 1,
+  "updated": "2026-09-26",
+  "baseline_commit": "c40dd9faea90a83c582c39813eef9008965d60eb",
+  "active_wave": "W03",
+  "notes": "Maps W00-W23 masterprompt waves to existing R/G/F gates. Status is NOT PASS without executed evidence.",
+  "status_vocabulary": [
+    "NOT_STARTED",
+    "IN_PROGRESS",
+    "BLOCKED_EXTERNAL",
+    "FAIL",
+    "PASS",
+    "NOT_APPLICABLE"
+  ],
+  "wave_gate_map": {
+    "W00": ["R30", "F0"],
+    "W01": ["R24", "G_eval"],
+    "W02": ["G25", "G28"],
+    "W03": ["R14"],
+    "W04": ["R05", "R06", "R15"],
+    "W05": ["R08", "R10"],
+    "W06": ["R11", "R18"],
+    "W07": ["R07", "R13"],
+    "W08": ["R02", "R20"],
+    "W09": ["research"],
+    "W10": ["R16", "R17"],
+    "W11": ["R17", "R19"],
+    "W12": ["coding", "multimodal"],
+    "W13": ["trading_data"],
+    "W14": ["trading_kernel"],
+    "W15": ["strategy_assets"],
+    "W16": ["G25", "lab"],
+    "W17": ["WFA", "sealed"],
+    "W18": ["paper"],
+    "W19": ["instruments"],
+    "W20": ["R22", "R23"],
+    "W21": ["R25", "R26"],
+    "W22": ["ops"],
+    "W23": ["R24", "R30"]
+  },
+  "waves": [
+    {
+      "id": "W00",
+      "title": "Baseline, integration inventory and compatibility",
+      "status": "PASS",
+      "owner": "composition",
+      "dependencies": [],
+      "implementation_paths": [
+        "Data/frontend/vite.config.ts",
+        "Data/backend/tests/production_quality_program.json",
+        "scripts/verify_trading_100.py"
+      ],
+      "tests": [
+        "npm run typecheck",
+        "npm test",
+        "npm run build (with and without editor/)"
+      ],
+      "evidence": [
+        {
+          "kind": "integration",
+          "command": "npm run build (editor absent)",
+          "exit": 0,
+          "notes": "default build does not import editor plugin"
+        },
+        {
+          "kind": "integration",
+          "command": "LEVIATHAN_EDITOR=1 npm run build (editor absent)",
+          "exit": 1,
+          "notes": "precise configuration error"
+        }
+      ],
+      "blocker": null
+    },
+    {
+      "id": "W01",
+      "title": "Repair measurement integrity",
+      "status": "PASS",
+      "owner": "evaluation",
+      "dependencies": ["W00"],
+      "implementation_paths": [
+        "Data/modules/evaluation/assistant_benchmark.py",
+        "scripts/verify_trading_100.py",
+        "Data/modules/research/quality_scorecard.py",
+        "Data/modules/cognition/ttc.py"
+      ],
+      "tests": [
+        "Data/backend/tests/test_adversarial_w01_w02.py",
+        "Data/backend/tests/test_round5_evaluation_platform.py::AssistantBenchmarkTests"
+      ],
+      "evidence": [
+        {
+          "kind": "unit",
+          "command": "pytest test_adversarial_w01_w02.py test_round5...AssistantBenchmarkTests",
+          "exit": 0
+        }
+      ],
+      "blocker": null
+    },
+    {
+      "id": "W02",
+      "title": "Close trading false-success defects",
+      "status": "PASS",
+      "owner": "market_sim",
+      "dependencies": ["W00"],
+      "implementation_paths": [
+        "Data/modules/market_sim/service.py",
+        "Data/modules/market_sim/agent_lab.py",
+        "Data/modules/market_sim/readiness.py",
+        "Data/modules/market_sim/strategy_asset.py",
+        "Data/modules/market_sim/causality.py",
+        "Data/modules/market_sim/experiments.py",
+        "Data/modules/market_sim/promotion.py"
+      ],
+      "tests": [
+        "Data/backend/tests/test_adversarial_w01_w02.py",
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests"
+      ],
+      "evidence": [
+        {
+          "kind": "integration",
+          "command": "pytest P3BResearchCampaignTests + adversarial T01-T05",
+          "exit": 0,
+          "notes": "campaign worker runs gym episodes; no fabricated wins"
+        }
+      ],
+      "blocker": null
+    },
+    {
+      "id": "W03",
+      "title": "Typed completion, evidence and independent verification",
+      "status": "IN_PROGRESS",
+      "owner": "verification",
+      "dependencies": ["W01"],
+      "acceptance": [
+        "typed predicates with criterion IDs",
+        "unrelated receipts do not pass tests",
+        "required verification failures visible"
+      ],
+      "evidence": [],
+      "blocker": null
+    }
+  ],
+  "findings_revalidation": {
+    "P0_campaign_fabricated_trials": "FIXED",
+    "P0_benchmark_force_ack": "FIXED",
+    "P0_acceptance_nan_missing": "FIXED",
+    "P1_candidate_budget": "FIXED",
+    "P1_weak_promotion": "FIXED",
+    "P1_marketview_cache": "FIXED",
+    "P1_editor_vite_import": "FIXED",
+    "P1_citation_fallback": "FIXED",
+    "P1_schema_scorer_keys_only": "FIXED"
+  },
+  "excluded_trees": ["Data/HADES/", "editor/"],
+  "canonical_docs": [
+    "Data/docs/Leviathan_system_backend.md",
+    "Data/docs/Leviathan_system_frontend.md"
+  ]
+}

@@ -166,7 +166,10 @@ def evaluate_acceptance(
     Criteria use percent units (`max_drawdown_pct`, `min_total_return_pct`).
     Canonical metrics may be fractions (`total_return`, `max_drawdown`) or
     percent aliases (`total_return_pct`, `max_drawdown_pct`).
+    Missing or non-finite metrics fail closed — never treat as zero risk.
     """
+    import math
+
     min_trades = int(criteria.get("min_trades", 5))
     max_dd = float(criteria.get("max_drawdown_pct", 25.0))
     min_return = float(criteria.get("min_total_return_pct", 0.0))
@@ -182,12 +185,24 @@ def evaluate_acceptance(
                 return None
             if raw.get("value") is None:
                 return None
-            return float(raw["value"])
+            try:
+                val = float(raw["value"])
+            except (TypeError, ValueError):
+                return None
+            if math.isnan(val) or math.isinf(val):
+                return None
+            return val
         if raw is None:
             return None
-        return float(raw)
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if math.isnan(val) or math.isinf(val):
+            return None
+        return val
 
-    def _pct_metric(*names: str, fraction_keys: tuple[str, ...] = ()) -> float:
+    def _pct_metric(*names: str, fraction_keys: tuple[str, ...] = ()) -> float | None:
         for name in names:
             val = _metric_value(name)
             if val is not None:
@@ -196,14 +211,14 @@ def evaluate_acceptance(
             val = _metric_value(name)
             if val is not None:
                 return val * 100.0
-        return 0.0
+        return None
 
-    trades = 0
+    trades = None
     for key in ("trade_count", "closed_trade_count", "fills"):
         val = _metric_value(key) if key != "fills" else None
         if key == "fills":
             raw = _raw("fills")
-            if isinstance(raw, (int, float)):
+            if isinstance(raw, (int, float)) and not (math.isnan(float(raw)) or math.isinf(float(raw))):
                 trades = int(raw)
                 break
             if isinstance(raw, list):
@@ -213,6 +228,8 @@ def evaluate_acceptance(
         if val is not None:
             trades = int(val)
             break
+    if trades is None:
+        return False, "trade_count UNMEASURED"
 
     total_return = _pct_metric(
         "total_return_pct",
@@ -222,9 +239,10 @@ def evaluate_acceptance(
         "max_drawdown_pct",
         fraction_keys=("max_drawdown",),
     )
-    # Default when drawdown missing: treat as worst-case so criteria fail closed.
-    if _metric_value("max_drawdown_pct") is None and _metric_value("max_drawdown") is None:
-        max_drawdown = 100.0
+    if max_drawdown is None:
+        return False, "max_drawdown UNMEASURED — missing/NaN is not zero risk"
+    if total_return is None:
+        return False, "total_return UNMEASURED"
     vs_bench = _pct_metric(
         "excess_return_pct",
         fraction_keys=("excess_return",),
@@ -236,7 +254,7 @@ def evaluate_acceptance(
         return False, f"drawdown {max_drawdown:.2f}% exceeds {max_dd}%"
     if total_return < min_return:
         return False, f"return {total_return:.2f}% below minimum {min_return}%"
-    if require_beat_benchmark and vs_bench <= 0:
+    if require_beat_benchmark and (vs_bench is None or vs_bench <= 0):
         return False, "did not beat buy-and-hold benchmark after costs"
     return True, "acceptance criteria met on held-out split"
 

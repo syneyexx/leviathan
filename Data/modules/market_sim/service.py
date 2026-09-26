@@ -2331,10 +2331,16 @@ class MarketSimControlPlane:
         )
 
     def run_research_campaign_on_worker(self, campaign_id: str) -> dict[str, Any]:
-        """Execute/resume campaign iterations on the worker (checkpoint resume)."""
+        """Execute/resume campaign iterations on the worker (checkpoint resume).
+
+        Each trial completes only after a canonical gym/simulation episode commits
+        metrics. Fabricated wins, all-trials-as-wins, and zero-risk promotion
+        inputs are forbidden.
+        """
         from .promotion import evaluate_promotion
         from .research_campaign import ResearchCampaign, advance_campaign_iteration
         from .scorecards import build_scorecard
+        from .wfa import evaluate_acceptance_from_run
 
         row = self.get_research_campaign(campaign_id)
         campaign = ResearchCampaign(
@@ -2365,52 +2371,208 @@ class MarketSimControlPlane:
         start_from = campaign.checkpoint_iteration
         campaign.status = "RUNNING"
         self.store.upsert_research_campaign(campaign.public_dict())
-        # Resume: continue from checkpoint (never rewind)
+
+        wins = 0
+        measured_returns: list[float] = []
+        measured_drawdowns: list[float] = []
+        last_run_metrics: dict[str, Any] = {}
+        last_run_id: str | None = None
+
         while campaign.checkpoint_iteration < campaign.max_iterations:
             it = campaign.checkpoint_iteration + 1
             trial_id = str(uuid.uuid4())
-            self.store.append_trial(
-                {
-                    "trial_id": trial_id,
-                    "strategy_id": campaign.strategy_id,
-                    "strategy_version": campaign.strategy_version,
-                    "hypothesis": campaign.hypothesis or f"campaign iter {it}",
-                    "proposer_agent_id": "research_campaign",
-                    "data_hash": campaign.source_id,
-                    "fingerprint": f"{campaign.campaign_id}:{it}:{campaign.seed}",
-                    "status": "completed",
-                    "config": {"campaign_id": campaign.campaign_id, "iteration": it},
-                    "split": {},
-                    "results": {"iteration": it, "status": "recorded"},
-                    "acceptance_criteria": campaign.acceptance_criteria,
-                    "seed": campaign.seed + it,
-                    "created_at": utc_now(),
+            trial_status = "failed"
+            iteration_result: dict[str, Any] = {
+                "status": "failed",
+                "resumed_from": start_from,
+                "simulation_executed": False,
+            }
+            try:
+                episode = self.create_gym_episode(
+                    source_id=campaign.source_id,
+                    strategy_id=campaign.strategy_id,
+                    strategy_version=campaign.strategy_version,
+                    seed=campaign.seed + it,
+                    mode="complete",
+                    metadata={
+                        "campaign_id": campaign.campaign_id,
+                        "trial_id": trial_id,
+                        "iteration": it,
+                        "acceptance_criteria": campaign.acceptance_criteria,
+                    },
+                )
+                run_id = str((episode.get("episode") or {}).get("run_id") or "")
+                if not run_id:
+                    raise MarketSimError("CAMPAIGN_TRIAL_NO_RUN", "gym episode missing run_id")
+                sim_result = self.run_gym_episode_on_worker(run_id)
+                run = self._get_run(run_id)
+                metrics = dict(sim_result.get("metrics") or run.metrics or {})
+                last_run_metrics = metrics
+                last_run_id = run_id
+                acceptance = evaluate_acceptance_from_run(
+                    run.public_dict(),
+                    criteria=campaign.acceptance_criteria
+                    or {"min_trades": 1, "max_drawdown_pct": 100.0, "min_total_return_pct": -100.0},
+                )
+                accepted = bool(getattr(acceptance, "passed", False))
+                if accepted:
+                    wins += 1
+                # Extract measured scalars for scorecard (never invent zeros as wins).
+                def _metric_scalar(name: str, *alts: str) -> float | None:
+                    for key in (name, *alts):
+                        raw = metrics.get(key)
+                        if isinstance(raw, dict):
+                            if raw.get("value") is None:
+                                continue
+                            try:
+                                return float(raw["value"])
+                            except (TypeError, ValueError):
+                                continue
+                        if raw is None:
+                            continue
+                        try:
+                            return float(raw)
+                        except (TypeError, ValueError):
+                            continue
+                    return None
+
+                ret = _metric_scalar("total_return", "total_return_pct")
+                dd = _metric_scalar("max_drawdown", "max_drawdown_pct")
+                if ret is not None:
+                    measured_returns.append(ret)
+                if dd is not None:
+                    measured_drawdowns.append(dd)
+
+                trial_status = "completed"
+                iteration_result = {
+                    "status": "ok" if accepted else "rejected",
+                    "resumed_from": start_from,
+                    "simulation_executed": True,
+                    "run_id": run_id,
+                    "accepted": accepted,
+                    "acceptance": acceptance.public_dict()
+                    if hasattr(acceptance, "public_dict")
+                    else dict(acceptance),
+                    "metrics": metrics,
                 }
-            )
+                self.store.append_trial(
+                    {
+                        "trial_id": trial_id,
+                        "strategy_id": campaign.strategy_id,
+                        "strategy_version": campaign.strategy_version,
+                        "hypothesis": campaign.hypothesis or f"campaign iter {it}",
+                        "proposer_agent_id": "research_campaign",
+                        "data_hash": campaign.source_id,
+                        "fingerprint": f"{campaign.campaign_id}:{it}:{campaign.seed}",
+                        "status": trial_status,
+                        "config": {
+                            "campaign_id": campaign.campaign_id,
+                            "iteration": it,
+                            "run_id": run_id,
+                        },
+                        "split": {"role": "TRAIN"},
+                        "results": {
+                            "iteration": it,
+                            "status": trial_status,
+                            "run_id": run_id,
+                            "accepted": accepted,
+                            "metrics": metrics,
+                            "simulation_executed": True,
+                        },
+                        "acceptance_criteria": campaign.acceptance_criteria,
+                        "seed": campaign.seed + it,
+                        "created_at": utc_now(),
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001 — persist failed trial, do not fabricate metrics
+                iteration_result = {
+                    "status": "failed",
+                    "resumed_from": start_from,
+                    "simulation_executed": False,
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                }
+                self.store.append_trial(
+                    {
+                        "trial_id": trial_id,
+                        "strategy_id": campaign.strategy_id,
+                        "strategy_version": campaign.strategy_version,
+                        "hypothesis": campaign.hypothesis or f"campaign iter {it}",
+                        "proposer_agent_id": "research_campaign",
+                        "data_hash": campaign.source_id,
+                        "fingerprint": f"{campaign.campaign_id}:{it}:{campaign.seed}",
+                        "status": "failed",
+                        "config": {"campaign_id": campaign.campaign_id, "iteration": it},
+                        "split": {},
+                        "results": {
+                            "iteration": it,
+                            "status": "failed",
+                            "simulation_executed": False,
+                            "error": str(exc),
+                        },
+                        "acceptance_criteria": campaign.acceptance_criteria,
+                        "seed": campaign.seed + it,
+                        "created_at": utc_now(),
+                    }
+                )
+
             advance_campaign_iteration(
                 campaign,
                 trial_id=trial_id,
-                iteration_result={"status": "ok", "resumed_from": start_from},
+                iteration_result=iteration_result,
             )
             self.store.upsert_research_campaign(campaign.public_dict())
 
+        trials = len(campaign.trial_ids)
+        # Scorecard from measured outcomes only — zeros are UNMEASURED when no metrics.
+        total_return = sum(measured_returns) / len(measured_returns) if measured_returns else None
+        max_drawdown = max(measured_drawdowns) if measured_drawdowns else None
         card = build_scorecard(
             agent_id="research_campaign",
             role="strategy_researcher",
-            trials=len(campaign.trial_ids),
-            wins=len(campaign.trial_ids),
-            total_return=0.0,
-            max_drawdown=0.0,
+            trials=trials,
+            wins=wins,
+            total_return=float(total_return) if total_return is not None else 0.0,
+            max_drawdown=float(max_drawdown) if max_drawdown is not None else 1.0,
         )
-        campaign.scorecard = card.public_dict()
+        card_payload = card.public_dict()
+        card_payload["measurement"] = {
+            "wins_from_acceptance": True,
+            "total_return": "MEASURED" if total_return is not None else "UNMEASURED",
+            "max_drawdown": "MEASURED" if max_drawdown is not None else "UNMEASURED",
+            "fabricated_zero_risk": False,
+        }
+        campaign.scorecard = card_payload
+
+        promo_metrics = dict(last_run_metrics) if last_run_metrics else {}
         campaign.promotion = evaluate_promotion(
-            metrics={"trade_count": {"value": len(campaign.trial_ids)}, "total_return": {"value": 0.0}, "max_drawdown": {"value": 0.0}},
-            acceptance_criteria=campaign.acceptance_criteria or {"min_trades": 1},
+            run={"run_id": last_run_id or "", "metrics": promo_metrics, "metadata": {}}
+            if last_run_id
+            else None,
+            metrics=promo_metrics or None,
+            acceptance_criteria=campaign.acceptance_criteria
+            or {"min_trades": 1, "max_drawdown_pct": 100.0, "min_total_return_pct": -100.0},
             current_level="A0",
             target_level=campaign.autonomy_ceiling,
         )
-        campaign.status = "COMPLETED"
+        # Incomplete simulation receipts → honest incomplete, never fabricated COMPLETED wins.
+        executed = sum(
+            1
+            for it in (campaign.results.get("iterations") or [])
+            if it.get("simulation_executed")
+        )
+        if executed == 0:
+            campaign.status = "FAILED"
+            campaign.error = "NO_EXECUTED_SIMULATION_RECEIPTS"
+        else:
+            campaign.status = "COMPLETED"
         campaign.updated_at = utc_now()
+        campaign.metadata = {
+            **dict(campaign.metadata),
+            "executed_trials": executed,
+            "accepted_wins": wins,
+            "last_run_id": last_run_id,
+        }
         self.store.upsert_research_campaign(campaign.public_dict())
         return campaign.public_dict()
 

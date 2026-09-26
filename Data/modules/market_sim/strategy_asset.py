@@ -270,12 +270,34 @@ def promote_asset(
     target_status: str,
     evidence: dict[str, Any],
 ) -> StrategyAsset:
-    """Promote only with evidence. CHAMPION requires VALIDATED prior + evaluation refs."""
+    """Promote only with server-resolvable evidence. Caller booleans are not proof."""
     target = str(target_status).upper()
     if target not in ASSET_STATUSES:
         raise MarketSimError("STRATEGY_STATUS_INVALID", f"unknown status {target}")
+    ev = dict(evidence or {})
+    # Reject bare accepted=True / acceptance={"passed": True} without refs or metrics.
+    acceptance = ev.get("acceptance")
+    bare_bool = ev.get("accepted") is True and not (
+        ev.get("evaluation_refs") or ev.get("trial_ids") or isinstance(acceptance, dict)
+    )
+    bare_acceptance = (
+        isinstance(acceptance, dict)
+        and acceptance.get("passed") is True
+        and not (
+            acceptance.get("run_id")
+            or acceptance.get("criteria_id")
+            or acceptance.get("metrics")
+            or ev.get("evaluation_refs")
+        )
+    )
+    if bare_bool or bare_acceptance:
+        raise MarketSimError(
+            "PROMOTION_EVIDENCE_INSUFFICIENT",
+            "caller-supplied accepted/passed boolean is not authoritative proof",
+            http_status=409,
+        )
     if target in {StrategyStatus.VALIDATED.value, StrategyStatus.CHAMPION.value, StrategyStatus.RESEARCH.value}:
-        if not evidence:
+        if not ev:
             raise MarketSimError(
                 "PROMOTION_EVIDENCE_REQUIRED",
                 "promotion requires evidence refs (evals/trials/acceptance)",
@@ -288,28 +310,33 @@ def promote_asset(
                 "CHAMPION requires VALIDATED status first",
                 http_status=409,
             )
-        if not (evidence.get("evaluation_refs") or asset.evaluation_refs):
+        if not (ev.get("evaluation_refs") or asset.evaluation_refs):
             raise MarketSimError(
                 "PROMOTION_EVIDENCE_REQUIRED",
                 "CHAMPION requires evaluation_refs",
                 http_status=409,
             )
     if target == StrategyStatus.VALIDATED.value and not (
-        evidence.get("acceptance") or evidence.get("evaluation_refs")
+        (
+            isinstance(acceptance, dict)
+            and acceptance.get("passed") is True
+            and (acceptance.get("run_id") or acceptance.get("metrics") or acceptance.get("criteria_id"))
+        )
+        or ev.get("evaluation_refs")
     ):
         raise MarketSimError(
             "PROMOTION_EVIDENCE_REQUIRED",
-            "VALIDATED requires acceptance or evaluation_refs",
+            "VALIDATED requires resolved acceptance (run/metrics/criteria) or evaluation_refs",
             http_status=409,
         )
     asset.status = target
     asset.promotion_evidence = {
         **dict(asset.promotion_evidence),
-        **dict(evidence),
+        **ev,
         "promoted_to": target,
     }
-    if evidence.get("evaluation_refs"):
+    if ev.get("evaluation_refs"):
         asset.evaluation_refs = list(
-            dict.fromkeys([*asset.evaluation_refs, *list(evidence["evaluation_refs"])])
+            dict.fromkeys([*asset.evaluation_refs, *list(ev["evaluation_refs"])])
         )
     return asset
