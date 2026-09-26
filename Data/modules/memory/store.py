@@ -468,34 +468,50 @@ class MemoryStore:
         tags: list[str] | tuple[str, ...] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> MemoryRecord:
-        """Persist a corrected user preference; prior matching FACT becomes SUPERSEDED.
+        """Persist a corrected user preference; prior matching prefs become SUPERSEDED.
 
-        A08: the current preference must win on retrieval — stale ACTIVE duplicates
-        with the same preference_key are closed, not left competing.
+        A08 / W08: the current preference must win on retrieval — stale ACTIVE
+        duplicates with the same preference_key are closed, not left competing.
+        Canonical kind is PREFERENCE; legacy FACT rows tagged as preferences are
+        also superseded so BehaviorProfile overlays and MemoryStore stay aligned
+        without a parallel preference store.
         """
         key = (preference_key or "").strip()
         if not key:
             raise ValueError("preference_key is required for preference correction")
-        supersedes_id = previous_memory_id
-        if supersedes_id is None:
+        resolved_scope: MemoryScope | None = None
+        if isinstance(scope, MemoryScope):
+            resolved_scope = scope
+        elif isinstance(scope, str) and scope.strip():
+            try:
+                resolved_scope = MemoryScope(scope.strip().upper())
+            except ValueError as exc:
+                raise ValueError(f"Invalid memory scope: {scope}") from exc
+
+        stale_ids: list[str] = []
+        if previous_memory_id:
+            stale_ids.append(previous_memory_id)
+        # Close every ACTIVE preference (PREFERENCE or legacy FACT) sharing the key.
+        for kind in (MemoryKind.PREFERENCE, MemoryKind.FACT):
             active = self.list(
                 status=MemoryStatus.ACTIVE,
-                kind=MemoryKind.FACT,
+                kind=kind,
                 conversation_id=conversation_id,
                 project_id=project_id,
                 workspace_id=workspace_id,
                 user_id=user_id,
-                scope=scope if isinstance(scope, MemoryScope) else None,
+                scope=resolved_scope,
                 limit=200,
             )
             for record in active:
+                if previous_memory_id and record.memory_id == previous_memory_id:
+                    continue
                 meta = dict(record.metadata or {})
-                if str(meta.get("preference_key") or "") == key:
-                    supersedes_id = record.memory_id
-                    break
-                if key in record.tags:
-                    supersedes_id = record.memory_id
-                    break
+                if str(meta.get("preference_key") or "") == key or key in record.tags:
+                    if record.memory_id not in stale_ids:
+                        stale_ids.append(record.memory_id)
+
+        supersedes_id = stale_ids[0] if stale_ids else None
         merged_tags = list(tags or ())
         if key not in merged_tags:
             merged_tags.append(key)
@@ -504,11 +520,12 @@ class MemoryStore:
         meta = dict(metadata or {})
         meta["preference_key"] = key
         meta["correction"] = True
-        if supersedes_id:
+        if stale_ids:
             meta["supersedes_preference"] = supersedes_id
-        return self.create(
+            meta["superseded_preference_ids"] = list(stale_ids)
+        record = self.create(
             content=content,
-            kind=MemoryKind.FACT,
+            kind=MemoryKind.PREFERENCE,
             source=source,
             trust=trust,
             conversation_id=conversation_id,
@@ -520,8 +537,14 @@ class MemoryStore:
             metadata=meta,
             supersedes_id=supersedes_id,
             confidence=1.0,
-            priority=0.95,
+            priority=MEMORY_KIND_PRIORITY.get(MemoryKind.PREFERENCE, 0.95),
         )
+        # create() supersedes only one id; close any additional stale duplicates.
+        for extra_id in stale_ids[1:]:
+            if extra_id == record.memory_id:
+                continue
+            self.set_status(extra_id, MemoryStatus.SUPERSEDED)
+        return record
 
     def set_status(self, memory_id: str, status: MemoryStatus) -> MemoryRecord | None:
         now = utc_now()
