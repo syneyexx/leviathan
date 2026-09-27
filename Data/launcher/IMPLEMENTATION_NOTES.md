@@ -59,11 +59,12 @@ They do not mutate jobs, create schema, or open SQLite from the renderer.
 
 ## Build
 
-```bash
-python scripts/build_run_leviathan_exe.py
-```
+On Windows, double-click `build_run_leviathan_exe.bat` in the install root. It does not call Python. It runs the launcher tests, then the Tauri release build, and copies the result to:
 
-On Windows the published path is `dist/run_leviathan.exe`. WebView2 is required at runtime. On any other OS the script exits 3 after portable checks and does not claim the exe exists. `--allow-host-binary` builds the current OS binary for inspection and still is not `run_leviathan.exe`.
+- `run_leviathan.exe` next to the batch file
+- `dist\run_leviathan.exe`
+
+WebView2 is required at runtime. The exe is gitignored. `scripts/build_run_leviathan_exe.py` remains a non-interactive equivalent for automation. On any OS other than Windows that script exits 3 after portable checks and does not claim the exe exists. `--allow-host-binary` builds the current OS binary for inspection and still is not `run_leviathan.exe`.
 
 Visual regression, fixture only:
 

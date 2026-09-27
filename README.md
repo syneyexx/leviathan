@@ -257,8 +257,9 @@ LEVIATHAN/
 ├── requirements.txt
 ├── .env.example
 ├── installer.bat
+├── build_run_leviathan_exe.bat   # Windows compile of the backend host
 ├── run_leviathan.bat   # launches the exe, or the legacy console if it is absent
-└── run_leviathan.exe   # canonical operator launcher, after a Windows host build
+└── run_leviathan.exe   # created by the build bat; not stored in git
 ```
 
 Detailed ownership/file locations: [backend system reference](Data/docs/Leviathan_system_backend.md).
@@ -278,13 +279,13 @@ Detailed ownership/file locations: [backend system reference](Data/docs/Leviatha
 6. Start LEVIATHAN with `run_leviathan.exe` when it has been built, otherwise `run_leviathan.bat`.
 ```
 
-`run_leviathan.exe` is the backend host. It starts, stops, and observes the existing `leviathan.py` runtime in one window. It is not the user-facing frontend at `http://127.0.0.1:8765/` (host and port come from settings). Build it on Windows with Rust, Tauri, and WebView2:
+`run_leviathan.exe` is the backend host. It starts, stops, and observes the existing `leviathan.py` runtime in one window. It is not the user-facing frontend at `http://127.0.0.1:8765/` (host and port come from settings). The exe is not stored in git. On Windows, double-click:
 
-```bash
-python scripts/build_run_leviathan_exe.py
+```text
+build_run_leviathan_exe.bat
 ```
 
-The published file is `dist/run_leviathan.exe`. Source installs do not require Rust. `installer.bat` builds the exe only when `LEVIATHAN_BUILD_HOST_EXE=1`, and a failed host build fails the install. Otherwise the installer prints `NOT BUILT` and leaves `run_leviathan.bat` as the fallback.
+That requires Node.js 20+, Rust, the Visual Studio C++ build tools, and WebView2. When it succeeds, the file is next to the batch file and also at `dist\run_leviathan.exe`. Source installs do not require Rust. `installer.bat` builds the exe only when `LEVIATHAN_BUILD_HOST_EXE=1`, and a failed host build fails the install. Otherwise the installer prints `NOT BUILT` and leaves `run_leviathan.bat` as the fallback.
 
 `run_leviathan.bat` launches the exe when `run_leviathan.exe` or `dist\run_leviathan.exe` exists. `LEVIATHAN_LEGACY_CONSOLE=1` forces the old console path. `run_leviathan_workers.bat` remains the manual consolidated Worker Supervisor recovery path. Safe Mode is a process-local API-only profile inside the host and does not rewrite `.env`. Architecture notes: `Data/launcher/IMPLEMENTATION_NOTES.md`.
 
