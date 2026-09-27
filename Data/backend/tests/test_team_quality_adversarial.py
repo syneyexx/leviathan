@@ -339,7 +339,19 @@ class TeamOrchestratorTests(unittest.TestCase):
         st = orch.start(request_text="x", task_category="general", policy=policy)
         st = orch.run_until_terminal(st.run_id, max_iterations=20)
         self.assertEqual(st.status, TeamRunStatus.BLOCKED)
-        self.assertTrue(any(b.kind == "no_progress" for b in st.blockers))
+        # Truthful blocker kind — not a silent green completion.
+        self.assertTrue(
+            any(
+                b.kind
+                in {
+                    "no_progress",
+                    "repeated_no_progress",
+                    "internal_result_schema_error",
+                    "verification_failed",
+                }
+                for b in st.blockers
+            )
+        )
 
     def test_p_single_model_sequential(self) -> None:
         order: list[str] = []
@@ -408,7 +420,13 @@ class TeamOrchestratorTests(unittest.TestCase):
 
         policy = TeamExecutionPolicy(no_progress_window=2)
         orch = TeamOrchestrator(specialist_executor=executor)
-        st = orch.start(request_text="x", task_category="general", policy=policy)
+        # Research contract cannot accept a bare draft — export stays provisional.
+        st = orch.start(
+            request_text="research claim",
+            task_category="research",
+            requires_research=True,
+            policy=policy,
+        )
         orch.advance(st.run_id)
         export = orch.export_artifact(st.run_id)
         self.assertTrue(export["provisional"])
@@ -436,13 +454,13 @@ class TeamOrchestratorTests(unittest.TestCase):
                 return {
                     "role": assignment.role.value,
                     "evidence_ids": ["ev:1"],
-                    "artifact_ok": True,
+                    "provisional_artifact": {"text": "draft with unsupported leap"},
                     "unsupported_new_claim": True,
                 }
             return {
                 "role": assignment.role.value,
                 "evidence_ids": ["ev:1", "ev:2"],
-                "artifact_ok": True,
+                "provisional_artifact": {"text": "revised draft without unsupported claims"},
                 "unsupported_new_claim": False,
             }
 

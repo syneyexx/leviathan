@@ -582,6 +582,7 @@ def criterion_progress(
         "mandatory_unverifiable": unverifiable,
         "advisory_total": len(contract.advisory()),
         "label": "criteria_satisfied",
+        "criteria_ratio_label": f"{satisfied}/{total} mandatory criteria satisfied",
         "truth": {
             "not_percent_truth": True,
             "not_predicted_time": True,

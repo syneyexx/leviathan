@@ -2862,25 +2862,31 @@ async def chat(payload: ChatRequest, request: Request):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     if collab == CollaborationStrategy.TEAM:
-        lower = message.lower()
-        requires_coding = any(k in lower for k in ("fix", "bug", "test", "code", "implement", "pytest"))
-        requires_research = any(k in lower for k in ("research", "sources", "cite", "evidence", "investigate"))
-        task_category = (
-            "coding"
-            if requires_coding
-            else "research"
-            if requires_research
-            else "uncertainty"
-            if "uncertain" in lower
-            else "general"
-        )
+        from Data.modules.cognition.team_strategy import TeamSpecialistResult
+        from Data.modules.cognition.team_task_profile import build_team_task_profile
+
+        team_profile = build_team_task_profile(message)
+        task_category = team_profile.category
+        requires_coding = bool(team_profile.requires_code_execution)
+        requires_research = bool(team_profile.requires_external_research)
+        requires_tools = bool(team_profile.requires_tools)
 
         def _chat_team_executor(assignment, state):
-            """Bounded specialist call via shared model caller — fail closed without evidence."""
+            """Bounded specialist call — produce typed TeamSpecialistResult.
+
+            Never asserts artifact_ok/tests_passed/claims_supported as proof.
+            The orchestrator inspects provisional artifact text and real receipts.
+            """
+            profile = state.task_profile or {}
+            lightweight = bool(profile.get("lightweight"))
             prompt = (
                 f"ROLE={assignment.role.value}\nOBJECTIVE={assignment.objective}\n"
-                f"CRITERIA={assignment.criterion_ids}\nUSER={message}\n"
-                "Return a short public summary. Do not claim tools ran unless receipts exist."
+                f"CRITERIA={assignment.criterion_ids}\n"
+                f"TASK_CATEGORY={task_category}\n"
+                f"USER={message}\n"
+                "Return a helpful public response for the user. "
+                "Do not claim tools ran unless receipts exist. "
+                "Do not invent live trading or unavailable runtime capabilities."
             )
             summary = ""
             try:
@@ -2891,23 +2897,51 @@ async def chat(payload: ChatRequest, request: Request):
                     else:
                         summary = str(raw or "")[:4000]
             except Exception as exc:  # noqa: BLE001
-                return {
-                    "role": assignment.role.value,
-                    "evidence_ids": [],
-                    "error": str(exc),
-                    "notes": "model call failed — no fabricated evidence",
+                return TeamSpecialistResult(
+                    role=assignment.role.value,
+                    task_id=assignment.task_id,
+                    errors=[str(exc)],
+                    notes="model call failed — no fabricated evidence",
+                ).to_dict()
+
+            # Fallback local draft when model is unavailable: still a real artifact candidate
+            # for lightweight conversational TEAM (deterministic inspection), never fake receipts.
+            if not summary and lightweight and assignment.role.value in {
+                "analyst",
+                "synthesizer",
+                "verifier",
+            }:
+                summary = (
+                    "Ik ben LEVIATHAN, een lokale team-assistent. "
+                    "Ik kan uitleggen, redeneren, samenvatten en helpen met taken binnen "
+                    "de modules en tools die in deze runtime beschikbaar zijn — zonder "
+                    "verzonnen live-handelsrechten of externe bewijzen."
+                )
+
+            art = None
+            if summary and assignment.role.value in {"analyst", "synthesizer", "verifier"}:
+                art = {
+                    "text": summary,
+                    "provisional": True,
+                    "revision": state.artifact_revision,
+                    "answer_kind": profile.get("answer_kind") or "prose_reply",
                 }
-            # Without tool/test receipts we never auto-satisfy mandatory gates.
-            result: dict[str, Any] = {
-                "role": assignment.role.value,
-                "evidence_ids": [],
-                "notes": summary[:500] or "no model output",
-                "provisional_artifact": {"text": summary, "provisional": True} if summary else None,
-            }
+
+            result = TeamSpecialistResult(
+                role=assignment.role.value,
+                task_id=assignment.task_id,
+                summary=summary,
+                notes=(summary[:500] if summary else "no model output"),
+                artifact_candidate=art,
+                provisional_artifact=art,
+                evidence_ids=[],
+                material_claims=[],
+                warnings=[],
+            )
             if task_category == "uncertainty" and summary:
-                result["supported_uncertainty"] = True
-                result["evidence_ids"] = ["uncertainty:statement"]
-            return result
+                result.supported_uncertainty = True
+                result.evidence_ids = ["uncertainty:statement"]
+            return result.to_dict()
 
         team_orchestrator._executor = _chat_team_executor
         team_state = team_orchestrator.start(
@@ -2917,6 +2951,8 @@ async def chat(payload: ChatRequest, request: Request):
             task_category=task_category,
             requires_coding=requires_coding,
             requires_research=requires_research,
+            requires_tools=requires_tools,
+            profile=team_profile,
         )
         # Drive a bounded number of quality iterations for the HTTP turn.
         team_state = team_orchestrator.run_until_terminal(team_state.run_id, max_iterations=8)
@@ -2930,10 +2966,16 @@ async def chat(payload: ChatRequest, request: Request):
         else:
             progress = team_state.public_dict().get("progress") or {}
             blockers = [b.public_dict() for b in team_state.blockers]
+            quality = team_state.public_dict().get("quality_label") or team_state.status.value
+            ratio = progress.get("criteria_ratio_label") or (
+                f"{progress.get('mandatory_satisfied', 0)}/"
+                f"{progress.get('mandatory_total', 0)} mandatory criteria satisfied"
+            )
             answer = (
                 f"{USER_FACING_TEAM_DESCRIPTION}\n\n"
                 f"Status: {team_state.status.value}\n"
-                f"Criteria: {progress.get('criteria_ratio_label') or progress}\n"
+                f"TEAM quality: {quality}\n"
+                f"Criteria: {ratio}\n"
             )
             if export.get("artifact"):
                 answer += f"\nProvisional draft:\n{(export['artifact'] or {}).get('text') or ''}\n"
@@ -2962,6 +3004,7 @@ async def chat(payload: ChatRequest, request: Request):
                 "collaboration_strategy": "team",
                 "team": team_state.public_dict(),
                 "provisional": provisional,
+                "task_profile": team_profile.public_dict(),
             },
         )
         return {
@@ -2993,6 +3036,7 @@ async def chat(payload: ChatRequest, request: Request):
             "truth": {
                 "model_output_is_not_evidence": True,
                 "team_provisional": provisional,
+                "team_is_not_direct": True,
             },
         }
 

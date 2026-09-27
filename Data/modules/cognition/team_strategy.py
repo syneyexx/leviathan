@@ -14,11 +14,18 @@ from typing import Any, Mapping, Sequence
 
 from Data.modules.verification.quality_contract import (
     CompletionPolicyKind,
+    CriterionApplicability,
     EvidenceClass,
     QualityContract,
     QualityCriterion,
     CriterionSeverity,
     new_contract_id,
+)
+
+from .team_task_profile import (
+    LIGHTWEIGHT_CATEGORIES,
+    TeamTaskProfile,
+    build_team_task_profile,
 )
 
 
@@ -419,13 +426,24 @@ def select_roles_for_task(
     requires_research: bool = False,
     requires_coding: bool = False,
     requires_tools: bool = False,
+    profile: TeamTaskProfile | None = None,
 ) -> list[TeamRole]:
-    """Choose useful roles — TEAM need not invoke every role."""
+    """Choose useful roles — TEAM need not invoke every role.
+
+    Lightweight conversational/self-description uses a smaller genuine TEAM
+    graph (Analyst → Synthesizer → Verifier) — still TEAM, not DIRECT.
+    """
     roles: list[TeamRole] = [TeamRole.ORCHESTRATOR]
-    cat = (task_category or "general").lower()
-    if requires_coding or cat in {"coding", "code", "repair"}:
+    cat = (profile.category if profile else None) or (task_category or "general")
+    cat = cat.lower()
+    research = requires_research or (profile.requires_external_research if profile else False)
+    coding = requires_coding or (profile.requires_code_execution if profile else False)
+    tools = requires_tools or (profile.requires_tools if profile else False)
+    lightweight = bool(profile and profile.lightweight) or cat in LIGHTWEIGHT_CATEGORIES
+
+    if coding or cat in {"coding", "code", "repair"}:
         roles.extend([TeamRole.ANALYST, TeamRole.CRITIC, TeamRole.VERIFIER, TeamRole.SYNTHESIZER])
-    elif requires_research or cat in {"research", "factual", "investigation"}:
+    elif research or cat in {"research", "factual", "investigation"}:
         roles.extend(
             [
                 TeamRole.RESEARCHER,
@@ -435,10 +453,15 @@ def select_roles_for_task(
                 TeamRole.SYNTHESIZER,
             ]
         )
-    elif requires_tools or cat in {"tool", "local_tool"}:
+    elif cat in {"quantitative", "calculation"}:
+        roles.extend([TeamRole.ANALYST, TeamRole.VERIFIER, TeamRole.SYNTHESIZER])
+    elif tools or cat in {"tool", "local_tool", "tool_task"}:
         roles.extend([TeamRole.ANALYST, TeamRole.VERIFIER, TeamRole.SYNTHESIZER])
     elif cat in {"design", "proposal"}:
         roles.extend([TeamRole.ANALYST, TeamRole.CRITIC, TeamRole.SYNTHESIZER])
+    elif lightweight:
+        # Genuine lightweight TEAM: analyst drafts, synthesizer delivers, verifier checks.
+        roles.extend([TeamRole.ANALYST, TeamRole.SYNTHESIZER, TeamRole.VERIFIER])
     else:
         roles.extend([TeamRole.ANALYST, TeamRole.VERIFIER, TeamRole.SYNTHESIZER])
     # Deduplicate preserving order
@@ -451,6 +474,122 @@ def select_roles_for_task(
     return out
 
 
+@dataclass
+class TeamSpecialistResult:
+    """Typed specialist result contract shared by producers and TeamOrchestrator.
+
+    LLM self-assertions (artifact_ok / tests_passed / claims_supported) are never
+    authoritative alone — the orchestrator verifies against artifact state and
+    real receipts before emitting SATISFIED verdicts.
+    """
+
+    role: str
+    task_id: str = ""
+    summary: str = ""
+    artifact_candidate: dict[str, Any] | None = None
+    provisional_artifact: dict[str, Any] | None = None
+    evidence_refs: list[str] = field(default_factory=list)
+    evidence_ids: list[str] = field(default_factory=list)
+    evidence_origins: list[str] = field(default_factory=list)
+    criterion_observations: list[dict[str, Any]] = field(default_factory=list)
+    material_claims: list[dict[str, Any]] = field(default_factory=list)
+    tool_receipts: list[str] = field(default_factory=list)
+    test_receipts: list[str] = field(default_factory=list)
+    calculation_receipt_id: str | None = None
+    test_receipt_id: str | None = None
+    warnings: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    notes: str = ""
+    # Explicit signals — still require matching receipts/artifact inspection.
+    claims_supported: bool | None = None
+    citation_audit_passed: bool | None = None
+    tests_passed: bool | None = None
+    supported_uncertainty: bool | None = None
+    requirements_addressed: bool | None = None
+    unsupported_new_claim: bool | None = None
+    agents_agree_unsupported: bool | None = None
+    # Deprecated producer hint — orchestrator must not treat this as proof.
+    artifact_ok: bool | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        art = self.artifact_candidate or self.provisional_artifact
+        evidence = list(dict.fromkeys([*self.evidence_ids, *self.evidence_refs, *self.tool_receipts]))
+        out: dict[str, Any] = {
+            "role": self.role,
+            "task_id": self.task_id,
+            "summary": self.summary,
+            "notes": self.notes or (self.summary[:500] if self.summary else ""),
+            "evidence_ids": evidence,
+            "evidence_refs": list(self.evidence_refs),
+            "evidence_origins": list(self.evidence_origins),
+            "criterion_observations": list(self.criterion_observations),
+            "material_claims": list(self.material_claims),
+            "tool_receipts": list(self.tool_receipts),
+            "test_receipts": list(self.test_receipts),
+            "warnings": list(self.warnings),
+            "errors": list(self.errors),
+            "schema": "TeamSpecialistResult.v1",
+        }
+        if art is not None:
+            out["provisional_artifact"] = dict(art)
+            out["artifact_candidate"] = dict(art)
+        if self.calculation_receipt_id:
+            out["calculation_receipt_id"] = self.calculation_receipt_id
+        if self.test_receipt_id:
+            out["test_receipt_id"] = self.test_receipt_id
+        for key in (
+            "claims_supported",
+            "citation_audit_passed",
+            "tests_passed",
+            "supported_uncertainty",
+            "requirements_addressed",
+            "unsupported_new_claim",
+            "agents_agree_unsupported",
+            "artifact_ok",
+        ):
+            val = getattr(self, key)
+            if val is not None:
+                out[key] = val
+        return out
+
+    @classmethod
+    def from_mapping(cls, data: Mapping[str, Any] | "TeamSpecialistResult") -> "TeamSpecialistResult":
+        if isinstance(data, TeamSpecialistResult):
+            return data
+        raw = dict(data or {})
+        art = raw.get("artifact_candidate") or raw.get("provisional_artifact")
+        evidence = [str(x) for x in (raw.get("evidence_ids") or raw.get("evidence_refs") or [])]
+        return cls(
+            role=str(raw.get("role") or ""),
+            task_id=str(raw.get("task_id") or ""),
+            summary=str(raw.get("summary") or raw.get("notes") or ""),
+            artifact_candidate=dict(art) if isinstance(art, Mapping) else None,
+            provisional_artifact=dict(art) if isinstance(art, Mapping) else None,
+            evidence_refs=[str(x) for x in (raw.get("evidence_refs") or [])],
+            evidence_ids=evidence,
+            evidence_origins=[str(x) for x in (raw.get("evidence_origins") or [])],
+            criterion_observations=list(raw.get("criterion_observations") or []),
+            material_claims=list(raw.get("material_claims") or []),
+            tool_receipts=[str(x) for x in (raw.get("tool_receipts") or [])],
+            test_receipts=[str(x) for x in (raw.get("test_receipts") or [])],
+            calculation_receipt_id=(
+                str(raw["calculation_receipt_id"]) if raw.get("calculation_receipt_id") else None
+            ),
+            test_receipt_id=str(raw["test_receipt_id"]) if raw.get("test_receipt_id") else None,
+            warnings=[str(x) for x in (raw.get("warnings") or [])],
+            errors=[str(x) for x in (raw.get("errors") or ([raw["error"]] if raw.get("error") else []))],
+            notes=str(raw.get("notes") or ""),
+            claims_supported=raw.get("claims_supported"),
+            citation_audit_passed=raw.get("citation_audit_passed"),
+            tests_passed=raw.get("tests_passed"),
+            supported_uncertainty=raw.get("supported_uncertainty"),
+            requirements_addressed=raw.get("requirements_addressed"),
+            unsupported_new_claim=raw.get("unsupported_new_claim"),
+            agents_agree_unsupported=raw.get("agents_agree_unsupported"),
+            artifact_ok=raw.get("artifact_ok"),
+        )
+
+
 def build_default_contract_for_request(
     *,
     run_id: str,
@@ -460,12 +599,36 @@ def build_default_contract_for_request(
     requires_research: bool = False,
     requires_coding: bool = False,
     created_at: str = "",
+    profile: TeamTaskProfile | None = None,
 ) -> QualityContract:
-    """Translate a user request into concrete typed criteria (not ambition phrases)."""
-    criteria: list[QualityCriterion] = []
-    cat = (task_category or "general").lower()
+    """Translate a user request into concrete typed criteria (not ambition phrases).
 
-    if requires_coding or cat in {"coding", "code", "repair"}:
+    Task-aware: conversational/self-description gets response/coherence criteria
+    without irrelevant web/test/calc receipts. Research/coding/calc stay strict.
+    """
+    resolved = profile or (
+        build_team_task_profile(request_text)
+        if (task_category or "general") == "general"
+        and not requires_research
+        and not requires_coding
+        else None
+    )
+    criteria: list[QualityCriterion] = []
+    cat = (resolved.category if resolved else None) or (task_category or "general")
+    cat = cat.lower()
+    research = requires_research or (resolved.requires_external_research if resolved else False)
+    coding = requires_coding or (
+        resolved.requires_code_execution if resolved else False
+    ) or cat in {"coding", "code", "repair"}
+    quantitative = (resolved.requires_calculation if resolved else False) or cat in {
+        "quantitative",
+        "calculation",
+    }
+    lightweight = bool(resolved and resolved.lightweight) or cat in LIGHTWEIGHT_CATEGORIES
+    template = cat
+
+    if coding:
+        template = "coding"
         criteria.append(
             QualityCriterion(
                 criterion_id="crit:behavior_works",
@@ -486,7 +649,8 @@ def build_default_contract_for_request(
                 provenance={"source": "team_template", "template": "coding"},
             )
         )
-    elif requires_research or cat in {"research", "factual", "investigation"}:
+    elif research or cat in {"research", "factual", "investigation"}:
+        template = "research" if cat != "factual" else "factual"
         criteria.append(
             QualityCriterion(
                 criterion_id="crit:claims_supported",
@@ -494,7 +658,7 @@ def build_default_contract_for_request(
                 verification_method="claim_to_source_span_audit",
                 evidence_class=EvidenceClass.CLAIM_SUPPORT,
                 severity=CriterionSeverity.MANDATORY,
-                provenance={"source": "team_template", "template": "research"},
+                provenance={"source": "team_template", "template": template},
             )
         )
         criteria.append(
@@ -504,7 +668,7 @@ def build_default_contract_for_request(
                 verification_method="citation_audit",
                 evidence_class=EvidenceClass.CITATION_AUDIT,
                 severity=CriterionSeverity.MANDATORY,
-                provenance={"source": "team_template", "template": "research"},
+                provenance={"source": "team_template", "template": template},
             )
         )
         criteria.append(
@@ -514,10 +678,11 @@ def build_default_contract_for_request(
                 verification_method="conflict_and_gap_inspection",
                 evidence_class=EvidenceClass.INDEPENDENT_CHECK,
                 severity=CriterionSeverity.ADVISORY,
-                provenance={"source": "team_template", "template": "research"},
+                provenance={"source": "team_template", "template": template},
             )
         )
-    elif cat in {"quantitative", "calculation"}:
+    elif quantitative:
+        template = "quantitative"
         criteria.append(
             QualityCriterion(
                 criterion_id="crit:reproducible_calc",
@@ -529,6 +694,7 @@ def build_default_contract_for_request(
             )
         )
     elif cat in {"design", "proposal"}:
+        template = "design"
         criteria.append(
             QualityCriterion(
                 criterion_id="crit:requirements_addressed",
@@ -540,6 +706,7 @@ def build_default_contract_for_request(
             )
         )
     elif cat in {"uncertainty", "uncertainty_assessment"}:
+        template = "uncertainty"
         criteria.append(
             QualityCriterion(
                 criterion_id="crit:supported_uncertainty",
@@ -550,7 +717,30 @@ def build_default_contract_for_request(
                 provenance={"source": "team_template", "template": "uncertainty"},
             )
         )
+    elif lightweight:
+        template = "conversational"
+        criteria.append(
+            QualityCriterion(
+                criterion_id="crit:deliverable_present",
+                description="Non-empty candidate response exists for the current revision",
+                verification_method="deterministic_response_artifact_inspection",
+                evidence_class=EvidenceClass.ARTIFACT_INSPECTION,
+                severity=CriterionSeverity.MANDATORY,
+                provenance={"source": "team_template", "template": "conversational"},
+            )
+        )
+        criteria.append(
+            QualityCriterion(
+                criterion_id="crit:request_addressed",
+                description="Response addresses the user's conversational/self-description request",
+                verification_method="request_scope_response_inspection",
+                evidence_class=EvidenceClass.ARTIFACT_INSPECTION,
+                severity=CriterionSeverity.MANDATORY,
+                provenance={"source": "team_template", "template": "conversational"},
+            )
+        )
     else:
+        template = "general"
         criteria.append(
             QualityCriterion(
                 criterion_id="crit:deliverable_present",
@@ -574,6 +764,10 @@ def build_default_contract_for_request(
         )
     )
 
+    # Mark clearly irrelevant evidence classes as NOT_APPLICABLE for lightweight tasks
+    # when a caller embeds a mixed contract — builder itself does not add them.
+    final_category = (resolved.category if resolved else None) or cat or "general"
+
     return QualityContract(
         contract_id=new_contract_id(),
         version=1,
@@ -581,13 +775,38 @@ def build_default_contract_for_request(
         request_ref=request_ref,
         scope=(request_text or "")[:2000],
         expected_deliverables=["accepted_answer_or_artifact"],
-        task_category=task_category or "general",
+        task_category=final_category,
         exclusions=[],
         assumptions=[],
         accepted_uncertainty=[],
         criteria=criteria,
-        provenance={"builder": "build_default_contract_for_request"},
+        provenance={
+            "builder": "build_default_contract_for_request",
+            "template": template,
+            "profile": resolved.public_dict() if resolved else None,
+            "lightweight": lightweight,
+        },
         created_at=created_at,
+    )
+
+
+def mark_criterion_not_applicable(
+    criterion: QualityCriterion,
+    *,
+    justification: str,
+) -> QualityCriterion:
+    """Return a copy of *criterion* marked NOT_APPLICABLE with justification."""
+    return QualityCriterion(
+        criterion_id=criterion.criterion_id,
+        description=criterion.description,
+        verification_method=criterion.verification_method,
+        evidence_class=criterion.evidence_class,
+        severity=criterion.severity,
+        applicability=CriterionApplicability.NOT_APPLICABLE,
+        applicability_justification=justification,
+        depends_on=criterion.depends_on,
+        threshold=dict(criterion.threshold),
+        provenance={**dict(criterion.provenance), "applicability_set_by": "team_contract"},
     )
 
 
