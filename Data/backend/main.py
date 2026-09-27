@@ -1224,6 +1224,7 @@ cognition_runtime = CognitiveRuntime(
     neuro_advisor=neuro_advisor if settings.features.cognition_neuro else None,
     verification_engine=verification_engine,
     execution_gateway=execution_gateway,
+    job_runtime=job_runtime,
     observability=observability,
     resource_pressure_fn=build_resource_pressure_fn(
         telemetry_provider=lambda: telemetry_dict_from_observability(observability),

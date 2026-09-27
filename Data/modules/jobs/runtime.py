@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import uuid
 from typing import Any
@@ -430,19 +431,29 @@ class JobRuntime:
                     return current
                 raise
 
-            cap_result = self.gateway.execute(
-                CapabilityRequest(
-                    capability_id=job.capability_id,
-                    arguments=job.arguments,
-                    approval_id=job.approval_id,
-                    run_id=job.run_id,
-                    job_id=job.job_id,
-                    requested_by=job.requested_by,
-                    request_id=job.job_id,
-                    trace_id=job.trace_id,
-                    idempotency_key=job.idempotency_key,
+            # Claimed execution is worker-owned: temporarily mark this process so
+            # EXTERNAL_REQUIRED capabilities are not re-rejected as API-inline.
+            prev_worker = os.environ.get("LEVIATHAN_WORKER_ID")
+            os.environ["LEVIATHAN_WORKER_ID"] = str(self.worker_id or _LOCAL_WORKER_ID)
+            try:
+                cap_result = self.gateway.execute(
+                    CapabilityRequest(
+                        capability_id=job.capability_id,
+                        arguments=job.arguments,
+                        approval_id=job.approval_id,
+                        run_id=job.run_id,
+                        job_id=job.job_id,
+                        requested_by=job.requested_by,
+                        request_id=job.job_id,
+                        trace_id=job.trace_id,
+                        idempotency_key=job.idempotency_key,
+                    )
                 )
-            )
+            finally:
+                if prev_worker is None:
+                    os.environ.pop("LEVIATHAN_WORKER_ID", None)
+                else:
+                    os.environ["LEVIATHAN_WORKER_ID"] = prev_worker
 
             # Re-check cancel after gateway (cooperative).
             current = self.store.get(job.job_id)

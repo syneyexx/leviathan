@@ -457,6 +457,7 @@ class CognitiveRuntime:
         verification_engine: Any | None = None,
         factuality_mode: str | None = "LIGHT",
         execution_gateway: Any | None = None,
+        job_runtime: Any | None = None,
         observability: Any | None = None,
         resource_pressure_fn: Callable[[], float] | None = None,
         behavior_resolver: Any | None = None,
@@ -494,6 +495,7 @@ class CognitiveRuntime:
         # Thin factuality hook — VerificationEngine owns claim checks; Cognition only applies.
         self.factuality_mode = factuality_mode
         self.execution_gateway = execution_gateway
+        self.job_runtime = job_runtime
         self.observability = observability
         self.resource_pressure_fn = resource_pressure_fn or (lambda: 0.0)
         # Canonical BehaviorSettingsResolver — resolve current persisted profile
@@ -1365,6 +1367,225 @@ class CognitiveRuntime:
                 self._finalize(state)
                 return state.public_status()
 
+    def _execute_capability_request(
+        self,
+        state: CognitiveRunState,
+        request: Any,
+        *,
+        module_id_hint: str | None = None,
+    ) -> Any:
+        """Execute via ExecutionGateway; offload EXTERNAL_REQUIRED to JobRuntime.
+
+        When the gateway rejects with ``worker_required``, enqueue the same
+        capability through JobRuntime / Worker Fabric, stream job.* events, and
+        return the durable CapabilityResult. Does not invent success when workers
+        are unavailable.
+        """
+        result = self.execution_gateway.execute(request)
+        telemetry = getattr(result, "telemetry", None) or {}
+        status = getattr(result, "status", None)
+        status_value = getattr(status, "value", None) or str(status or "")
+        reason = str(telemetry.get("reason") or "")
+        if status_value != "REJECTED" or reason != "worker_required":
+            return result
+        if self.job_runtime is None:
+            return result
+
+        from Data.modules.execution.types import CapabilityResult, CapabilityStatus
+        from Data.modules.jobs.states import TERMINAL_JOB_STATES, JobState
+
+        capability_id = request.capability_id
+        timeout_seconds = 300.0
+        try:
+            defn = self.execution_gateway.catalog.get(capability_id) if self.execution_gateway else None
+            meta = dict(getattr(defn, "metadata", None) or {}) if defn is not None else {}
+            raw_timeout = meta.get("timeout_seconds") or meta.get("job_timeout_seconds")
+            if raw_timeout is not None:
+                timeout_seconds = max(5.0, float(raw_timeout))
+            resource_class = str(meta.get("resource_class") or "NETWORK_BOUND")
+        except Exception:  # noqa: BLE001
+            resource_class = "NETWORK_BOUND"
+
+        # Strip cognition-only callbacks — workers receive JSON-serializable args.
+        job_args = {
+            k: v
+            for k, v in dict(request.arguments or {}).items()
+            if not str(k).startswith("_") and not callable(v)
+        }
+        try:
+            job = self.job_runtime.enqueue(
+                capability_id=capability_id,
+                arguments=job_args,
+                run_id=request.run_id,
+                approval_id=request.approval_id,
+                requested_by=request.requested_by or "cognition",
+                trace_id=request.trace_id,
+                idempotency_key=request.idempotency_key,
+                latency_class="interactive",
+                domain="external",
+                consumer="cognition",
+                resource_class=resource_class,
+                timeout_seconds=timeout_seconds,
+                metadata={
+                    "module_id": module_id_hint,
+                    "offload_reason": "worker_required",
+                    "cognition_run_id": state.run_id,
+                    "action_request_id": request.request_id,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            return CapabilityResult(
+                request_id=request.request_id,
+                capability_id=capability_id,
+                status=CapabilityStatus.FAILED,
+                error=f"WORKER_UNAVAILABLE: enqueue failed: {exc}",
+                telemetry={"reason": "enqueue_failed", "offload": "job_runtime"},
+            )
+
+        self._emit(
+            state,
+            "job.started",
+            {
+                "job_id": job.job_id,
+                "capability_id": capability_id,
+                "module_id": module_id_hint,
+                "request_id": request.request_id,
+            },
+        )
+        # Wake in-process JobRuntime worker when present (tests / non-externalized).
+        wake = getattr(self.job_runtime, "_wake", None)
+        if wake is not None and hasattr(wake, "set"):
+            try:
+                wake.set()
+            except Exception:  # noqa: BLE001
+                pass
+
+        deadline = time.monotonic() + float(timeout_seconds) + 30.0
+        last_progress = 0.0
+        cancel_sent = False
+        while time.monotonic() < deadline:
+            if getattr(state, "cancel_requested", False) and not cancel_sent:
+                cancel_sent = True
+                try:
+                    self.job_runtime.cancel(job.job_id, reason="cognition_cancel_requested")
+                except Exception:  # noqa: BLE001
+                    pass
+                self._emit(
+                    state,
+                    "job.progress",
+                    {
+                        "job_id": job.job_id,
+                        "capability_id": capability_id,
+                        "status": "CANCEL_REQUESTED",
+                    },
+                )
+
+            current = self.job_runtime.get(job.job_id)
+            if current is None:
+                break
+            # Cooperatively drain general-pool jobs when no dedicated worker claimed yet.
+            if current.state == JobState.QUEUED:
+                process_next = getattr(self.job_runtime, "process_next", None)
+                if callable(process_next):
+                    try:
+                        process_next()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    current = self.job_runtime.get(job.job_id) or current
+
+            if current.state in TERMINAL_JOB_STATES:
+                raw = current.result if isinstance(current.result, dict) else {}
+                self._emit(
+                    state,
+                    "job.completed",
+                    {
+                        "job_id": job.job_id,
+                        "capability_id": capability_id,
+                        "module_id": module_id_hint,
+                        "status": current.state.value,
+                    },
+                )
+                if current.state == JobState.COMPLETED:
+                    if raw.get("capability_id") and raw.get("status"):
+                        try:
+                            mapped_status = CapabilityStatus(str(raw.get("status")))
+                        except Exception:  # noqa: BLE001
+                            mapped_status = CapabilityStatus.COMPLETED
+                        return CapabilityResult(
+                            request_id=str(raw.get("request_id") or request.request_id),
+                            capability_id=str(raw.get("capability_id") or capability_id),
+                            status=mapped_status,
+                            output=raw.get("output") if isinstance(raw.get("output"), dict) else raw,
+                            error=raw.get("error"),
+                            telemetry={
+                                **(raw.get("telemetry") if isinstance(raw.get("telemetry"), dict) else {}),
+                                "executed_via": "job_runtime",
+                                "job_id": job.job_id,
+                            },
+                        )
+                    return CapabilityResult(
+                        request_id=request.request_id,
+                        capability_id=capability_id,
+                        status=CapabilityStatus.COMPLETED,
+                        output=raw if isinstance(raw, dict) else {"result": raw},
+                        telemetry={"executed_via": "job_runtime", "job_id": job.job_id},
+                    )
+                mapped = (
+                    CapabilityStatus.CANCELLED
+                    if current.state == JobState.CANCELLED
+                    else CapabilityStatus.FAILED
+                )
+                return CapabilityResult(
+                    request_id=request.request_id,
+                    capability_id=capability_id,
+                    status=mapped,
+                    output=raw if isinstance(raw, dict) else None,
+                    error=current.error or current.state.value,
+                    telemetry={
+                        "executed_via": "job_runtime",
+                        "job_id": job.job_id,
+                        "job_state": current.state.value,
+                    },
+                )
+
+            now = time.monotonic()
+            if now - last_progress >= 1.0:
+                last_progress = now
+                self._emit(
+                    state,
+                    "job.progress",
+                    {
+                        "job_id": job.job_id,
+                        "capability_id": capability_id,
+                        "module_id": module_id_hint,
+                        "status": current.state.value,
+                    },
+                )
+                self._emit(
+                    state,
+                    "tool.progress",
+                    {
+                        "capability_id": capability_id,
+                        "request_id": request.request_id,
+                        "job_id": job.job_id,
+                        "status": current.state.value,
+                        "module_id": module_id_hint,
+                    },
+                )
+            time.sleep(0.05)
+
+        return CapabilityResult(
+            request_id=request.request_id,
+            capability_id=capability_id,
+            status=CapabilityStatus.TIMEOUT,
+            error="WORKER_UNAVAILABLE: timed out waiting for JobRuntime worker",
+            telemetry={
+                "executed_via": "job_runtime",
+                "job_id": getattr(job, "job_id", None),
+                "reason": "worker_wait_timeout",
+            },
+        )
+
     def _execute_action(
         self,
         state: CognitiveRunState,
@@ -1391,6 +1612,15 @@ class CognitiveRuntime:
             short = self.broker.shortlist_for_task(goal=state.task.goal, domain=state.task.domain)
             for cid in short.capability_ids:
                 state.working_memory.upsert("capability", cid, priority=0.45)
+                self._emit(
+                    state,
+                    "capability.discovered",
+                    {
+                        "capability_id": cid,
+                        "goal": state.task.goal,
+                        "domain": state.task.domain,
+                    },
+                )
             self._emit(state, "capability_searched", short.public_dict())
             return CognitiveObservation(
                 kind=CognitiveObservationKind.SYSTEM_STATE,
@@ -1726,7 +1956,7 @@ class CognitiveRuntime:
                         "trace_id": state.trace_id,
                     },
                 )
-                result = self.execution_gateway.execute(request)
+                result = self._execute_capability_request(state, request, module_id_hint=module_id_hint)
                 result_dict = result.public_dict() if hasattr(result, "public_dict") else dict(result)
                 status_value = str(result_dict.get("status") or "")
                 success = status_value in {"COMPLETED", "OK", "SUCCESS"}

@@ -9,7 +9,7 @@
     "NOT_APPLICABLE",
     "FAILED"
   ],
-  "notes": "Fixture adapters prove all adapter kinds. Live installs 21/21. Skill packs+catalog PASS. Vibe-Trading MCP 74 tools + ExecutionGateway approval path PASS. Agent-Reach real contract: doctor JSON + SKILL router (no fake search CLI). GhostTrack interactive-only BLOCKED_EXTERNAL. COMPOSITE declared CLI ops beat skill-pack name collisions. MCP lazy ensure_ready. No per-repository wrappers.",
+  "notes": "Fixture adapters prove all adapter kinds. Live installs 21/21. Skill packs+catalog PASS. Vibe-Trading MCP 74 tools + ExecutionGateway approval path PASS. Agent-Reach real contract: doctor JSON + SKILL router (no fake search CLI). GhostTrack interactive-only BLOCKED_EXTERNAL. COMPOSITE declared CLI ops beat skill-pack name collisions. MCP lazy ensure_ready. Cognition offloads EXTERNAL_REQUIRED MODULE caps via JobRuntime (job.* SSE). capability.discovered emitted on SEARCH. No per-repository wrappers.",
   "sources": [
     {
       "source": "wonderwhy-er/DesktopCommanderMCP",
@@ -629,7 +629,10 @@
       "status_honesty_pass_upgrades": "PASS",
       "no_v2_systems": "PASS",
       "agent_reach_web_ops": "PASS",
-      "scrollcraft_verify": "PASS"
+      "scrollcraft_verify": "PASS",
+      "cognition_job_runtime_offload": "PASS",
+      "capability_discovered_sse": "PASS",
+      "cli_blocks_api_thread": "NO (EXTERNAL_REQUIRED → JobRuntime)"
     },
     "skill_pack_invoke": {
       "claude-osint": {

@@ -479,7 +479,7 @@ Routes cover:
 - `pages/PerformancePage.tsx` — thin wrapper/performance page;
 - `pages/ConsolePage.tsx` — thin wrapper/console page.
 
-Chat Tools tab telemetry may optionally include `module_id`, `provider`, `result_count`, `artifact_refs`, `source_count`, and typed `parts` from capability outputs while preserving backward-compatible `assistant_message` / TEAM contracts.
+Chat Tools tab telemetry may optionally include `module_id`, `provider`, `result_count`, `artifact_refs`, `source_count`, and typed `parts` from capability outputs while preserving backward-compatible `assistant_message` / TEAM contracts. Chat SSE may surface operational `capability.discovered`, `job.started` / `job.progress` / `job.completed`, and `tool.*` / `module.*` / `artifact.*` / `source.*` events when CognitiveRuntime offloads EXTERNAL_REQUIRED work through JobRuntime — status line only, never private CoT.
 
 Runtime-oriented supporting pages/components also live in page subdirectories (`pages/plugin/`, `pages/runtime/` where present). Route wiring in `App.tsx` is authoritative.
 
