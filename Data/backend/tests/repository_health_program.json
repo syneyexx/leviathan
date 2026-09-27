@@ -4,7 +4,7 @@
   "updated": "2026-09-27",
   "audit_baseline_sha": "95fe8658638ff016115d9a05c9a2a8d835ccfb97",
   "starting_current_main_head": "95fe8658638ff016115d9a05c9a2a8d835ccfb97",
-  "notes": "A–Z institutional recovery against CURRENT main. Defect candidates revalidated; statuses are evidence-backed.",
+  "notes": "A\u2013Z institutional recovery against CURRENT main. Defect candidates revalidated; statuses are evidence-backed.",
   "status_vocabulary": [
     "CONFIRMED",
     "ALREADY_FIXED_CURRENT",
@@ -14,7 +14,10 @@
     "BLOCKED_EXTERNAL",
     "DECISION_REQUIRED"
   ],
-  "excluded_trees": ["Data/HADES/", "editor/"],
+  "excluded_trees": [
+    "Data/HADES/",
+    "editor/"
+  ],
   "environment": {
     "os": "Linux cursor 6.12.94+",
     "python": "3.12.3",
@@ -74,7 +77,9 @@
       ],
       "root_cause": "Compile-time types only at JSON trust boundary",
       "fix": "Lightweight runtime guards for persisted message and stream terminal/token events",
-      "tests": ["Data/frontend/src/api/chatContract.adversarial.test.ts"],
+      "tests": [
+        "Data/frontend/src/api/chatContract.adversarial.test.ts"
+      ],
       "verification": "pending_local",
       "notes": ""
     },
@@ -91,7 +96,9 @@
       ],
       "root_cause": "Persisted messages trusted as Message shape",
       "fix": "toDisplayMessages + normalizeMessage at load/reconcile boundaries",
-      "tests": ["Data/frontend/src/api/chatContract.adversarial.test.ts"],
+      "tests": [
+        "Data/frontend/src/api/chatContract.adversarial.test.ts"
+      ],
       "verification": "pending_local",
       "notes": "null/undefined content no longer reaches unsafe dereference"
     },
@@ -102,10 +109,14 @@
       "status": "FIXED",
       "reproduction": "setTeamPanel only cleared when collaborationStrategy!==team",
       "canonical_owner": "ChatPage",
-      "files": ["Data/frontend/src/pages/ChatPage.tsx"],
+      "files": [
+        "Data/frontend/src/pages/ChatPage.tsx"
+      ],
       "root_cause": "TEAM panel state survived conversation switches and non-team responses",
       "fix": "Clear team panel on load/create/error/non-team terminal; always set from payload presence",
-      "tests": ["Data/frontend/src/api/chatContract.adversarial.test.ts"],
+      "tests": [
+        "Data/frontend/src/api/chatContract.adversarial.test.ts"
+      ],
       "verification": "pending_local",
       "notes": ""
     },
@@ -116,7 +127,9 @@
       "status": "CONFIRMED",
       "reproduction": "research worker_context KnowledgeStore(settings.database_path)",
       "canonical_owner": "modules.research.worker_context",
-      "files": ["Data/modules/research/worker_context.py"],
+      "files": [
+        "Data/modules/research/worker_context.py"
+      ],
       "root_cause": "CONTROL compat alias used for KNOWLEDGE tables",
       "fix": null,
       "tests": [],
@@ -130,7 +143,9 @@
       "status": "CONFIRMED",
       "reproduction": "dataset worker KnowledgeStore(settings.database_path)",
       "canonical_owner": "modules.datasets.worker",
-      "files": ["Data/modules/datasets/worker.py"],
+      "files": [
+        "Data/modules/datasets/worker.py"
+      ],
       "root_cause": "CONTROL path passed into KnowledgeStore",
       "fix": null,
       "tests": [],
@@ -144,7 +159,9 @@
       "status": "CONFIRMED",
       "reproduction": "source_ingestion worker mixes CONTROL jobs with KnowledgeStore on CONTROL",
       "canonical_owner": "modules.source_ingestion.worker",
-      "files": ["Data/modules/source_ingestion/worker.py"],
+      "files": [
+        "Data/modules/source_ingestion/worker.py"
+      ],
       "root_cause": "Single database_path for multi-domain stores",
       "fix": null,
       "tests": [],
@@ -158,7 +175,10 @@
       "status": "CONFIRMED",
       "reproduction": "ResearchService passes store.db_path (CONTROL) to SourceIngestionService",
       "canonical_owner": "modules.research.service",
-      "files": ["Data/modules/research/service.py", "Data/modules/source_ingestion/service.py"],
+      "files": [
+        "Data/modules/research/service.py",
+        "Data/modules/source_ingestion/service.py"
+      ],
       "root_cause": "IngestionStore inherits Research CONTROL path",
       "fix": null,
       "tests": [],
@@ -181,7 +201,7 @@
       "fix": null,
       "tests": [],
       "verification": null,
-      "notes": "Wave 2 — pick single canonical domain"
+      "notes": "Wave 2 \u2014 pick single canonical domain"
     },
     {
       "id": "DBOWN-006",
@@ -226,12 +246,512 @@
       "status": "CONFIRMED",
       "reproduction": "Database facade KnowledgeStore(self.path) on CONTROL; bootstrap creates knowledge_* on CONTROL",
       "canonical_owner": "backend.database.Database",
-      "files": ["Data/backend/database.py"],
+      "files": [
+        "Data/backend/database.py"
+      ],
       "root_cause": "Legacy single-DB facade still creates Knowledge tables on CONTROL",
       "fix": null,
       "tests": [],
       "verification": null,
       "notes": "Wave 2"
+    },
+    {
+      "id": "SCHEMA-001",
+      "severity": "P0",
+      "subsystem": "schema",
+      "status": "FIXED",
+      "reproduction": "see wave tests",
+      "canonical_owner": "schema",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 3 canonical bootstrap + stub repair",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 3 canonical bootstrap + stub repair"
+    },
+    {
+      "id": "SCHEMA-002",
+      "severity": "P0",
+      "subsystem": "schema",
+      "status": "FIXED",
+      "reproduction": "see wave tests",
+      "canonical_owner": "schema",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 3",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 3"
+    },
+    {
+      "id": "SCHEMA-003",
+      "severity": "P0",
+      "subsystem": "schema",
+      "status": "FIXED",
+      "reproduction": "see wave tests",
+      "canonical_owner": "schema",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 3",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 3"
+    },
+    {
+      "id": "SCHEMA-004",
+      "severity": "P0",
+      "subsystem": "schema",
+      "status": "FIXED",
+      "reproduction": "see wave tests",
+      "canonical_owner": "schema",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 3",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 3"
+    },
+    {
+      "id": "SCHEMA-005",
+      "severity": "P0",
+      "subsystem": "schema",
+      "status": "FIXED",
+      "reproduction": "see wave tests",
+      "canonical_owner": "schema",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 3",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 3"
+    },
+    {
+      "id": "SCHEMA-006",
+      "severity": "P0",
+      "subsystem": "schema",
+      "status": "FIXED",
+      "reproduction": "see wave tests",
+      "canonical_owner": "schema",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 3",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 3"
+    },
+    {
+      "id": "BACKUP-001",
+      "severity": "P0",
+      "subsystem": "backup",
+      "status": "FIXED",
+      "reproduction": "see wave tests",
+      "canonical_owner": "backup",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 7 KNOWLEDGE inventory",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 7 KNOWLEDGE inventory"
+    },
+    {
+      "id": "BACKUP-002",
+      "severity": "P0",
+      "subsystem": "backup",
+      "status": "FIXED",
+      "reproduction": "see wave tests",
+      "canonical_owner": "backup",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 7 journaled non-atomic restore",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 7 journaled non-atomic restore"
+    },
+    {
+      "id": "BACKUP-003",
+      "severity": "P0",
+      "subsystem": "backup",
+      "status": "FIXED",
+      "reproduction": "see wave tests",
+      "canonical_owner": "backup",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 7 maintenance_boundary",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 7 maintenance_boundary"
+    },
+    {
+      "id": "BACKUP-004",
+      "severity": "P0",
+      "subsystem": "backup",
+      "status": "ALREADY_FIXED_CURRENT",
+      "reproduction": "see wave tests",
+      "canonical_owner": "backup",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 7 operator loopback",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 7 operator loopback"
+    },
+    {
+      "id": "BACKUP-005",
+      "severity": "P1",
+      "subsystem": "backup",
+      "status": "ALREADY_FIXED_CURRENT",
+      "reproduction": "see wave tests",
+      "canonical_owner": "backup",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 7 worker enqueue when externalized",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 7 worker enqueue when externalized"
+    },
+    {
+      "id": "PROVIDER-001",
+      "severity": "P1",
+      "subsystem": "provider_io",
+      "status": "FIXED",
+      "reproduction": "see wave tests",
+      "canonical_owner": "provider_io",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 8 sqlite_policy",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 8 sqlite_policy"
+    },
+    {
+      "id": "PROVIDER-002",
+      "severity": "P0",
+      "subsystem": "provider_io",
+      "status": "FIXED",
+      "reproduction": "see wave tests",
+      "canonical_owner": "provider_io",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 8 durable sequence",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 8 durable sequence"
+    },
+    {
+      "id": "MODEL-001",
+      "severity": "P0",
+      "subsystem": "model_runtime",
+      "status": "FIXED",
+      "reproduction": "see wave tests",
+      "canonical_owner": "model_runtime",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 8 stderr drain",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 8 stderr drain"
+    },
+    {
+      "id": "MODEL-002",
+      "severity": "P0",
+      "subsystem": "model_runtime",
+      "status": "FIXED",
+      "reproduction": "see wave tests",
+      "canonical_owner": "model_runtime",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 8 orphan registry reconcile",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 8 orphan registry reconcile"
+    },
+    {
+      "id": "TRUTH-001",
+      "severity": "P1",
+      "subsystem": "research",
+      "status": "FIXED",
+      "reproduction": "see wave tests",
+      "canonical_owner": "research",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 10 source_ingestion_status",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 10 source_ingestion_status"
+    },
+    {
+      "id": "TRUTH-002",
+      "severity": "P1",
+      "subsystem": "db_commit",
+      "status": "FIXED",
+      "reproduction": "see wave tests",
+      "canonical_owner": "db_commit",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 10 no false APPLIED after aux failure",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 10 no false APPLIED after aux failure"
+    },
+    {
+      "id": "NUMERIC-001",
+      "severity": "P1",
+      "subsystem": "compute",
+      "status": "FIXED",
+      "reproduction": "see wave tests",
+      "canonical_owner": "compute",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 11 delegates to NumericComputeEngine",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 11 delegates to NumericComputeEngine"
+    },
+    {
+      "id": "MARKET-001",
+      "severity": "P0",
+      "subsystem": "market_feed",
+      "status": "FIXED",
+      "reproduction": "see wave tests",
+      "canonical_owner": "market_feed",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 12 DEGRADED_GAP continuity",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 12 DEGRADED_GAP continuity"
+    },
+    {
+      "id": "MARKET-002",
+      "severity": "P1",
+      "subsystem": "market_feed",
+      "status": "FIXED",
+      "reproduction": "see wave tests",
+      "canonical_owner": "market_feed",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 12 stable feed identity",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 12 stable feed identity"
+    },
+    {
+      "id": "OBS-001",
+      "severity": "P1",
+      "subsystem": "observability",
+      "status": "FIXED",
+      "reproduction": "see wave tests",
+      "canonical_owner": "observability",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 13 per-domain contention",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 13 per-domain contention"
+    },
+    {
+      "id": "VERIFY-001",
+      "severity": "P1",
+      "subsystem": "audit",
+      "status": "FIXED",
+      "reproduction": "see wave tests",
+      "canonical_owner": "audit",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 14 three-DB audit",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 14 three-DB audit"
+    },
+    {
+      "id": "VERIFY-002",
+      "severity": "P1",
+      "subsystem": "audit",
+      "status": "FIXED",
+      "reproduction": "see wave tests",
+      "canonical_owner": "audit",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 14 bounded default",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 14 bounded default"
+    },
+    {
+      "id": "VERIFY-003",
+      "severity": "P2",
+      "subsystem": "audit",
+      "status": "FIXED",
+      "reproduction": "see wave tests",
+      "canonical_owner": "audit",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 14 regenerated three_database report",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 14 regenerated three_database report"
+    },
+    {
+      "id": "VERIFY-004",
+      "severity": "P2",
+      "subsystem": "frontier",
+      "status": "ALREADY_FIXED_CURRENT",
+      "reproduction": "see wave tests",
+      "canonical_owner": "frontier",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 14 gates remain evidence-gated",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 14 gates remain evidence-gated"
+    },
+    {
+      "id": "CLEANUP-002",
+      "severity": "P2",
+      "subsystem": "ci",
+      "status": "FIXED",
+      "reproduction": "see wave tests",
+      "canonical_owner": "ci",
+      "files": [],
+      "root_cause": null,
+      "fix": "Wave 14 Data/HADES/ exclusion path",
+      "tests": [
+        "Data/backend/tests/test_schema_wave3_authority.py",
+        "Data/backend/tests/test_backup_wave7.py",
+        "Data/backend/tests/test_wave7_14_institutional.py",
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 14 Data/HADES/ exclusion path"
     }
-  ]
+  ],
+  "wave7_14_revalidation": {
+    "at": "2026-09-27T11:43:53Z",
+    "note": "SCHEMA/BACKUP/PROVIDER/MODEL/TRUTH/NUMERIC/MARKET/OBS/VERIFY/CLEANUP revalidated on current branch."
+  }
 }
