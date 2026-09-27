@@ -479,20 +479,32 @@ class SourceIngestionService:
         if job is None:
             return None
         try:
+            from Data.modules.jobs.leases import fenced_transition
+
             source_id = str(job.arguments.get("source_id") or "")
             if job.capability_id == CAPABILITY_BRAIN_RETRY:
                 self.pipeline().retry_brain_only(source_id)
             else:
                 self.pipeline().process_source(source_id)
-            store.transition(
+            fenced_transition(
+                store,
                 job.job_id,
                 JobState.COMPLETED,
+                worker_id=worker_id,
                 result={"source_id": source_id, "progress": self.get_status(source_id).public_dict()},
             )
             return job.job_id
         except Exception as exc:  # noqa: BLE001
             try:
-                store.transition(job.job_id, JobState.FAILED, error=str(exc)[:500])
+                from Data.modules.jobs.leases import fenced_transition
+
+                fenced_transition(
+                    store,
+                    job.job_id,
+                    JobState.FAILED,
+                    worker_id=worker_id,
+                    error=str(exc)[:500],
+                )
             except Exception:  # noqa: BLE001
                 pass
             return job.job_id

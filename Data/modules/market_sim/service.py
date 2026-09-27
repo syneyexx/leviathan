@@ -123,11 +123,12 @@ class MarketSimControlPlane:
         staged_retriever: Any | None = None,
         brain_access: Any | None = None,
     ) -> "MarketSimControlPlane":
-        path = Path(
-            db_path
-            or getattr(settings, "market_database_path", None)
-            or settings.database_path
-        )
+        if db_path is not None:
+            path = Path(db_path)
+        else:
+            from Data.modules.common.database_domains import market_path_from_settings
+
+            path = market_path_from_settings(settings)
         store = MarketSimStore(path)
         store.initialize()
         markets_root = Path(settings.market_sim.markets_root)

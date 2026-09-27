@@ -311,9 +311,17 @@ class DatasetJobRunner:
         if target is None:
             return
         try:
-            self.jobs.store.transition(
+            from Data.modules.jobs.leases import fenced_transition
+
+            owner = getattr(kernel_job, "lease_owner", None)
+            if not owner:
+                # No proven lease — refuse to authoritatively mutate kernel truth.
+                return
+            fenced_transition(
+                self.jobs.store,
                 kernel_job.job_id,
                 target,
+                worker_id=str(owner),
                 result={
                     "dataset_job_id": domain.job_id,
                     "status": domain.status.value,
@@ -334,9 +342,16 @@ class DatasetJobRunner:
         if self.jobs is None:
             return
         try:
-            self.jobs.store.transition(
+            from Data.modules.jobs.leases import fenced_transition
+
+            owner = getattr(kernel_job, "lease_owner", None)
+            if not owner:
+                return
+            fenced_transition(
+                self.jobs.store,
                 kernel_job.job_id,
                 JobState.FAILED,
+                worker_id=str(owner),
                 error=error[:500],
                 error_code="DATASET_LINK_ERROR",
                 retryable=False,
