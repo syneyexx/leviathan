@@ -356,18 +356,24 @@ def build_matrix(*, rows: int = 32, out_path: Path = DEFAULT_OUT) -> dict[str, A
                     else:
                         status = "FAIL"
                         notes = rust.get("error") or f"py={py_h} rust={rust_h}"
-                        # Document intentional differences only when clearly labeled
-                        if operation == "dataset.dedupe" and rust.get("ok"):
-                            intentional.append(
-                                {
-                                    "operation": operation,
-                                    "reason": "HASH_MISMATCH_INVESTIGATE",
-                                    "detail": notes,
-                                }
-                            )
+                        intentional.append(
+                            {
+                                "operation": operation,
+                                "reason": "HASH_MISMATCH_INVESTIGATE",
+                                "detail": notes,
+                            }
+                        )
                 else:
                     status = "FAIL"
                     notes = rust.get("error") or f"py={py_h} rust={rust_h}"
+                    if rust.get("ok"):
+                        intentional.append(
+                            {
+                                "operation": operation,
+                                "reason": "HASH_MISMATCH_INVESTIGATE",
+                                "detail": notes,
+                            }
+                        )
 
             entries.append(
                 {
