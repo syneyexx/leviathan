@@ -22,8 +22,12 @@
         "GIT_CHECKOUT",
         "PYTHON_VENV"
       ],
+      "python_packages": [
+        "yt-dlp[default]"
+      ],
       "dependencies": [
-        "python3"
+        "python3",
+        "curl"
       ]
     },
     "skill_roots": [
@@ -64,6 +68,26 @@
             "agent-reach",
             "version"
           ]
+        },
+        {
+          "name": "fetch_url",
+          "command": [
+            "curl",
+            "-sS",
+            "https://r.jina.ai/{url}"
+          ],
+          "timeout_seconds": 60
+        },
+        {
+          "name": "v2ex_hot",
+          "command": [
+            "curl",
+            "-sS",
+            "https://www.v2ex.com/api/topics/hot.json",
+            "-H",
+            "User-Agent: agent-reach/1.0"
+          ],
+          "timeout_seconds": 45
         }
       ]
     },
@@ -84,7 +108,7 @@
     "domain": "osint",
     "resource_class": "NETWORK_HEAVY",
     "metadata": {
-      "preferred_machine_contract": "SKILL.md internet router + CLI doctor/watch/check-update/version. No native `agent-reach search` subcommand — platform reads are routed by the skill to upstream tools (gh, yt-dlp, jina, mcporter, bili). Upstream MCP get_status server is currently incompatible with modern mcp SDK (list_tools API) so CLI doctor --json is the status contract.",
+      "preferred_machine_contract": "SKILL.md internet router + CLI doctor/watch + zero-config fetch_url (Jina) / v2ex_hot. No native `agent-reach search` subcommand — other platforms via upstream tools (gh, yt-dlp, mcporter, bili). Upstream MCP get_status incompatible with modern mcp SDK — CLI doctor --json is status contract.",
       "not_a_second_agent_runtime": true,
       "no_native_search_subcommand": true
     }
@@ -105,6 +129,26 @@
       "name": "Agent-Reach Watch",
       "description": "Quick health + update check for scheduled monitoring.",
       "external_name": "watch",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.agent_reach.fetch_url",
+      "name": "Agent-Reach Fetch URL (Jina)",
+      "description": "Read an arbitrary URL via Jina Reader (skill-routed zero-config web path).",
+      "external_name": "fetch_url",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.agent_reach.v2ex_hot",
+      "name": "Agent-Reach V2EX Hot",
+      "description": "Fetch V2EX hot topics JSON (skill-routed zero-config social path).",
+      "external_name": "v2ex_hot",
       "side_effects": [
         "READ",
         "NETWORK"

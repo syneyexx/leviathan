@@ -97,11 +97,12 @@
       "known_external_requirements": [
         "git",
         "python>=3.10",
+        "curl",
         "network",
         "optional: yt-dlp, gh, mcporter, platform CLIs"
       ],
-      "status": "PARTIAL",
-      "limitations": "Audited: no native `agent-reach search` subcommand. Real contract is SKILL.md router + CLI doctor --json / watch / check-update / version. Doctor JSON + skill load PASS. Platform scrapes (Reddit/YouTube/\u2026) require upstream tools (gh, yt-dlp, jina, mcporter) selected by cognition from the skill \u2014 not a fake search CLI. Upstream MCP get_status incompatible with modern mcp SDK (list_tools) \u2014 CLI doctor is status contract."
+      "status": "PASS",
+      "limitations": "Real contract: SKILL.md router + CLI doctor --json + zero-config fetch_url (Jina) / v2ex_hot via generic curl argv. Live doctor/v2ex_hot/fetch_url PASS. No native search subcommand. Reddit/YouTube/etc. need optional upstream CLIs/login; yt-dlp installable via python_packages. Not a second agent runtime."
     },
     {
       "source": "HunxByts/GhostTrack",
@@ -240,7 +241,7 @@
         "ffmpeg(optional)"
       ],
       "status": "PARTIAL",
-      "limitations": "Live GIT+npm install PASS; skill search/load PASS; generate+build produce scrollcraft.json + dist/index.html PASS. verify may fail without frames/ffmpeg (DEPENDENCY/EXIT_NONZERO honest). Full cinematic video path BLOCKED_EXTERNAL without assets."
+      "limitations": "Live GIT+npm install PASS; generate+build \u2192 scrollcraft.json + dist/index.html + FILE artifacts PASS. ffmpeg present; verify still EXIT_NONZERO without frame assets (frames: absent) \u2014 honest PARTIAL for cinematic verify path."
     },
     {
       "source": "ukanwat/selfstarter",
@@ -548,7 +549,9 @@
       "skill_load": "PASS",
       "generate": "PASS",
       "build": "PASS",
-      "verify": "FAILED_EXIT_NONZERO_or_missing_frames"
+      "verify": "FAILED_EXIT_NONZERO_frames_absent",
+      "ffmpeg_present": "PASS",
+      "generate_build_artifacts": "PASS"
     },
     "osintgram": {
       "install": "PASS",
@@ -622,7 +625,8 @@
       "agent_reach_real_contract": "PASS",
       "composite_cli_over_skill_search": "PASS",
       "status_honesty_pass_upgrades": "PASS",
-      "no_v2_systems": "PASS"
+      "no_v2_systems": "PASS",
+      "agent_reach_web_ops": "PASS"
     },
     "skill_pack_invoke": {
       "claude-osint": {
@@ -707,7 +711,10 @@
       "skill_load": "PASS",
       "native_search_subcommand": "ABSENT",
       "mcp_get_status": "BLOCKED_EXTERNAL upstream mcp SDK API",
-      "composite_cli_ops_precedence": "PASS"
+      "composite_cli_ops_precedence": "PASS",
+      "fetch_url_jina": "PASS",
+      "v2ex_hot": "PASS",
+      "skill_routed_zero_config_cli": "PASS"
     }
   }
 }
