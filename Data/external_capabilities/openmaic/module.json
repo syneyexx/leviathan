@@ -1,7 +1,7 @@
 {
   "module_id": "openmaic",
   "name": "OpenMAIC",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
   "side_effects": [
     "READ",
@@ -45,17 +45,62 @@
       "base_url": "http://127.0.0.1:3000",
       "ready_probe": {
         "kind": "http",
-        "url": "http://127.0.0.1:3000",
+        "url": "http://127.0.0.1:3000/api/health",
         "expect_status": 200
       },
       "health_probe": {
         "kind": "http",
-        "url": "http://127.0.0.1:3000",
+        "url": "http://127.0.0.1:3000/api/health",
         "expect_status": 200
       },
       "operations": [
         {
+          "name": "health",
+          "method": "GET",
+          "path": "/api/health"
+        },
+        {
+          "name": "agent_runtime_status",
+          "method": "GET",
+          "path": "/api/agent/runtime"
+        },
+        {
           "name": "generate_course",
+          "method": "POST",
+          "path": "/api/generate-classroom",
+          "accept_statuses": [
+            200,
+            201,
+            202
+          ],
+          "body_from": [
+            "requirement",
+            "topic",
+            "prompt",
+            "message",
+            "pdfContent",
+            "enableWebSearch",
+            "enableImageGeneration",
+            "enableVideoGeneration",
+            "enableTTS",
+            "agentMode"
+          ],
+          "body_aliases": {
+            "topic": "requirement",
+            "prompt": "requirement",
+            "message": "requirement"
+          }
+        },
+        {
+          "name": "classroom_job_status",
+          "method": "GET",
+          "path": "/api/generate-classroom/{jobId}",
+          "path_params": [
+            "jobId"
+          ]
+        },
+        {
+          "name": "generate_course_agent_session",
           "method": "POST",
           "path": "/api/agent/sessions",
           "body_from": [
@@ -63,12 +108,19 @@
             "level",
             "prompt",
             "message"
-          ]
+          ],
+          "metadata": {
+            "requires_agent_runtime": true,
+            "note": "Returns HTTP 404 unless OPENMAIC agent runtime flag + DATABASE_URL are configured."
+          }
         },
         {
           "name": "session_status",
           "method": "GET",
-          "path": "/api/agent/sessions/status"
+          "path": "/api/agent/sessions/status",
+          "metadata": {
+            "requires_agent_runtime": true
+          }
         },
         {
           "name": "cancel_session",
@@ -76,12 +128,19 @@
           "path": "/api/agent/sessions/{session_id}/cancel",
           "path_params": [
             "session_id"
-          ]
+          ],
+          "metadata": {
+            "requires_agent_runtime": true
+          }
         },
         {
           "name": "list_skills",
           "method": "GET",
-          "path": "/api/agent/skills"
+          "path": "/api/agent/skills",
+          "metadata": {
+            "requires_agent_runtime": true,
+            "note": "Agent-runtime gated. Prefer SKILL_PACK importer for on-demand skill load."
+          }
         }
       ],
       "eager_start": false
@@ -108,7 +167,7 @@
     "domain": "education",
     "resource_class": "CPU_HEAVY",
     "metadata": {
-      "preferred_machine_contract": "Next.js PROCESS_SERVICE on :3000 + SKILL.md packs under skills/",
+      "preferred_machine_contract": "PROCESS_SERVICE: Next.js /api/health + /api/generate-classroom; SKILL_PACK under skills/. Agent /api/agent/* requires feature flag + DATABASE_URL.",
       "requires_node": ">=22.19.0",
       "llm_provider_keys_required": true
     }
@@ -117,11 +176,41 @@
     {
       "capability_id": "external.openmaic.generate_course",
       "name": "OpenMAIC Generate Course",
-      "description": "Create an OpenMAIC agent session to generate course/slides/quizzes for a topic.",
+      "description": "Create an OpenMAIC classroom generation job (slides/quizzes/course) for a topic via /api/generate-classroom.",
       "external_name": "generate_course",
       "side_effects": [
         "EXECUTE",
         "WRITE",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.openmaic.classroom_job_status",
+      "name": "OpenMAIC Classroom Job Status",
+      "description": "Poll OpenMAIC classroom generation job status by jobId.",
+      "external_name": "classroom_job_status",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.openmaic.health",
+      "name": "OpenMAIC Health",
+      "description": "Read OpenMAIC /api/health capability probe.",
+      "external_name": "health",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.openmaic.agent_runtime_status",
+      "name": "OpenMAIC Agent Runtime Status",
+      "description": "Probe whether OpenMAIC agent-runtime APIs are enabled (honest gating).",
+      "external_name": "agent_runtime_status",
+      "side_effects": [
+        "READ",
         "NETWORK"
       ]
     },

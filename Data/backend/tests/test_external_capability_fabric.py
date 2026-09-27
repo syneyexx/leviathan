@@ -83,6 +83,9 @@ class ExternalFabricUnitTests(unittest.TestCase):
         openmaic = json.loads((root / "openmaic" / "module.json").read_text(encoding="utf-8"))
         self.assertIn("3000", json.dumps(openmaic["external"]["runtime"]))
         self.assertIn("NODE_PNPM", json.dumps(openmaic["external"]["install"]))
+        self.assertIn("/api/health", json.dumps(openmaic["external"]["runtime"]))
+        self.assertIn("/api/generate-classroom", json.dumps(openmaic["external"]["runtime"]))
+        self.assertIn("body_aliases", json.dumps(openmaic["external"]["runtime"]))
         scroll = json.loads((root / "scrollcraft" / "module.json").read_text(encoding="utf-8"))
         self.assertIn("plugins/scrollcraft/skills", json.dumps(scroll["external"]))
 
@@ -559,7 +562,14 @@ class ExternalAdapterFixtureE2ETests(unittest.TestCase):
                                     "method": "POST",
                                     "path": "/echo",
                                     "body": "json",
-                                }
+                                },
+                                {
+                                    "name": "echo_alias",
+                                    "method": "POST",
+                                    "path": "/echo",
+                                    "body_from": ["topic", "message"],
+                                    "body_aliases": {"topic": "message"},
+                                },
                             ],
                         },
                         "result": {"format": "json"},
@@ -586,6 +596,8 @@ class ExternalAdapterFixtureE2ETests(unittest.TestCase):
                 self.assertEqual(result.status, "COMPLETED")
                 structured = (result.output or {}).get("structured_data") or {}
                 self.assertTrue(structured.get("ok") or "echo" in structured or "parts" in (result.output or {}))
+                aliased = manager.execute("fake-http", "echo_alias", {"topic": "aliased-hi"})
+                self.assertEqual(aliased.status, "COMPLETED")
         finally:
             proc.terminate()
             try:

@@ -9,7 +9,7 @@
     "NOT_APPLICABLE",
     "FAILED"
   ],
-  "notes": "Fixture adapters prove all adapter kinds. Live installs: 21/21 sources now have at least GIT checkout where applicable (vibe/llm-agent-trader venv fixed). DesktopCommander MCP gateway+approval PASS. Osintgram process start/invoke PASS. OpenMAIC next dev ready PASS. ScrollCraft generate+build PASS. Skill load on-demand PASS. Auth/LLM/UE-heavy invokes remain BLOCKED_EXTERNAL. No per-repository wrappers.",
+  "notes": "Fixture adapters prove all adapter kinds. Live installs: 21/21 sources now have at least GIT checkout where applicable (vibe/llm-agent-trader venv fixed). DesktopCommander MCP gateway+approval PASS. Osintgram process start/invoke PASS. OpenMAIC /api/health + generate-classroom 202 PASS. ScrollCraft generate+build PASS. Skill load on-demand PASS. Auth/LLM/UE-heavy invokes remain BLOCKED_EXTERNAL. No per-repository wrappers.",
   "sources": [
     {
       "source": "wonderwhy-er/DesktopCommanderMCP",
@@ -289,7 +289,7 @@
         "LLM API keys"
       ],
       "status": "PARTIAL",
-      "limitations": "Live GIT+pnpm install PASS; next dev start/ready HTTP 200 PASS; 26 skills indexed. Course generation APIs need LLM keys (list_skills path returned HTTP 404 \u2014 PARTIAL)."
+      "limitations": "Live GIT+pnpm install PASS; ready/health GET /api/health PASS; agent_runtime_status honest enabled=false; generate_course POST /api/generate-classroom returns 202 jobId+pollUrl PASS (topic\u2192requirement body_aliases); full classroom content completion needs LLM keys (BLOCKED_EXTERNAL). Agent /api/agent/* gated by feature flag+DATABASE_URL."
     },
     {
       "source": "Companion-Inc/feynman",
@@ -551,7 +551,11 @@
       "install": "PASS",
       "start": "PASS",
       "skills": 26,
-      "list_skills_api": "HTTP_404"
+      "health_api": "PASS /api/health",
+      "agent_runtime_status": "PASS enabled=false",
+      "generate_course": "PASS 202 job queued via /api/generate-classroom",
+      "full_course_content": "BLOCKED_EXTERNAL LLM keys",
+      "list_skills_api": "HTTP_404_WITHOUT_AGENT_RUNTIME"
     },
     "gateway_mcp_approval": {
       "without": "REJECTED",

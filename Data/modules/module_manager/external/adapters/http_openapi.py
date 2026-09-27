@@ -153,10 +153,23 @@ class HttpOpenApiAdapter:
                 body_obj = {str(k): arguments.get(k) for k in body_keys if k in arguments}
             else:
                 body_obj = dict(arguments)
+            # Declarative arg→body field rename (e.g. topic → requirement).
+            aliases = op.get("body_aliases")
+            if isinstance(aliases, Mapping) and body_obj is not None:
+                for src, dest in aliases.items():
+                    src_k, dest_k = str(src), str(dest)
+                    if src_k in arguments and (dest_k not in body_obj or body_obj.get(dest_k) in (None, "")):
+                        body_obj[dest_k] = arguments.get(src_k)
+                        body_obj.pop(src_k, None)
         data = None if body_obj is None else json.dumps(body_obj).encode("utf-8")
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
         headers.update({str(k): str(v) for k, v in dict(op.get("headers") or {}).items()})
         timeout = float(op.get("timeout_seconds") or self.config.runtime.timeout_seconds)
+        accept_statuses = {
+            int(x)
+            for x in (op.get("accept_statuses") or [200, 201, 202, 204])
+            if str(x).isdigit() or isinstance(x, int)
+        }
         if progress:
             progress(0.1, "http", f"{method} {url}")
         try:
@@ -170,7 +183,7 @@ class HttpOpenApiAdapter:
                 structured = json.loads(text) if text else None
             except json.JSONDecodeError:
                 structured = None
-            if status_code >= 400:
+            if status_code not in accept_statuses and status_code >= 400:
                 return ModuleResult(
                     module_id=self.ctx.module_id,
                     operation=operation,
