@@ -9,7 +9,7 @@
     "NOT_APPLICABLE",
     "FAILED"
   ],
-  "notes": "Fixture adapters prove all adapter kinds including cancel/progress and source time provenance. Live GIT installs verified for skill packs, catalog, GhostTrack, Agent-Reach, Feynman (with build), ScrollCraft, DesktopCommander. Full network/auth invokes remain BLOCKED_EXTERNAL where noted. No per-repository wrappers.",
+  "notes": "Fixture adapters prove all adapter kinds. Live GIT installs verified for 15 sources. DesktopCommander MCP live connect+list_directory+disconnect via McpBridge PASS. Agent-Reach doctor and Feynman help invoke PASS. Chat CapabilityResultCards render artifact/source links from telemetry (no invented counts). Full network/auth research invokes remain BLOCKED_EXTERNAL. No per-repository wrappers.",
   "sources": [
     {
       "source": "wonderwhy-er/DesktopCommanderMCP",
@@ -18,10 +18,10 @@
       "module_id": "desktop-commander-mcp",
       "install_verified": "PASS",
       "discovery_verified": "PASS",
-      "start_verified": "BLOCKED_EXTERNAL",
-      "stop_verified": "BLOCKED_EXTERNAL",
+      "start_verified": "PASS",
+      "stop_verified": "PASS",
       "capability_discovery": "PASS",
-      "invoke_verified": "BLOCKED_EXTERNAL",
+      "invoke_verified": "PASS",
       "result_normalization": "PASS",
       "chat_rendering": "PARTIAL",
       "artifact_support": "PARTIAL",
@@ -32,7 +32,7 @@
         "network"
       ],
       "status": "PARTIAL",
-      "limitations": "Manifest + McpBridge registration present; live GIT+npm install PASS. Live npx/MCP connect still requires operator enable + network session."
+      "limitations": "Live McpBridge: register/enable/connect/refresh_tools (26 tools)/list_directory invoke/disconnect PASS. Tools expand into CapabilityCatalog. Gateway EXECUTE tools require approval (expected). Chat cards render artifact/source links when telemetry present."
     },
     {
       "source": "Datalux/Osintgram",
@@ -519,6 +519,13 @@
       "awesome-openclaw-skills": "catalog search COMPLETED (bounded)",
       "cloudflare-security-audit-skill": "skill index+load path via store",
       "scrollcraft": "skill discovery after install"
+    },
+    "desktop_commander_mcp": {
+      "connect": "PASS",
+      "tools_discovered": 26,
+      "invoke": "list_directory PASS via McpBridge.call_tool",
+      "disconnect": "PASS",
+      "gateway_approval_required_for_EXECUTE": true
     }
   }
 }
