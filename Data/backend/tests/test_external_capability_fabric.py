@@ -619,6 +619,145 @@ class ExternalAdapterFixtureE2ETests(unittest.TestCase):
             mat = manager.execute("fake-cat", "materialize", {"skill_id": target})
             self.assertEqual(mat.status, "COMPLETED")
 
+    def test_mcp_adapter_lifecycle_via_fake_bridge(self) -> None:
+        """McpAdapter start/status/stop through a real McpBridge + fake stdio server."""
+        from Data.modules.mcp import McpBridge, McpStore
+        from Data.modules.mcp.limits import McpLimits
+
+        fake = Path(__file__).resolve().parent / "fixtures" / "fake_mcp_server.py"
+        self.assertTrue(fake.exists())
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "mods" / "fake-mcp"
+            root.mkdir(parents=True)
+            # Local path install of a stub package directory (no network).
+            pkg = root / "pkg"
+            pkg.mkdir()
+            (pkg / "README.md").write_text("fake mcp pkg\n", encoding="utf-8")
+            catalog = CapabilityCatalog()
+            plugins = PluginRegistry(catalog)
+            store = McpStore(Path(tmp) / "mcp.db")
+            store.initialize()
+            bridge = McpBridge(
+                store=store,
+                catalog=catalog,
+                plugin_registry=plugins,
+                enabled=True,
+                stdio_enabled=True,
+                http_enabled=False,
+                auto_expand_modules=False,
+                allow_outbound=False,
+                limits=McpLimits(startup_timeout_seconds=10.0, max_restart_attempts=1),
+            )
+            bridge.initialize()
+            cfg = bridge.register_server(
+                display_name="Fake MCP",
+                transport="stdio",
+                source_kind="manual",
+                source_key="fake-mcp",
+                server_id="fake-mcp",
+                command=sys.executable,
+                args=[str(fake), "--mode=normal"],
+                enabled=True,
+                trust="untrusted",
+                expand_tools=True,
+            )
+            self.assertEqual(cfg.server_id, "fake-mcp")
+            manifest = {
+                "module_id": "fake-mcp",
+                "name": "Fake MCP Module",
+                "version": "0.0.1",
+                "entrypoint": FACTORY,
+                "external": {
+                    "adapter": "MCP",
+                    "source_type": "path",
+                    "path": str(pkg),
+                    "install": {"strategy": "NONE"},
+                    "runtime": {"mode": "LAZY", "mcp_server_id": "fake-mcp", "eager_start": False},
+                },
+                "capabilities": [
+                    {
+                        "capability_id": "external.fake_mcp.start",
+                        "name": "Start",
+                        "external_name": "start",
+                        "side_effects": ["EXECUTE"],
+                    },
+                    {
+                        "capability_id": "external.fake_mcp.status",
+                        "name": "Status",
+                        "external_name": "status",
+                        "side_effects": ["READ"],
+                    },
+                ],
+            }
+            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+            manager.discover()
+            manager.initialize(
+                "fake-mcp",
+                ModuleContext(
+                    database_path=str(Path(tmp) / "c.db"),
+                    data_root=tmp,
+                    metadata={"mcp_bridge": bridge},
+                ),
+            )
+            started = manager.execute("fake-mcp", "start", {})
+            self.assertEqual(started.status, "COMPLETED")
+            status = manager.execute("fake-mcp", "status", {})
+            self.assertEqual(status.status, "COMPLETED")
+            stopped = manager.execute("fake-mcp", "stop", {})
+            self.assertEqual(stopped.status, "COMPLETED")
+
+    def test_assimilation_idempotency_skips_duplicate(self) -> None:
+        from Data.modules.module_manager.external.post_result import (
+            queue_or_run_assimilation,
+            resolve_assimilation_mode,
+        )
+        from Data.modules.module_manager.external.types import AssimilationMode
+
+        class _Svc:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def assimilate_external_capability(self, **kwargs):  # noqa: ANN003
+                self.calls += 1
+
+                class R:
+                    receipt_id = "r1"
+                    ok = True
+
+                    def public_dict(self):
+                        return {"receipt_id": self.receipt_id, "ok": True}
+
+                return R()
+
+        svc = _Svc()
+        mode = AssimilationMode.KNOWLEDGE_CANDIDATE
+        first = queue_or_run_assimilation(
+            mode=mode,
+            capability_id="external.fake.search",
+            module_id="fake",
+            request_id="same-req",
+            run_id=None,
+            job_id=None,
+            output={"summary": "hello world evidence"},
+            status="COMPLETED",
+            assimilation_service=svc,
+        )
+        second = queue_or_run_assimilation(
+            mode=mode,
+            capability_id="external.fake.search",
+            module_id="fake",
+            request_id="same-req",
+            run_id=None,
+            job_id=None,
+            output={"summary": "hello world evidence"},
+            status="COMPLETED",
+            assimilation_service=svc,
+        )
+        self.assertTrue(first.get("completed") or first.get("queued") is False)
+        self.assertEqual(svc.calls, 1)
+        self.assertEqual(second.get("reason"), "duplicate_skipped")
+
     def test_skill_shortlist_includes_skill_ids(self) -> None:
         # Load broker module without pulling cognition package __init__ (heavy deps).
         import importlib.util

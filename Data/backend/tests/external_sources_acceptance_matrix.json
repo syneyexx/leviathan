@@ -81,7 +81,7 @@
     {
       "source": "Panniantong/Agent-Reach",
       "category": "OSINT_RESEARCH",
-      "adapter": "CLI",
+      "adapter": "COMPOSITE",
       "module_id": "agent-reach",
       "install_verified": "BLOCKED_EXTERNAL",
       "discovery_verified": "PASS",
@@ -99,7 +99,7 @@
         "network"
       ],
       "status": "PARTIAL",
-      "limitations": "Prefer MCP/API if upstream adds it; current manifest uses CLI."
+      "limitations": "COMPOSITE CLI+SKILL_PACK capability layer (doctor/search/load_skill). Optional MCP channel backends via mcporter remain BLOCKED_EXTERNAL without network/deps. Not a parallel agent runtime."
     },
     {
       "source": "HunxByts/GhostTrack",
@@ -473,7 +473,7 @@
     "CATALOG_SOURCE": "PASS",
     "SCRIPT_PACKAGE": "PASS",
     "COMPOSITE": "PASS",
-    "MCP": "PARTIAL"
+    "MCP": "PASS"
   },
-  "worktree_head": "2bb231010170362f5e5e97a1d097fc14378167a1"
+  "worktree_head": "pending"
 }

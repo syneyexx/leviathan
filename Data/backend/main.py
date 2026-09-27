@@ -478,11 +478,27 @@ execution_gateway.module_executor = ExternalModuleExecutor(
     observability=observability,
     catalog=capability_catalog,
 )
-# Cooperative cancel probe for MODULE jobs running via gateway.
+# Cooperative cancel / progress probes for MODULE jobs running via gateway.
 execution_gateway._job_cancel_check = lambda job_id: bool(  # type: ignore[attr-defined]
     getattr(job_runtime, "_cancel_flags", {}).get(job_id)
     and getattr(job_runtime, "_cancel_flags", {}).get(job_id).is_set()
 )
+
+
+def _gateway_job_progress(job_id: str, pct: float, phase: str, message: str) -> None:
+    try:
+        if hasattr(job_store, "update_progress"):
+            job_store.update_progress(job_id, progress=pct, phase=phase, message=message[:240])
+        observability.emit(
+            "external_capability",
+            "job.progress",
+            payload={"job_id": job_id, "progress": pct, "phase": phase, "message": message[:240]},
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+execution_gateway._job_progress = _gateway_job_progress  # type: ignore[attr-defined]
 register_external_control_capabilities(capability_catalog)
 
 evaluation_harness = EvaluationHarness(

@@ -1,7 +1,7 @@
 {
   "module_id": "agent-reach",
   "name": "Agent Reach",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
   "side_effects": [
     "READ",
@@ -9,10 +9,14 @@
   ],
   "hot_reload": false,
   "external": {
-    "adapter": "CLI",
+    "adapter": "COMPOSITE",
     "source_type": "git",
     "source": "https://github.com/Panniantong/Agent-Reach",
     "ref": "main",
+    "children": [
+      "SKILL_PACK",
+      "CLI"
+    ],
     "install": {
       "strategy": [
         "GIT_CHECKOUT",
@@ -20,23 +24,31 @@
       ],
       "requirements_file": "requirements.txt"
     },
+    "skill_roots": [
+      ".",
+      "skills",
+      "docs"
+    ],
     "runtime": {
       "mode": "EPHEMERAL",
       "command": [
-        "python",
-        "-m",
-        "agent_reach",
-        "{query}"
+        "agent-reach",
+        "doctor"
       ],
       "cwd": "$INSTALL_ROOT",
       "timeout_seconds": 600,
       "operations": [
         {
+          "name": "doctor",
+          "command": [
+            "agent-reach",
+            "doctor"
+          ]
+        },
+        {
           "name": "search",
           "command": [
-            "python",
-            "-m",
-            "agent_reach",
+            "agent-reach",
             "search",
             "{query}"
           ]
@@ -44,9 +56,7 @@
         {
           "name": "run",
           "command": [
-            "python",
-            "-m",
-            "agent_reach",
+            "agent-reach",
             "{query}"
           ]
         }
@@ -62,20 +72,44 @@
       "research",
       "reddit",
       "youtube",
-      "github"
+      "github",
+      "skill"
     ],
     "domain": "osint",
-    "resource_class": "NETWORK_HEAVY"
+    "resource_class": "NETWORK_HEAVY",
+    "metadata": {
+      "preferred_machine_contract": "CLI + SKILL.md capability layer; MCP channel backends optional via mcporter",
+      "not_a_second_agent_runtime": true
+    }
   },
   "capabilities": [
     {
+      "capability_id": "external.agent_reach.doctor",
+      "name": "Agent-Reach Doctor",
+      "description": "Diagnose Agent-Reach channel backends (YouTube, GitHub, RSS, etc.).",
+      "external_name": "doctor",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
       "capability_id": "external.agent_reach.search",
       "name": "Agent-Reach Search",
-      "description": "Search Reddit/YouTube/GitHub and related sources via Agent-Reach.",
+      "description": "Search/read internet sources via Agent-Reach CLI routing (not a parallel agent runtime).",
       "external_name": "search",
       "side_effects": [
         "READ",
         "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.agent_reach.load_skill",
+      "name": "Agent-Reach Load Skill",
+      "description": "Load Agent-Reach SKILL.md instructions on demand.",
+      "external_name": "load",
+      "side_effects": [
+        "READ"
       ]
     }
   ]

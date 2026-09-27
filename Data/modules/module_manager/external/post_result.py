@@ -48,6 +48,11 @@ def queue_or_run_assimilation(
     if mode == AssimilationMode.NONE or str(status).upper() not in {"COMPLETED", "OK", "SUCCESS"}:
         return {"queued": False, "mode": mode.value, "reason": "skipped"}
 
+    # Process-local idempotency for sync/fallback path (JobRuntime key covers queued path).
+    idem_key = assimilation_idempotency_key(capability_id, request_id or "")
+    if request_id and not mark_assim_seen(idem_key):
+        return {"queued": False, "mode": mode.value, "reason": "duplicate_skipped", "idempotency_key": idem_key}
+
     payload = {
         "mode": mode.value,
         "capability_id": capability_id,
