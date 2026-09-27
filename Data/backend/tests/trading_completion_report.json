@@ -1,13 +1,12 @@
 {
-  "generated_at": "2026-09-27T14:37:17+00:00",
+  "generated_at": "2026-09-27T14:38:32+00:00",
   "phase": "Slice16/A0-A4",
   "program": "Master Program v4.1",
   "all_required_pass": false,
   "allow_incomplete": true,
   "counts": {
-    "PASS": 75,
+    "PASS": 77,
     "IN_PROGRESS": 2,
-    "NOT_STARTED": 2,
     "FEATURE_GATED": 1,
     "NOT_TESTED_IN_CI": 1
   },
@@ -197,9 +196,15 @@
     },
     {
       "id": "G14",
-      "status": "NOT_STARTED",
-      "evidence": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/kernel_parity.py::kernel_legacy_parity_report",
+        "Data/modules/market_sim/fill_model.py FillModel shim over NextBarFillModel",
+        "Data/backend/tests/test_kernel_parity_dr_w_cont.py::KernelParityG14Tests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::test_step_once_has_no_legacy_fill_import",
+        "pytest:deferred(--run-tests not set)"
+      ],
+      "notes": "Kernel v2 (NextBarFillModel+WalletLedger) vs legacy FillModel shim parity report \u2014 market-order fill agreement proven."
     },
     {
       "id": "G15",
@@ -688,9 +693,14 @@
     },
     {
       "id": "G54",
-      "status": "NOT_STARTED",
-      "evidence": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/institutional_core/resilience.py::backup_sqlite_database / restore_and_verify_institutional",
+        "Data/backend/tests/test_kernel_parity_dr_w_cont.py::DisasterRecoveryTempTargetG54Tests",
+        "Temp-target restore with measured RTO; truth.not_production_dr_claim=true",
+        "pytest:deferred(--run-tests not set)"
+      ],
+      "notes": "Temp-target local SQLite backup/restore verified. Explicitly not a production DR SLA claim."
     },
     {
       "id": "G55",
@@ -1033,5 +1043,5 @@
     "feature_gated_is_not_pass_claim": true,
     "baseline_green_does_not_mark_trading_pass": true
   },
-  "exit_reason": "incomplete gates reported honestly (5 open); no FAIL"
+  "exit_reason": "incomplete gates reported honestly (3 open); no FAIL"
 }

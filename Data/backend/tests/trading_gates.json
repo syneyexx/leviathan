@@ -420,12 +420,27 @@
     "G14": {
       "title": "Kernel v2 legacy parity report",
       "phase": "T3C",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/kernel_parity.py::kernel_legacy_parity_report",
+        "Data/modules/market_sim/fill_model.py FillModel shim over NextBarFillModel",
+        "Data/backend/tests/test_kernel_parity_dr_w_cont.py::KernelParityG14Tests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::test_step_once_has_no_legacy_fill_import"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_kernel_parity_dr_w_cont.py::KernelParityG14Tests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_kernel_parity_dr_w_cont.py::KernelParityG14Tests"
+          ],
+          "timeout_sec": 30
+        }
+      ],
+      "notes": "Kernel v2 (NextBarFillModel+WalletLedger) vs legacy FillModel shim parity report \u2014 market-order fill agreement proven."
     },
     "G15": {
       "title": "Strategy Spec v2 + feature library",
@@ -1499,12 +1514,26 @@
     "G54": {
       "title": "Disaster recovery temp-target",
       "phase": "T4D",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/institutional_core/resilience.py::backup_sqlite_database / restore_and_verify_institutional",
+        "Data/backend/tests/test_kernel_parity_dr_w_cont.py::DisasterRecoveryTempTargetG54Tests",
+        "Temp-target restore with measured RTO; truth.not_production_dr_claim=true"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_kernel_parity_dr_w_cont.py::DisasterRecoveryTempTargetG54Tests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_kernel_parity_dr_w_cont.py::DisasterRecoveryTempTargetG54Tests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "Temp-target local SQLite backup/restore verified. Explicitly not a production DR SLA claim."
     },
     "G55": {
       "title": "Data provenance/licensing state",
