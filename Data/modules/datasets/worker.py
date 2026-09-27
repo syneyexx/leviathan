@@ -144,10 +144,10 @@ def build_service_from_env():
     provider = build_embedding_provider(
         kind=settings.knowledge.embedding_provider,
         model_name=settings.knowledge.embedding_model,
-        hash_dimensions=getattr(settings.knowledge, "hash_dimensions", 256),
+        hash_dimensions=int(settings.knowledge.embedding_hash_dimensions),
     )
     knowledge = KnowledgeStore(
-        settings.database_path,
+        settings.knowledge_database_path,
         data_root=Path(settings.knowledge.data_root),
         embedding_provider=provider,
     )

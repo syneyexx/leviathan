@@ -61,6 +61,7 @@ class ResearchService:
         model_caller: Callable[..., dict[str, Any]] | None = None,
         job_runtime: Any | None = None,
         dataset_service: Any | None = None,
+        knowledge_database_path: Path | None = None,
     ) -> None:
         self.store = store
         self.knowledge = knowledge
@@ -72,6 +73,9 @@ class ResearchService:
         self.model_caller = model_caller
         self.job_runtime = job_runtime
         self.dataset_service = dataset_service
+        self._knowledge_database_path = (
+            Path(knowledge_database_path) if knowledge_database_path is not None else None
+        )
         if corpus is not None:
             self.snapshots_root = corpus.research_snapshots
             self.reports_root = corpus.research_reports
@@ -132,10 +136,17 @@ class ResearchService:
                     models_cache=self.sources_root.parent / "models" / "cache",
                     hf_cache=self.sources_root.parent / "hf_cache",
                 )
+            ingestion_db: Path | None = self._knowledge_database_path
+            if ingestion_db is None and knowledge is not None:
+                ingestion_db = Path(knowledge.db_path)
+            if ingestion_db is None:
+                raise RuntimeError(
+                    "SourceIngestion requires knowledge_database_path or a KnowledgeStore"
+                )
             self.source_ingestion = SourceIngestionService.from_corpus(
                 research_store=store,
                 corpus=layout,
-                database_path=store.db_path,
+                database_path=ingestion_db,
                 knowledge=knowledge,
                 job_runtime=job_runtime,
                 dataset_service=dataset_service,
@@ -218,6 +229,11 @@ class ResearchService:
             search_provider=search_provider,
             search_mode=search_mode,
         )
+        knowledge_db = None
+        if hasattr(settings, "knowledge_database_path"):
+            knowledge_db = Path(settings.knowledge_database_path)
+        elif knowledge is not None:
+            knowledge_db = Path(knowledge.db_path)
         svc = cls(
             store,
             knowledge=knowledge,
@@ -231,6 +247,7 @@ class ResearchService:
             model_caller=model_caller,
             job_runtime=job_runtime,
             dataset_service=dataset_service,
+            knowledge_database_path=knowledge_db,
         )
         svc._web_search_endpoint = endpoint
         svc._web_search_api_key_configured = bool((api_key or "").strip())

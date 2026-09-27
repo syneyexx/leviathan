@@ -29,24 +29,25 @@ def build_research_worker_context(
     from Data.modules.observability import ObservabilityHub
     from Data.modules.research.service import ResearchService
 
-    db_path = Path(settings.database_path)
+    db_path = Path(settings.database_path)  # CONTROL — jobs / research / receipts
+    knowledge_db = Path(settings.knowledge_database_path)
     observability = ObservabilityHub(capacity=2000, db_path=db_path)
 
     provider = build_embedding_provider(
         kind=settings.knowledge.embedding_provider,
         model_name=settings.knowledge.embedding_model,
-        hash_dimensions=getattr(settings.knowledge, "hash_dimensions", 256),
+        hash_dimensions=int(settings.knowledge.embedding_hash_dimensions),
     )
     knowledge = KnowledgeStore(
-        db_path,
+        knowledge_db,
         data_root=Path(settings.knowledge.data_root),
         embedding_provider=provider,
     )
     knowledge.initialize()
 
-    atlas_store = AtlasStore(db_path)
+    atlas_store = AtlasStore(knowledge_db)
     assimilation_service = KnowledgeAssimilationService(
-        database_path=db_path,
+        database_path=db_path,  # receipts are CONTROL-owned
         knowledge_store=knowledge,
         atlas_store=atlas_store,
     )

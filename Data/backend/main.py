@@ -274,7 +274,7 @@ deep_recall_service = DeepRecallService(
 )
 staged_retriever.deep_recall = deep_recall_service
 assimilation_service = KnowledgeAssimilationService(
-    database_path=KNOWLEDGE_DB,
+    database_path=CONTROL_DB,  # intelligence_assimilation_receipts ∈ CONTROL
     knowledge_store=knowledge,
     atlas_store=atlas_store,
 )
@@ -2889,20 +2889,33 @@ async def chat(payload: ChatRequest, request: Request):
         )
         return {
             "conversation_id": conversation_id,
+            "user_message": user_message,
+            "assistant_message": assistant_message,
+            # Legacy alias retained for older clients; canonical field is assistant_message.
             "message": assistant_message,
+            "model": "",
             "run_id": run.run_id,
             "team_run_id": team_state.run_id,
             "collaboration_strategy": "team",
             "collaboration_description": USER_FACING_TEAM_DESCRIPTION,
             "team": team_state.public_dict(),
             "provisional": provisional,
+            "knowledge_sources": [],
             "reasoning": {
+                "intent": "team_collaboration",
+                "complexity": "team",
+                "use_knowledge": False,
+                "steps": [],
                 "mode": {
                     "requested": payload.reasoning_mode or "auto",
                     "effective": payload.reasoning_mode or "auto",
                     "source": "team_collaboration",
                     "notes": ["collaboration_strategy=team is orthogonal to reasoning depth"],
-                }
+                },
+            },
+            "truth": {
+                "model_output_is_not_evidence": True,
+                "team_provisional": provisional,
             },
         }
 

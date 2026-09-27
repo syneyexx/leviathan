@@ -265,7 +265,7 @@ def normalize_binance_stream_message(
 
 
 class _CheckpointWriter:
-    """Coalesced CONTROL-sized snapshot writer — never one row per tick."""
+    """Coalesced MARKET checkpoint writer — never one row per tick."""
 
     def __init__(
         self,
@@ -484,11 +484,16 @@ class MarketStreamAdapter:
             emit = payload["emit"]
 
         db_path = str(
-            payload.get("db_path")
+            payload.get("market_db_path")
+            or payload.get("db_path")
+            or ctx.get("market_db_path")
             or ctx.get("db_path")
-            or os.environ.get("LEVIATHAN_DB_PATH")
             or ""
         )
+        if not db_path:
+            from Data.modules.common.database_domains import resolve_market_database_path
+
+            db_path = str(resolve_market_database_path())
         checkpoint: _CheckpointWriter | None = None
         if db_path and not ingest:
             checkpoint = _CheckpointWriter(

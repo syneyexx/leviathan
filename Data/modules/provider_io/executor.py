@@ -113,7 +113,11 @@ class ProviderIoExecutor:
         self.policy = ProviderPolicyRegistry(self.settings)
         self.clients = ProviderClientPool(self.settings)
         self.stream_store = ProviderStreamStore(
-            db_path or os.environ.get("LEVIATHAN_DB_PATH") or "Data/state/leviathan.db",
+            db_path
+            or __import__(
+                "Data.modules.common.database_domains",
+                fromlist=["resolve_control_database_path"],
+            ).resolve_control_database_path(),
             max_events_per_job=self.settings.max_buffered_stream_events,
         )
         self.stream_store.initialize()
@@ -265,19 +269,30 @@ class ProviderIoExecutor:
                 }
                 # Market stream adapter accepts optional emit/ingest/ctx.
                 if request.capability in {"market.stream", "market.stream.stop"}:
+                    from Data.modules.common.database_domains import (
+                        resolve_market_database_path,
+                    )
+
                     store_path = getattr(store, "path", None)
                     execute_kwargs["emit"] = emit_cb
                     execute_kwargs["ingest"] = ctx.get("ingest") or request.payload.get(
                         "ingest_callback"
                     )
+                    # Checkpoints are MARKET-owned; JobStore path is CONTROL — do not conflate.
+                    market_path = resolve_market_database_path(
+                        explicit=request.payload.get("market_db_path")
+                        or ctx.get("market_db_path")
+                    )
                     execute_kwargs["ctx"] = {
                         **{k: v for k, v in ctx.items() if k != "job_store"},
-                        "db_path": str(
+                        "db_path": str(market_path),
+                        "control_db_path": str(
                             store_path
-                            or os.environ.get("LEVIATHAN_DB_PATH")
+                            or os.environ.get("LEVIATHAN_CONTROL_DATABASE_PATH")
                             or self.stream_store.db_path
                             or ""
                         ),
+                        "market_db_path": str(market_path),
                         "emit": emit_cb,
                     }
                 result = adapter.execute(request, **execute_kwargs)

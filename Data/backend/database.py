@@ -15,9 +15,10 @@ def utc_now() -> str:
 
 
 class Database:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, knowledge_path: Path | None = None) -> None:
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._knowledge_path_override = Path(knowledge_path) if knowledge_path is not None else None
         self._wal_ready = False
 
     @contextmanager
@@ -62,27 +63,10 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_messages_conversation
                     ON messages(conversation_id, id);
-
-                CREATE TABLE IF NOT EXISTS knowledge_documents (
-                    id TEXT PRIMARY KEY,
-                    title TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    source TEXT NOT NULL DEFAULT 'manual',
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
                 """
             )
-            try:
-                conn.execute(
-                    """
-                    CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts
-                    USING fts5(document_id UNINDEXED, title, content)
-                    """
-                )
-            except sqlite3.OperationalError:
-                # Some stripped SQLite builds omit FTS5. Search falls back to LIKE.
-                pass
+            # Knowledge tables must NOT materialize on CONTROL (three-DB ownership).
+            # Legacy installs that already have them are reconciled by db_upgrade.
             # Idempotent upgrade for DBs created before pinned column existed.
             cols = {row[1] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()}
             if "pinned" not in cols:
@@ -215,7 +199,7 @@ class Database:
     def upsert_knowledge(self, title: str, content: str, source: str = "manual", document_id: str | None = None) -> dict:
         from Data.modules.knowledge import KnowledgeStore
 
-        store = KnowledgeStore(self.path)
+        store = KnowledgeStore(self._knowledge_db_path())
         store.initialize()
         record = store.upsert_document(
             title=title,
@@ -228,14 +212,14 @@ class Database:
     def list_knowledge(self, limit: int = 100) -> list[dict]:
         from Data.modules.knowledge import KnowledgeStore
 
-        store = KnowledgeStore(self.path)
+        store = KnowledgeStore(self._knowledge_db_path())
         store.initialize()
         return [item.legacy_dict() for item in store.list_documents(limit=limit)]
 
     def search_knowledge(self, query: str, limit: int = 5) -> list[dict]:
         from Data.modules.knowledge import HybridRetriever, KnowledgeStore, RetrievalQuery
 
-        store = KnowledgeStore(self.path)
+        store = KnowledgeStore(self._knowledge_db_path())
         store.initialize()
         hits = HybridRetriever(store).search(RetrievalQuery(text=query, limit=limit))
         return [hit.as_context_document() for hit in hits]
@@ -243,6 +227,19 @@ class Database:
     def delete_knowledge(self, document_id: str) -> bool:
         from Data.modules.knowledge import KnowledgeStore
 
-        store = KnowledgeStore(self.path)
+        store = KnowledgeStore(self._knowledge_db_path())
         store.initialize()
         return store.delete_document(document_id)
+
+    def _knowledge_db_path(self) -> Path:
+        """Legacy Database facade must never write Knowledge tables into CONTROL."""
+        override = getattr(self, "_knowledge_path_override", None)
+        if override is not None:
+            return Path(override)
+        try:
+            from Data.backend.config import load_settings
+
+            return Path(load_settings().knowledge_database_path)
+        except Exception:  # noqa: BLE001
+            # Test/single-file fixtures: sibling knowledge DB next to CONTROL.
+            return self.path.parent / "leviathan_knowledge.db"

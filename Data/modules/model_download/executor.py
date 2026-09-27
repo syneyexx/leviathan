@@ -91,11 +91,9 @@ class ModelDownloadExecutor:
     """Process-local executor owned by one model_download worker."""
 
     def __init__(self, *, db_path: str | Path | None = None) -> None:
-        path = Path(
-            db_path
-            or os.environ.get("LEVIATHAN_DB_PATH")
-            or "Data/state/leviathan.db"
-        )
+        from Data.modules.common.database_domains import resolve_control_database_path
+
+        path = resolve_control_database_path(explicit=db_path)
         self.db_path = path
         self.store = ModelStore(path)
         self.registry = ModelRegistry(self.store)

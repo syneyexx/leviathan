@@ -32,8 +32,12 @@ class ProviderExecutionClient:
         self.job_runtime = job_runtime
         self.settings = settings or ProviderIoSettings.load()
         db_path = getattr(getattr(job_runtime, "store", None), "path", None)
+        if not db_path:
+            from Data.modules.common.database_domains import resolve_control_database_path
+
+            db_path = resolve_control_database_path()
         self.stream_store = stream_store or ProviderStreamStore(
-            db_path or "Data/state/leviathan.db",
+            db_path,
             max_events_per_job=self.settings.max_buffered_stream_events,
         )
         try:

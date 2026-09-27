@@ -1,0 +1,237 @@
+{
+  "program": "leviathan_institutional_defect_eradication",
+  "version": 1,
+  "updated": "2026-09-27",
+  "audit_baseline_sha": "95fe8658638ff016115d9a05c9a2a8d835ccfb97",
+  "starting_current_main_head": "95fe8658638ff016115d9a05c9a2a8d835ccfb97",
+  "notes": "A–Z institutional recovery against CURRENT main. Defect candidates revalidated; statuses are evidence-backed.",
+  "status_vocabulary": [
+    "CONFIRMED",
+    "ALREADY_FIXED_CURRENT",
+    "NOT_REPRODUCED",
+    "FIXED",
+    "IN_PROGRESS",
+    "BLOCKED_EXTERNAL",
+    "DECISION_REQUIRED"
+  ],
+  "excluded_trees": ["Data/HADES/", "editor/"],
+  "environment": {
+    "os": "Linux cursor 6.12.94+",
+    "python": "3.12.3",
+    "node": "22.14.0",
+    "npm": "10.9.7",
+    "rustc": "1.83.0",
+    "cargo": "1.83.0",
+    "native_binary": "Data/native/leviathan_data_plane",
+    "canonical_db_paths": {
+      "CONTROL": "Data/backend/data/leviathan_control.db",
+      "KNOWLEDGE": "Data/backend/data/leviathan_knowledge.db",
+      "MARKET": "Data/backend/data/leviathan_market.db"
+    }
+  },
+  "pr180_preservation": {
+    "settings_multiline_textareas": "PROTECTED",
+    "models_hardware_inventory_layout": "PROTECTED",
+    "slash_model_id_routes": "PROTECTED",
+    "relations_batch_persistence": "PROTECTED",
+    "fingerprint_skip": "PROTECTED",
+    "native_windows_exe_path": "PROTECTED",
+    "forced_rust_honesty": "PROTECTED"
+  },
+  "defects": [
+    {
+      "id": "CHAT-001",
+      "severity": "P0",
+      "subsystem": "chat",
+      "status": "FIXED",
+      "reproduction": "doneOnce||assistant_message then .content; TEAM JSON used message not assistant_message",
+      "canonical_owner": "ChatPage + api.chatStream + /api/chat",
+      "files": [
+        "Data/frontend/src/pages/ChatPage.tsx",
+        "Data/frontend/src/api/client.ts",
+        "Data/frontend/src/api/chatContract.ts",
+        "Data/backend/main.py"
+      ],
+      "root_cause": "Terminal reconciliation assumed assistant_message always present; TEAM path returned message alias only",
+      "fix": "Runtime parseChatDonePayload; safe ChatPage reconcile; TEAM returns assistant_message+user_message",
+      "tests": [
+        "Data/frontend/src/api/chatContract.adversarial.test.ts",
+        "Data/frontend/src/api/chatStream.boundary.test.ts"
+      ],
+      "verification": "pending_local",
+      "notes": ""
+    },
+    {
+      "id": "CHAT-002",
+      "severity": "P0",
+      "subsystem": "chat",
+      "status": "FIXED",
+      "reproduction": "SSE done cast to ChatResponse without runtime validation",
+      "canonical_owner": "api.chatStream",
+      "files": [
+        "Data/frontend/src/api/chatContract.ts",
+        "Data/frontend/src/api/client.ts"
+      ],
+      "root_cause": "Compile-time types only at JSON trust boundary",
+      "fix": "Lightweight runtime guards for persisted message and stream terminal/token events",
+      "tests": ["Data/frontend/src/api/chatContract.adversarial.test.ts"],
+      "verification": "pending_local",
+      "notes": ""
+    },
+    {
+      "id": "CHAT-003",
+      "severity": "P1",
+      "subsystem": "chat",
+      "status": "FIXED",
+      "reproduction": "loadConversation mapped item.content without normalization",
+      "canonical_owner": "ChatPage",
+      "files": [
+        "Data/frontend/src/pages/ChatPage.tsx",
+        "Data/frontend/src/api/chatContract.ts"
+      ],
+      "root_cause": "Persisted messages trusted as Message shape",
+      "fix": "toDisplayMessages + normalizeMessage at load/reconcile boundaries",
+      "tests": ["Data/frontend/src/api/chatContract.adversarial.test.ts"],
+      "verification": "pending_local",
+      "notes": "null/undefined content no longer reaches unsafe dereference"
+    },
+    {
+      "id": "CHAT-004",
+      "severity": "P1",
+      "subsystem": "chat",
+      "status": "FIXED",
+      "reproduction": "setTeamPanel only cleared when collaborationStrategy!==team",
+      "canonical_owner": "ChatPage",
+      "files": ["Data/frontend/src/pages/ChatPage.tsx"],
+      "root_cause": "TEAM panel state survived conversation switches and non-team responses",
+      "fix": "Clear team panel on load/create/error/non-team terminal; always set from payload presence",
+      "tests": ["Data/frontend/src/api/chatContract.adversarial.test.ts"],
+      "verification": "pending_local",
+      "notes": ""
+    },
+    {
+      "id": "DBOWN-001",
+      "severity": "P0",
+      "subsystem": "database_ownership",
+      "status": "CONFIRMED",
+      "reproduction": "research worker_context KnowledgeStore(settings.database_path)",
+      "canonical_owner": "modules.research.worker_context",
+      "files": ["Data/modules/research/worker_context.py"],
+      "root_cause": "CONTROL compat alias used for KNOWLEDGE tables",
+      "fix": null,
+      "tests": [],
+      "verification": null,
+      "notes": "Wave 2"
+    },
+    {
+      "id": "DBOWN-002",
+      "severity": "P0",
+      "subsystem": "database_ownership",
+      "status": "CONFIRMED",
+      "reproduction": "dataset worker KnowledgeStore(settings.database_path)",
+      "canonical_owner": "modules.datasets.worker",
+      "files": ["Data/modules/datasets/worker.py"],
+      "root_cause": "CONTROL path passed into KnowledgeStore",
+      "fix": null,
+      "tests": [],
+      "verification": null,
+      "notes": "Wave 2"
+    },
+    {
+      "id": "DBOWN-003",
+      "severity": "P0",
+      "subsystem": "database_ownership",
+      "status": "CONFIRMED",
+      "reproduction": "source_ingestion worker mixes CONTROL jobs with KnowledgeStore on CONTROL",
+      "canonical_owner": "modules.source_ingestion.worker",
+      "files": ["Data/modules/source_ingestion/worker.py"],
+      "root_cause": "Single database_path for multi-domain stores",
+      "fix": null,
+      "tests": [],
+      "verification": null,
+      "notes": "Wave 2"
+    },
+    {
+      "id": "DBOWN-004",
+      "severity": "P0",
+      "subsystem": "database_ownership",
+      "status": "CONFIRMED",
+      "reproduction": "ResearchService passes store.db_path (CONTROL) to SourceIngestionService",
+      "canonical_owner": "modules.research.service",
+      "files": ["Data/modules/research/service.py", "Data/modules/source_ingestion/service.py"],
+      "root_cause": "IngestionStore inherits Research CONTROL path",
+      "fix": null,
+      "tests": [],
+      "verification": null,
+      "notes": "Wave 2"
+    },
+    {
+      "id": "DBOWN-005",
+      "severity": "P0",
+      "subsystem": "database_ownership",
+      "status": "CONFIRMED",
+      "reproduction": "table_ownership=CONTROL but API uses KNOWLEDGE_DB; worker uses CONTROL",
+      "canonical_owner": "KnowledgeAssimilationService + table_ownership",
+      "files": [
+        "Data/backend/table_ownership.py",
+        "Data/backend/main.py",
+        "Data/modules/research/worker_context.py"
+      ],
+      "root_cause": "Callsite-dependent domain placement",
+      "fix": null,
+      "tests": [],
+      "verification": null,
+      "notes": "Wave 2 — pick single canonical domain"
+    },
+    {
+      "id": "DBOWN-006",
+      "severity": "P1",
+      "subsystem": "database_ownership",
+      "status": "CONFIRMED",
+      "reproduction": "workers getattr(hash_dimensions,256) vs API embedding_hash_dimensions",
+      "canonical_owner": "KnowledgeSettings",
+      "files": [
+        "Data/backend/config.py",
+        "Data/modules/research/worker_context.py",
+        "Data/modules/datasets/worker.py",
+        "Data/modules/source_ingestion/worker.py"
+      ],
+      "root_cause": "Wrong attribute name in workers",
+      "fix": null,
+      "tests": [],
+      "verification": null,
+      "notes": "Wave 2"
+    },
+    {
+      "id": "DBOWN-007",
+      "severity": "P0",
+      "subsystem": "database_ownership",
+      "status": "CONFIRMED",
+      "reproduction": "market feed checkpoint writer uses settings.database_path / LEVIATHAN_DB_PATH",
+      "canonical_owner": "provider_io market_stream",
+      "files": [
+        "Data/modules/provider_io/adapters/market_stream.py",
+        "Data/modules/provider_io/executor.py"
+      ],
+      "root_cause": "MARKET table written via CONTROL path",
+      "fix": null,
+      "tests": [],
+      "verification": null,
+      "notes": "Wave 2"
+    },
+    {
+      "id": "DBOWN-008",
+      "severity": "P1",
+      "subsystem": "database_ownership",
+      "status": "CONFIRMED",
+      "reproduction": "Database facade KnowledgeStore(self.path) on CONTROL; bootstrap creates knowledge_* on CONTROL",
+      "canonical_owner": "backend.database.Database",
+      "files": ["Data/backend/database.py"],
+      "root_cause": "Legacy single-DB facade still creates Knowledge tables on CONTROL",
+      "fix": null,
+      "tests": [],
+      "verification": null,
+      "notes": "Wave 2"
+    }
+  ]
+}

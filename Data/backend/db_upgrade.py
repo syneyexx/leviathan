@@ -303,6 +303,162 @@ def _row_count(conn: sqlite3.Connection, table: str) -> int:
     return int(row[0] if not isinstance(row, sqlite3.Row) else row["c"])
 
 
+@dataclass
+class MisplacedTableFinding:
+    table: str
+    found_in: DatabaseDomain
+    owned_by: DatabaseDomain
+    row_count: int
+    target_row_count: int | None
+    action: str  # MIGRATE | BLOCK_CONFLICT | SKIP_EMPTY
+
+
+@dataclass
+class MisplacedReconcileReport:
+    findings: list[MisplacedTableFinding] = field(default_factory=list)
+    migrated: list[str] = field(default_factory=list)
+    blocked: list[str] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
+    receipt_path: str | None = None
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "findings": [
+                {
+                    "table": f.table,
+                    "found_in": f.found_in.value,
+                    "owned_by": f.owned_by.value,
+                    "row_count": f.row_count,
+                    "target_row_count": f.target_row_count,
+                    "action": f.action,
+                }
+                for f in self.findings
+            ],
+            "migrated": list(self.migrated),
+            "blocked": list(self.blocked),
+            "skipped": list(self.skipped),
+            "receipt_path": self.receipt_path,
+        }
+
+
+def detect_misplaced_product_tables(paths: DatabasePaths) -> list[MisplacedTableFinding]:
+    """Detect canonical product tables materialised in the wrong domain DB."""
+    from Data.backend.table_ownership import is_fts_shadow_table
+
+    findings: list[MisplacedTableFinding] = []
+    for found_domain, found_path in paths.all_canonical():
+        if not found_path.is_file():
+            continue
+        conn = _connect(found_path)
+        try:
+            for name in sorted(_table_names(conn)):
+                if is_fts_shadow_table(name):
+                    continue
+                owned = ownership_for(name)
+                if owned is None or owned is found_domain:
+                    continue
+                try:
+                    row_count = _row_count(conn, name)
+                except sqlite3.Error:
+                    row_count = -1
+                target_path = paths.path_for(owned)
+                target_count: int | None = None
+                if target_path.is_file():
+                    tconn = _connect(target_path)
+                    try:
+                        if name in _table_names(tconn):
+                            try:
+                                target_count = _row_count(tconn, name)
+                            except sqlite3.Error:
+                                target_count = -1
+                        else:
+                            target_count = 0
+                    finally:
+                        tconn.close()
+                if row_count == 0:
+                    action = "SKIP_EMPTY"
+                elif target_count and target_count > 0:
+                    action = "BLOCK_CONFLICT"
+                else:
+                    action = "MIGRATE"
+                findings.append(
+                    MisplacedTableFinding(
+                        table=name,
+                        found_in=found_domain,
+                        owned_by=owned,
+                        row_count=row_count,
+                        target_row_count=target_count,
+                        action=action,
+                    )
+                )
+        finally:
+            conn.close()
+    return findings
+
+
+def reconcile_misplaced_product_tables(
+    paths: DatabasePaths,
+    *,
+    apply: bool = True,
+    receipt_dir: Path | None = None,
+) -> MisplacedReconcileReport:
+    """Migrate unambiguous misplaced tables; block when both sides have rows."""
+    report = MisplacedReconcileReport()
+    findings = detect_misplaced_product_tables(paths)
+    report.findings = findings
+    for finding in findings:
+        if finding.action == "SKIP_EMPTY":
+            report.skipped.append(finding.table)
+            continue
+        if finding.action == "BLOCK_CONFLICT":
+            report.blocked.append(finding.table)
+            continue
+        if not apply or finding.action != "MIGRATE":
+            continue
+        src = paths.path_for(finding.found_in)
+        dst = paths.path_for(finding.owned_by)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        src_conn = _connect(src)
+        dst_conn = _connect(dst)
+        try:
+            dst_conn.execute("ATTACH DATABASE ? AS srcdb", (str(src),))
+            create_sql = src_conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                (finding.table,),
+            ).fetchone()
+            if create_sql and create_sql[0]:
+                ddl = str(create_sql[0])
+                if "IF NOT EXISTS" not in ddl.upper():
+                    ddl = ddl.replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS", 1)
+                dst_conn.execute(ddl)
+            cols = [r[1] for r in src_conn.execute(f'PRAGMA table_info("{finding.table}")').fetchall()]
+            col_list = ", ".join(f'"{c}"' for c in cols)
+            dst_conn.execute(
+                f'INSERT OR IGNORE INTO "{finding.table}" ({col_list}) '
+                f'SELECT {col_list} FROM srcdb."{finding.table}"'
+            )
+            dst_conn.commit()
+            src_conn.execute(f'DROP TABLE IF EXISTS "{finding.table}"')
+            src_conn.commit()
+            report.migrated.append(finding.table)
+        except sqlite3.Error:
+            report.blocked.append(finding.table)
+        finally:
+            try:
+                dst_conn.execute("DETACH DATABASE srcdb")
+            except sqlite3.Error:
+                pass
+            src_conn.close()
+            dst_conn.close()
+
+    receipt_dir = receipt_dir or paths.control.parent
+    receipt_dir.mkdir(parents=True, exist_ok=True)
+    receipt = receipt_dir / "misplaced_table_reconcile_receipt.json"
+    receipt.write_text(json.dumps(report.public_dict(), indent=2), encoding="utf-8")
+    report.receipt_path = str(receipt)
+    return report
+
+
 def _content_checksum(conn: sqlite3.Connection, table: str, *, limit: int = 50_000) -> str:
     """Bounded deterministic checksum of row payloads for verification."""
     try:
@@ -907,6 +1063,14 @@ def upgrade_all_databases(paths: DatabasePaths) -> UpgradeReport:
                 control.commit()
             finally:
                 control.close()
+            # Reconcile product tables that landed in the wrong domain DB.
+            reconcile_report = reconcile_misplaced_product_tables(paths, apply=True)
+            report.verification["misplaced_reconcile"] = reconcile_report.public_dict()
+            if reconcile_report.blocked:
+                report.errors.append(
+                    "Misplaced tables require operator review (conflicting rows): "
+                    + ", ".join(reconcile_report.blocked)
+                )
             # If cutover already complete, done.
             control = _connect(paths.control)
             try:
