@@ -2201,6 +2201,12 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Leviathan", version="0.73.0-wave9-flywheel", lifespan=lifespan)
+
+# Narrow local-launcher Origin contract for WebView read projections.
+# Not wildcard CORS. Not credentials. Mutations stay loopback/token gated.
+from Data.modules.host_console.launcher_cors import LauncherReadCorsMiddleware
+
+app.add_middleware(LauncherReadCorsMiddleware)
 app.include_router(build_models_router(model_plane))
 app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
@@ -2476,6 +2482,9 @@ async def _observability_http_middleware(request: Request, call_next):
             "/api/metrics",
             "/api/performance/snapshot",
             "/api/health",
+            "/api/host/liveness",
+            "/api/host/overview",
+            "/api/workers/dashboard",
         }
         if not noisy and not path.startswith("/api/events/stream"):
             level = "error" if status_code >= 500 else ("warning" if status_code >= 400 else "info")

@@ -73,6 +73,9 @@ pub struct HostSnapshot {
     pub supervisor_health: Option<String>,
     pub workers_expected: bool,
     pub exit_when_stopped: bool,
+    /// System readiness is distinct from process lifecycle (`state`).
+    /// STARTING | READY | DEGRADED | SAFE_MODE | NOT_CONFIGURED | UNMEASURED
+    pub system_readiness: String,
 }
 
 #[derive(Clone, Debug)]
@@ -346,7 +349,7 @@ impl HostController {
         session.exit_code = None;
         session.clean_shutdown = None;
         session.deadline = Some(Instant::now() + self.startup_timeout);
-        session.message = format!("Owned process {pid} is starting. Waiting for /api/health.");
+        session.message = format!("Owned process {pid} is starting. Waiting for /api/host/liveness.");
         drop(session);
         self.push_line("state", "info", "system", &format!("STARTING pid={pid}"), Some(pid));
         Ok(self.snapshot())
@@ -549,16 +552,22 @@ impl HostController {
                     session.pid = None;
                     session.clean_shutdown = Some(false);
                     session.message = format!(
-                        "Backend process exited before /api/health became ready (code={}).",
+                        "Backend process exited before /api/host/liveness became ready (code={}).",
                         polled.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "unknown".into())
                     );
                 } else if health.as_ref().and_then(|p| p.ok) == Some(true) {
                     session.phase = Phase::Running;
-                    session.message = "Backend health is ready. This host owns the process.".into();
+                    session.message = if session.safe_mode_active {
+                        "Backend host active. Safe Mode — API-only recovery posture.".into()
+                    } else if session.workers_expected {
+                        "Backend host active. System readiness: STARTING WORKERS.".into()
+                    } else {
+                        "Backend host active. Workers not configured.".into()
+                    };
                     session.deadline = None;
                 } else if session.deadline.is_some_and(|deadline| Instant::now() > deadline) {
                     session.phase = Phase::Failed;
-                    session.message = "Startup timed out waiting for /api/health.".into();
+                    session.message = "Startup timed out waiting for /api/host/liveness.".into();
                     session.clean_shutdown = Some(false);
                     drop(session);
                     let _ = self.port.lock().unwrap_or_else(|p| p.into_inner()).terminate_owned();
@@ -583,24 +592,37 @@ impl HostController {
                                 .supervisor_health
                                 .as_deref()
                                 .is_some_and(|value| !supervisor_is_running(value));
-                        if supervisor_bad {
+                        if session.safe_mode_active {
+                            session.phase = Phase::Running;
+                            session.message =
+                                "Backend host active. Safe Mode — API-only recovery posture.".into();
+                        } else if supervisor_bad {
                             session.phase = Phase::Degraded;
                             session.message = format!(
-                                "API is up. Worker supervisor is {}.",
+                                "Backend host active. System degraded — Worker supervisor is {}.",
                                 session.supervisor_health.as_deref().unwrap_or("UNMEASURED")
                             );
+                        } else if session.workers_expected
+                            && session.supervisor_health.as_deref().is_none()
+                        {
+                            // API alive; supervisor not yet measured — stay RUNNING, readiness STARTING.
+                            session.phase = Phase::Running;
+                            session.message =
+                                "Backend host active. System readiness: STARTING WORKERS.".into();
                         } else {
                             session.phase = Phase::Running;
-                            if session.message.starts_with("API is up") {
-                                session.message = "Backend health is ready. This host owns the process.".into();
-                            }
+                            session.message = if session.workers_expected {
+                                "Backend host active. SYSTEM READY.".into()
+                            } else {
+                                "Backend host active. Workers not configured.".into()
+                            };
                         }
                     } else if probe.reachable {
                         session.phase = Phase::Degraded;
-                        session.message = "API responded but /api/health did not report ok.".into();
+                        session.message = "API responded but /api/host/liveness did not report ok.".into();
                     } else {
                         session.phase = Phase::Degraded;
-                        session.message = format!("Health probe failed: {}", probe.detail);
+                        session.message = format!("Liveness probe failed: {}", probe.detail);
                     }
                 }
             }
@@ -717,6 +739,42 @@ impl Session {
             supervisor_health: self.supervisor_health.clone(),
             workers_expected: self.workers_expected,
             exit_when_stopped: self.exit_when_stopped,
+            system_readiness: derive_system_readiness(self).into(),
+        }
+    }
+}
+
+fn derive_system_readiness(session: &Session) -> &'static str {
+    match session.phase {
+        Phase::Stopped | Phase::Failed => "UNMEASURED",
+        Phase::Preflight | Phase::Starting | Phase::Stopping => "STARTING",
+        Phase::AttachedExternal => {
+            if session.safe_mode_active {
+                "SAFE_MODE"
+            } else if !session.workers_expected {
+                "NOT_CONFIGURED"
+            } else {
+                match session.supervisor_health.as_deref() {
+                    Some(value) if supervisor_is_running(value) => "READY",
+                    Some(_) => "DEGRADED",
+                    None => "UNMEASURED",
+                }
+            }
+        }
+        Phase::Running | Phase::Degraded => {
+            if session.safe_mode_active {
+                "SAFE_MODE"
+            } else if !session.workers_expected {
+                "NOT_CONFIGURED"
+            } else if session.phase == Phase::Degraded {
+                "DEGRADED"
+            } else {
+                match session.supervisor_health.as_deref() {
+                    Some(value) if supervisor_is_running(value) => "READY",
+                    Some(_) => "DEGRADED",
+                    None => "STARTING",
+                }
+            }
         }
     }
 }
@@ -923,6 +981,7 @@ mod tests {
                 status: if ok { Some(200) } else { None },
                 ok: if ok { Some(true) } else { None },
                 detail: "fake".into(),
+                error_kind: None,
             }
         }
         fn probe_supervisor(&mut self, _host: &str, _port: u16) -> Option<String> {

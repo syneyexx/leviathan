@@ -9,6 +9,7 @@ from typing import Any
 
 from fastapi import APIRouter, Query
 
+from Data.modules.host_console.liveness import build_host_liveness
 from Data.modules.host_console.read_model import (
     build_host_overview,
     build_native_operations_read_model,
@@ -26,6 +27,15 @@ def build_host_console_router(
     version: str = "",
 ) -> APIRouter:
     router = APIRouter(tags=["host-console"])
+
+    @router.get("/api/host/liveness")
+    def host_liveness() -> dict[str, Any]:
+        """Cheap process liveness for the native host readiness probe.
+
+        FastAPI only serves this after lifespan startup completes, so a
+        successful response proves API process liveness + bootstrap completion.
+        """
+        return build_host_liveness(version=version, bootstrapped=True)
 
     @router.get("/api/host/overview")
     def host_overview() -> dict[str, Any]:
