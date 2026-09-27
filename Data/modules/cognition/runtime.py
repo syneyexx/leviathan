@@ -1498,7 +1498,16 @@ class CognitiveRuntime:
                 "request_id": request.request_id,
             },
         )
-        # Wake in-process JobRuntime worker when present (tests / non-externalized).
+        # Prefer a background JobRuntime worker so this await loop can observe
+        # cancel_requested without blocking inside process_next (which would
+        # prevent cancel from propagating into the child adapter).
+        start_bg = getattr(self.job_runtime, "start_background_worker", None)
+        worker_thread = getattr(self.job_runtime, "_worker_thread", None)
+        if callable(start_bg) and (worker_thread is None or not worker_thread.is_alive()):
+            try:
+                start_bg()
+            except Exception:  # noqa: BLE001
+                pass
         wake = getattr(self.job_runtime, "_wake", None)
         if wake is not None and hasattr(wake, "set"):
             try:
@@ -1529,15 +1538,6 @@ class CognitiveRuntime:
             current = self.job_runtime.get(job.job_id)
             if current is None:
                 break
-            # Cooperatively drain general-pool jobs when no dedicated worker claimed yet.
-            if current.state == JobState.QUEUED:
-                process_next = getattr(self.job_runtime, "process_next", None)
-                if callable(process_next):
-                    try:
-                        process_next()
-                    except Exception:  # noqa: BLE001
-                        pass
-                    current = self.job_runtime.get(job.job_id) or current
 
             if current.state in TERMINAL_JOB_STATES:
                 raw = current.result if isinstance(current.result, dict) else {}

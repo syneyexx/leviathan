@@ -638,7 +638,8 @@
       "observability_external_metrics": "PASS",
       "cognition_job_idempotency": "PASS",
       "regression_guards_191_192_193": "PASS",
-      "cognition_external_preferred_offload": "PASS"
+      "cognition_external_preferred_offload": "PASS",
+      "cognition_cancel_via_job_runtime": "PASS"
     },
     "skill_pack_invoke": {
       "claude-osint": {

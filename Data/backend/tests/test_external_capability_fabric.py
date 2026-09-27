@@ -1866,6 +1866,136 @@ class ExternalFabricDoDProofTests(unittest.TestCase):
                 msg=f"expected tool.progress in {event_types}",
             )
 
+    def test_cognition_cancel_via_job_runtime_offload(self) -> None:
+        """Cancel must reach child CLI through JobRuntime cancel flags + gateway probe."""
+        import os
+
+        from Data.modules.cognition.runtime import CognitiveRunState, CognitiveRuntime
+        from Data.modules.cognition.task_model import TaskModel
+        from Data.modules.cognition.types import (
+            CognitiveAction,
+            CognitiveActionKind,
+            CognitiveRunStatus,
+        )
+        from Data.modules.jobs import JobRuntime, JobStore, ResourceManager
+
+        prev = os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API")
+        os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "mods" / "slow-job"
+                root.mkdir(parents=True)
+                slow = Path(tmp) / "slow_job.py"
+                slow.write_text("import time\ntime.sleep(60)\nprint('late')\n", encoding="utf-8")
+                manifest = {
+                    "module_id": "slow-job",
+                    "name": "Slow Job",
+                    "version": "0.0.1",
+                    "entrypoint": FACTORY,
+                    "external": {
+                        "adapter": "CLI",
+                        "source_type": "path",
+                        "path": str(tmp),
+                        "install": {"strategy": "NONE"},
+                        "resource_class": "CPU_HEAVY",
+                        "runtime": {
+                            "operations": [
+                                {
+                                    "name": "run",
+                                    "command": [sys.executable, str(slow)],
+                                }
+                            ],
+                            "timeout_seconds": 90,
+                        },
+                    },
+                    "capabilities": [
+                        {
+                            "capability_id": "external.slow_job.run",
+                            "name": "Run",
+                            "external_name": "run",
+                            "side_effects": ["READ"],
+                        }
+                    ],
+                }
+                (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+                manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+                manager.discover()
+                manager.initialize(
+                    "slow-job",
+                    ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp),
+                )
+                catalog = CapabilityCatalog()
+                plugins = PluginRegistry(catalog)
+                managed = manager.get("slow-job")
+                assert managed is not None
+                register_external_module_capabilities(
+                    catalog=catalog, plugin_registry=plugins, managed=managed
+                )
+                gateway = ExecutionGateway(catalog=catalog)
+                gateway.module_executor = ExternalModuleExecutor(manager, catalog=catalog)
+                job_store = JobStore(Path(tmp) / "jobs.db")
+                job_store.initialize()
+                jobs = JobRuntime(job_store, gateway, ResourceManager(2))
+                # Mirror production wiring: gateway cancel probe reads JobRuntime flags.
+                gateway._job_cancel_check = lambda job_id: bool(  # type: ignore[attr-defined]
+                    getattr(jobs, "_cancel_flags", {}).get(job_id)
+                    and getattr(jobs, "_cancel_flags", {}).get(job_id).is_set()
+                )
+                runtime = CognitiveRuntime(
+                    enabled=True,
+                    execution_gateway=gateway,
+                    job_runtime=jobs,
+                    factuality_mode="NONE",
+                )
+                task = TaskModel(
+                    task_id="t-cancel-job",
+                    run_id="r-cancel-job",
+                    raw_request="run slow job",
+                    goal="run slow job",
+                    domain="test",
+                    task_type="tool",
+                )
+                state = CognitiveRunState(
+                    run_id="r-cancel-job",
+                    task=task,
+                    status=CognitiveRunStatus.REASONING,
+                    trace_id="tr-cancel-job",
+                )
+
+                def _cancel_later() -> None:
+                    time.sleep(0.35)
+                    state.cancel_requested = True
+
+                threading.Thread(target=_cancel_later, daemon=True).start()
+                action = CognitiveAction(
+                    kind=CognitiveActionKind.INVOKE_CAPABILITY,
+                    action_id="a-cancel-job-1",
+                    capability_id="external.slow_job.run",
+                    arguments={},
+                )
+                obs = runtime._execute_action(state, action, history=[])  # noqa: SLF001
+                assert obs is not None
+                result = (obs.payload or {}).get("result") or {}
+                self.assertEqual(str(result.get("status")), "CANCELLED", msg=result)
+                tele = result.get("telemetry") if isinstance(result.get("telemetry"), dict) else {}
+                self.assertEqual(tele.get("executed_via"), "job_runtime")
+                event_types = [e.get("event_type") for e in state.events]
+                self.assertIn("job.started", event_types)
+                self.assertTrue(
+                    any(
+                        e.get("event_type") == "job.progress"
+                        and (e.get("payload") or {}).get("status") == "CANCEL_REQUESTED"
+                        for e in state.events
+                    ),
+                    msg=f"events={event_types}",
+                )
+                jobs.stop_background_worker()
+        finally:
+            if prev is None:
+                os.environ.pop("LEVIATHAN_WORKERS_EXTERNALIZE_API", None)
+            else:
+                os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = prev
+
     def test_cognition_emits_rich_operational_sse_events(self) -> None:
         from Data.modules.cognition.runtime import CognitiveRunState, CognitiveRuntime
         from Data.modules.cognition.task_model import TaskModel
