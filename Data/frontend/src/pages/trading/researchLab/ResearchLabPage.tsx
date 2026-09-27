@@ -158,10 +158,16 @@ export function ResearchLabPage() {
           <section className="lv-rl-center" aria-label="Research Lab workspace">
             {!state.selectedLabId && !state.loading ? (
               <div className="lv-rl-empty">
-                <strong>{state.labs.length === 0 ? "No research runs" : "No run selected"}</strong>
+                <strong>
+                  {state.labs.length === 0
+                    ? "No research runs"
+                    : state.tab === "overview"
+                      ? "No run selected"
+                      : `${state.tab[0]!.toUpperCase()}${state.tab.slice(1)} unavailable`}
+                </strong>
                 {state.labs.length === 0
                   ? "Create a research run to begin learning on market simulation."
-                  : "Choose a run from the left rail to inspect generations, population, and validation."}
+                  : `Choose a run from the left rail to inspect ${state.tab}.`}
               </div>
             ) : (
               <>
