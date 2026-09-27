@@ -286,14 +286,18 @@ class ReadModelTests(unittest.TestCase):
             overview = client.get("/api/host/overview")
             ingestion = client.get("/api/host/source-ingestion")
             native = client.get("/api/host/native-operations")
+            liveness = client.get("/api/host/liveness")
             self.assertEqual(overview.status_code, 200)
             self.assertEqual(ingestion.status_code, 200)
             self.assertEqual(native.status_code, 200)
+            self.assertEqual(liveness.status_code, 200)
+            self.assertTrue(liveness.json()["ok"])
             self.assertEqual(overview.json()["databases"][0]["domain"], "CONTROL")
             self.assertEqual(ingestion.json()["counts"]["processing"], 1)
             self.assertEqual(native.json()["probe"]["status"], "BUILD_MISSING")
             self.assertEqual(db.read_bytes(), before)
             self.assertEqual(client.post("/api/host/overview").status_code, 405)
+            self.assertEqual(client.post("/api/host/liveness").status_code, 405)
 
 
 if __name__ == "__main__":

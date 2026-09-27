@@ -97,12 +97,14 @@ class LauncherReadCorsMiddleware(BaseHTTPMiddleware):
             response = Response(status_code=204)
             response.headers.update(cors_headers_for(origin))  # type: ignore[arg-type]
             # Explicitly do not grant credentialed CORS.
-            response.headers.pop("Access-Control-Allow-Credentials", None)
+            if "access-control-allow-credentials" in response.headers:
+                del response.headers["access-control-allow-credentials"]
             return response
 
         response = await call_next(request)
         if eligible and origin:
             for key, value in cors_headers_for(origin).items():
                 response.headers[key] = value
-            response.headers.pop("Access-Control-Allow-Credentials", None)
+            if "access-control-allow-credentials" in response.headers:
+                del response.headers["access-control-allow-credentials"]
         return response

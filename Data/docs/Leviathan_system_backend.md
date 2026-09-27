@@ -217,7 +217,7 @@ Dedicated route modules live in `Data/backend/routes/` (Wave 0D — domain route
 | `evidence.py` | evidence store |
 | `flywheel.py` | post-training challengers / promotions / lineage |
 | `functions.py` | function registry / invoke |
-| `host_console.py` | read-only backend-host projections (`/api/host/overview`, `/api/host/source-ingestion`, `/api/host/native-operations`) |
+| `host_console.py` | read-only backend-host projections (`/api/host/liveness`, `/api/host/overview`, `/api/host/source-ingestion`, `/api/host/native-operations`) |
 | `jobs.py` | job runtime |
 | `knowledge.py` | knowledge / atlas / deep-recall / why / ingest |
 | `market_sim.py` | market simulation, strategies, data, paper trading |
@@ -1207,6 +1207,21 @@ Release/evaluation philosophy: missing measurements remain missing; they are not
 - `.env.example` — documented environment controls.
 - `leviathan.py`, `run_leviathan.bat`, `run_leviathan.exe`, `installer.bat` — startup/install entrypoints.
 - `Data/launcher/` — native backend host. It supervises `leviathan.py`; it is not a second API, Worker Fabric, or JobStore. See `Data/launcher/IMPLEMENTATION_NOTES.md`.
+
+### Native backend host contracts (CURRENT)
+
+`run_leviathan.exe` (Tauri + `host-core`) owns process lifecycle. FastAPI remains the only HTTP control plane.
+
+| Concern | Contract |
+|---|---|
+| Cheap liveness | `GET /api/host/liveness` — tiny `{ok,liveness,bootstrapped,started,version}`. No LLM/knowledge/product-truth/worker/dashboard work. Served only after FastAPI lifespan startup. Native probe uses this endpoint (not heavy `/api/health`). |
+| Process lifecycle | Host states: `STOPPED` / `PREFLIGHT` / `STARTING` / `RUNNING` / `DEGRADED` / `STOPPING` / `FAILED` / `ATTACHED_EXTERNAL`. Successful liveness moves `STARTING` → `RUNNING`. |
+| System readiness | Distinct from process lifecycle. Snapshot field `systemReadiness`: `STARTING` / `READY` / `DEGRADED` / `SAFE_MODE` / `NOT_CONFIGURED` / `UNMEASURED`. Safe Mode is intentional API-only recovery — workers are disabled, not unhealthy. |
+| WebView read transport | Production Tauri origins (`http://tauri.localhost`, `https://tauri.localhost`, `tauri://localhost`) and Vite dev (`http://127.0.0.1:1420`, `http://localhost:1420`, `http://[::1]:1420`) may consume an exact allowlist of GET read projections via narrow CORS middleware. No wildcard Origin. No credentials. Mutation routes are not CORS-enabled. CORS is not authorization — loopback/token mutation gates remain authoritative. |
+| Allowlisted read paths | `/api/host/liveness`, `/api/health`, `/api/workers/dashboard`, `/api/performance/snapshot`, `/api/host/overview`, `/api/host/source-ingestion`, `/api/host/native-operations`, `/api/models/status`, `/api/events/stream` |
+| System telemetry | `SystemTelemetrySampler` measures CPU/RAM/(optional) GPU, disk **capacity** utilization for the install data volume, and network bytes/sec from OS counter deltas. First network sample and counter resets stay null (UNMEASURED), never fabricated zero. |
+
+`/api/health` remains the rich public/application diagnostic aggregate for existing callers and must stay compatible.
 
 ---
 

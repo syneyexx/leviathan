@@ -35,7 +35,17 @@ npm run preview
 
 Production builds are emitted to `Data/frontend/dist` and served by the FastAPI backend when present.
 
-`run_leviathan.exe` is the backend host and operator launcher (`Data/launcher`). It is not this user-facing frontend. The host opens the configured loopback frontend in the system browser. It does not embed the operator UI or duplicate its routes.
+`run_leviathan.exe` is the backend host and operator launcher (`Data/launcher`). It is not this user-facing frontend. The host opens the configured loopback frontend in the system browser. It does not embed the operator UI routes of `Data/frontend`.
+
+The launcher WebView is a **read-only operator console** over canonical backend projections:
+
+- Host process state arrives via Tauri IPC (`host://state`, `host://console`).
+- Backend projections use direct loopback `fetch` / `EventSource` against `host.apiBase`.
+- Approved local launcher Origins receive a narrow CORS grant for GET read surfaces only (see backend doc).
+- Projection freshness uses `ReadProjection` states: `LOADING` / `LIVE` / `STALE` / `TRANSPORT_ERROR` / `UNAVAILABLE`.
+- `UNMEASURED` means the authoritative endpoint responded but the metric is absent — never a transport/CORS failure.
+- Live polls (approximate): liveness ~1.5–3s, workers/performance ~2s, overview ~20s, SSE event-driven; backoff when `document.hidden`.
+- Safe Mode is shown explicitly as workers **DISABLED BY SAFE MODE**.
 
 ### Optional layout editor (W00 CURRENT)
 

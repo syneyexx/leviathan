@@ -45,17 +45,26 @@ The UI shows `SAFE MODE` while the preference is armed or the owned process was 
 
 `STOPPED`, `PREFLIGHT`, `STARTING`, `RUNNING`, `DEGRADED`, `STOPPING`, `FAILED`, `ATTACHED_EXTERNAL`.
 
-`RUNNING` requires `/api/health` with `ok=true`. An already-healthy external listener is attached. Start, Stop, Restart, and Emergency Shutdown stay disabled for that instance. Closing the window does not stop it.
+`RUNNING` requires cheap `GET /api/host/liveness` with semantic `ok=true` (not the heavy `/api/health` aggregate). An already-healthy external listener is attached. Start, Stop, Restart, and Emergency Shutdown stay disabled for that instance. Closing the window does not stop it.
+
+`systemReadiness` is separate from process lifecycle: `STARTING` / `READY` / `DEGRADED` / `SAFE_MODE` / `NOT_CONFIGURED` / `UNMEASURED`. Worker supervisor failure degrades readiness without reverting the host to `STARTING`.
 
 ## Read-only endpoints
 
-Added only where existing APIs did not expose a bounded operator projection:
-
+- `GET /api/host/liveness` — cheap process liveness for the native probe and WebView API card
 - `GET /api/host/overview`
 - `GET /api/host/source-ingestion`
 - `GET /api/host/native-operations`
 
 They do not mutate jobs, create schema, or open SQLite from the renderer.
+
+## WebView ↔ backend transport
+
+Production Tauri Origins (`http://tauri.localhost`, `https://tauri.localhost`, `tauri://localhost`) and Vite dev (`http://127.0.0.1:1420` and localhost/`[::1]` equivalents) receive CORS only for the allowlisted GET read projections. No wildcard. No credentials. Mutations stay loopback/token gated. Renderer projections use `ReadProjection` so transport errors are never labeled `UNMEASURED`.
+
+## Performance / telemetry
+
+`GET /api/performance/snapshot` exposes `system` CPU/RAM/GPU plus disk capacity utilization and network bytes/sec when measured. Operator gauges may include `tasks_per_min` and `jobs_completed_24h` when instrumented; otherwise they stay null/UNMEASURED.
 
 ## Build
 
