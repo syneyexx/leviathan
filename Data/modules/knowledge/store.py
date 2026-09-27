@@ -731,6 +731,34 @@ class KnowledgeStore:
             cursor = conn.execute("DELETE FROM knowledge_documents WHERE id = ?", (document_id,))
             return cursor.rowcount > 0
 
+    def merge_document_trust_metadata(
+        self, document_id: str, patch: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Merge keys into an existing document's trust_metadata (safe patch)."""
+        if not patch:
+            doc = self.get_document(document_id)
+            return dict(doc.trust_metadata) if doc else {}
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                "SELECT trust_metadata_json FROM knowledge_documents WHERE id = ?",
+                (document_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(document_id)
+            try:
+                current = json.loads(row["trust_metadata_json"] or "{}")
+            except Exception:  # noqa: BLE001
+                current = {}
+            if not isinstance(current, dict):
+                current = {}
+            current.update(patch)
+            conn.execute(
+                "UPDATE knowledge_documents SET trust_metadata_json = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(current), utc_now(), document_id),
+            )
+            return current
+
     def resolve_under_data_root(self, relative_or_absolute: str) -> Path:
         if self.data_root is None:
             raise ValueError("Knowledge data_root is not configured")
@@ -985,11 +1013,82 @@ class KnowledgeStore:
         """Remove relation atoms tied to one knowledge document (rebuild hygiene)."""
         with self.connect() as conn:
             self._ensure_schema(conn)
-            cur = conn.execute(
-                "DELETE FROM directional_relation_atoms WHERE document_id = ?",
-                (document_id,),
-            )
-            return int(cur.rowcount or 0)
+            return self._delete_relation_atoms_for_document(conn, document_id)
+
+    @staticmethod
+    def _delete_relation_atoms_for_document(
+        conn: sqlite3.Connection, document_id: str
+    ) -> int:
+        cur = conn.execute(
+            "DELETE FROM directional_relation_atoms WHERE document_id = ?",
+            (document_id,),
+        )
+        return int(cur.rowcount or 0)
+
+    def _upsert_relation_atom_on_conn(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        subject_ref: str,
+        object_ref: str,
+        relation_class: RelationClass | str,
+        comparison_vector: list[float] | None = None,
+        supporting_evidence_refs: list[str] | tuple[str, ...] | None = None,
+        document_id: str | None = None,
+        chunk_id: str | None = None,
+        confidence: float = 0.5,
+        notes: str = "",
+        atom_id: str | None = None,
+        created_at: str | None = None,
+    ) -> DirectionalRelationAtom:
+        if isinstance(relation_class, str):
+            relation_class = RelationClass(relation_class)
+        atom = DirectionalRelationAtom(
+            atom_id=atom_id or str(uuid.uuid4()),
+            subject_ref=subject_ref.strip(),
+            object_ref=object_ref.strip(),
+            relation_class=relation_class,
+            comparison_vector=list(comparison_vector or []),
+            supporting_evidence_refs=tuple(supporting_evidence_refs or ()),
+            document_id=document_id,
+            chunk_id=chunk_id,
+            confidence=max(0.0, min(1.0, float(confidence))),
+            notes=notes,
+            created_at=created_at or utc_now(),
+        )
+        conn.execute(
+            """
+            INSERT INTO directional_relation_atoms(
+                atom_id, subject_ref, object_ref, relation_class,
+                comparison_vector_json, supporting_evidence_refs_json,
+                document_id, chunk_id, confidence, notes, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(atom_id) DO UPDATE SET
+                subject_ref=excluded.subject_ref,
+                object_ref=excluded.object_ref,
+                relation_class=excluded.relation_class,
+                comparison_vector_json=excluded.comparison_vector_json,
+                supporting_evidence_refs_json=excluded.supporting_evidence_refs_json,
+                document_id=excluded.document_id,
+                chunk_id=excluded.chunk_id,
+                confidence=excluded.confidence,
+                notes=excluded.notes
+            """,
+            (
+                atom.atom_id,
+                atom.subject_ref,
+                atom.object_ref,
+                atom.relation_class.value,
+                json.dumps(atom.comparison_vector),
+                json.dumps(list(atom.supporting_evidence_refs)),
+                atom.document_id,
+                atom.chunk_id,
+                atom.confidence,
+                atom.notes,
+                atom.created_at,
+            ),
+        )
+        return atom
 
     def upsert_relation_atom(
         self,
@@ -1006,56 +1105,159 @@ class KnowledgeStore:
         atom_id: str | None = None,
     ) -> DirectionalRelationAtom:
         """Insert or replace a relation atom by stable ``atom_id`` (idempotent)."""
-        if isinstance(relation_class, str):
-            relation_class = RelationClass(relation_class)
-        atom = DirectionalRelationAtom(
-            atom_id=atom_id or str(uuid.uuid4()),
-            subject_ref=subject_ref.strip(),
-            object_ref=object_ref.strip(),
-            relation_class=relation_class,
-            comparison_vector=list(comparison_vector or []),
-            supporting_evidence_refs=tuple(supporting_evidence_refs or ()),
-            document_id=document_id,
-            chunk_id=chunk_id,
-            confidence=max(0.0, min(1.0, float(confidence))),
-            notes=notes,
-            created_at=utc_now(),
-        )
         with self.connect() as conn:
             self._ensure_schema(conn)
-            conn.execute(
-                """
-                INSERT INTO directional_relation_atoms(
-                    atom_id, subject_ref, object_ref, relation_class,
-                    comparison_vector_json, supporting_evidence_refs_json,
-                    document_id, chunk_id, confidence, notes, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(atom_id) DO UPDATE SET
-                    subject_ref=excluded.subject_ref,
-                    object_ref=excluded.object_ref,
-                    relation_class=excluded.relation_class,
-                    comparison_vector_json=excluded.comparison_vector_json,
-                    supporting_evidence_refs_json=excluded.supporting_evidence_refs_json,
-                    document_id=excluded.document_id,
-                    chunk_id=excluded.chunk_id,
-                    confidence=excluded.confidence,
-                    notes=excluded.notes
-                """,
-                (
-                    atom.atom_id,
-                    atom.subject_ref,
-                    atom.object_ref,
-                    atom.relation_class.value,
-                    json.dumps(atom.comparison_vector),
-                    json.dumps(list(atom.supporting_evidence_refs)),
-                    atom.document_id,
-                    atom.chunk_id,
-                    atom.confidence,
-                    atom.notes,
-                    atom.created_at,
-                ),
+            return self._upsert_relation_atom_on_conn(
+                conn,
+                subject_ref=subject_ref,
+                object_ref=object_ref,
+                relation_class=relation_class,
+                comparison_vector=comparison_vector,
+                supporting_evidence_refs=supporting_evidence_refs,
+                document_id=document_id,
+                chunk_id=chunk_id,
+                confidence=confidence,
+                notes=notes,
+                atom_id=atom_id,
             )
-        return atom
+
+    def replace_document_relation_atoms(
+        self,
+        document_id: str,
+        atoms: list[dict[str, Any]] | list[DirectionalRelationAtom],
+    ) -> dict[str, Any]:
+        """Delete-then-upsert all relation atoms for one document in a single transaction.
+
+        Canonical owner for relation rebuild hygiene — callers must not open
+        per-atom SQLite connections from DatasetService.
+        """
+        doc_id = str(document_id or "").strip()
+        if not doc_id:
+            raise ValueError("document_id is required")
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            deleted = self._delete_relation_atoms_for_document(conn, doc_id)
+            upserted = 0
+            for raw in atoms:
+                if isinstance(raw, DirectionalRelationAtom):
+                    self._upsert_relation_atom_on_conn(
+                        conn,
+                        subject_ref=raw.subject_ref,
+                        object_ref=raw.object_ref,
+                        relation_class=raw.relation_class,
+                        comparison_vector=list(raw.comparison_vector),
+                        supporting_evidence_refs=raw.supporting_evidence_refs,
+                        document_id=doc_id,
+                        chunk_id=raw.chunk_id,
+                        confidence=raw.confidence,
+                        notes=raw.notes,
+                        atom_id=raw.atom_id,
+                        created_at=raw.created_at or None,
+                    )
+                else:
+                    self._upsert_relation_atom_on_conn(
+                        conn,
+                        subject_ref=str(raw.get("subject_ref") or raw.get("subjectRef") or ""),
+                        object_ref=str(raw.get("object_ref") or raw.get("objectRef") or ""),
+                        relation_class=raw.get("relation_class") or raw.get("relationClass") or RelationClass.LIKE,
+                        comparison_vector=list(raw.get("comparison_vector") or raw.get("comparisonVector") or []),
+                        supporting_evidence_refs=raw.get("supporting_evidence_refs")
+                        or raw.get("supportingEvidenceRefs")
+                        or (),
+                        document_id=doc_id,
+                        chunk_id=raw.get("chunk_id") or raw.get("chunkId"),
+                        confidence=float(raw.get("confidence") if raw.get("confidence") is not None else 0.5),
+                        notes=str(raw.get("notes") or ""),
+                        atom_id=raw.get("atom_id") or raw.get("atomId"),
+                    )
+                upserted += 1
+            return {
+                "documentId": doc_id,
+                "deleted": deleted,
+                "upserted": upserted,
+                "transaction": "single",
+            }
+
+    def replace_relation_atoms_batch(
+        self,
+        replacements: list[tuple[str, list[dict[str, Any]] | list[DirectionalRelationAtom]]],
+    ) -> dict[str, Any]:
+        """Replace relation atoms for multiple documents in one bounded transaction.
+
+        ``replacements`` is a list of ``(document_id, atoms)``. Memory stays
+        bounded by the caller — do not materialize unlimited documents.
+        Failure rolls back the whole batch (atomic unit).
+        """
+        if not replacements:
+            return {
+                "documents": 0,
+                "deleted": 0,
+                "upserted": 0,
+                "transaction": "single",
+            }
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            deleted_total = 0
+            upserted_total = 0
+            for document_id, atoms in replacements:
+                doc_id = str(document_id or "").strip()
+                if not doc_id:
+                    raise ValueError("document_id is required")
+                deleted_total += self._delete_relation_atoms_for_document(conn, doc_id)
+                for raw in atoms:
+                    if isinstance(raw, DirectionalRelationAtom):
+                        self._upsert_relation_atom_on_conn(
+                            conn,
+                            subject_ref=raw.subject_ref,
+                            object_ref=raw.object_ref,
+                            relation_class=raw.relation_class,
+                            comparison_vector=list(raw.comparison_vector),
+                            supporting_evidence_refs=raw.supporting_evidence_refs,
+                            document_id=doc_id,
+                            chunk_id=raw.chunk_id,
+                            confidence=raw.confidence,
+                            notes=raw.notes,
+                            atom_id=raw.atom_id,
+                            created_at=raw.created_at or None,
+                        )
+                    else:
+                        self._upsert_relation_atom_on_conn(
+                            conn,
+                            subject_ref=str(raw.get("subject_ref") or raw.get("subjectRef") or ""),
+                            object_ref=str(raw.get("object_ref") or raw.get("objectRef") or ""),
+                            relation_class=raw.get("relation_class")
+                            or raw.get("relationClass")
+                            or RelationClass.LIKE,
+                            comparison_vector=list(
+                                raw.get("comparison_vector") or raw.get("comparisonVector") or []
+                            ),
+                            supporting_evidence_refs=raw.get("supporting_evidence_refs")
+                            or raw.get("supportingEvidenceRefs")
+                            or (),
+                            document_id=doc_id,
+                            chunk_id=raw.get("chunk_id") or raw.get("chunkId"),
+                            confidence=float(
+                                raw.get("confidence") if raw.get("confidence") is not None else 0.5
+                            ),
+                            notes=str(raw.get("notes") or ""),
+                            atom_id=raw.get("atom_id") or raw.get("atomId"),
+                        )
+                    upserted_total += 1
+            return {
+                "documents": len(replacements),
+                "deleted": deleted_total,
+                "upserted": upserted_total,
+                "transaction": "single",
+            }
+
+    def count_relation_atoms_for_document(self, document_id: str) -> int:
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM directional_relation_atoms WHERE document_id = ?",
+                (document_id,),
+            ).fetchone()
+            return int(row["c"] if row else 0)
 
     def add_relation_atom(
         self,

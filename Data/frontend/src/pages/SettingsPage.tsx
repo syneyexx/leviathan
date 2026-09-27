@@ -602,8 +602,8 @@ export function SettingsPage() {
                 <label style={{ display: "block", marginTop: "0.75rem" }}>
                   Identity description
                   <textarea
-                    className="lv-input"
-                    rows={2}
+                    className="lv-input lv-textarea lv-textarea--identity"
+                    rows={6}
                     value={behaviorDraft.identity_description}
                     onChange={(e) =>
                       setBehaviorDraft((d) => ({ ...d, identity_description: e.target.value }))
@@ -615,8 +615,8 @@ export function SettingsPage() {
                   System Prompt
                 </div>
                 <textarea
-                  className="lv-input"
-                  rows={6}
+                  className="lv-input lv-textarea lv-textarea--system-prompt"
+                  rows={12}
                   value={systemPrompt}
                   onChange={(e) => setSystemPrompt(e.target.value)}
                   aria-label="System prompt"

@@ -112,6 +112,17 @@ class ComputeBackendPlanner:
                         fallback_reason=f"forced_rust_unavailable:{caps.status.value}",
                         detail=caps.detail,
                     )
+                if op not in SUPPORTED_OPERATIONS:
+                    return BackendPlan(
+                        backend=ComputeBackend.PYTHON_STREAMING,
+                        operation=op,
+                        native_mode=mode,
+                        input_bytes=size,
+                        rust_threshold_bytes=self.policy.rust_threshold_bytes,
+                        native_status=caps.status.value,
+                        fallback_reason="forced_rust_unsupported_operation",
+                        detail=f"operation {op} not in native allowlist",
+                    )
                 return BackendPlan(
                     backend=ComputeBackend.RUST_NATIVE,
                     operation=op,

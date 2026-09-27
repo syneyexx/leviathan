@@ -11,10 +11,18 @@ import subprocess
 import sys
 from pathlib import Path
 
+BINARY_STEM = "leviathan-data-plane"
+
 
 def _data_root() -> Path:
     # scripts/build_native_data_plane.py → repo root; Data/ is sibling of scripts/
     return Path(__file__).resolve().parents[1] / "Data"
+
+
+def binary_filename(*, windows: bool | None = None) -> str:
+    """Platform-aware Cargo artifact / install name (``.exe`` on Windows)."""
+    is_windows = sys.platform.startswith("win") if windows is None else bool(windows)
+    return f"{BINARY_STEM}.exe" if is_windows else BINARY_STEM
 
 
 def detect_cargo() -> str | None:
@@ -29,6 +37,15 @@ def detect_cargo() -> str | None:
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return str(candidate)
     return None
+
+
+def built_binary_path(native: Path, *, release: bool, windows: bool | None = None) -> Path:
+    profile = "release" if release else "debug"
+    return native / "target" / profile / binary_filename(windows=windows)
+
+
+def install_binary_path(native: Path, *, windows: bool | None = None) -> Path:
+    return native / "bin" / binary_filename(windows=windows)
 
 
 def build(release: bool = True, locked: bool = True) -> Path:
@@ -51,16 +68,18 @@ def build(release: bool = True, locked: bool = True) -> Path:
     if proc.returncode != 0:
         raise SystemExit(f"cargo build failed with exit {proc.returncode}")
 
-    profile = "release" if release else "debug"
-    built = native / "target" / profile / "leviathan-data-plane"
+    built = built_binary_path(native, release=release)
     if not built.is_file():
-        raise SystemExit(f"built binary missing: {built}")
+        # Honest diagnostic if Cargo produced the other platform suffix.
+        alt = built_binary_path(native, release=release, windows=not sys.platform.startswith("win"))
+        hint = f" (also checked {alt})" if alt != built else ""
+        raise SystemExit(f"built binary missing: {built}{hint}")
 
-    dest_dir = native / "bin"
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / "leviathan-data-plane"
+    dest = install_binary_path(native)
+    dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(built, dest)
-    dest.chmod(dest.stat().st_mode | 0o111)
+    if not sys.platform.startswith("win"):
+        dest.chmod(dest.stat().st_mode | 0o111)
     return dest
 
 

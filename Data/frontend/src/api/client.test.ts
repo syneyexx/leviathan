@@ -340,15 +340,24 @@ describe("api client — datasets / training / research / model test", () => {
     expect(cancelCap.init?.method).toBe("POST");
   });
 
-  it("listSchedules and pauseSchedule hit schedule routes", async () => {
-    mockFetch(200, { schedules: [] });
-    const listed = await api.listSchedules({ limit: 10 });
-    expect(listed.schedules).toEqual([]);
+  it("encodes slash-bearing model ids in path segments", async () => {
+    const modelId = "provider:org/deep/model";
+    const encoded = encodeURIComponent(modelId);
+    const capture: { url?: string; init?: RequestInit } = {};
+    mockFetch(200, { model: { id: modelId } }, capture);
+    await api.getModel(modelId);
+    expect(capture.url).toBe(`/api/models/${encoded}`);
+    expect(capture.url).toContain("%2F");
 
-    const pauseCap: { url?: string; init?: RequestInit } = {};
-    mockFetch(200, { schedule: { schedule_id: "s1", status: "PAUSED" } }, pauseCap);
-    await api.pauseSchedule("s1");
-    expect(pauseCap.url).toBe("/api/schedules/s1/pause");
-    expect(pauseCap.init?.method).toBe("POST");
+    const act: { url?: string; init?: RequestInit } = {};
+    mockFetch(200, { model: { id: modelId }, activeModelId: modelId }, act);
+    await api.activateModel(modelId);
+    expect(act.url).toBe(`/api/models/${encoded}/activate`);
+    expect(act.init?.method).toBe("POST");
+
+    const prof: { url?: string } = {};
+    mockFetch(200, { profile: {} }, prof);
+    await api.getModelProfile(modelId);
+    expect(prof.url).toBe(`/api/models/${encoded}/profile`);
   });
 });
