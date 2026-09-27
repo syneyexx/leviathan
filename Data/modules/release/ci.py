@@ -112,7 +112,7 @@ def interpret_command_result(
     available: bool = True,
     applicable: bool = True,
     detail: str = "",
-    exclude: tuple[str, ...] = ("HADES/", "editor/"),
+    exclude: tuple[str, ...] = ("Data/HADES/", "editor/"),
 ) -> CiSuiteResult:
     """Map a CI command outcome to honest measurement semantics."""
     if not applicable:
@@ -266,7 +266,7 @@ def default_leviathan_ci_plan(
             command="",
             exit_code=None,
             applicable=False,
-            detail="HADES/ excluded from LEVIATHAN CI by policy",
+            detail="Data/HADES/ excluded from LEVIATHAN CI by policy",
         ),
         interpret_command_result(
             suite_id="editor",

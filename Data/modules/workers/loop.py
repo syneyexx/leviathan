@@ -9,7 +9,8 @@ import time
 import traceback
 from typing import Any, Callable
 
-from Data.modules.jobs.states import JobState
+from Data.modules.jobs.leases import LeaseFenceError, observe_job_cancel_state, require_lease_heartbeat
+from Data.modules.jobs.states import JobState, StaleLeaseError
 
 from .admission import ResourceAdmission, ResourceClass
 from .events import get_worker_event_emitter, resolve_human_title
@@ -137,7 +138,10 @@ def run_pool_loop(
             exact = {k for k in defn.job_kinds if not k.endswith(".")}
             capability_ids = exact or None
 
-        claim_kwargs: dict[str, Any] = {}
+        claim_kwargs: dict[str, Any] = {
+            "worker_id": worker_id,
+            "lease_ttl_seconds": lease_ttl,
+        }
         if capability_ids:
             claim_kwargs["capability_ids"] = capability_ids
         # Prefer worker_pool column when store supports it
@@ -149,11 +153,26 @@ def run_pool_loop(
             )
         else:
             job = store.claim_next_queued(**claim_kwargs)
-            if job is not None and hasattr(store, "acquire_lease"):
+            # claim_next_queued already attaches the lease atomically. A follow-up
+            # acquire is only for stores that claim without leasing — never swallow
+            # acquisition failure and execute anyway (WORKER-001).
+            if job is not None and getattr(job, "lease_owner", None) != worker_id:
+                if not hasattr(store, "acquire_lease"):
+                    print(
+                        f"[{pool_id}-worker] lease unproven for job={job.job_id} — skipping",
+                        flush=True,
+                    )
+                    time.sleep(poll)
+                    continue
                 try:
                     store.acquire_lease(job.job_id, worker_id=worker_id, ttl_seconds=lease_ttl)
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    print(
+                        f"[{pool_id}-worker] lease acquire failed job={job.job_id}: {exc}",
+                        flush=True,
+                    )
+                    time.sleep(poll)
+                    continue
 
         if job is None:
             if once:
@@ -199,22 +218,60 @@ def run_pool_loop(
                 human_title=human,
                 domain=getattr(job, "domain", None) or pool_id,
             )
+            # WORKER-008: transition while lease is held, then release. Never swallow
+            # state-mutation failure after admission rejection.
+            recovery_error: str | None = None
             try:
-                if hasattr(store, "transition"):
-                    from Data.modules.jobs.states import JobState as JS
-
-                    # Soft release: mark retry wait briefly via metadata when available
+                if hasattr(store, "schedule_retry"):
+                    store.schedule_retry(
+                        job.job_id,
+                        delay_seconds=poll * 4,
+                        error=str(decision.reason or "RESOURCE_UNAVAILABLE"),
+                        error_code="RESOURCE_UNAVAILABLE",
+                        retryable=True,
+                        expected_lease_owner=worker_id,
+                    )
+                elif hasattr(store, "transition"):
+                    store.transition(
+                        job.job_id,
+                        JobState.QUEUED,
+                        error=str(decision.reason or "RESOURCE_UNAVAILABLE"),
+                        expected_lease_owner=worker_id,
+                    )
+                else:
+                    recovery_error = "store_cannot_requeue_after_admission_reject"
+            except Exception as exc:  # noqa: BLE001
+                recovery_error = f"{type(exc).__name__}: {exc}"
+                try:
+                    store.transition(
+                        job.job_id,
+                        JobState.FAILED,
+                        error=f"resource_admission_recovery_failed: {recovery_error}",
+                        error_code="RESOURCE_ADMISSION_RECOVERY_FAILED",
+                        expected_lease_owner=worker_id,
+                    )
+                except Exception as fence_exc:  # noqa: BLE001
+                    print(
+                        f"[{pool_id}-worker] admission recovery failed job={job.job_id}: "
+                        f"{recovery_error}; fence also failed: {fence_exc}",
+                        flush=True,
+                    )
+            finally:
+                try:
                     store.release_lease(job.job_id, worker_id=worker_id)
-                    if hasattr(store, "schedule_retry"):
-                        store.schedule_retry(
-                            job.job_id,
-                            delay_seconds=poll * 4,
-                            error=decision.reason,
-                        )
-                    else:
-                        store.transition(job.job_id, JS.QUEUED, error=decision.reason)
-            except Exception:  # noqa: BLE001
-                pass
+                except Exception as release_exc:  # noqa: BLE001
+                    print(
+                        f"[{pool_id}-worker] release after admission reject failed "
+                        f"job={job.job_id}: {release_exc}",
+                        flush=True,
+                    )
+            if recovery_error and "resource_admission_recovery_failed" not in str(
+                getattr(store.get(job.job_id), "error", "") or ""
+            ):
+                print(
+                    f"[{pool_id}-worker] admission recovery error job={job.job_id}: {recovery_error}",
+                    flush=True,
+                )
             registry.heartbeat(worker_id, state=WorkerInstanceState.READY, clear_job=True)
             time.sleep(poll)
             continue

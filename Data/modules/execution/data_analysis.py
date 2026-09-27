@@ -5,53 +5,41 @@ Unsafe raw eval is refused. Long analysis belongs on external workers.
 
 from __future__ import annotations
 
-import ast
 import csv
 import io
-import math
 from dataclasses import dataclass
 from typing import Any
 
 
-ALLOWED_BINOPS = (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow, ast.Mod, ast.FloorDiv)
-ALLOWED_UNARY = (ast.UAdd, ast.USub)
-
-
 def safe_calculate(expression: str) -> dict[str, Any]:
-    """Evaluate a numeric expression via AST — no names, attrs, or calls."""
+    """Evaluate a numeric expression via the canonical NumericComputeEngine.
+
+    Compatibility alias — do not maintain a weaker second AST evaluator here.
+    """
+    from Data.modules.compute.numeric import NumericComputeEngine
+
     src = (expression or "").strip()
     if not src:
         return {"ok": False, "error": "empty", "status": "REJECTED"}
     try:
-        tree = ast.parse(src, mode="eval")
-    except SyntaxError as exc:
-        return {"ok": False, "error": str(exc), "status": "REJECTED"}
-
-    def _check(node: ast.AST) -> None:
-        if isinstance(node, ast.Expression):
-            _check(node.body)
-            return
-        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-            return
-        if isinstance(node, ast.BinOp) and isinstance(node.op, ALLOWED_BINOPS):
-            _check(node.left)
-            _check(node.right)
-            return
-        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ALLOWED_UNARY):
-            _check(node.operand)
-            return
-        raise ValueError(f"disallowed node {type(node).__name__}")
-
-    try:
-        _check(tree)
-        value = eval(compile(tree, "<safe_calculate>", "eval"), {"__builtins__": {}}, {})  # noqa: S307
+        result = NumericComputeEngine().evaluate_expression(src)
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": str(exc), "status": "REJECTED", "truth": {"no_raw_eval": True}}
+        return {
+            "ok": False,
+            "error": str(exc),
+            "status": "REJECTED",
+            "truth": {"no_raw_eval": True, "delegates_to": "NumericComputeEngine"},
+        }
+    value = result.value
     return {
         "ok": True,
         "value": float(value) if isinstance(value, (int, float)) else value,
         "status": "MEASURED",
-        "truth": {"deterministic_calculation": True, "no_raw_eval": True},
+        "truth": {
+            "deterministic_calculation": True,
+            "no_raw_eval": True,
+            "delegates_to": "NumericComputeEngine",
+        },
     }
 
 
