@@ -1252,7 +1252,7 @@ class Settings:
                 ),
                 neuro_soak_long=_env_bool("LEVIATHAN_FEATURE_NEURO_SOAK_LONG", False),
                 neuro_training_real_worker=_env_bool("LEVIATHAN_NEURO_TRAINING_REAL_WORKER", False),
-                module_manager_enabled=_env_bool("LEVIATHAN_FEATURE_MODULE_MANAGER", False),
+                module_manager_enabled=_env_bool("LEVIATHAN_FEATURE_MODULE_MANAGER", True),
                 module_manager_subprocess=_env_bool("LEVIATHAN_FEATURE_MODULE_MANAGER_SUBPROCESS", False),
                 agents_enabled=_env_bool("LEVIATHAN_FEATURE_AGENTS", True),
                 coding_enabled=coding_enabled,
