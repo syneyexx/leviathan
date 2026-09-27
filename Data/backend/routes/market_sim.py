@@ -966,6 +966,36 @@ def build_market_sim_router(
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 
+    @router.post("/api/market-sim/portfolios/{portfolio_id}/flatten")
+    def flatten_portfolio(portfolio_id: str) -> dict:
+        """Close all open paper positions (Flatten All)."""
+        try:
+            return _mutate_via_gateway(
+                "market_sim.portfolio_flatten",
+                {"portfolio_id": portfolio_id},
+                lambda: service.portfolio_flatten_all(portfolio_id),
+            )
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/market/bars")
+    def market_bars(
+        symbol: str = Query(..., min_length=1),
+        providerId: str = Query("binance_public"),
+        timeframe: str = Query("1h"),
+        limit: int = Query(200, ge=10, le=1000),
+    ) -> dict:
+        """OHLCV bars for Paper Trading chart — provider-backed, never fabricated."""
+        try:
+            return service.fetch_market_bars(
+                provider_id=providerId,
+                symbol=symbol,
+                timeframe=timeframe,
+                limit=limit,
+            )
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
     @router.post("/api/market-sim/portfolios/{portfolio_id}/rebalance/preview")
     def rebalance_preview(portfolio_id: str, payload: PortfolioRebalanceRequest) -> dict:
         try:

@@ -2595,6 +2595,45 @@ export type PortfolioDashboard = {
   truth?: Record<string, unknown>;
 };
 
+/** Provider-backed OHLCV for Paper Trading chart — never fabricated client-side. */
+export type MarketBar = {
+  ts: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
+export type MarketBarsResponse = {
+  symbol: string;
+  provider_id: string;
+  timeframe: string;
+  bars: MarketBar[];
+  count: number;
+  quote?: {
+    price?: number;
+    bid?: number;
+    ask?: number;
+    provider?: string;
+    ts?: string;
+    [key: string]: unknown;
+  } | null;
+  ohlc?: {
+    open?: number;
+    high?: number;
+    low?: number;
+    close?: number;
+    volume?: number;
+    ts?: string;
+  } | null;
+  license_note?: string;
+  license_state?: string;
+  executed_via?: string;
+  detail?: string;
+  truth?: Record<string, unknown>;
+};
+
 export type SettingsCategory = {
   id: string;
   label: string;

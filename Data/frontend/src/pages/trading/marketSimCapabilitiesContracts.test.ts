@@ -4,13 +4,15 @@ import { describe, expect, it } from "vitest";
 
 const typesPath = resolve(__dirname, "../../types/api.ts");
 const clientPath = resolve(__dirname, "../../api/client.ts");
-const paperPath = resolve(__dirname, "PaperTradingPage.tsx");
+const paperHookPath = resolve(__dirname, "paper/hooks/usePaperTradingOperator.ts");
+const paperPagePath = resolve(__dirname, "paper/PaperTradingPage.tsx");
 const controlRoomPath = resolve(__dirname, "InstitutionalControlRoomPage.tsx");
 
 describe("Trading Center typed capability contracts", () => {
   const types = readFileSync(typesPath, "utf8");
   const client = readFileSync(clientPath, "utf8");
-  const paper = readFileSync(paperPath, "utf8");
+  const paper = readFileSync(paperHookPath, "utf8");
+  const paperPage = readFileSync(paperPagePath, "utf8");
   const controlRoom = readFileSync(controlRoomPath, "utf8");
 
   it("declares MarketSimCapabilities and granularity types", () => {
@@ -33,8 +35,10 @@ describe("Trading Center typed capability contracts", () => {
 
   it("Paper Trading consumes backend capabilities without fabricating Sharpe", () => {
     expect(paper).toContain("marketSimCapabilities");
+    expect(paperPage).toContain("lv-main lv-tp-main");
     expect(paper).not.toMatch(/sharpe\s*[:=]\s*1\.[0-9]/i);
     expect(paper).not.toContain("institutional ready");
+    expect(paperPage).not.toContain("institutional ready");
   });
 
   it("Control Room treats live trading as blocked by default", () => {
