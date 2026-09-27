@@ -302,6 +302,47 @@ def run_assurance(
             )
         )
 
+    # Exactly three canonical product databases (CONTROL / KNOWLEDGE / MARKET).
+    try:
+        from Data.modules.common.database_domains import DatabaseDomain, DatabasePaths
+
+        domains = list(DatabaseDomain)
+        if len(domains) != 3 or {d.value for d in domains} != {
+            "CONTROL",
+            "KNOWLEDGE",
+            "MARKET",
+        }:
+            findings.append(
+                AssuranceFinding(
+                    code="DATABASE_AUTHORITY_COUNT",
+                    severity="CRITICAL",
+                    detail=f"expected exactly CONTROL/KNOWLEDGE/MARKET, got {[d.value for d in domains]}",
+                )
+            )
+        # Contract object must advertise canonical_count=3
+        paths = DatabasePaths(
+            control=Path("Data/backend/data/leviathan_control.db"),
+            knowledge=Path("Data/backend/data/leviathan_knowledge.db"),
+            market=Path("Data/backend/data/leviathan_market.db"),
+        )
+        pub = paths.public_dict() if hasattr(paths, "public_dict") else {}
+        if pub and int(pub.get("canonical_count") or 0) != 3:
+            findings.append(
+                AssuranceFinding(
+                    code="DATABASE_AUTHORITY_COUNT",
+                    severity="CRITICAL",
+                    detail=f"canonical_count={pub.get('canonical_count')} expected 3",
+                )
+            )
+    except Exception as exc:  # noqa: BLE001
+        findings.append(
+            AssuranceFinding(
+                code="DATABASE_AUTHORITY_UNAVAILABLE",
+                severity="HIGH",
+                detail=str(exc),
+            )
+        )
+
     # Flag promotional parity claims only. Markers joined at runtime so this
     # file does not contain the forbidden phrases as contiguous literals.
     claim_markers = tuple(
