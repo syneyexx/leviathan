@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import socket
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import urlparse
 
 from ...types import ModuleHealth, ModuleResult, ModuleStatus
 from ..install import InstallationService, InstallError
@@ -52,6 +54,36 @@ class ProcessServiceAdapter:
             return self._install_root
         return self._install_root
 
+    def _configured_listen_endpoint(self) -> tuple[str, int] | None:
+        """Host/port from base_url or ready_probe URL — used for collision checks."""
+        candidates: list[str] = []
+        if self.config.runtime.base_url:
+            candidates.append(str(self.config.runtime.base_url))
+        probe = self.config.runtime.ready_probe or self.config.runtime.health_probe
+        if isinstance(probe, Mapping) and probe.get("url"):
+            candidates.append(str(probe.get("url")))
+        for raw in candidates:
+            try:
+                parsed = urlparse(raw)
+            except Exception:  # noqa: BLE001
+                continue
+            host = parsed.hostname or "127.0.0.1"
+            if parsed.port is not None:
+                return host, int(parsed.port)
+            if parsed.scheme == "https":
+                return host, 443
+            if parsed.scheme == "http":
+                return host, 80
+        return None
+
+    @staticmethod
+    def _endpoint_accepts_connections(host: str, port: int, *, timeout: float = 0.25) -> bool:
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError:
+            return False
+
     def start(self) -> dict[str, Any]:
         self._reconcile_persisted()
         if self._owned and self._owned.is_alive():
@@ -59,6 +91,19 @@ class ProcessServiceAdapter:
             return {"status": "RUNNING", "pid": self._owned.pid}
         if not self.config.runtime.command:
             raise InstallError(ExternalFailureCode.START_FAILED, "process service requires runtime.command")
+        # Fail closed if another process already owns the configured listen port.
+        # Prevents ready_probe succeeding against a different module (e.g. Osintgram vs
+        # llm-agent-trader both defaulting to :8000).
+        endpoint = self._configured_listen_endpoint()
+        if endpoint is not None:
+            host, port = endpoint
+            if self._endpoint_accepts_connections(host, port):
+                self._state = ExternalRuntimeState.FAILED
+                raise InstallError(
+                    ExternalFailureCode.PORT_IN_USE,
+                    f"listen endpoint {host}:{port} already accepts connections; "
+                    f"choose a dedicated port for module {self.ctx.module_id}",
+                )
         self._state = ExternalRuntimeState.STARTING
         root = self._resolve_install_root()
         cwd = (self.config.runtime.cwd or root or "").replace("$INSTALL_ROOT", root or "") or None

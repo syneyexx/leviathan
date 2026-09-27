@@ -86,6 +86,7 @@ class ExternalFailureCode(str, Enum):
     INSTALL_FAILED = "INSTALL_FAILED"
     UPDATE_BLOCKED_ACTIVE = "UPDATE_BLOCKED_ACTIVE"
     NOT_AVAILABLE = "NOT_AVAILABLE"
+    PORT_IN_USE = "PORT_IN_USE"
 
 
 @dataclass(frozen=True)

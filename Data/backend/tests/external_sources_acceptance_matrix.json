@@ -671,7 +671,8 @@
       "http_agent_runtime_preflight": "PASS NOT_AVAILABLE when requires_agent_runtime",
       "modules_page_sweep_idle": "PASS",
       "llm_agent_trader_port_isolation": "PASS :8010",
-      "skills_page_search_pagination": "PASS_UI limit=40 offset"
+      "skills_page_search_pagination": "PASS_UI limit=40 offset",
+      "process_service_port_in_use": "PASS fails closed PORT_IN_USE"
     },
     "skill_pack_invoke": {
       "claude-osint": {

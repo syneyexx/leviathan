@@ -222,6 +222,80 @@ class ExternalFabricUnitTests(unittest.TestCase):
             assert stopped is not None
             self.assertEqual(stopped.status, ModuleStatus.STOPPED)
 
+    def test_process_service_port_in_use_fails_closed(self) -> None:
+        """Do not treat another listener's ready probe as our module starting."""
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        from Data.modules.module_manager.manager import ModuleManagerError
+
+        class _Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_args: Any) -> None:  # noqa: ANN401
+                return
+
+            def do_GET(self) -> None:  # noqa: N802
+                body = b'{"ok":true,"owner":"intruder"}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        port = _free_port()
+        server = HTTPServer(("127.0.0.1", port), _Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            deadline = time.time() + 3
+            while time.time() < deadline:
+                try:
+                    with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.05)
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "mods" / "port-clash"
+                root.mkdir(parents=True)
+                # Command would never be reached if port guard works.
+                bogus = Path(tmp) / "never.py"
+                bogus.write_text("raise SystemExit('should not start')\n", encoding="utf-8")
+                manifest = {
+                    "module_id": "port-clash",
+                    "name": "Port Clash",
+                    "version": "0.0.1",
+                    "entrypoint": FACTORY,
+                    "external": {
+                        "adapter": "PROCESS_SERVICE",
+                        "source_type": "path",
+                        "path": str(tmp),
+                        "install": {"strategy": "NONE"},
+                        "runtime": {
+                            "mode": "LAZY",
+                            "command": [sys.executable, str(bogus)],
+                            "startup_timeout_seconds": 5,
+                            "base_url": f"http://127.0.0.1:{port}",
+                            "ready_probe": {
+                                "kind": "http",
+                                "url": f"http://127.0.0.1:{port}/health",
+                                "expect_status": 200,
+                            },
+                        },
+                    },
+                    "capabilities": [],
+                }
+                (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+                manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+                manager.discover()
+                manager.initialize(
+                    "port-clash",
+                    ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp),
+                )
+                with self.assertRaises(ModuleManagerError) as ctx:
+                    manager.start("port-clash")
+                self.assertIn("PORT_IN_USE", str(ctx.exception))
+        finally:
+            server.shutdown()
+            server.server_close()
+
     def test_skill_pack_index_and_on_demand_load(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "mods" / "fake-skill"
