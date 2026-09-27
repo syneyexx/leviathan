@@ -550,7 +550,6 @@ print("STATUS", result.get("status"))
                 provider="fake",
                 capability="http",
                 payload={"url": f"{self.base.replace('/v1', '')}/health"},
-                allow_private_hosts=True,
                 credential_ref="none",
             )
         with self.assertRaises(ProviderError) as ctx:
@@ -558,7 +557,6 @@ print("STATUS", result.get("status"))
                 provider="fake",
                 capability="http",
                 payload={"url": f"{self.base.replace('/v1', '')}/health"},
-                allow_private_hosts=True,
                 credential_ref="none",
             )
         self.assertEqual(ctx.exception.code, ProviderErrorCode.EXECUTION_CAPACITY_EXHAUSTED)

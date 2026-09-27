@@ -70,8 +70,16 @@ def configured_private_host_allowlist(*, settings: Any | None = None) -> set[str
                 h = _normalize_host(parsed.hostname)
                 if h:
                     hosts.add(h)
-    # Common local inference defaults commonly configured by operators.
-    hosts.update({"127.0.0.1", "localhost", "::1"})
+        # Settings may also expose llm_base_url as a property alias.
+        llm = getattr(settings, "llm_base_url", None)
+        if isinstance(llm, str) and llm.strip():
+            parsed = urlparse(llm if "://" in llm else f"http://{llm}")
+            h = _normalize_host(parsed.hostname)
+            if h:
+                hosts.add(h)
+    # Do NOT hardcode loopback — that would let any caller-chosen localhost URL
+    # bypass SSRF. Loopback is allowed only via env allowlist or configured
+    # model/managed-serving base_url hostnames above.
     return hosts
 
 

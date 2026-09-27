@@ -1204,16 +1204,21 @@ task_service = TaskService(
 
 
 def _knowledge_search(query: str, limit: int = 6):
-    try:
-        if staged_retriever is not None and hasattr(staged_retriever, "retrieve"):
+    """Retrieve knowledge hits. Store/retriever failures raise — empty is not failure."""
+    last_err: Exception | None = None
+    if staged_retriever is not None and hasattr(staged_retriever, "retrieve"):
+        try:
             return staged_retriever.retrieve(query, limit=limit)
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        if hasattr(knowledge, "search"):
+        except Exception as exc:  # noqa: BLE001
+            last_err = exc
+    if hasattr(knowledge, "search"):
+        try:
             return knowledge.search(query, limit=limit)
-    except Exception:  # noqa: BLE001
-        return []
+        except Exception:
+            # Authoritative knowledge failure must not look like "no hits".
+            raise
+    if last_err is not None:
+        raise last_err
     return []
 
 

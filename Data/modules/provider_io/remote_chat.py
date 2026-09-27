@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from Data.modules.provider_io.facade import ProviderExecutionClient
-from Data.modules.provider_io.types import ProviderExecutionResult, StreamEvent
+from Data.modules.provider_io.types import ProviderExecutionResult
 
 
 def complete_remote_chat(
@@ -16,14 +16,18 @@ def complete_remote_chat(
     model: str | None = None,
     provider: str = "openai_compatible",
     credential_ref: str | None = "llm",
-    allow_private_hosts: bool = True,
     max_tokens: int | None = None,
     temperature: float | None = None,
     deadline_seconds: float | None = None,
     correlation_id: str | None = None,
     principal_ref: str | None = None,
 ) -> ProviderExecutionResult:
-    """Non-streaming remote completion via provider_io workers."""
+    """Non-streaming remote completion via provider_io workers.
+
+    Private-host / SSRF privilege is resolved solely from trusted configuration
+    (endpoint allowlist / operator env) inside the provider executor — callers
+    cannot request ``allow_private_hosts``.
+    """
     client = ProviderExecutionClient(job_runtime)
     payload: dict[str, Any] = {
         "endpoint": endpoint,
@@ -39,7 +43,6 @@ def complete_remote_chat(
         payload=payload,
         model=model,
         credential_ref=credential_ref,
-        allow_private_hosts=allow_private_hosts,
         deadline_seconds=deadline_seconds,
         correlation_id=correlation_id,
         principal_ref=principal_ref,
@@ -56,10 +59,11 @@ def stream_remote_chat(
     model: str | None = None,
     provider: str = "openai_compatible",
     credential_ref: str | None = "llm",
-    allow_private_hosts: bool = True,
     **kwargs: Any,
 ) -> tuple[Any, Any]:
     """Submit streaming chat; returns (job, event_iterator)."""
+    # Drop forgeable private-host flags — authority is policy-owned only.
+    kwargs.pop("allow_private_hosts", None)
     client = ProviderExecutionClient(job_runtime)
     payload: dict[str, Any] = {"endpoint": endpoint, "messages": messages}
     for key in ("max_tokens", "temperature", "tools", "tool_choice"):
@@ -72,7 +76,6 @@ def stream_remote_chat(
         model=model,
         streaming=True,
         credential_ref=credential_ref,
-        allow_private_hosts=allow_private_hosts,
         deadline_seconds=kwargs.get("deadline_seconds"),
         correlation_id=kwargs.get("correlation_id"),
         principal_ref=kwargs.get("principal_ref"),

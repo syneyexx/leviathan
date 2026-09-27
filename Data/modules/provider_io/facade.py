@@ -50,8 +50,12 @@ class ProviderExecutionClient:
         try:
             queued = store.list(state=JobState.QUEUED, limit=self.settings.queue_capacity + 1)
             return sum(1 for j in queued if getattr(j, "worker_pool", None) == "provider_io")
-        except Exception:  # noqa: BLE001
-            return 0
+        except Exception as exc:  # noqa: BLE001 — fail closed: unknown depth is not free capacity
+            raise ProviderError(
+                ProviderErrorCode.EXECUTION_CAPACITY_EXHAUSTED,
+                "Provider queue depth unmeasured; refusing submit (fail-closed).",
+                retryable=True,
+            ) from exc
 
     def submit(
         self,
@@ -67,7 +71,6 @@ class ProviderExecutionClient:
         idempotency_key: str | None = None,
         idempotency_class: str = "READ",
         deadline_seconds: float | None = None,
-        allow_private_hosts: bool = False,
         latency_class: str = "interactive",
         priority: int | None = None,
         requested_by: str = "api",
@@ -196,6 +199,7 @@ class ProviderExecutionClient:
         )
 
     def submit_and_wait(self, **kwargs: Any) -> ProviderExecutionResult:
+        kwargs.pop("allow_private_hosts", None)  # untrusted — policy-owned only
         job = self.submit(**kwargs)
         return self.await_result(
             job.job_id,

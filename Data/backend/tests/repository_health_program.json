@@ -770,6 +770,119 @@
       ],
       "verification": "local_pytest",
       "notes": "Wave 14 Data/HADES/ exclusion path"
+    },
+    {
+      "id": "SECURITY-001",
+      "severity": "P0",
+      "subsystem": "security",
+      "status": "FIXED",
+      "reproduction": "configured_private_host_allowlist hardcoded 127.0.0.1/localhost/::1",
+      "canonical_owner": "private_host_authority",
+      "files": [
+        "Data/modules/provider_io/private_host_authority.py"
+      ],
+      "root_cause": "Unconditional loopback allowlist let any caller-chosen localhost URL bypass SSRF",
+      "fix": "Allowlist only from env + configured model/managed-serving base_url hosts",
+      "tests": [
+        "Data/backend/tests/test_sec_sqlmgr_wave5_6.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 16 second A-Z"
+    },
+    {
+      "id": "SECURITY-002",
+      "severity": "P2",
+      "subsystem": "security",
+      "status": "FIXED",
+      "reproduction": "capability schema + remote_chat defaulted allow_private_hosts",
+      "canonical_owner": "execution.builtins + remote_chat",
+      "files": [
+        "Data/modules/execution/builtins.py",
+        "Data/modules/provider_io/remote_chat.py",
+        "Data/modules/provider_io/facade.py"
+      ],
+      "root_cause": "Forgeable flag still in public capability schema despite executor ignore",
+      "fix": "Removed from schemas; remote_chat/facade no longer accept the flag",
+      "tests": [
+        "Data/backend/tests/test_wave16_second_az.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 16"
+    },
+    {
+      "id": "API-001",
+      "severity": "P1",
+      "subsystem": "provider_io",
+      "status": "FIXED",
+      "reproduction": "_queue_depth except return 0 disabled capacity enforcement",
+      "canonical_owner": "ProviderExecutionClient",
+      "files": [
+        "Data/modules/provider_io/facade.py"
+      ],
+      "root_cause": "Fail-open on queue depth read failure",
+      "fix": "Raise EXECUTION_CAPACITY_EXHAUSTED when depth unmeasured",
+      "tests": [
+        "Data/backend/tests/test_wave16_second_az.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 16"
+    },
+    {
+      "id": "API-002",
+      "severity": "P1",
+      "subsystem": "brain",
+      "status": "FIXED",
+      "reproduction": "_knowledge_search swallowed exceptions as []",
+      "canonical_owner": "Data.backend.main._knowledge_search",
+      "files": [
+        "Data/backend/main.py"
+      ],
+      "root_cause": "Retrieval failure looked like empty knowledge",
+      "fix": "Re-raise authoritative knowledge failures; BrainAccess records knowledge_query_failed",
+      "tests": [
+        "Data/backend/tests/test_wave16_second_az.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 16"
+    },
+    {
+      "id": "FRONTEND-006",
+      "severity": "P2",
+      "subsystem": "frontend",
+      "status": "FIXED",
+      "reproduction": "Hardcoded SYSTEMS ONLINE/OPERATIONAL chrome on MCP/Geheugen/Workflows/Evidence",
+      "canonical_owner": "AppShell systemItems",
+      "files": [
+        "Data/frontend/src/pages/McpPage.tsx",
+        "Data/frontend/src/pages/GeheugenPage.tsx",
+        "Data/frontend/src/pages/WorkflowsPage.tsx",
+        "Data/frontend/src/pages/EvidenceVaultPage.tsx"
+      ],
+      "root_cause": "Static chrome presented as live operational truth",
+      "fix": "Neutral surface labels; no SYSTEMS ONLINE/OPERATIONAL claims",
+      "tests": [
+        "Data/frontend/src/pages/systemChromeTruth.test.ts"
+      ],
+      "verification": "local_vitest",
+      "notes": "Wave 16"
+    },
+    {
+      "id": "NATIVE-001",
+      "severity": "P1",
+      "subsystem": "model_runtime",
+      "status": "FIXED",
+      "reproduction": "get_serving_supervisor registry_path None without env",
+      "canonical_owner": "ServingSupervisor",
+      "files": [
+        "Data/modules/model_runtime/serving.py"
+      ],
+      "root_cause": "Orphan registry opt-in only",
+      "fix": "default_serving_registry_path beside CONTROL",
+      "tests": [
+        "Data/backend/tests/test_wave_8_10_12_13.py"
+      ],
+      "verification": "local_pytest",
+      "notes": "Wave 16 residual of MODEL-002"
     }
   ],
   "wave7_14_revalidation": {

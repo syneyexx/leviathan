@@ -38,11 +38,48 @@ class PrivateHostAuthorityTests(unittest.TestCase):
     def test_allowlist_permits_configured_local_endpoint(self) -> None:
         with mock.patch.dict(
             os.environ,
-            {"LEVIATHAN_PROVIDER_PRIVATE_HOST_ALLOWLIST": "127.0.0.1"},
+            {
+                "LEVIATHAN_PROVIDER_PRIVATE_HOST_ALLOWLIST": "127.0.0.1",
+                "LEVIATHAN_PROVIDER_ALLOW_PRIVATE_HOSTS": "",
+            },
             clear=False,
         ):
             self.assertTrue(
-                resolve_allow_private_hosts_for_url("http://127.0.0.1:11434/v1/chat")
+                resolve_allow_private_hosts_for_url(
+                    "http://127.0.0.1:11434/v1/chat",
+                    settings=mock.Mock(spec=[]),  # no model.base_url
+                )
+            )
+
+    def test_loopback_not_hardcoded_without_policy(self) -> None:
+        """SECURITY-001: arbitrary localhost must not bypass SSRF without allowlist."""
+        with mock.patch.dict(
+            os.environ,
+            {
+                "LEVIATHAN_PROVIDER_PRIVATE_HOST_ALLOWLIST": "",
+                "LEVIATHAN_PROVIDER_ALLOW_PRIVATE_HOSTS": "",
+            },
+            clear=False,
+        ):
+            # Settings with no configured private endpoints.
+            settings = mock.Mock(spec=["model", "managed_serving", "llm_base_url"])
+            settings.model = mock.Mock(spec=["base_url"])
+            settings.model.base_url = "https://api.openai.com/v1"
+            settings.managed_serving = mock.Mock(spec=["base_url"])
+            settings.managed_serving.base_url = ""
+            settings.llm_base_url = "https://api.openai.com/v1"
+            self.assertFalse(
+                resolve_allow_private_hosts_for_url(
+                    "http://127.0.0.1:9/secret",
+                    settings=settings,
+                    request_flag=True,
+                )
+            )
+            self.assertFalse(
+                resolve_allow_private_hosts_for_url(
+                    "http://localhost/admin",
+                    settings=settings,
+                )
             )
 
     def test_public_host_not_granted_via_flag(self) -> None:
