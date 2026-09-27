@@ -816,6 +816,9 @@ class ExecutionGateway:
                 raise GatewayRejection(f"Missing required argument: {key}", reason="validation")
         for key, value in args.items():
             if key not in properties:
+                # Honor JSON Schema additionalProperties when explicitly true.
+                if schema.get("additionalProperties") is True:
+                    continue
                 raise GatewayRejection(f"Unexpected argument: {key}", reason="validation")
             expected = properties[key].get("type")
             if expected is None:

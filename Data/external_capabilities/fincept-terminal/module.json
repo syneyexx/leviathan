@@ -1,0 +1,72 @@
+{
+  "module_id": "fincept-terminal",
+  "name": "Fincept Terminal Analytics",
+  "version": "0.1.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "HTTP_OPENAPI",
+    "source_type": "git",
+    "source": "https://github.com/Fincept-Corporation/FinceptTerminal",
+    "ref": "main",
+    "install": {
+      "strategy": [
+        "GIT_CHECKOUT",
+        "PYTHON_VENV"
+      ]
+    },
+    "runtime": {
+      "mode": "LAZY",
+      "base_url": "http://127.0.0.1:8080",
+      "timeout_seconds": 120,
+      "operations": [
+        {
+          "name": "health",
+          "method": "GET",
+          "path": "/health"
+        },
+        {
+          "name": "analyze",
+          "method": "POST",
+          "path": "/api/analyze",
+          "body_from": [
+            "query",
+            "symbol",
+            "mode"
+          ]
+        }
+      ],
+      "health_probe": {
+        "kind": "http",
+        "url": "http://127.0.0.1:8080/health",
+        "expect_status": 200
+      }
+    },
+    "assimilation_mode": "EVIDENCE",
+    "tags": [
+      "finance",
+      "analytics"
+    ],
+    "domain": "finance",
+    "metadata": {
+      "marketsim_bypass_forbidden": true,
+      "prefer_sdk_over_gui": true
+    }
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.fincept.analyze",
+      "name": "Fincept Analyze",
+      "description": "Financial analytics via Fincept programmatic surface when available.",
+      "external_name": "analyze",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    }
+  ]
+}

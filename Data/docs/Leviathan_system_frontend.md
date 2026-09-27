@@ -473,9 +473,11 @@ Routes cover:
 - `pages/ToolsPage.tsx` — canonical capability/tool surface;
 - `pages/McpPage.tsx` — MCP servers/sessions/tools;
 - `pages/WorkflowsPage.tsx` — workflow controls;
-- `pages/ModulesPage.tsx` — thin wrapper/runtime module page;
+- `pages/ModulesPage.tsx` / `pages/plugin-runtime/ModulesPage.tsx` — ModuleManager surface (discover, install, start/stop/restart, health, logs, execute). Shows adapter kind, runtime state, capability counts for external modules. Does **not** invent RUNNING/READY — derives from backend snapshot;
 - `pages/PerformancePage.tsx` — thin wrapper/performance page;
 - `pages/ConsolePage.tsx` — thin wrapper/console page.
+
+Chat Tools tab telemetry may optionally include `module_id`, `provider`, `result_count`, `artifact_refs`, `source_count`, and typed `parts` from capability outputs while preserving backward-compatible `assistant_message` / TEAM contracts.
 
 Runtime-oriented supporting pages/components also live in page subdirectories (`pages/plugin/`, `pages/runtime/` where present). Route wiring in `App.tsx` is authoritative.
 

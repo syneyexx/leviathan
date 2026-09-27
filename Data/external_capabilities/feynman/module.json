@@ -1,0 +1,81 @@
+{
+  "module_id": "feynman",
+  "name": "Feynman Research",
+  "version": "0.1.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "CLI",
+    "source_type": "git",
+    "source": "https://github.com/Companion-Inc/feynman",
+    "ref": "main",
+    "install": {
+      "strategy": [
+        "GIT_CHECKOUT",
+        "PYTHON_VENV"
+      ]
+    },
+    "runtime": {
+      "mode": "EPHEMERAL",
+      "timeout_seconds": 1800,
+      "cwd": "$INSTALL_ROOT",
+      "operations": [
+        {
+          "name": "research",
+          "command": [
+            "python",
+            "-m",
+            "feynman",
+            "research",
+            "{topic}"
+          ]
+        },
+        {
+          "name": "run",
+          "command": [
+            "python",
+            "-m",
+            "feynman",
+            "{topic}"
+          ]
+        }
+      ]
+    },
+    "result": {
+      "format": "MIXED",
+      "artifact_globs": [
+        "reports/**",
+        "output/**",
+        "*.md",
+        "*.pdf"
+      ]
+    },
+    "assimilation_mode": "KNOWLEDGE_CANDIDATE",
+    "tags": [
+      "research",
+      "summarization"
+    ],
+    "domain": "research",
+    "resource_class": "NETWORK_HEAVY",
+    "metadata": {
+      "does_not_replace_research_service": true
+    }
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.feynman.research",
+      "name": "Feynman Research",
+      "description": "Long-running research synthesis via Feynman (external specialist).",
+      "external_name": "research",
+      "side_effects": [
+        "READ",
+        "NETWORK",
+        "WRITE"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "module_id": "desktop-commander-mcp",
+  "name": "Desktop Commander MCP",
+  "version": "0.1.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "MCP",
+    "source_type": "git",
+    "source": "https://github.com/wonderwhy-er/DesktopCommanderMCP",
+    "ref": "main",
+    "install": {
+      "strategy": [
+        "GIT_CHECKOUT",
+        "NODE_NPM"
+      ]
+    },
+    "runtime": {
+      "mode": "LAZY",
+      "mcp_server_id": "desktop-commander",
+      "eager_start": false
+    },
+    "assimilation_mode": "NONE",
+    "tags": [
+      "mcp",
+      "desktop",
+      "filesystem"
+    ],
+    "domain": "desktop"
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.desktop_commander.status",
+      "name": "DesktopCommander Status",
+      "description": "Lifecycle/status for DesktopCommander MCP (tools via mcp.* after connect).",
+      "external_name": "status",
+      "side_effects": [
+        "READ"
+      ]
+    },
+    {
+      "capability_id": "external.desktop_commander.start",
+      "name": "Start DesktopCommander",
+      "description": "Enable/connect DesktopCommander MCP via McpBridge.",
+      "external_name": "start",
+      "side_effects": [
+        "EXECUTE"
+      ]
+    }
+  ],
+  "mcp": {
+    "servers": [
+      {
+        "server_id": "desktop-commander",
+        "display_name": "Desktop Commander",
+        "transport": "stdio",
+        "command": "npx",
+        "args": [
+          "-y",
+          "@wonderwhy-er/desktop-commander@latest"
+        ],
+        "enabled": false,
+        "eager_connect": false,
+        "trust": "untrusted"
+      }
+    ]
+  }
+}

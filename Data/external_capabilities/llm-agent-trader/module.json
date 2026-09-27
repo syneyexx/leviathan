@@ -1,0 +1,77 @@
+{
+  "module_id": "llm-agent-trader",
+  "name": "LLM Agent Trader (research)",
+  "version": "0.1.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "CLI",
+    "source_type": "git",
+    "source": "https://github.com/jason8745/llm-agent-trader",
+    "ref": "main",
+    "install": {
+      "strategy": [
+        "GIT_CHECKOUT",
+        "PYTHON_VENV"
+      ]
+    },
+    "runtime": {
+      "mode": "EPHEMERAL",
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "cwd": "$INSTALL_ROOT",
+      "timeout_seconds": 600,
+      "operations": [
+        {
+          "name": "analyze",
+          "command": [
+            "python",
+            "main.py",
+            "{query}"
+          ]
+        },
+        {
+          "name": "run",
+          "command": [
+            "python",
+            "main.py",
+            "{query}"
+          ]
+        }
+      ]
+    },
+    "result": {
+      "format": "MIXED"
+    },
+    "assimilation_mode": "EVIDENCE",
+    "tags": [
+      "finance",
+      "backtest-reference"
+    ],
+    "domain": "finance",
+    "metadata": {
+      "not_leviathan_qualification": true,
+      "marketsim_bypass_forbidden": true
+    }
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.llm_agent_trader.analyze",
+      "name": "LLM Agent Trader Analyze",
+      "description": "External trading research/backtest reference \u2014 not MarketSim qualification.",
+      "external_name": "analyze",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    }
+  ]
+}

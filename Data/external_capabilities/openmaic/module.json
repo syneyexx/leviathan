@@ -1,0 +1,108 @@
+{
+  "module_id": "openmaic",
+  "name": "OpenMAIC",
+  "version": "0.1.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "COMPOSITE",
+    "children": [
+      "SKILL_PACK",
+      "PROCESS_SERVICE"
+    ],
+    "source_type": "git",
+    "source": "https://github.com/THU-MAIC/OpenMAIC",
+    "ref": "main",
+    "install": {
+      "strategy": [
+        "GIT_CHECKOUT",
+        "NODE_NPM",
+        "PYTHON_VENV"
+      ]
+    },
+    "runtime": {
+      "mode": "LAZY",
+      "command": [
+        "npm",
+        "run",
+        "dev"
+      ],
+      "cwd": "$INSTALL_ROOT",
+      "startup_timeout_seconds": 120,
+      "idle_timeout_seconds": 1800,
+      "base_url": "http://127.0.0.1:5173",
+      "ready_probe": {
+        "kind": "http",
+        "url": "http://127.0.0.1:5173",
+        "expect_status": 200
+      },
+      "operations": [
+        {
+          "name": "generate_course",
+          "method": "POST",
+          "path": "/api/course",
+          "body_from": [
+            "topic",
+            "level"
+          ]
+        }
+      ],
+      "eager_start": false
+    },
+    "result": {
+      "format": "MIXED",
+      "artifact_globs": [
+        "output/**",
+        "courses/**",
+        "*.pptx",
+        "*.html"
+      ]
+    },
+    "skill_roots": [
+      ".",
+      "skills"
+    ],
+    "assimilation_mode": "NONE",
+    "tags": [
+      "education",
+      "course"
+    ],
+    "domain": "education",
+    "resource_class": "CPU_HEAVY"
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.openmaic.generate_course",
+      "name": "OpenMAIC Generate Course",
+      "description": "Generate course outline/slides/quizzes via OpenMAIC.",
+      "external_name": "generate_course",
+      "side_effects": [
+        "EXECUTE",
+        "WRITE",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.openmaic.start",
+      "name": "Start OpenMAIC",
+      "description": "Start OpenMAIC local runtime if needed.",
+      "external_name": "start",
+      "side_effects": [
+        "EXECUTE"
+      ]
+    },
+    {
+      "capability_id": "external.openmaic.stop",
+      "name": "Stop OpenMAIC",
+      "description": "Stop OpenMAIC local runtime.",
+      "external_name": "stop",
+      "side_effects": [
+        "EXECUTE"
+      ]
+    }
+  ]
+}

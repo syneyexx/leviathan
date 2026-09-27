@@ -1,0 +1,63 @@
+{
+  "module_id": "financial-services",
+  "name": "Anthropic Financial Services Skills",
+  "version": "0.1.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "COMPOSITE",
+    "children": [
+      "SKILL_PACK",
+      "MCP"
+    ],
+    "source_type": "git",
+    "source": "https://github.com/anthropics/financial-services",
+    "ref": "main",
+    "install": {
+      "strategy": "GIT_CHECKOUT"
+    },
+    "runtime": {
+      "mode": "NONE",
+      "mcp_server_id": "financial-services"
+    },
+    "skill_roots": [
+      "skills",
+      "agents",
+      "."
+    ],
+    "assimilation_mode": "KNOWLEDGE_CANDIDATE",
+    "tags": [
+      "finance",
+      "dcf",
+      "skill"
+    ],
+    "domain": "finance",
+    "metadata": {
+      "marketsim_bypass_forbidden": true
+    }
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.financial_services.search_skills",
+      "name": "Search Financial Skills",
+      "description": "Search financial-services skill procedures (DCF, filings, etc.).",
+      "external_name": "search",
+      "side_effects": [
+        "READ"
+      ]
+    },
+    {
+      "capability_id": "external.financial_services.load_skill",
+      "name": "Load Financial Skill",
+      "description": "On-demand load a financial skill instruction body.",
+      "external_name": "load",
+      "side_effects": [
+        "READ"
+      ]
+    }
+  ]
+}

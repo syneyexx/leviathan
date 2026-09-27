@@ -818,8 +818,47 @@ export const api = {
     return request<ModuleSnapshot>("/api/modules");
   },
 
+  getModule(moduleId: string): Promise<{ module: NonNullable<ModuleSnapshot["modules"]>[number] }> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}`);
+  },
+
   discoverModules(): Promise<{ discovered: unknown[]; snapshot: ModuleSnapshot }> {
     return request("/api/modules/discover", { method: "POST" });
+  },
+
+  installModule(moduleId: string, payload: { force?: boolean; ref?: string } = {}): Promise<Record<string, unknown>> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/install`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  startModule(moduleId: string): Promise<Record<string, unknown>> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/start`, { method: "POST" });
+  },
+
+  stopModule(moduleId: string): Promise<Record<string, unknown>> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/stop`, { method: "POST" });
+  },
+
+  restartModule(moduleId: string): Promise<Record<string, unknown>> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/restart`, { method: "POST" });
+  },
+
+  moduleHealth(moduleId: string): Promise<{ health: Record<string, unknown> }> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/health`);
+  },
+
+  moduleLogs(moduleId: string, limit = 200): Promise<{ lines: string[]; count: number }> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/logs?limit=${Math.max(1, Math.min(500, limit))}`);
+  },
+
+  moduleCapabilities(moduleId: string): Promise<{ capabilities: unknown[]; count: number }> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/capabilities`);
+  },
+
+  moduleJobs(moduleId: string): Promise<{ jobs: string[]; count: number }> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/jobs`);
   },
 
   executeModule(

@@ -95,6 +95,12 @@ export type AssistantToolCallTelemetry = {
   receipt_id?: string | null;
   error?: string | null;
   summary?: string | null;
+  provider?: string | null;
+  module_id?: string | null;
+  result_count?: number | null;
+  artifact_refs?: string[];
+  source_count?: number | null;
+  parts?: Array<Record<string, unknown>>;
 };
 
 /** Specialist delegation row for Chat Agents tab. */
@@ -2854,11 +2860,17 @@ export type ModuleSnapshot = {
       capabilities?: unknown[];
       isolation?: string;
       source_path?: string;
+      metadata?: Record<string, unknown>;
     };
     status?: string;
+    runtime_state?: string;
+    desired_state?: string | null;
+    adapter?: string | null;
     error?: string | null;
+    active_jobs?: string[];
     health?: Record<string, unknown> | null;
     last_result?: Record<string, unknown> | null;
+    truth?: Record<string, boolean>;
   }>;
   telemetry?: Record<string, number>;
   discovery_roots?: string[];

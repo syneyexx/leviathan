@@ -901,11 +901,30 @@ MCP invocation still passes through `ExecutionGateway`; MCP is not a private sid
 
 ## Plugins — `Data/modules/plugins/`
 
-`registry.py`, `types.py` manage plugin registration/capability exposure.
+`registry.py`, `types.py` manage declarative plugin/MCP/skill capability bindings into `CapabilityCatalog`. PluginRegistry is **not** a loader or lifecycle owner. Binding configuration may persist in CONTROL (`external_plugin_bindings`); hydrated ENABLED ≠ runtime READY.
+
+Adapter kinds: `DECLARATIVE`, `MCP`, `PROTOCOL`, `SKILL`.
 
 ## Module manager — `Data/modules/module_manager/`
 
 `manager.py`, `discovery.py`, `subprocess_exec.py`, `types.py` own dynamic module discovery/lifecycle and optional subprocess isolation.
+
+### External capability fabric (**CURRENT**)
+
+`Data/modules/module_manager/external/` is the **one** generic fabric for third-party software — not a second plugin/runtime/gateway system.
+
+- **Adapters:** `MCP` (via McpBridge), `CLI`, `PROCESS_SERVICE`, `HTTP_OPENAPI`, `SKILL_PACK`, `CATALOG_SOURCE`, `SCRIPT_PACKAGE`, `COMPOSITE`.
+- **Declarative manifests:** `Data/external_capabilities/*/module.json` (plus existing `Data/modules/*/module.json`). Top-level `external` folds into manifest metadata.
+- **Factory:** `create_external_capability_module(manifest=...)` — ModuleManager calls factories with `manifest=` when the signature accepts it; legacy `factory()` still works.
+- **Lifecycle API:** `ensure_installed`, `start`, `stop`, `restart`, `ensure_ready`, `health`, `logs`, `active_jobs` on ModuleManager. HTTP: `/api/modules/{id}/install|start|stop|restart|health|logs|capabilities|jobs`.
+- **Execution:** `ExternalModuleExecutor` is wired as `ExecutionGateway.module_executor`. Catalogued MODULE capabilities execute through the gateway; MCP tools remain McpBridge-owned.
+- **Skills:** SKILL.md importer indexes metadata; instructions load on demand. Large catalogs (`CATALOG_SOURCE`) never enter system prompts.
+- **CONTROL persistence:** `external_modules`, `external_module_versions`, `external_process_records`, `external_skills`, `external_skill_catalogs`, `external_plugin_bindings`, `external_log_windows` (domain migration v3). No fourth database.
+- **Process ownership:** PID + fingerprint reconciliation — persisted RUNNING is never trusted after restart; PID-reuse kills are refused.
+- **Optional modules:** missing/failed third-party installs do not prevent LEVIATHAN boot.
+- **Trading boundary:** external finance packages are research/analytics only; MarketSim remains trading authority; real-money remains BLOCKED.
+
+Acceptance matrix (machine-readable): `Data/backend/tests/external_sources_acceptance_matrix.json`.
 
 ---
 
@@ -1192,7 +1211,7 @@ Release/evaluation philosophy: missing measurements remain missing; they are not
 | `model_download/` | model download boundary |
 | `model_runtime/` | inference transport/serving |
 | `models/` | Model Control Plane |
-| `module_manager/` | module discovery/lifecycle |
+| `module_manager/` | module discovery/lifecycle + generic external capability fabric (`external/`) |
 | `native/` | native runtime stub/boundary |
 | `neuro/` | Neuro/Cortex/residual advisory layer |
 | `observability/` | system/operator telemetry |

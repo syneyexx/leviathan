@@ -1,0 +1,127 @@
+{
+  "module_id": "selfstarter",
+  "name": "Selfstarter",
+  "version": "0.1.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "CLI",
+    "source_type": "git",
+    "source": "https://github.com/ukanwat/selfstarter",
+    "ref": "main",
+    "install": {
+      "strategy": [
+        "GIT_CHECKOUT",
+        "PYTHON_VENV"
+      ]
+    },
+    "runtime": {
+      "mode": "EPHEMERAL",
+      "timeout_seconds": 3600,
+      "cwd": "$INSTALL_ROOT",
+      "operations": [
+        {
+          "name": "run_brief",
+          "command": [
+            "python",
+            "-m",
+            "selfstarter",
+            "run",
+            "{brief}"
+          ]
+        },
+        {
+          "name": "status",
+          "command": [
+            "python",
+            "-m",
+            "selfstarter",
+            "status",
+            "{session_id}"
+          ]
+        },
+        {
+          "name": "cancel",
+          "command": [
+            "python",
+            "-m",
+            "selfstarter",
+            "cancel",
+            "{session_id}"
+          ]
+        },
+        {
+          "name": "results",
+          "command": [
+            "python",
+            "-m",
+            "selfstarter",
+            "results",
+            "{session_id}"
+          ]
+        }
+      ]
+    },
+    "result": {
+      "format": "MIXED",
+      "artifact_globs": [
+        "output/**",
+        "artifacts/**"
+      ]
+    },
+    "assimilation_mode": "NONE",
+    "tags": [
+      "autonomous",
+      "long-horizon",
+      "coding"
+    ],
+    "domain": "specialist",
+    "resource_class": "CPU_HEAVY",
+    "metadata": {
+      "does_not_replace_cognitive_runtime": true
+    }
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.selfstarter.run_brief",
+      "name": "Selfstarter Run Brief",
+      "description": "Run a Selfstarter brief as an external specialist job.",
+      "external_name": "run_brief",
+      "side_effects": [
+        "EXECUTE",
+        "WRITE"
+      ]
+    },
+    {
+      "capability_id": "external.selfstarter.status",
+      "name": "Selfstarter Status",
+      "description": "Check Selfstarter session status.",
+      "external_name": "status",
+      "side_effects": [
+        "READ"
+      ]
+    },
+    {
+      "capability_id": "external.selfstarter.cancel",
+      "name": "Selfstarter Cancel",
+      "description": "Cancel a Selfstarter session.",
+      "external_name": "cancel",
+      "side_effects": [
+        "EXECUTE"
+      ]
+    },
+    {
+      "capability_id": "external.selfstarter.results",
+      "name": "Selfstarter Results",
+      "description": "Fetch Selfstarter results/artifacts.",
+      "external_name": "results",
+      "side_effects": [
+        "READ"
+      ]
+    }
+  ]
+}

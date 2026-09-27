@@ -1,0 +1,63 @@
+{
+  "module_id": "ghosttrack",
+  "name": "GhostTrack",
+  "version": "0.1.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "CLI",
+    "source_type": "git",
+    "source": "https://github.com/HunxByts/GhostTrack",
+    "ref": "main",
+    "install": {
+      "strategy": [
+        "GIT_CHECKOUT",
+        "PYTHON_VENV"
+      ]
+    },
+    "runtime": {
+      "mode": "EPHEMERAL",
+      "command": [
+        "python",
+        "GhostTR.py"
+      ],
+      "cwd": "$INSTALL_ROOT",
+      "timeout_seconds": 300,
+      "operations": [
+        {
+          "name": "run",
+          "command": [
+            "python",
+            "GhostTR.py"
+          ]
+        }
+      ]
+    },
+    "result": {
+      "format": "TEXT"
+    },
+    "assimilation_mode": "EVIDENCE",
+    "tags": [
+      "osint",
+      "tracking"
+    ],
+    "domain": "osint",
+    "resource_class": "NETWORK_HEAVY"
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.ghosttrack.run",
+      "name": "GhostTrack Run",
+      "description": "Run GhostTrack OSINT CLI.",
+      "external_name": "run",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    }
+  ]
+}

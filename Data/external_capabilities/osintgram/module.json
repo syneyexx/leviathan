@@ -1,0 +1,78 @@
+{
+  "module_id": "osintgram",
+  "name": "Osintgram",
+  "version": "0.1.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "CLI",
+    "source_type": "git",
+    "source": "https://github.com/Datalux/Osintgram",
+    "ref": "master",
+    "install": {
+      "strategy": [
+        "GIT_CHECKOUT",
+        "PYTHON_VENV"
+      ],
+      "requirements_file": "requirements.txt",
+      "dependencies": []
+    },
+    "runtime": {
+      "mode": "EPHEMERAL",
+      "command": [
+        "python",
+        "main.py",
+        "{target}"
+      ],
+      "cwd": "$INSTALL_ROOT",
+      "timeout_seconds": 300,
+      "operations": [
+        {
+          "name": "run",
+          "command": [
+            "python",
+            "main.py",
+            "{target}"
+          ]
+        },
+        {
+          "name": "info",
+          "command": [
+            "python",
+            "main.py",
+            "{target}",
+            "--command",
+            "info"
+          ]
+        }
+      ]
+    },
+    "result": {
+      "format": "TEXT",
+      "treat_nonzero_as_failure": true
+    },
+    "assimilation_mode": "EVIDENCE",
+    "tags": [
+      "osint",
+      "instagram"
+    ],
+    "domain": "osint",
+    "resource_class": "NETWORK_HEAVY"
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.osintgram.run",
+      "name": "Osintgram Run",
+      "description": "Run Osintgram CLI against an Instagram target.",
+      "external_name": "run",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    }
+  ]
+}

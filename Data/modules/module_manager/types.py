@@ -6,12 +6,29 @@ from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
 
 class ModuleStatus(str, Enum):
+    """ModuleManager lifecycle states.
+
+    Legacy states remain for first-party modules. Extended states support
+    external capability runtimes without forcing meaningless transitions on
+    every adapter.
+    """
+
     DISCOVERED = "DISCOVERED"
+    INSTALLED = "INSTALLED"
     LOADED = "LOADED"
-    INITIALIZED = "INITIALIZED"
+    INITIALIZED = "INITIALIZED"  # legacy; initialize() typically jumps to READY
+    INITIALIZING = "INITIALIZING"
     READY = "READY"
-    EXECUTING = "EXECUTING"
-    ERROR = "ERROR"
+    STARTING = "STARTING"
+    RUNNING = "RUNNING"
+    BUSY = "BUSY"
+    EXECUTING = "EXECUTING"  # legacy alias for busy in-process execute
+    STOPPING = "STOPPING"
+    STOPPED = "STOPPED"
+    DISABLED = "DISABLED"
+    DEGRADED = "DEGRADED"
+    FAILED = "FAILED"
+    ERROR = "ERROR"  # legacy alias of FAILED
     SHUTDOWN = "SHUTDOWN"
 
 

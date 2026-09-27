@@ -1,0 +1,95 @@
+{
+  "module_id": "scrollcraft",
+  "name": "ScrollCraft",
+  "version": "0.1.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "COMPOSITE",
+    "children": [
+      "SKILL_PACK",
+      "SCRIPT_PACKAGE"
+    ],
+    "source_type": "git",
+    "source": "https://github.com/singhharsh1708/scrollcraft",
+    "ref": "main",
+    "install": {
+      "strategy": [
+        "GIT_CHECKOUT",
+        "NODE_NPM"
+      ],
+      "dependencies": [
+        "node"
+      ]
+    },
+    "runtime": {
+      "mode": "EPHEMERAL",
+      "timeout_seconds": 900,
+      "operations": [
+        {
+          "name": "build",
+          "command": [
+            "npm",
+            "run",
+            "build"
+          ]
+        },
+        {
+          "name": "generate",
+          "command": [
+            "node",
+            "scripts/generate.js",
+            "{prompt}"
+          ]
+        }
+      ],
+      "cwd": "$INSTALL_ROOT"
+    },
+    "result": {
+      "format": "FILES",
+      "artifact_globs": [
+        "dist/**",
+        "output/**",
+        "*.html",
+        "*.zip"
+      ]
+    },
+    "skill_roots": [
+      ".",
+      "skills"
+    ],
+    "assimilation_mode": "NONE",
+    "tags": [
+      "web",
+      "artifact",
+      "scroll"
+    ],
+    "domain": "artifacts",
+    "resource_class": "CPU_HEAVY"
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.scrollcraft.build",
+      "name": "ScrollCraft Build",
+      "description": "Build a cinematic scrolling website via ScrollCraft scripts.",
+      "external_name": "build",
+      "side_effects": [
+        "WRITE",
+        "EXECUTE"
+      ]
+    },
+    {
+      "capability_id": "external.scrollcraft.load_skill",
+      "name": "Load ScrollCraft Skill",
+      "description": "Load ScrollCraft skill instructions on demand.",
+      "external_name": "load",
+      "side_effects": [
+        "READ"
+      ]
+    }
+  ]
+}

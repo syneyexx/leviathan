@@ -107,7 +107,46 @@ class CapabilityBroker:
         goal: str,
         domain: str | None = None,
         limit: int = 6,
+        skill_store: Any | None = None,
     ) -> CapabilityShortlist:
         short = self.search(goal, limit=limit, domain=domain)
         # Inspect only top few — avoid prompt explosion.
-        return self.inspect(short.capability_ids[:3])
+        inspected = self.inspect(short.capability_ids[:3])
+        notes = list(inspected.notes)
+        inspected_map = dict(inspected.inspected)
+        # Bounded skill metadata — never inject instruction bodies into prompts.
+        if skill_store is not None and goal.strip():
+            try:
+                skills = skill_store.search_skills(
+                    query=goal.strip(),
+                    enabled_only=True,
+                    include_catalog=False,
+                    limit=min(5, limit),
+                )
+                for skill in skills:
+                    sid = f"skill:{skill.get('skill_id')}"
+                    inspected_map[sid] = {
+                        "id": sid,
+                        "name": skill.get("name"),
+                        "description": skill.get("description"),
+                        "provider_kind": "skill",
+                        "available": bool(skill.get("enabled")),
+                        "metadata": {
+                            "skill_id": skill.get("skill_id"),
+                            "module_id": skill.get("module_id"),
+                            "on_demand_instructions": True,
+                            "required_capabilities": skill.get("required_capabilities") or [],
+                        },
+                    }
+                if skills:
+                    notes.append(
+                        f"Matched {len(skills)} installed skill(s); instructions load on demand only"
+                    )
+            except Exception:  # noqa: BLE001
+                notes.append("skill search unavailable")
+        return CapabilityShortlist(
+            query=inspected.query,
+            capability_ids=inspected.capability_ids,
+            inspected=inspected_map,
+            notes=tuple(notes),
+        )

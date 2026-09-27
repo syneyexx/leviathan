@@ -1,0 +1,82 @@
+{
+  "module_id": "agent-reach",
+  "name": "Agent Reach",
+  "version": "0.1.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "CLI",
+    "source_type": "git",
+    "source": "https://github.com/Panniantong/Agent-Reach",
+    "ref": "main",
+    "install": {
+      "strategy": [
+        "GIT_CHECKOUT",
+        "PYTHON_VENV"
+      ],
+      "requirements_file": "requirements.txt"
+    },
+    "runtime": {
+      "mode": "EPHEMERAL",
+      "command": [
+        "python",
+        "-m",
+        "agent_reach",
+        "{query}"
+      ],
+      "cwd": "$INSTALL_ROOT",
+      "timeout_seconds": 600,
+      "operations": [
+        {
+          "name": "search",
+          "command": [
+            "python",
+            "-m",
+            "agent_reach",
+            "search",
+            "{query}"
+          ]
+        },
+        {
+          "name": "run",
+          "command": [
+            "python",
+            "-m",
+            "agent_reach",
+            "{query}"
+          ]
+        }
+      ]
+    },
+    "result": {
+      "format": "MIXED",
+      "parse_stdout_json": true
+    },
+    "assimilation_mode": "KNOWLEDGE_CANDIDATE",
+    "tags": [
+      "osint",
+      "research",
+      "reddit",
+      "youtube",
+      "github"
+    ],
+    "domain": "osint",
+    "resource_class": "NETWORK_HEAVY"
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.agent_reach.search",
+      "name": "Agent-Reach Search",
+      "description": "Search Reddit/YouTube/GitHub and related sources via Agent-Reach.",
+      "external_name": "search",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    }
+  ]
+}

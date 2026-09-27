@@ -1,0 +1,69 @@
+{
+  "module_id": "vibe-trading",
+  "name": "Vibe Trading (research)",
+  "version": "0.1.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "MCP",
+    "source_type": "git",
+    "source": "https://github.com/HKUDS/Vibe-Trading",
+    "ref": "main",
+    "install": {
+      "strategy": [
+        "GIT_CHECKOUT",
+        "PYTHON_VENV"
+      ]
+    },
+    "runtime": {
+      "mode": "LAZY",
+      "mcp_server_id": "vibe-trading",
+      "eager_start": false
+    },
+    "assimilation_mode": "EVIDENCE",
+    "tags": [
+      "finance",
+      "research",
+      "trading-analytics"
+    ],
+    "domain": "finance",
+    "metadata": {
+      "marketsim_bypass_forbidden": true,
+      "real_money_blocked": true
+    }
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.vibe_trading.analyze",
+      "name": "Vibe-Trading Analyze",
+      "description": "External trading research/analytics via Vibe-Trading (not MarketSim authority).",
+      "external_name": "status",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    }
+  ],
+  "mcp": {
+    "servers": [
+      {
+        "server_id": "vibe-trading",
+        "display_name": "Vibe Trading",
+        "transport": "stdio",
+        "command": "python",
+        "args": [
+          "-m",
+          "vibe_trading"
+        ],
+        "cwd": "$INSTALL_ROOT",
+        "enabled": false,
+        "eager_connect": false,
+        "trust": "untrusted"
+      }
+    ]
+  }
+}

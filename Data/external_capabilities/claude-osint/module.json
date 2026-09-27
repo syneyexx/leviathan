@@ -1,0 +1,53 @@
+{
+  "module_id": "claude-osint",
+  "name": "Claude OSINT Skills",
+  "version": "0.1.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "SKILL_PACK",
+    "source_type": "git",
+    "source": "https://github.com/elementalsouls/Claude-OSINT",
+    "ref": "main",
+    "install": {
+      "strategy": "GIT_CHECKOUT"
+    },
+    "runtime": {
+      "mode": "NONE"
+    },
+    "skill_roots": [
+      ".",
+      "skills"
+    ],
+    "assimilation_mode": "NONE",
+    "tags": [
+      "osint",
+      "skill"
+    ],
+    "domain": "osint"
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.claude_osint.search_skills",
+      "name": "Search Claude-OSINT Skills",
+      "description": "Search imported Claude-OSINT skill procedures.",
+      "external_name": "search",
+      "side_effects": [
+        "READ"
+      ]
+    },
+    {
+      "capability_id": "external.claude_osint.load_skill",
+      "name": "Load Claude-OSINT Skill",
+      "description": "On-demand load a Claude-OSINT skill instruction body.",
+      "external_name": "load",
+      "side_effects": [
+        "READ"
+      ]
+    }
+  ]
+}

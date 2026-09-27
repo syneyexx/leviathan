@@ -1,0 +1,53 @@
+{
+  "module_id": "andrej-karpathy-skills",
+  "name": "Andrej Karpathy Skills",
+  "version": "0.1.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "SKILL_PACK",
+    "source_type": "git",
+    "source": "https://github.com/multica-ai/andrej-karpathy-skills",
+    "ref": "main",
+    "install": {
+      "strategy": "GIT_CHECKOUT"
+    },
+    "runtime": {
+      "mode": "NONE"
+    },
+    "skill_roots": [
+      ".",
+      "skills",
+      "packages"
+    ],
+    "assimilation_mode": "NONE",
+    "tags": [
+      "skill"
+    ],
+    "domain": "skills"
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.andrej_karpathy_skills.search",
+      "name": "Search Andrej Karpathy Skills",
+      "description": "Search skills from Andrej Karpathy Skills.",
+      "external_name": "search",
+      "side_effects": [
+        "READ"
+      ]
+    },
+    {
+      "capability_id": "external.andrej_karpathy_skills.load",
+      "name": "Load Andrej Karpathy Skills Skill",
+      "description": "On-demand load a skill from Andrej Karpathy Skills.",
+      "external_name": "load",
+      "side_effects": [
+        "READ"
+      ]
+    }
+  ]
+}

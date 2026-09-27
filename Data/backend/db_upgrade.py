@@ -70,6 +70,121 @@ def _dm2_market_paper_deployments(conn: sqlite3.Connection, domain: DatabaseDoma
     _m57_market_paper_deployments(conn)
 
 
+def _dm3_external_capability_fabric(conn: sqlite3.Connection, domain: DatabaseDomain) -> None:
+    """CONTROL domain v3 — external capability fabric tables."""
+    if domain is not DatabaseDomain.CONTROL:
+        return
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS external_modules (
+            module_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            adapter TEXT NOT NULL,
+            source_json TEXT NOT NULL DEFAULT '{}',
+            desired_state TEXT NOT NULL DEFAULT 'STOPPED',
+            runtime_state TEXT NOT NULL DEFAULT 'DISCOVERED',
+            active_version_id TEXT,
+            last_error TEXT,
+            last_used_at TEXT,
+            capability_count INTEGER NOT NULL DEFAULT 0,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS external_module_versions (
+            version_id TEXT PRIMARY KEY,
+            module_id TEXT NOT NULL,
+            source_ref TEXT,
+            resolved_commit TEXT,
+            content_hash TEXT,
+            install_root TEXT NOT NULL,
+            install_strategy_json TEXT NOT NULL DEFAULT '[]',
+            dependency_versions_json TEXT NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL DEFAULT 'INSTALLED',
+            installed_at TEXT NOT NULL,
+            activated_at TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(module_id) REFERENCES external_modules(module_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ext_versions_module
+            ON external_module_versions(module_id, installed_at DESC);
+
+        CREATE TABLE IF NOT EXISTS external_process_records (
+            module_id TEXT PRIMARY KEY,
+            pid INTEGER,
+            fingerprint TEXT,
+            command_json TEXT NOT NULL DEFAULT '[]',
+            cwd TEXT,
+            started_at TEXT,
+            exit_code INTEGER,
+            restart_count INTEGER NOT NULL DEFAULT 0,
+            health TEXT NOT NULL DEFAULT 'UNKNOWN',
+            stdout_artifact TEXT,
+            stderr_artifact TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(module_id) REFERENCES external_modules(module_id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS external_skills (
+            skill_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            source_repo TEXT,
+            source_path TEXT,
+            source_ref TEXT,
+            version TEXT,
+            content_hash TEXT NOT NULL,
+            instruction_artifact TEXT,
+            resource_refs_json TEXT NOT NULL DEFAULT '[]',
+            script_refs_json TEXT NOT NULL DEFAULT '[]',
+            required_capabilities_json TEXT NOT NULL DEFAULT '[]',
+            trigger_description TEXT,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            catalog_only INTEGER NOT NULL DEFAULT 0,
+            module_id TEXT,
+            imported_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ext_skills_name ON external_skills(name);
+        CREATE INDEX IF NOT EXISTS idx_ext_skills_enabled ON external_skills(enabled, catalog_only);
+
+        CREATE TABLE IF NOT EXISTS external_skill_catalogs (
+            catalog_id TEXT PRIMARY KEY,
+            module_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            entry_count INTEGER NOT NULL DEFAULT 0,
+            last_refreshed_at TEXT,
+            index_artifact TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(module_id) REFERENCES external_modules(module_id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS external_plugin_bindings (
+            plugin_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL,
+            version TEXT NOT NULL DEFAULT '0.0.0',
+            bindings_json TEXT NOT NULL DEFAULT '[]',
+            endpoint TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS external_log_windows (
+            module_id TEXT PRIMARY KEY,
+            lines_json TEXT NOT NULL DEFAULT '[]',
+            byte_count INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL
+        );
+        """
+    )
+
+
 # Post-baseline domain migrations (independent per DB). Contiguous from v2.
 DOMAIN_MIGRATIONS: tuple[DomainMigration, ...] = (
     DomainMigration(
@@ -77,7 +192,13 @@ DOMAIN_MIGRATIONS: tuple[DomainMigration, ...] = (
         name="market_paper_deployments",
         apply=_dm2_market_paper_deployments,
     ),
+    DomainMigration(
+        version=3,
+        name="external_capability_fabric",
+        apply=_dm3_external_capability_fabric,
+    ),
 )
+
 
 
 @dataclass

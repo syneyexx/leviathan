@@ -1,0 +1,53 @@
+{
+  "module_id": "mattpocock-skills",
+  "name": "Matt Pocock Skills",
+  "version": "0.1.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "SKILL_PACK",
+    "source_type": "git",
+    "source": "https://github.com/mattpocock/skills",
+    "ref": "main",
+    "install": {
+      "strategy": "GIT_CHECKOUT"
+    },
+    "runtime": {
+      "mode": "NONE"
+    },
+    "skill_roots": [
+      ".",
+      "skills",
+      "packages"
+    ],
+    "assimilation_mode": "NONE",
+    "tags": [
+      "skill"
+    ],
+    "domain": "skills"
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.mattpocock_skills.search",
+      "name": "Search Matt Pocock Skills",
+      "description": "Search skills from Matt Pocock Skills.",
+      "external_name": "search",
+      "side_effects": [
+        "READ"
+      ]
+    },
+    {
+      "capability_id": "external.mattpocock_skills.load",
+      "name": "Load Matt Pocock Skills Skill",
+      "description": "On-demand load a skill from Matt Pocock Skills.",
+      "external_name": "load",
+      "side_effects": [
+        "READ"
+      ]
+    }
+  ]
+}
