@@ -216,7 +216,7 @@ from Data.modules.execution import CapabilityReceiptStore
 from Data.modules.native import NativeRuntimeStub
 from Data.modules.trading import TradingStub
 from Data.modules.backup import BackupError, BackupService
-from Data.modules.sqlite_manager import SqliteManager
+from Data.modules.sqlite_manager import SqliteManager, SqliteManagerRuntimeDeps
 from .routes.sqlite_manager import build_sqlite_manager_router
 from Data.modules.chaos import ChaosInjector, ChaosPlan
 from Data.modules.master import MasterGateCheck, MasterGateRunner, MasterGateStatus
@@ -881,13 +881,52 @@ def _backup_corpus_root() -> Path | None:
         return Path(raw) if raw else None
 
 
-sqlite_manager = SqliteManager(settings.database_paths)
 backup_service = BackupService(
     database_path=settings.database_path,
     artifacts_root=settings.artifacts.root,
     backup_root=settings.backup.root,
     corpus_root=_backup_corpus_root(),
     database_paths=settings.database_paths,
+)
+
+
+def _sqlite_manager_backup_list() -> list[dict]:
+    return [item.public_dict() for item in backup_service.list(limit=5)]
+
+
+def _sqlite_manager_db_commit_settings() -> dict:
+    from Data.modules.db_commit.settings import load_db_commit_settings
+
+    return load_db_commit_settings().public_dict()
+
+
+def _sqlite_manager_db_commit_spool_stats() -> dict:
+    from Data.modules.db_commit.settings import load_db_commit_settings
+    from Data.modules.db_commit.spool import CommitSpool
+    from Data.modules.common.database_domains import DatabaseDomain
+
+    cfg = load_db_commit_settings()
+    lanes: dict[str, object] = {}
+    for domain, path in settings.database_paths:
+        root = cfg.spool_root_for(path, domain=domain.value.lower())
+        if not root.is_dir():
+            lanes[domain.value] = {"present": False, "path": str(root)}
+            continue
+        stats = CommitSpool(root, settings=cfg).stats().public_dict()
+        lanes[domain.value] = {"present": True, "path": str(root), **stats}
+    return {
+        "lanes": lanes,
+        "domains": [d.value for d in DatabaseDomain],
+    }
+
+
+sqlite_manager = SqliteManager(
+    settings.database_paths,
+    runtime=SqliteManagerRuntimeDeps(
+        backup_list=_sqlite_manager_backup_list,
+        db_commit_settings=_sqlite_manager_db_commit_settings,
+        db_commit_spool_stats=_sqlite_manager_db_commit_spool_stats,
+    ),
 )
 chaos = ChaosInjector(
     ChaosPlan(

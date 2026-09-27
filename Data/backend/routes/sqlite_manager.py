@@ -22,12 +22,56 @@ class SqliteMutateRequest(BaseModel):
     sql: str = Field(min_length=1, max_length=20_000)
 
 
+class SqliteRowsQueryRequest(BaseModel):
+    offset: int = Field(default=0, ge=0, le=10_000_000)
+    limit: int = Field(default=50, ge=1, le=200)
+    columns: list[str] | None = None
+    filters: list[dict[str, Any]] | None = None
+    search: str | None = Field(default=None, max_length=500)
+    orderBy: list[str] | None = None
+
+
+class SqliteIntegrityRequest(BaseModel):
+    domain: str = Field(min_length=1, max_length=32)
+    kind: str = Field(default="quick_check", max_length=64)
+    maxErrors: int = Field(default=100, ge=1, le=1000)
+
+
+class SqliteCheckpointRequest(BaseModel):
+    domain: str = Field(min_length=1, max_length=32)
+    confirmDomain: str = Field(min_length=1, max_length=32)
+    mode: str = Field(default="PASSIVE", max_length=32)
+
+
+class SqliteRowInsertRequest(BaseModel):
+    domain: str = Field(min_length=1, max_length=32)
+    confirmDomain: str = Field(min_length=1, max_length=32)
+    table: str = Field(min_length=1, max_length=128)
+    values: dict[str, Any]
+
+
+class SqliteRowUpdateRequest(BaseModel):
+    domain: str = Field(min_length=1, max_length=32)
+    confirmDomain: str = Field(min_length=1, max_length=32)
+    table: str = Field(min_length=1, max_length=128)
+    identity: dict[str, Any]
+    values: dict[str, Any]
+
+
+class SqliteRowDeleteRequest(BaseModel):
+    domain: str = Field(min_length=1, max_length=32)
+    confirmDomain: str = Field(min_length=1, max_length=32)
+    table: str = Field(min_length=1, max_length=128)
+    identity: dict[str, Any]
+
+
 def build_sqlite_manager_router(manager: SqliteManager) -> APIRouter:
     router = APIRouter(tags=["sqlite-manager"])
 
     def _http(exc: SqliteManagerError) -> HTTPException:
+        status = 409 if exc.code == "DB_BUSY" else 400
         return HTTPException(
-            status_code=400,
+            status_code=status,
             detail={"code": exc.code, "message": str(exc), "domain": exc.domain},
         )
 
@@ -49,6 +93,29 @@ def build_sqlite_manager_router(manager: SqliteManager) -> APIRouter:
         except SqliteManagerError as exc:
             raise _http(exc) from exc
 
+    @router.get("/api/sqlite/databases/{domain}/tables/{table}")
+    def table_detail(domain: str, table: str) -> dict[str, Any]:
+        try:
+            return {"table": manager.table_detail(domain, table)}
+        except SqliteManagerError as exc:
+            raise _http(exc) from exc
+
+    @router.post("/api/sqlite/databases/{domain}/tables/{table}/rows/query")
+    def query_rows(domain: str, table: str, payload: SqliteRowsQueryRequest) -> dict[str, Any]:
+        try:
+            return manager.query_rows(
+                domain,
+                table,
+                offset=payload.offset,
+                limit=payload.limit,
+                columns=payload.columns,
+                filters=payload.filters,
+                search=payload.search,
+                order_by=payload.orderBy,
+            )
+        except SqliteManagerError as exc:
+            raise _http(exc) from exc
+
     @router.post("/api/sqlite/query")
     def query(payload: SqliteQueryRequest) -> dict[str, Any]:
         try:
@@ -64,6 +131,79 @@ def build_sqlite_manager_router(manager: SqliteManager) -> APIRouter:
                 payload.sql,
                 confirm_domain=payload.confirmDomain,
             )
+        except SqliteManagerError as exc:
+            raise _http(exc) from exc
+
+    @router.post("/api/sqlite/rows/insert")
+    def insert_row(payload: SqliteRowInsertRequest) -> dict[str, Any]:
+        try:
+            return manager.insert_row(
+                payload.domain,
+                payload.table,
+                payload.values,
+                confirm_domain=payload.confirmDomain,
+            )
+        except SqliteManagerError as exc:
+            raise _http(exc) from exc
+
+    @router.post("/api/sqlite/rows/update")
+    def update_row(payload: SqliteRowUpdateRequest) -> dict[str, Any]:
+        try:
+            return manager.update_row(
+                payload.domain,
+                payload.table,
+                payload.identity,
+                payload.values,
+                confirm_domain=payload.confirmDomain,
+            )
+        except SqliteManagerError as exc:
+            raise _http(exc) from exc
+
+    @router.post("/api/sqlite/rows/delete")
+    def delete_row(payload: SqliteRowDeleteRequest) -> dict[str, Any]:
+        try:
+            return manager.delete_row(
+                payload.domain,
+                payload.table,
+                payload.identity,
+                confirm_domain=payload.confirmDomain,
+            )
+        except SqliteManagerError as exc:
+            raise _http(exc) from exc
+
+    @router.post("/api/sqlite/integrity")
+    def integrity(payload: SqliteIntegrityRequest) -> dict[str, Any]:
+        try:
+            return manager.integrity_check(
+                payload.domain,
+                kind=payload.kind,
+                max_errors=payload.maxErrors,
+            )
+        except SqliteManagerError as exc:
+            raise _http(exc) from exc
+
+    @router.post("/api/sqlite/wal-checkpoint")
+    def wal_checkpoint(payload: SqliteCheckpointRequest) -> dict[str, Any]:
+        try:
+            return manager.wal_checkpoint(
+                payload.domain,
+                mode=payload.mode,
+                confirm_domain=payload.confirmDomain,
+            )
+        except SqliteManagerError as exc:
+            raise _http(exc) from exc
+
+    @router.get("/api/sqlite/ownership-audit")
+    def ownership_audit() -> dict[str, Any]:
+        try:
+            return manager.ownership_audit()
+        except SqliteManagerError as exc:
+            raise _http(exc) from exc
+
+    @router.get("/api/sqlite/runtime")
+    def runtime() -> dict[str, Any]:
+        try:
+            return manager.runtime_status()
         except SqliteManagerError as exc:
             raise _http(exc) from exc
 

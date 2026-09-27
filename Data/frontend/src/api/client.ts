@@ -31,6 +31,12 @@ import type {
   SqliteDatabaseStatus,
   SqliteQueryResult,
   SqliteTableInfo,
+  SqliteTableDetail,
+  SqliteRowsPage,
+  SqliteMutationResult,
+  SqliteIntegrityResult,
+  SqliteOwnershipAudit,
+  SqliteRuntimeStatus,
   ChatResponse,
   CognitionHealth,
   CognitionRunStatus,
@@ -512,9 +518,42 @@ export const api = {
     return request<{ databases: SqliteDatabaseStatus[] }>("/api/sqlite/databases");
   },
 
+  sqliteDatabaseStatus(domain: string): Promise<{ database: SqliteDatabaseStatus }> {
+    return request<{ database: SqliteDatabaseStatus }>(
+      `/api/sqlite/databases/${encodeURIComponent(domain)}`,
+    );
+  },
+
   sqliteDatabaseTables(domain: string): Promise<{ domain: string; tables: SqliteTableInfo[] }> {
     return request<{ domain: string; tables: SqliteTableInfo[] }>(
       `/api/sqlite/databases/${encodeURIComponent(domain)}/tables`,
+    );
+  },
+
+  sqliteTableDetail(domain: string, table: string): Promise<{ table: SqliteTableDetail }> {
+    return request<{ table: SqliteTableDetail }>(
+      `/api/sqlite/databases/${encodeURIComponent(domain)}/tables/${encodeURIComponent(table)}`,
+    );
+  },
+
+  sqliteQueryRows(
+    domain: string,
+    table: string,
+    body: {
+      offset?: number;
+      limit?: number;
+      columns?: string[];
+      filters?: Array<Record<string, unknown>>;
+      search?: string;
+      orderBy?: string[];
+    } = {},
+  ): Promise<SqliteRowsPage> {
+    return request<SqliteRowsPage>(
+      `/api/sqlite/databases/${encodeURIComponent(domain)}/tables/${encodeURIComponent(table)}/rows/query`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
     );
   },
 
@@ -525,11 +564,78 @@ export const api = {
     });
   },
 
-  sqliteMutate(domain: string, confirmDomain: string, sql: string): Promise<{ domain: string; rowcount: number; ok: boolean }> {
-    return request<{ domain: string; rowcount: number; ok: boolean }>("/api/sqlite/mutate", {
+  sqliteMutate(domain: string, confirmDomain: string, sql: string): Promise<SqliteMutationResult> {
+    return request<SqliteMutationResult>("/api/sqlite/mutate", {
       method: "POST",
       body: JSON.stringify({ domain, confirmDomain, sql }),
     });
+  },
+
+  sqliteInsertRow(
+    domain: string,
+    confirmDomain: string,
+    table: string,
+    values: Record<string, unknown>,
+  ): Promise<SqliteMutationResult> {
+    return request<SqliteMutationResult>("/api/sqlite/rows/insert", {
+      method: "POST",
+      body: JSON.stringify({ domain, confirmDomain, table, values }),
+    });
+  },
+
+  sqliteUpdateRow(
+    domain: string,
+    confirmDomain: string,
+    table: string,
+    identity: Record<string, unknown>,
+    values: Record<string, unknown>,
+  ): Promise<SqliteMutationResult> {
+    return request<SqliteMutationResult>("/api/sqlite/rows/update", {
+      method: "POST",
+      body: JSON.stringify({ domain, confirmDomain, table, identity, values }),
+    });
+  },
+
+  sqliteDeleteRow(
+    domain: string,
+    confirmDomain: string,
+    table: string,
+    identity: Record<string, unknown>,
+  ): Promise<SqliteMutationResult> {
+    return request<SqliteMutationResult>("/api/sqlite/rows/delete", {
+      method: "POST",
+      body: JSON.stringify({ domain, confirmDomain, table, identity }),
+    });
+  },
+
+  sqliteIntegrity(
+    domain: string,
+    kind: "quick_check" | "integrity_check" | "foreign_key_check" = "quick_check",
+    maxErrors = 100,
+  ): Promise<SqliteIntegrityResult> {
+    return request<SqliteIntegrityResult>("/api/sqlite/integrity", {
+      method: "POST",
+      body: JSON.stringify({ domain, kind, maxErrors }),
+    });
+  },
+
+  sqliteWalCheckpoint(
+    domain: string,
+    confirmDomain: string,
+    mode: "PASSIVE" | "FULL" | "RESTART" | "TRUNCATE" = "PASSIVE",
+  ): Promise<Record<string, unknown>> {
+    return request<Record<string, unknown>>("/api/sqlite/wal-checkpoint", {
+      method: "POST",
+      body: JSON.stringify({ domain, confirmDomain, mode }),
+    });
+  },
+
+  sqliteOwnershipAudit(): Promise<SqliteOwnershipAudit> {
+    return request<SqliteOwnershipAudit>("/api/sqlite/ownership-audit");
+  },
+
+  sqliteRuntime(): Promise<SqliteRuntimeStatus> {
+    return request<SqliteRuntimeStatus>("/api/sqlite/runtime");
   },
 
   telemetry(): Promise<{ events: RuntimeEvent[]; snapshot?: unknown; latest_sequence?: number }> {
