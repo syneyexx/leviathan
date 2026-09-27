@@ -69,9 +69,12 @@ class VerifierHonestyTests(unittest.TestCase):
         self.assertFalse(report.get("all_required_pass"))
         self.assertTrue(report["truth"]["incomplete_is_not_pass"])
         self.assertTrue(report["allow_incomplete"])
-        # At least one required gate must still be incomplete on current main.
+        # At least one required gate must still be incomplete / non-green on current main.
         statuses = {row["status"] for row in report["gates"]}
-        self.assertTrue(statuses & {"NOT_STARTED", "IN_PROGRESS", "UNMEASURED", "FEATURE_GATED"})
+        self.assertTrue(
+            statuses
+            & {"NOT_STARTED", "IN_PROGRESS", "UNMEASURED", "FEATURE_GATED", "NOT_TESTED"}
+        )
 
     def test_missing_gates_manifest_does_not_traceback(self) -> None:
         import importlib.util
