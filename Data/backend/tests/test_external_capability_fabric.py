@@ -2952,6 +2952,7 @@ class ExternalFabricDoDProofTests(unittest.TestCase):
                     status=CognitiveRunStatus.REASONING,
                     trace_id="tr-multi",
                 )
+                history: list[Any] = []
                 for i, cap in enumerate(("external.tool_a.search", "external.tool_b.search")):
                     # Iterative loop returns to REASONING between tool observations.
                     state.status = CognitiveRunStatus.REASONING
@@ -2961,8 +2962,10 @@ class ExternalFabricDoDProofTests(unittest.TestCase):
                         capability_id=cap,
                         arguments={"query": f"q{i}"},
                     )
-                    obs = runtime._execute_action(state, action, history=[])  # noqa: SLF001
+                    obs = runtime._execute_action(state, action, history=history)  # noqa: SLF001
                     assert obs is not None
+                    history.append(obs)
+                    state.observations.append(obs)
                     result = (obs.payload or {}).get("result") or {}
                     self.assertEqual(str(result.get("status")), "COMPLETED", msg=result)
                     tele = result.get("telemetry") if isinstance(result.get("telemetry"), dict) else {}
@@ -2972,12 +2975,232 @@ class ExternalFabricDoDProofTests(unittest.TestCase):
                 self.assertGreaterEqual(event_types.count("job.started"), 2)
                 self.assertGreaterEqual(event_types.count("job.completed"), 2)
                 self.assertGreaterEqual(event_types.count("tool.completed"), 2)
+                # Distinct modules observed across the iterative turn.
+                module_ids = {
+                    (e.get("payload") or {}).get("module_id")
+                    for e in state.events
+                    if e.get("event_type") == "tool.completed"
+                }
+                self.assertIn("tool-a", module_ids)
+                self.assertIn("tool-b", module_ids)
+                self.assertEqual(len(state.observations), 2)
                 jobs.stop_background_worker()
         finally:
             if prev is None:
                 os.environ.pop("LEVIATHAN_WORKERS_EXTERNALIZE_API", None)
             else:
                 os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = prev
+
+    def test_cognition_iterative_loop_selects_two_external_tools(self) -> None:
+        """ActionSelector → _iterative_loop must drive tool A then tool B then COMPLETE."""
+        import os
+        import uuid
+
+        from Data.modules.cognition.meta_controller import MetaDecision
+        from Data.modules.cognition.runtime import CognitiveRunState, CognitiveRuntime
+        from Data.modules.cognition.task_model import TaskModel
+        from Data.modules.cognition.types import (
+            CognitiveAction,
+            CognitiveActionKind,
+            CognitiveBudgets,
+            CognitivePlan,
+            CognitiveRunStatus,
+            ReasoningMode,
+            ReasoningStrategy,
+        )
+        from Data.modules.cognition.loop_detection import LoopDetector
+        from Data.modules.jobs import JobRuntime, JobStore, ResourceManager
+
+        class _SeqActions:
+            def select(self, *, observations, cancel_requested=False, **_: Any) -> CognitiveAction:
+                if cancel_requested:
+                    return CognitiveAction(
+                        kind=CognitiveActionKind.FAIL,
+                        action_id=str(uuid.uuid4()),
+                        rationale="cancel",
+                    )
+                n = len(observations or [])
+                if n == 0:
+                    return CognitiveAction(
+                        kind=CognitiveActionKind.INVOKE_CAPABILITY,
+                        action_id="seq-a",
+                        capability_id="external.tool_a.search",
+                        arguments={"query": "first"},
+                        rationale="select tool A after plan",
+                    )
+                if n == 1:
+                    return CognitiveAction(
+                        kind=CognitiveActionKind.INVOKE_CAPABILITY,
+                        action_id="seq-b",
+                        capability_id="external.tool_b.search",
+                        arguments={"query": "second"},
+                        rationale="select tool B after observe A",
+                    )
+                return CognitiveAction(
+                    kind=CognitiveActionKind.COMPLETE,
+                    action_id="seq-done",
+                    rationale="both tools observed — finalize",
+                    arguments={"status": "COMPLETED"},
+                )
+
+        prev = os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API")
+        os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                mods = Path(tmp) / "mods"
+                tool = FIXTURES / "fake_cli" / "tool.py"
+                for mid, cap in (("tool-a", "external.tool_a.search"), ("tool-b", "external.tool_b.search")):
+                    root = mods / mid
+                    root.mkdir(parents=True)
+                    (root / "module.json").write_text(
+                        json.dumps(
+                            {
+                                "module_id": mid,
+                                "name": mid,
+                                "version": "0.0.1",
+                                "entrypoint": FACTORY,
+                                "external": {
+                                    "adapter": "CLI",
+                                    "source_type": "path",
+                                    "path": str(tool.parent),
+                                    "install": {"strategy": "NONE"},
+                                    "resource_class": "NETWORK_HEAVY",
+                                    "runtime": {
+                                        "operations": [
+                                            {
+                                                "name": "search",
+                                                "command": [sys.executable, str(tool), "{query}"],
+                                            }
+                                        ]
+                                    },
+                                    "result": {"format": "json"},
+                                },
+                                "capabilities": [
+                                    {
+                                        "capability_id": cap,
+                                        "name": "Search",
+                                        "external_name": "search",
+                                        "side_effects": ["READ"],
+                                    }
+                                ],
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+                manager = ModuleManager(discovery_roots=(mods,), enabled=True)
+                manager.discover()
+                catalog = CapabilityCatalog()
+                plugins = PluginRegistry(catalog)
+                for mid in ("tool-a", "tool-b"):
+                    manager.initialize(
+                        mid,
+                        ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp),
+                    )
+                    managed = manager.get(mid)
+                    assert managed is not None
+                    register_external_module_capabilities(
+                        catalog=catalog, plugin_registry=plugins, managed=managed
+                    )
+                gateway = ExecutionGateway(catalog=catalog)
+                gateway.module_executor = ExternalModuleExecutor(manager, catalog=catalog)
+                job_store = JobStore(Path(tmp) / "jobs.db")
+                job_store.initialize()
+                jobs = JobRuntime(job_store, gateway, ResourceManager(2))
+                runtime = CognitiveRuntime(
+                    enabled=True,
+                    execution_gateway=gateway,
+                    job_runtime=jobs,
+                    factuality_mode="NONE",
+                    adaptive_depth=False,
+                    iterative=True,
+                    actions=_SeqActions(),  # type: ignore[arg-type]
+                )
+                task = TaskModel(
+                    task_id="t-loop",
+                    run_id="r-loop",
+                    raw_request="search with both tools",
+                    goal="search with both tools",
+                    domain="test",
+                    task_type="tool",
+                    execution_class="TOOL_REQUIRED",
+                )
+                state = CognitiveRunState(
+                    run_id="r-loop",
+                    task=task,
+                    status=CognitiveRunStatus.REASONING,
+                    trace_id="tr-loop",
+                )
+                state.decision = MetaDecision(
+                    mode=ReasoningMode.STANDARD,
+                    strategy=ReasoningStrategy.TOOL_DRIVEN,
+                    budgets=CognitiveBudgets(
+                        max_tool_calls=8,
+                        max_model_calls=4,
+                        max_replans=2,
+                        max_wall_time_seconds=60,
+                    ),
+                    value_scores={},
+                    notes=("multi-tool",),
+                )
+                state.plan = CognitivePlan(
+                    plan_id="p-loop",
+                    strategy=ReasoningStrategy.TOOL_DRIVEN,
+                    steps=[],
+                )
+                runtime._loops[state.run_id] = LoopDetector()
+                out = runtime._iterative_loop(state, history=[])  # noqa: SLF001
+                self.assertIsInstance(out, dict)
+                caps = [
+                    a.capability_id
+                    for a in state.actions
+                    if a.kind == CognitiveActionKind.INVOKE_CAPABILITY
+                ]
+                self.assertEqual(caps, ["external.tool_a.search", "external.tool_b.search"])
+                self.assertGreaterEqual(len(state.observations), 2)
+                event_types = [e.get("event_type") for e in state.events]
+                self.assertIn("action_requested", event_types)
+                self.assertGreaterEqual(event_types.count("tool.completed"), 2)
+                self.assertGreaterEqual(event_types.count("observation_added"), 2)
+                jobs.stop_background_worker()
+        finally:
+            if prev is None:
+                os.environ.pop("LEVIATHAN_WORKERS_EXTERNALIZE_API", None)
+            else:
+                os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = prev
+
+    def test_owned_process_drains_noisy_stderr_without_deadlock(self) -> None:
+        """PROCESS_SERVICE pipe drain must absorb flood without hanging the parent."""
+        from Data.modules.module_manager.external.process import OwnedProcess
+
+        flood = Path(tempfile.mkdtemp()) / "flood.py"
+        flood.write_text(
+            "import sys, time\n"
+            "for i in range(2000):\n"
+            "    print('ERR'+str(i)*40, file=sys.stderr)\n"
+            "    if i % 50 == 0:\n"
+            "        print('OUT'+str(i), flush=True)\n"
+            "    sys.stderr.flush()\n"
+            "time.sleep(0.2)\n",
+            encoding="utf-8",
+        )
+        proc = OwnedProcess(
+            module_id="noisy",
+            command=[sys.executable, str(flood)],
+            cwd=str(flood.parent),
+            env={},
+        )
+        started = time.time()
+        proc.start()
+        # Wait for child exit — must not deadlock on filled pipes.
+        while proc.is_alive() and time.time() - started < 10:
+            time.sleep(0.05)
+        self.assertFalse(proc.is_alive(), msg="child still alive — possible pipe deadlock")
+        self.assertLess(time.time() - started, 8.0)
+        logs = proc.stderr_buf.snapshot(limit=500)
+        self.assertGreater(len(logs), 10, msg="stderr drain collected nothing")
+        # Bounded — flood cannot grow unbounded in RAM.
+        self.assertLessEqual(len(proc.stderr_buf.lines), proc.stderr_buf.max_lines)
+        proc.stop(grace_seconds=1.0)
 
     def test_cognition_offloads_external_preferred_module_when_externalized(self) -> None:
         """EXTERNAL_PREFERRED MODULE CLI must not run inline when externalize=on."""

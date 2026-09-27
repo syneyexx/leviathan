@@ -1335,6 +1335,11 @@ class CognitiveRuntime:
                 )
                 return state.public_status()
 
+            # Multi-tool turns: OBSERVING → REASONING before the next select/execute.
+            # Without this, INVOKE_CAPABILITY B fails with Invalid transition OBSERVING → EXECUTING.
+            if state.status == CognitiveRunStatus.OBSERVING:
+                self._transition(state, CognitiveRunStatus.REASONING)
+
             # Critic pass (targeted — DEEP/MAXIMUM, high risk, contradictions)
             critic_justified = bool(
                 state.decision
