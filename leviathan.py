@@ -6,6 +6,12 @@ from __future__ import annotations
 def main() -> None:
     import os
 
+    # Host-owned children (run_leviathan.exe → piped CREATE_NO_WINDOW) must not
+    # die on console flush Errno 22 before the fabric starts.
+    from Data.modules.common.process_stdio import install_host_compatible_stdio
+
+    install_host_compatible_stdio()
+
     from Data.modules.workers.settings import load_worker_settings
 
     settings = load_worker_settings()

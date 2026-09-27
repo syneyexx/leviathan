@@ -24,7 +24,11 @@ pub const SAFE_MODE_ENV: &[(&str, &str)] = &[
 
 pub fn build_child_env(base: &HashMap<String, String>, root: &Path, safe_mode: bool) -> HashMap<String, String> {
     let mut env = base.clone();
+    // Unbuffered + UTF-8 so CREATE_NO_WINDOW piped capture stays readable in the
+    // host GUI and Python does not trip console code-page write failures.
     env.insert("PYTHONUNBUFFERED".into(), "1".into());
+    env.insert("PYTHONUTF8".into(), "1".into());
+    env.insert("PYTHONIOENCODING".into(), "utf-8:replace".into());
     let root_s = root.to_string_lossy().to_string();
     let mut parts: Vec<String> = vec![root_s.clone()];
     if let Some(existing) = env.get("PYTHONPATH") {
@@ -57,6 +61,11 @@ mod tests {
         base.insert("LEVIATHAN_NETWORK_ALLOW_OUTBOUND".into(), "true".into());
         let env = build_child_env(&base, Path::new("/opt/leviathan"), false);
         assert_eq!(env.get("PYTHONUNBUFFERED").map(String::as_str), Some("1"));
+        assert_eq!(env.get("PYTHONUTF8").map(String::as_str), Some("1"));
+        assert_eq!(
+            env.get("PYTHONIOENCODING").map(String::as_str),
+            Some("utf-8:replace")
+        );
         let pythonpath = env.get("PYTHONPATH").unwrap();
         assert!(pythonpath.starts_with("/opt/leviathan"));
         assert!(pythonpath.contains("/tmp/other"));

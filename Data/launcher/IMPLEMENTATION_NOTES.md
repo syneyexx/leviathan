@@ -98,3 +98,19 @@ On this host, portable process tests use a real Python child, process-group `SIG
 - `scripts/build_run_leviathan_exe.py` on this Linux host exited 3 after the portable checks. It printed that `run_leviathan.exe` was not produced.
 - `libwebkit2gtk` is not installed here, and `cargo check` for the Tauri crate could not resolve `tauri` from the offline registry. `run_leviathan.exe` was not produced.
 - `cargo test` for `Data/native` did not run. Rust 1.83 cannot parse the current `arrow-cmp` crate (`edition2024`). That is a toolchain limit, not a host-core result.
+
+## Host-captured stdio (NORMAL mode)
+
+`run_leviathan.exe` spawns `.venv` Python with piped stdout/stderr and Windows
+`CREATE_NO_WINDOW`. Operator console writes (Worker Fabric banner / bootstrap
+prints) must not crash that child with `OSError: [Errno 22] Invalid argument`.
+
+Ownership:
+
+- Host (`envbuild`) sets `PYTHONUNBUFFERED`, `PYTHONUTF8`, and `PYTHONIOENCODING=utf-8:replace`.
+- Python (`Data.modules.common.process_stdio`) hardens write/flush and is installed
+  from `leviathan.py` / bootstrap before console output.
+- `Data.modules.workers.console` uses `safe_write_line`.
+- Bootstrap siblings inherit the host-captured filenos explicitly.
+
+The launcher still does not own PaperDeployment / MarketSim / A4 lifecycle.
