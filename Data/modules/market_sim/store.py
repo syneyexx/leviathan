@@ -1217,6 +1217,34 @@ class MarketSimStore:
             )
         return trial
 
+    def get_experiment(self, trial_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM market_experiments WHERE trial_id=?",
+                (trial_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "trial_id": row["trial_id"],
+            "strategy_id": row["strategy_id"],
+            "strategy_version": row["strategy_version"],
+            "hypothesis": row["hypothesis"],
+            "proposer_agent_id": row["proposer_agent_id"],
+            "data_hash": row["data_hash"],
+            "fingerprint": row["fingerprint"],
+            "status": row["status"],
+            "config": _loads(row["config_json"], {}),
+            "split": _loads(row["split_json"], {}),
+            "results": _loads(row["results_json"], {}),
+            "acceptance_criteria": _loads(row["acceptance_json"], {}),
+            "rejection_reason": row["rejection_reason"],
+            "seed": row["seed"],
+            "created_at": row["created_at"],
+            "finished_at": row["finished_at"],
+            "metadata": _loads(row["metadata_json"], {}),
+        }
+
     def append_trial(self, trial: dict[str, Any]) -> dict[str, Any]:
         """Append-only Trial Ledger entry — never overwrites prior trial_id rows.
 
