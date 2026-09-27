@@ -1,4 +1,8 @@
-/** FINALBETA Model Training pixel mock (General tab). */
+/**
+ * FINALBETA Model Training pixel mock (UI fixtures only).
+ * Do NOT render TRAINING_DATASET_PREVIEW / TRAINING_SAFETY_* as live operational truth
+ * without DEMO/FIXTURE labeling. Prefer live training API or UNAVAILABLE.
+ */
 
 export const TRAINING_PIXEL_TABS = ["General", "Model", "Dataset", "Training", "Advanced"] as const;
 export type TrainingPixelTab = (typeof TRAINING_PIXEL_TABS)[number];

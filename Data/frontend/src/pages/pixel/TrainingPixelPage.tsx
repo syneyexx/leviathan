@@ -3,10 +3,8 @@ import { Link, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../../api/client";
 import { AppShell } from "../../layouts/AppShell";
 import {
-  TRAINING_DATASET_PREVIEW,
   TRAINING_PIXEL_DATASET_PREVIEW_TABS,
   TRAINING_PIXEL_TABS,
-  TRAINING_SAFETY_TOGGLES,
   type TrainingPixelTab,
 } from "../../mocks/training-pixel";
 import { useAppToast } from "../../state/useAppToast";
@@ -680,9 +678,15 @@ export function TrainingPixelPage() {
                     ))}
                   </div>
                   {dsPreviewTab === "Voorbeeld" ? (
-                    <pre className="lv-px-code" style={{ marginTop: 8 }}>
-                      {TRAINING_DATASET_PREVIEW}
-                    </pre>
+                    <p
+                      className="lv-muted"
+                      style={{ fontSize: 9, marginTop: 8 }}
+                      data-truth="unavailable"
+                      role="status"
+                    >
+                      Dataset preview UNAVAILABLE — select a dataset version or path, then open
+                      Datasets for live samples. Fixture Alpaca text is not shown as live data.
+                    </p>
                   ) : (
                     <p style={{ fontSize: 9, color: "var(--lv-text-muted)", marginTop: 8 }}>
                       {dsPreviewTab === "Statistieken"
@@ -697,16 +701,17 @@ export function TrainingPixelPage() {
               )}
 
               {(tab === "General" || tab === "Advanced") && (
-                <section className="lv-px-panel">
+                <section className="lv-px-panel" data-truth="live-config">
                   <h2 className="lv-px-panel-title">Veiligheid &amp; limieten</h2>
-                  {TRAINING_SAFETY_TOGGLES.map((toggle) => (
-                    <div key={toggle.id} className="lv-px-toggle-row">
-                      <div>
-                        <strong>{toggle.label}</strong>
-                        <span>{toggle.description}</span>
-                      </div>
-                    </div>
-                  ))}
+                  <p
+                    className="lv-muted"
+                    style={{ fontSize: 9, marginBottom: 8 }}
+                    data-truth="unavailable"
+                    role="status"
+                  >
+                    Static fixture safety toggles (validation/early-stop demos) are not shown as live
+                    config. Only API-backed job fields below apply.
+                  </p>
                   <div className="lv-px-toggle-row">
                     <div>
                       <strong>Gradient checkpointing</strong>
