@@ -1,24 +1,18 @@
 {
   "program": "leviathan_institutional_defect_eradication",
-  "version": 2,
+  "version": 3,
   "updated": "2026-09-27",
   "audit_baseline_sha": "95fe8658638ff016115d9a05c9a2a8d835ccfb97",
+  "original_pr181_handoff_sha": "41e7033ea7e360a54cafbb268036b1b1540cc312",
   "integrated_main_sha": "8605b725ac3d549d0210a60496d3d1898fca402e",
+  "verification_code_sha": "438fbb7cae7ad5666ec005226bd403c40cb2b22b",
   "pr": 181,
   "branch": "cursor/institutional-defect-eradication-bfd4",
   "scope": {
     "excluded_trees": ["Data/HADES/", "editor/"],
-    "canonical_databases": ["CONTROL", "KNOWLEDGE", "MARKET"]
+    "canonical_databases": ["CONTROL", "KNOWLEDGE", "MARKET"],
+    "excluded_diff_vs_main_count": 0
   },
-  "status_vocabulary": [
-    "CONFIRMED",
-    "ALREADY_FIXED_CURRENT",
-    "NOT_REPRODUCED",
-    "FIXED",
-    "BLOCKED_EXTERNAL",
-    "DECISION_REQUIRED",
-    "PENDING_FINAL_VERIFICATION"
-  ],
   "pr180_preservation": {
     "settings_multiline_textareas": "PROTECTED",
     "models_hardware_inventory_layout": "PROTECTED",
@@ -37,52 +31,52 @@
     "23_db_path_ssrf": "COMPLETE",
     "24_schema_process_owner": "COMPLETE",
     "25_commit_receipt_truth": "COMPLETE",
-    "26_evidence_docs": "IN_PROGRESS",
-    "27_final_az": "PENDING",
-    "28_final_verification": "PENDING"
+    "26_evidence_docs": "COMPLETE",
+    "27_final_az": "COMPLETE",
+    "28_final_verification": "COMPLETE"
   },
-  "verification_model": {
-    "note": "Do not embed self-referential git HEAD in this ledger; record command results after Wave 28 on the final tip.",
+  "verification": {
+    "timestamp_utc": "2026-09-27T13:40:00Z",
     "github_ci": "NOT RUN",
-    "commands": []
+    "commands": [
+      {
+        "command": "pytest Data/backend/tests -q",
+        "result": "PASS",
+        "counts": {"passed": 2210, "skipped": 17, "xfailed": 5, "failed": 0}
+      },
+      {
+        "command": "npm run typecheck (Data/frontend)",
+        "result": "PASS"
+      },
+      {
+        "command": "npm run lint (Data/frontend)",
+        "result": "PASS",
+        "notes": "pre-existing warnings only"
+      },
+      {
+        "command": "npm test -- --run (Data/frontend)",
+        "result": "PASS",
+        "counts": {"passed": 213, "failed": 0}
+      },
+      {
+        "command": "npm run build (Data/frontend)",
+        "result": "PASS"
+      },
+      {
+        "command": "cargo check --manifest-path Data/launcher/host-core/Cargo.toml",
+        "result": "PASS"
+      },
+      {
+        "command": "cargo check --manifest-path Data/native/leviathan_data_plane/Cargo.toml",
+        "result": "NOT_EXECUTED_TOOLCHAIN",
+        "notes": "Cargo 1.83 cannot parse arrow-data edition2024 dependency"
+      },
+      {
+        "command": "Windows live run_leviathan.exe execution",
+        "result": "NOT_EXECUTED_PLATFORM_WINDOWS"
+      }
+    ]
   },
-  "remediation_families": [
-    {
-      "id": "WAVE20-MISPLACED",
-      "status": "FIXED",
-      "invariant": "UNKNOWN=>BLOCK; verified copy before source DROP; completed=False with blockers",
-      "tests": ["Data/backend/tests/test_wave20_misplaced_noloss.py"]
-    },
-    {
-      "id": "WAVE21-RESTORE",
-      "status": "FIXED",
-      "invariant": "server maintenance proof; RECOVERY_REQUIRED blocks normal lifespan",
-      "tests": ["Data/backend/tests/test_backup_wave7.py"]
-    },
-    {
-      "id": "WAVE22-LEASE",
-      "status": "FIXED",
-      "invariant": "fenced_transition on all worker terminal mutations",
-      "tests": ["Data/backend/tests/test_adversarial_lease_fencing_wave22.py"]
-    },
-    {
-      "id": "WAVE23-AUTHORITY",
-      "status": "FIXED",
-      "invariant": "no payload DB path authority; scheme+host+port private trust",
-      "tests": ["Data/backend/tests/test_wave23_24_25.py", "Data/backend/tests/test_sec_sqlmgr_wave5_6.py"]
-    },
-    {
-      "id": "WAVE24-SCHEMA-SERVING",
-      "status": "FIXED",
-      "invariant": "single WAVE3 DDL authority; ServingSupervisor sole process owner",
-      "tests": ["Data/backend/tests/test_wave23_24_25.py", "Data/backend/tests/test_schema_wave3_authority.py"]
-    },
-    {
-      "id": "WAVE25-COMMIT-TRUTH",
-      "status": "FIXED",
-      "invariant": "no REJECTED after durable primary; PARTIAL/FAILED_AFTER_PARTIAL_COMMIT",
-      "tests": ["Data/backend/tests/test_wave23_24_25.py"]
-    }
-  ],
-  "result": "PENDING_FINAL_VERIFICATION"
+  "result": "READY_FOR_INDEPENDENT_PRE_MERGE_REVIEW",
+  "remaining_issues": "No known P0/P1 correctness defects remain after final A–Z audit."
 }
