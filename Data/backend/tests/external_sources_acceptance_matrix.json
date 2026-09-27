@@ -495,7 +495,7 @@
     "COMPOSITE": "PASS",
     "MCP": "PASS"
   },
-  "worktree_head": "298217071f159035e114a0be5b57b52e952d41bc",
+  "worktree_head": "eaa8d1f0b4f50e52c0a6dd6c9fe2e9f9782384bd",
   "live_proofs": {
     "install_pass_module_ids": [
       "agent-reach",
@@ -632,7 +632,10 @@
       "scrollcraft_verify": "PASS",
       "cognition_job_runtime_offload": "PASS",
       "capability_discovered_sse": "PASS",
-      "cli_blocks_api_thread": "NO (EXTERNAL_REQUIRED \u2192 JobRuntime)"
+      "cli_blocks_api_thread": "NO (EXTERNAL_REQUIRED \u2192 JobRuntime)",
+      "cognition_iterative_multi_tool": "PASS",
+      "assimilation_enqueue_kwargs": "PASS",
+      "observability_external_metrics": "PASS"
     },
     "skill_pack_invoke": {
       "claude-osint": {
