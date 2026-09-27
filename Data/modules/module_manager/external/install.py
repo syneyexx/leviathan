@@ -351,13 +351,38 @@ class InstallationService:
             if not pip_bin:
                 raise InstallError(ExternalFailureCode.DEPENDENCY_MISSING, "pip not available")
             pip = Path(pip_bin)
-        packages = list(config.install.python_packages)
-        if not packages and config.source.source_type == "pip" and config.source.source:
+        raw = list(config.install.python_packages)
+        # Treat "-e ." / "--editable ." as editable install of the checkout root.
+        editable = False
+        packages: list[str] = []
+        i = 0
+        while i < len(raw):
+            tok = raw[i]
+            if tok in {"-e", "--editable"}:
+                editable = True
+                if i + 1 < len(raw) and raw[i + 1] in {".", ""}:
+                    i += 2
+                    continue
+                i += 1
+                continue
+            if tok == ".":
+                editable = True
+                i += 1
+                continue
+            packages.append(tok)
+            i += 1
+        if not packages and not editable and config.source.source_type == "pip" and config.source.source:
             packages = [config.source.source]
-        if not packages:
+        if not packages and not editable:
             return {}
+        cmd = [str(pip), "install"]
+        if editable:
+            cmd.extend(["-e", str(root)])
+        if packages:
+            cmd.extend(packages)
         completed = subprocess.run(
-            [str(pip), "install", *packages],
+            cmd,
+            cwd=str(root),
             capture_output=True,
             text=True,
             timeout=900,
@@ -365,8 +390,9 @@ class InstallationService:
             shell=False,
         )
         if completed.returncode != 0:
-            raise InstallError(ExternalFailureCode.INSTALL_FAILED, f"pip failed: {completed.stderr[:500]}")
-        return {"pip_packages": packages}
+            detail = (completed.stderr or completed.stdout or "").strip()[:500]
+            raise InstallError(ExternalFailureCode.INSTALL_FAILED, f"pip failed: {detail}")
+        return {"pip_packages": packages, "editable": editable, "cwd": str(root)}
 
     def _node_install(self, root: Path, config: ExternalConfig, *, tool: str) -> dict[str, Any]:
         tool_path = _resolve_node_tool(tool)

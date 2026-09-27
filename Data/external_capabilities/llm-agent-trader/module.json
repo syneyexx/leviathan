@@ -20,12 +20,10 @@
     "install": {
       "strategy": [
         "GIT_CHECKOUT",
-        "PYTHON_VENV",
-        "PIP_PACKAGE"
+        "PYTHON_VENV"
       ],
-      "python_packages": [
-        "-e",
-        "."
+      "dependencies": [
+        "python3"
       ]
     },
     "runtime": {

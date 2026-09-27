@@ -330,4 +330,17 @@ class CliAdapter:
                 rendered[0] = str(venv_bin)
             elif bin_candidate.exists():
                 rendered[0] = str(bin_candidate)
+            else:
+                # Alias bare python → python3 when only python3 is on PATH.
+                rendered[0] = _resolve_python_alias(rendered[0])
+        elif rendered:
+            rendered[0] = _resolve_python_alias(rendered[0])
         return rendered
+
+
+def _resolve_python_alias(executable: str) -> str:
+    if executable not in {"python", "python.exe"}:
+        return executable
+    import shutil
+
+    return shutil.which("python3") or shutil.which("python") or executable

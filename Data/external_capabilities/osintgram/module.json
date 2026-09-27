@@ -27,7 +27,7 @@
     "runtime": {
       "mode": "LAZY",
       "command": [
-        "python",
+        "python3",
         "-m",
         "uvicorn",
         "src.web.app:app",

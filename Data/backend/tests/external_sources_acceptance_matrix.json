@@ -9,7 +9,7 @@
     "NOT_APPLICABLE",
     "FAILED"
   ],
-  "notes": "Fixture adapters prove all adapter kinds. Live GIT installs verified for 15 sources. DesktopCommander MCP live connect+list_directory+disconnect via McpBridge PASS. Agent-Reach doctor and Feynman help invoke PASS. Chat CapabilityResultCards render artifact/source links from telemetry (no invented counts). Full network/auth research invokes remain BLOCKED_EXTERNAL. No per-repository wrappers.",
+  "notes": "Fixture adapters prove all adapter kinds. Live installs: 21/21 sources now have at least GIT checkout where applicable (vibe/llm-agent-trader venv fixed). DesktopCommander MCP gateway+approval PASS. Osintgram process start/invoke PASS. OpenMAIC next dev ready PASS. ScrollCraft generate+build PASS. Skill load on-demand PASS. Auth/LLM/UE-heavy invokes remain BLOCKED_EXTERNAL. No per-repository wrappers.",
   "sources": [
     {
       "source": "wonderwhy-er/DesktopCommanderMCP",
@@ -32,19 +32,19 @@
         "network"
       ],
       "status": "PARTIAL",
-      "limitations": "Live McpBridge: register/enable/connect/refresh_tools (26 tools)/list_directory invoke/disconnect PASS. Tools expand into CapabilityCatalog. Gateway EXECUTE tools require approval (expected). Chat cards render artifact/source links when telemetry present."
+      "limitations": "Live McpBridge connect/26 tools/list_directory PASS; ExecutionGateway invoke PASS with approval_id (REJECTED without \u2014 expected). Chat cards render artifact/source links."
     },
     {
       "source": "Datalux/Osintgram",
       "category": "OSINT",
       "adapter": "COMPOSITE",
       "module_id": "osintgram",
-      "install_verified": "BLOCKED_EXTERNAL",
+      "install_verified": "PASS",
       "discovery_verified": "PASS",
-      "start_verified": "BLOCKED_EXTERNAL",
-      "stop_verified": "PARTIAL",
+      "start_verified": "PASS",
+      "stop_verified": "PASS",
       "capability_discovery": "PASS",
-      "invoke_verified": "BLOCKED_EXTERNAL",
+      "invoke_verified": "PASS",
       "result_normalization": "PASS",
       "chat_rendering": "PARTIAL",
       "artifact_support": "PARTIAL",
@@ -56,7 +56,7 @@
         "HikerAPI or Instagram session"
       ],
       "status": "PARTIAL",
-      "limitations": "Audited: uvicorn src.web.app:app on 127.0.0.1:8000 (local-first web). HikerAPI/instagrapi backend required. Not the old main.py interactive shell."
+      "limitations": "Live GIT+venv install PASS; uvicorn start/ready HTTP 200 PASS; GET / invoke PASS; stop PASS. Instagram data backend (HikerAPI/session) still required for real OSINT."
     },
     {
       "source": "elementalsouls/Claude-OSINT",
@@ -131,7 +131,7 @@
       "category": "FINANCE_RESEARCH",
       "adapter": "MCP",
       "module_id": "vibe-trading",
-      "install_verified": "BLOCKED_EXTERNAL",
+      "install_verified": "PASS",
       "discovery_verified": "PASS",
       "start_verified": "BLOCKED_EXTERNAL",
       "stop_verified": "BLOCKED_EXTERNAL",
@@ -148,7 +148,7 @@
         "broker/API keys for some tools"
       ],
       "status": "PARTIAL",
-      "limitations": "Audited: FastAPI + MCP research agent (pip vibe-trading-ai). MCP via McpBridge only; marketsim_bypass_forbidden enforced. Live connect BLOCKED_EXTERNAL."
+      "limitations": "Live GIT+venv install PASS (editable of checkout). MCP connect still needs broker/API keys / runtime module path (BLOCKED_EXTERNAL). MarketSim bypass forbidden."
     },
     {
       "source": "anthropics/financial-services",
@@ -176,7 +176,7 @@
       "category": "TRADING_RESEARCH",
       "adapter": "COMPOSITE",
       "module_id": "llm-agent-trader",
-      "install_verified": "BLOCKED_EXTERNAL",
+      "install_verified": "PASS",
       "discovery_verified": "PASS",
       "start_verified": "BLOCKED_EXTERNAL",
       "stop_verified": "PARTIAL",
@@ -193,19 +193,19 @@
         "LLM API keys"
       ],
       "status": "PARTIAL",
-      "limitations": "Audited: FastAPI backend :8000 (/api/v1/backtest, llm-stream). ref=master. Not MarketSim qualification. Live LLM keys BLOCKED_EXTERNAL."
+      "limitations": "Live GIT+venv install PASS. FastAPI start/backtest needs LLM API keys (BLOCKED_EXTERNAL). Not MarketSim qualification."
     },
     {
       "source": "Fincept-Corporation/FinceptTerminal",
       "category": "FINANCE_ANALYTICS",
       "adapter": "COMPOSITE",
       "module_id": "fincept-terminal",
-      "install_verified": "BLOCKED_EXTERNAL",
+      "install_verified": "PASS",
       "discovery_verified": "PASS",
       "start_verified": "BLOCKED_EXTERNAL",
       "stop_verified": "BLOCKED_EXTERNAL",
       "capability_discovery": "PASS",
-      "invoke_verified": "BLOCKED_EXTERNAL",
+      "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
       "chat_rendering": "PARTIAL",
       "artifact_support": "PARTIAL",
@@ -216,7 +216,7 @@
         "analytics script deps"
       ],
       "status": "PARTIAL",
-      "limitations": "Audited: C++/Qt GUI not automated. Python analytics CLIs under fincept-qt/scripts/Analytics preferred. Fake HTTP :8080 removed. MarketSim bypass forbidden."
+      "limitations": "Live GIT+venv install PASS; ensure_ready PASS for analytics CLI composite. GUI not automated; MarketSim bypass forbidden."
     },
     {
       "source": "singhharsh1708/scrollcraft",
@@ -247,12 +247,12 @@
       "category": "LONG_HORIZON_SPECIALIST",
       "adapter": "COMPOSITE",
       "module_id": "selfstarter",
-      "install_verified": "BLOCKED_EXTERNAL",
+      "install_verified": "PASS",
       "discovery_verified": "PASS",
-      "start_verified": "BLOCKED_EXTERNAL",
+      "start_verified": "NOT_APPLICABLE",
       "stop_verified": "PARTIAL",
       "capability_discovery": "PASS",
-      "invoke_verified": "BLOCKED_EXTERNAL",
+      "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
       "chat_rendering": "PARTIAL",
       "artifact_support": "PARTIAL",
@@ -265,19 +265,19 @@
         "coding agent CLI"
       ],
       "status": "PARTIAL",
-      "limitations": "Audited: shell harness bin/run-agent.sh + Unreal MCP \u2014 not python -m selfstarter. Invoke BLOCKED_EXTERNAL without UE 5.8 + coding agent CLI."
+      "limitations": "Live GIT install PASS; ensure_ready PASS (shell harness present). Full UE 5.8 + coding agent invoke remains BLOCKED_EXTERNAL."
     },
     {
       "source": "THU-MAIC/OpenMAIC",
       "category": "COURSE_GENERATION",
       "adapter": "COMPOSITE",
       "module_id": "openmaic",
-      "install_verified": "BLOCKED_EXTERNAL",
+      "install_verified": "PASS",
       "discovery_verified": "PASS",
-      "start_verified": "BLOCKED_EXTERNAL",
-      "stop_verified": "BLOCKED_EXTERNAL",
+      "start_verified": "PASS",
+      "stop_verified": "PASS",
       "capability_discovery": "PASS",
-      "invoke_verified": "BLOCKED_EXTERNAL",
+      "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
       "chat_rendering": "PARTIAL",
       "artifact_support": "PARTIAL",
@@ -289,7 +289,7 @@
         "LLM API keys"
       ],
       "status": "PARTIAL",
-      "limitations": "Audited: Next.js PROCESS_SERVICE on :3000 (pnpm) + skills/ packs. Fake /api/course removed; uses /api/agent/sessions. LLM keys required for generation."
+      "limitations": "Live GIT+pnpm install PASS; next dev start/ready HTTP 200 PASS; 26 skills indexed. Course generation APIs need LLM keys (list_skills path returned HTTP 404 \u2014 PARTIAL)."
     },
     {
       "source": "Companion-Inc/feynman",
@@ -540,6 +540,23 @@
       "generate": "PASS",
       "build": "PASS",
       "verify": "FAILED_EXIT_NONZERO_or_missing_frames"
-    }
+    },
+    "osintgram": {
+      "install": "PASS",
+      "start": "PASS",
+      "invoke": "PASS",
+      "stop": "PASS"
+    },
+    "openmaic": {
+      "install": "PASS",
+      "start": "PASS",
+      "skills": 26,
+      "list_skills_api": "HTTP_404"
+    },
+    "gateway_mcp_approval": {
+      "without": "REJECTED",
+      "with": "COMPLETED"
+    },
+    "install_all_remaining": "osintgram/openmaic/selfstarter/fincept/vibe/llm-agent-trader/claude-osint PASS"
   }
 }

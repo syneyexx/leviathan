@@ -1480,6 +1480,41 @@ class ExternalAssimilationAndScaleTests(unittest.TestCase):
             assert ver is not None
             self.assertEqual(ver["module_id"], "mod-a")
 
+    def test_pip_editable_dot_uses_install_root(self) -> None:
+        from Data.modules.module_manager.external.install import InstallationService
+        from Data.modules.module_manager.external.types import parse_external_config
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "pkg"
+            root.mkdir()
+            (root / "pyproject.toml").write_text(
+                '[project]\nname="tinydemo"\nversion="0.0.1"\n'
+                'requires-python=">=3.10"\n',
+                encoding="utf-8",
+            )
+            (root / "tinydemo").mkdir()
+            (root / "tinydemo" / "__init__.py").write_text("", encoding="utf-8")
+            cfg = parse_external_config(
+                {
+                    "adapter": "CLI",
+                    "source_type": "path",
+                    "path": str(root),
+                    "install": {
+                        "strategy": ["PIP_PACKAGE"],
+                        "python_packages": ["-e", "."],
+                    },
+                    "runtime": {"command": ["python3", "-c", "print(1)"]},
+                }
+            )
+            assert cfg is not None
+            svc = InstallationService(Path(tmp) / "data")
+            # Create venv under checkout so pip is local (not system externally-managed).
+            svc._python_venv(root, cfg)  # noqa: SLF001
+            info = svc._pip_packages(root, cfg)  # noqa: SLF001
+            self.assertTrue(info.get("editable"))
+            self.assertEqual(info.get("cwd"), str(root))
+            self.assertTrue((root / ".venv").exists())
+
     def test_cli_operation_defaults_fill_placeholders(self) -> None:
         from Data.modules.module_manager.external.adapters.base import AdapterContext
         from Data.modules.module_manager.external.adapters.cli import CliAdapter

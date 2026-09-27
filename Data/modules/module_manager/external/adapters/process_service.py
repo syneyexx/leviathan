@@ -48,7 +48,36 @@ class ProcessServiceAdapter:
         self._state = ExternalRuntimeState.STARTING
         cwd = (self.config.runtime.cwd or self._install_root or "").replace("$INSTALL_ROOT", self._install_root or "") or None
         command = [c.replace("$INSTALL_ROOT", self._install_root or "") for c in self.config.runtime.command]
+        if command:
+            from .cli import _resolve_python_alias
+
+            exe = command[0]
+            if self._install_root:
+                import os as _os
+                from pathlib import Path as _Path
+
+                venv_bin = (
+                    _Path(self._install_root)
+                    / ".venv"
+                    / ("Scripts" if _os.name == "nt" else "bin")
+                    / exe
+                )
+                if venv_bin.exists():
+                    exe = str(venv_bin)
+                else:
+                    exe = _resolve_python_alias(exe)
+            else:
+                exe = _resolve_python_alias(exe)
+            command[0] = exe
         env = {k: v.replace("$INSTALL_ROOT", self._install_root or "") for k, v in self.config.runtime.env.items()}
+        # Prefer install-root venv on PATH for module-local binaries (uvicorn, etc.).
+        if self._install_root:
+            import os as _os
+            from pathlib import Path as _Path
+
+            venv_path = _Path(self._install_root) / ".venv" / ("Scripts" if _os.name == "nt" else "bin")
+            if venv_path.is_dir():
+                env = {**_os.environ, **env, "PATH": f"{venv_path}{_os.pathsep}{_os.environ.get('PATH', '')}"}
         self._owned = OwnedProcess(
             module_id=self.ctx.module_id,
             command=command,
