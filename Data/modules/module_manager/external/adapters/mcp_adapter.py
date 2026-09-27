@@ -149,7 +149,22 @@ class McpAdapter:
     def ensure_ready(self) -> dict[str, Any]:
         state = self.runtime_state()
         if state == ExternalRuntimeState.RUNNING:
-            return {"ready": True, "server_id": self._server_id}
+            return {"ready": True, "server_id": self._server_id, "connected": True}
+        # LAZY MCP: install+register is enough for readiness. Connect happens on
+        # start() / tool selection — COMPOSITE ensure_ready must not force-connect
+        # optional MCP children (missing extras must not fail the whole module).
+        if not self.config.runtime.eager_start:
+            try:
+                self._reregister_mcp()
+            except Exception:  # noqa: BLE001
+                pass
+            self._state = ExternalRuntimeState.READY
+            return {
+                "ready": True,
+                "server_id": self._server_id,
+                "connected": False,
+                "lazy": True,
+            }
         started = self.start()
         return {"ready": True, **started}
 

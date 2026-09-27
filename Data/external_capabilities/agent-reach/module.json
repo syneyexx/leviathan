@@ -1,7 +1,7 @@
 {
   "module_id": "agent-reach",
   "name": "Agent Reach",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
   "side_effects": [
     "READ",
@@ -27,39 +27,42 @@
       ]
     },
     "skill_roots": [
-      ".",
+      "agent_reach/skill",
       "skills",
-      "docs"
+      "."
     ],
     "runtime": {
       "mode": "EPHEMERAL",
-      "command": [
-        "agent-reach",
-        "doctor"
-      ],
       "cwd": "$INSTALL_ROOT",
-      "timeout_seconds": 600,
+      "timeout_seconds": 120,
       "operations": [
         {
           "name": "doctor",
           "command": [
             "agent-reach",
-            "doctor"
+            "doctor",
+            "--json"
           ]
         },
         {
-          "name": "search",
+          "name": "watch",
           "command": [
             "agent-reach",
-            "search",
-            "{query}"
+            "watch"
           ]
         },
         {
-          "name": "run",
+          "name": "check_update",
           "command": [
             "agent-reach",
-            "{query}"
+            "check-update"
+          ]
+        },
+        {
+          "name": "version",
+          "command": [
+            "agent-reach",
+            "version"
           ]
         }
       ]
@@ -75,20 +78,22 @@
       "reddit",
       "youtube",
       "github",
-      "skill"
+      "skill",
+      "router"
     ],
     "domain": "osint",
     "resource_class": "NETWORK_HEAVY",
     "metadata": {
-      "preferred_machine_contract": "CLI + SKILL.md capability layer; MCP channel backends optional via mcporter",
-      "not_a_second_agent_runtime": true
+      "preferred_machine_contract": "SKILL.md internet router + CLI doctor/watch/check-update/version. No native `agent-reach search` subcommand — platform reads are routed by the skill to upstream tools (gh, yt-dlp, jina, mcporter, bili). Upstream MCP get_status server is currently incompatible with modern mcp SDK (list_tools API) so CLI doctor --json is the status contract.",
+      "not_a_second_agent_runtime": true,
+      "no_native_search_subcommand": true
     }
   },
   "capabilities": [
     {
       "capability_id": "external.agent_reach.doctor",
       "name": "Agent-Reach Doctor",
-      "description": "Diagnose Agent-Reach channel backends (YouTube, GitHub, RSS, etc.).",
+      "description": "JSON channel availability report (which backends are installed/active).",
       "external_name": "doctor",
       "side_effects": [
         "READ",
@@ -96,10 +101,10 @@
       ]
     },
     {
-      "capability_id": "external.agent_reach.search",
-      "name": "Agent-Reach Search",
-      "description": "Search/read internet sources via Agent-Reach CLI routing (not a parallel agent runtime).",
-      "external_name": "search",
+      "capability_id": "external.agent_reach.watch",
+      "name": "Agent-Reach Watch",
+      "description": "Quick health + update check for scheduled monitoring.",
+      "external_name": "watch",
       "side_effects": [
         "READ",
         "NETWORK"
@@ -108,8 +113,17 @@
     {
       "capability_id": "external.agent_reach.load_skill",
       "name": "Agent-Reach Load Skill",
-      "description": "Load Agent-Reach SKILL.md instructions on demand.",
+      "description": "Load Agent-Reach SKILL.md internet-routing instructions on demand (not prompt-injected).",
       "external_name": "load",
+      "side_effects": [
+        "READ"
+      ]
+    },
+    {
+      "capability_id": "external.agent_reach.search_skills",
+      "name": "Agent-Reach Search Skills",
+      "description": "Search indexed Agent-Reach skill metadata (not a platform scrape).",
+      "external_name": "search_skills",
       "side_effects": [
         "READ"
       ]

@@ -78,6 +78,7 @@ class CompositeAdapter:
 
     def ensure_ready(self) -> dict[str, Any]:
         results = [child.ensure_ready() for child in self._children]
+        # Optional MCP children may report ready=lazy without a live session.
         ready = all(r.get("ready", True) for r in results if isinstance(r, dict))
         return {"ready": ready, "children": results}
 
@@ -106,10 +107,20 @@ class CompositeAdapter:
         progress: ProgressCb | None = None,
         cancel_check: CancelCheck | None = None,
     ) -> ModuleResult:
-        # Skill ops → skill child; lifecycle → all; else executable child.
+        # Declared executable ops (CLI/HTTP/process) win over skill-pack names like "search".
+        declared_exec_ops = {
+            str(op.get("name") or op.get("operation") or "")
+            for op in (self.config.runtime.operations or ())
+            if isinstance(op, dict)
+        }
+        if operation in declared_exec_ops:
+            return self._exec.invoke(operation, arguments, progress=progress, cancel_check=cancel_check)
+
+        # Skill-only ops → skill/catalog child; lifecycle → all; else executable child.
         if self._skills is not None and operation in {
             "list",
             "search",
+            "search_skills",
             "load",
             "get",
             "enable",
@@ -119,7 +130,8 @@ class CompositeAdapter:
             "materialize",
             "install_skill",
         }:
-            return self._skills.invoke(operation, arguments, progress=progress, cancel_check=cancel_check)
+            skill_op = "search" if operation == "search_skills" else operation
+            return self._skills.invoke(skill_op, arguments, progress=progress, cancel_check=cancel_check)
         if operation in {"start", "stop", "restart"}:
             if operation == "start":
                 out = self.start()

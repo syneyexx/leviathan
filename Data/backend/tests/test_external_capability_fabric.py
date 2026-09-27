@@ -657,6 +657,55 @@ class ExternalAdapterFixtureE2ETests(unittest.TestCase):
             self.assertEqual(result.status, "COMPLETED")
             self.assertTrue(script.exists())  # fixture present even if unused directly
 
+    def test_composite_declared_cli_ops_beat_skill_search_name(self) -> None:
+        """COMPOSITE: runtime.operations names must not be swallowed by skill-pack 'search'."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "mods" / "fake-comp-search"
+            root.mkdir(parents=True)
+            tool = FIXTURES / "fake_cli" / "tool.py"
+            skill_dir = root / "skills" / "demo"
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                "---\nname: demo\ndescription: skill search decoy\n---\n# Demo\n",
+                encoding="utf-8",
+            )
+            manifest = {
+                "module_id": "fake-comp-search",
+                "name": "Fake Comp Search",
+                "version": "0.0.1",
+                "entrypoint": FACTORY,
+                "external": {
+                    "adapter": "COMPOSITE",
+                    "children": ["SKILL_PACK", "CLI"],
+                    "source_type": "path",
+                    "path": str(root),
+                    "install": {"strategy": "NONE"},
+                    "skill_roots": ["skills"],
+                    "runtime": {
+                        "operations": [
+                            {
+                                "name": "search",
+                                "command": [sys.executable, str(tool), "{query}"],
+                            }
+                        ]
+                    },
+                    "result": {"format": "text"},
+                },
+            }
+            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+            manager.discover()
+            manager.initialize(
+                "fake-comp-search",
+                ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp),
+            )
+            manager.ensure_installed("fake-comp-search")
+            cli_search = manager.execute("fake-comp-search", "search", {"query": "needle"})
+            self.assertEqual(cli_search.status, "COMPLETED")
+            # Skill search remains available under search_skills alias.
+            skills = manager.execute("fake-comp-search", "search_skills", {"query": "demo"})
+            self.assertEqual(skills.status, "COMPLETED")
+
     def test_composite_skill_plus_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "mods" / "fake-composite"

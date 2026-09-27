@@ -9,7 +9,7 @@
     "NOT_APPLICABLE",
     "FAILED"
   ],
-  "notes": "Fixture adapters prove all adapter kinds. Live installs: 21/21. Skill packs search/load PASS. DesktopCommander + Vibe-Trading MCP via McpBridge PASS (74 tools; alpha_zoo/analyze_options). Osintgram/OpenMAIC/ScrollCraft/Fincept/llm-agent-trader docs PASS. GhostTrack interactive-only BLOCKED_EXTERNAL. MCP module registration accepts server_id/display_name and resolves $INSTALL_ROOT. Heavy modules resource_class\u2192EXTERNAL_REQUIRED. No per-repository wrappers.",
+  "notes": "Fixture adapters prove all adapter kinds. Live installs 21/21. Skill packs+catalog PASS. Vibe-Trading MCP 74 tools + ExecutionGateway approval path PASS. Agent-Reach real contract: doctor JSON + SKILL router (no fake search CLI). GhostTrack interactive-only BLOCKED_EXTERNAL. COMPOSITE declared CLI ops beat skill-pack name collisions. MCP lazy ensure_ready. No per-repository wrappers.",
   "sources": [
     {
       "source": "wonderwhy-er/DesktopCommanderMCP",
@@ -98,10 +98,10 @@
         "git",
         "python>=3.10",
         "network",
-        "yt-dlp"
+        "optional: yt-dlp, gh, mcporter, platform CLIs"
       ],
       "status": "PARTIAL",
-      "limitations": "Audited: Python package agent-reach CLI. COMPOSITE CLI+SKILL. Live GIT+venv install PASS; doctor invoke PASS. Network scrape/search remains BLOCKED_EXTERNAL without network credentials in CI."
+      "limitations": "Audited: no native `agent-reach search` subcommand. Real contract is SKILL.md router + CLI doctor --json / watch / check-update / version. Doctor JSON + skill load PASS. Platform scrapes (Reddit/YouTube/\u2026) require upstream tools (gh, yt-dlp, jina, mcporter) selected by cognition from the skill \u2014 not a fake search CLI. Upstream MCP get_status incompatible with modern mcp SDK (list_tools) \u2014 CLI doctor is status contract."
     },
     {
       "source": "HunxByts/GhostTrack",
@@ -115,7 +115,7 @@
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "NOT_APPLICABLE",
       "artifact_support": "PARTIAL",
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
@@ -148,7 +148,7 @@
         "broker/API keys for some tools"
       ],
       "status": "PARTIAL",
-      "limitations": "Live GIT+venv install PASS. Fixed MCP entrypoint vibe-trading-mcp; McpBridge register via server_id/display_name + $INSTALL_ROOT resolution PASS; connect discovers 74 tools; alpha_zoo health + analyze_options invoke PASS without broker keys. Broker/live-trading tools may still need API keys. MarketSim bypass forbidden."
+      "limitations": "Live GIT+venv install PASS. vibe-trading-mcp via McpBridge: 74 tools; alpha_zoo + analyze_options PASS; ExecutionGateway invoke PASS with approval_id (REJECTED without). MarketSim bypass forbidden. Broker/live tools may need API keys."
     },
     {
       "source": "anthropics/financial-services",
@@ -250,7 +250,7 @@
       "install_verified": "PASS",
       "discovery_verified": "PASS",
       "start_verified": "NOT_APPLICABLE",
-      "stop_verified": "PARTIAL",
+      "stop_verified": "NOT_APPLICABLE",
       "capability_discovery": "PASS",
       "invoke_verified": "PASS",
       "result_normalization": "PASS",
@@ -618,7 +618,9 @@
       "llm_agent_trader_start_docs": "PASS",
       "ghosttrack_no_hang": "PASS",
       "vibe_trading_mcp": "PASS",
-      "mcp_server_id_registration": "PASS"
+      "mcp_server_id_registration": "PASS",
+      "agent_reach_real_contract": "PASS",
+      "composite_cli_over_skill_search": "PASS"
     },
     "skill_pack_invoke": {
       "claude-osint": {
@@ -694,7 +696,16 @@
       "invoke_analyze_options": "PASS",
       "disconnect": "PASS",
       "module_manager_start_stop": "PASS",
-      "broker_keys": "NOT_REQUIRED_for_research_tools"
+      "broker_keys": "NOT_REQUIRED_for_research_tools",
+      "gateway_analyze_options_with_approval": "PASS"
+    },
+    "agent-reach": {
+      "doctor_json": "PASS",
+      "version": "PASS",
+      "skill_load": "PASS",
+      "native_search_subcommand": "ABSENT",
+      "mcp_get_status": "BLOCKED_EXTERNAL upstream mcp SDK API",
+      "composite_cli_ops_precedence": "PASS"
     }
   }
 }
