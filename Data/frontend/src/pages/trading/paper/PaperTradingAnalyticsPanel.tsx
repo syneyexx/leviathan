@@ -13,8 +13,6 @@ export function PaperTradingAnalyticsPanel({
   const [range, setRange] = useState<(typeof RANGES)[number]>("YTD");
   const perf = dashboard?.performance_summary;
   const series = (perf?.series || []).map((p) => num(p.equity));
-  const initial = series[0] || 0;
-  const bench = series.map((_, i) => (initial ? initial * (1 + (i / Math.max(series.length - 1, 1)) * 0.02) : 0));
 
   // Total trades: prefer backend transactions count when present
   const trades = dashboard?.recent_transactions?.length ?? null;
@@ -45,7 +43,9 @@ export function PaperTradingAnalyticsPanel({
             <div>
               <span>Total Return</span>
               <strong className={totalReturn != null && totalReturn >= 0 ? "is-good" : "is-bad"}>
-                {totalReturn == null ? "—" : fmtPct(totalReturn * (Math.abs(totalReturn) <= 2 ? 100 : 1))}
+                {totalReturn == null
+                  ? "—"
+                  : fmtPct(totalReturn * (Math.abs(totalReturn) <= 2 ? 100 : 1))}
               </strong>
             </div>
             <div>
@@ -68,24 +68,22 @@ export function PaperTradingAnalyticsPanel({
           {series.length >= 2 ? (
             <div className="lv-paper-chart-box">
               <LineSeries
-                series={[
-                  { values: series, color: "#22c9d6" },
-                  { values: bench, color: "rgba(214,169,87,0.45)" },
-                ]}
+                series={[{ values: series, color: "#22c9d6" }]}
                 width={520}
                 height={120}
               />
               <div className="lv-paper-legend">
-                <span className="is-cyan">Equity</span>
-                <span className="is-gold">Reference path</span>
+                <span className="is-cyan">Equity (backend)</span>
               </div>
               <p className="lv-paper-footnote">
-                Range selector is UI state; series is backend `performance_summary` ({perf?.range || range}).
-                Reference path is a visual guide only — not a fabricated benchmark return.
+                Series from backend `performance_summary` ({perf?.range || range}). Profit factor
+                remains — until the accounting plane exposes it.
               </p>
             </div>
           ) : (
-            <p className="lv-paper-state">Insufficient equity history for chart — trade to build the curve.</p>
+            <p className="lv-paper-state">
+              Insufficient equity history for chart — trade to build the curve.
+            </p>
           )}
         </>
       )}
