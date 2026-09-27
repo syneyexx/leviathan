@@ -442,9 +442,11 @@ export function ModulesPage() {
               ) : null}
               {!ws.loading && ws.rows.length === 0 ? (
                 <div className="lv-mod-empty">
-                  {ws.managerEnabled
-                    ? "No modules in snapshot. Use Discover to scan discovery roots."
-                    : "Manager OFF — empty list is truthful."}
+                  {ws.loadError
+                    ? "Module snapshot unavailable — fix backend/API, then Refresh."
+                    : ws.snapshot && !ws.managerEnabled
+                      ? "Manager OFF — empty list is truthful."
+                      : "No modules in snapshot. Use Discover to scan discovery roots."}
                 </div>
               ) : null}
               {ws.rows.map((row) => {
