@@ -793,8 +793,10 @@ fn open_path(path: &Path) -> Result<(), String> {
             SW_SHOWNORMAL,
         )
     };
-    if (rc as isize) <= 32 {
-        Err(format!("ShellExecute failed ({rc})"))
+    // ShellExecuteW returns an HINSTANCE. Values 32 and below are error codes, not a handle.
+    let code = rc as isize;
+    if code <= 32 {
+        Err(format!("ShellExecute failed ({code})"))
     } else {
         Ok(())
     }
