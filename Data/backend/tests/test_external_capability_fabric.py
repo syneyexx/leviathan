@@ -2386,6 +2386,187 @@ class ExternalFabricDoDProofTests(unittest.TestCase):
         ids = {e["payload"]["capability_id"] for e in discovered}
         self.assertEqual(ids, {"external.agent_reach.doctor", "skill:scrollcraft"})
 
+    def test_cognition_job_offload_idempotent_no_duplicate_jobs(self) -> None:
+        """Same action_id replays TOOL_RESULT; JobRuntime idempotency_key dedupes enqueue."""
+        import os
+
+        from Data.modules.cognition.runtime import CognitiveRunState, CognitiveRuntime
+        from Data.modules.cognition.task_model import TaskModel
+        from Data.modules.cognition.types import (
+            CognitiveAction,
+            CognitiveActionKind,
+            CognitiveRunStatus,
+        )
+        from Data.modules.jobs import JobRuntime, JobStore, ResourceManager
+
+        prev = os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API")
+        os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "mods" / "idem-cli"
+                root.mkdir(parents=True)
+                tool = FIXTURES / "fake_cli" / "tool.py"
+                manifest = {
+                    "module_id": "idem-cli",
+                    "name": "Idem CLI",
+                    "version": "0.0.1",
+                    "entrypoint": FACTORY,
+                    "external": {
+                        "adapter": "CLI",
+                        "source_type": "path",
+                        "path": str(tool.parent),
+                        "install": {"strategy": "NONE"},
+                        "resource_class": "IO_HEAVY",
+                        "assimilation_mode": "NONE",
+                        "runtime": {
+                            "operations": [
+                                {
+                                    "name": "search",
+                                    "command": [sys.executable, str(tool), "{query}"],
+                                }
+                            ],
+                            "timeout_seconds": 30,
+                        },
+                        "result": {"format": "json"},
+                    },
+                    "capabilities": [
+                        {
+                            "capability_id": "external.idem_cli.search",
+                            "name": "Search",
+                            "external_name": "search",
+                            "side_effects": ["READ"],
+                        }
+                    ],
+                }
+                (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+                manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+                manager.discover()
+                manager.initialize(
+                    "idem-cli",
+                    ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp),
+                )
+                catalog = CapabilityCatalog()
+                plugins = PluginRegistry(catalog)
+                managed = manager.get("idem-cli")
+                assert managed is not None
+                register_external_module_capabilities(
+                    catalog=catalog, plugin_registry=plugins, managed=managed
+                )
+                gateway = ExecutionGateway(catalog=catalog)
+                gateway.module_executor = ExternalModuleExecutor(manager, catalog=catalog)
+                job_store = JobStore(Path(tmp) / "jobs.db")
+                job_store.initialize()
+                jobs = JobRuntime(job_store, gateway, ResourceManager(2))
+                runtime = CognitiveRuntime(
+                    enabled=True,
+                    execution_gateway=gateway,
+                    job_runtime=jobs,
+                    factuality_mode="NONE",
+                )
+                task = TaskModel(
+                    task_id="t-idem",
+                    run_id="r-idem",
+                    raw_request="search once",
+                    goal="search once",
+                    domain="test",
+                    task_type="tool",
+                )
+                state = CognitiveRunState(
+                    run_id="r-idem",
+                    task=task,
+                    status=CognitiveRunStatus.REASONING,
+                    trace_id="tr-idem",
+                )
+                action = CognitiveAction(
+                    kind=CognitiveActionKind.INVOKE_CAPABILITY,
+                    action_id="a-idem-1",
+                    capability_id="external.idem_cli.search",
+                    arguments={"query": "once"},
+                )
+                obs1 = runtime._execute_action(state, action, history=[])  # noqa: SLF001
+                assert obs1 is not None
+                self.assertEqual(
+                    str(((obs1.payload or {}).get("result") or {}).get("status")),
+                    "COMPLETED",
+                )
+                # Main loop appends observations; mirror that for direct _execute_action tests.
+                state.observations.append(obs1)
+                jobs_after_first = job_store.list(limit=50)
+                self.assertEqual(len(jobs_after_first), 1)
+                first_job_id = jobs_after_first[0].job_id
+
+                # Replay same action_id — must not enqueue a second job.
+                state.status = CognitiveRunStatus.REASONING
+                obs2 = runtime._execute_action(state, action, history=[])  # noqa: SLF001
+                assert obs2 is not None
+                self.assertIs(obs2, obs1)
+                jobs_after_replay = job_store.list(limit=50)
+                self.assertEqual(len(jobs_after_replay), 1)
+                self.assertEqual(jobs_after_replay[0].job_id, first_job_id)
+                event_types = [e.get("event_type") for e in state.events]
+                self.assertIn("capability_idempotent_replay", event_types)
+
+                # Direct JobRuntime enqueue with same idempotency key returns same record.
+                again = jobs.enqueue(
+                    capability_id="external.idem_cli.search",
+                    arguments={"query": "once"},
+                    requested_by="cognition",
+                    idempotency_key=f"cog:{state.run_id}:{action.action_id}",
+                )
+                self.assertEqual(again.job_id, first_job_id)
+                self.assertEqual(len(job_store.list(limit=50)), 1)
+                jobs.stop_background_worker()
+        finally:
+            if prev is None:
+                os.environ.pop("LEVIATHAN_WORKERS_EXTERNALIZE_API", None)
+            else:
+                os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = prev
+
+
+class ExternalFabricRegressionGuardTests(unittest.TestCase):
+    """Prove fabric work did not regress PR #191/#192/#193 surfaces."""
+
+    def test_paper_trading_operator_page_still_present(self) -> None:
+        root = Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages" / "trading"
+        page = root / "paper" / "PaperTradingPage.tsx"
+        self.assertTrue(page.is_file(), msg=f"missing {page}")
+        text = page.read_text(encoding="utf-8")
+        self.assertIn("PaperTrading", text)
+        # Fabric must not replace the operator page with a stub.
+        self.assertGreater(len(text), 500)
+
+    def test_team_collaboration_strategy_still_canonical(self) -> None:
+        from Data.modules.cognition.team_strategy import (
+            CollaborationStrategy,
+            normalize_collaboration_strategy,
+        )
+
+        self.assertEqual(normalize_collaboration_strategy("team"), CollaborationStrategy.TEAM)
+        self.assertEqual(normalize_collaboration_strategy("TEAM"), CollaborationStrategy.TEAM)
+        # Fabric must not invent a second collaboration authority.
+        values = {m.value for m in CollaborationStrategy}
+        self.assertIn("team", values)
+
+    def test_host_console_liveness_and_cors_surfaces_intact(self) -> None:
+        root = Path(__file__).resolve().parents[2] / "modules" / "host_console"
+        liveness = root / "liveness.py"
+        cors = root / "launcher_cors.py"
+        self.assertTrue(liveness.is_file())
+        self.assertTrue(cors.is_file())
+        self.assertIn("def build_host_liveness", liveness.read_text(encoding="utf-8"))
+        cors_text = cors.read_text(encoding="utf-8")
+        self.assertTrue(
+            "cors" in cors_text.lower() and ("origin" in cors_text.lower() or "CORS" in cors_text),
+            msg="launcher CORS surface missing",
+        )
+        # Prefer runtime import when Starlette deps are present (CI).
+        try:
+            from Data.modules.host_console.liveness import build_host_liveness
+
+            self.assertTrue(callable(build_host_liveness))
+        except ModuleNotFoundError:
+            pass
+
 
 if __name__ == "__main__":
     unittest.main()

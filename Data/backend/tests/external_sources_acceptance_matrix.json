@@ -635,7 +635,9 @@
       "cli_blocks_api_thread": "NO (EXTERNAL_REQUIRED \u2192 JobRuntime)",
       "cognition_iterative_multi_tool": "PASS",
       "assimilation_enqueue_kwargs": "PASS",
-      "observability_external_metrics": "PASS"
+      "observability_external_metrics": "PASS",
+      "cognition_job_idempotency": "PASS",
+      "regression_guards_191_192_193": "PASS"
     },
     "skill_pack_invoke": {
       "claude-osint": {
