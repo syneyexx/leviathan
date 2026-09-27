@@ -190,10 +190,77 @@ def build_market_capabilities(
         "binance_public_reachable": bool(binance_reachable),
         "force_live_blocked": not _env_truthy("LEVIATHAN_LIVE_TRADING_UNLOCK"),
         "markets": [m.public_dict() for m in families],
+        "execution_granularity": execution_granularity_matrix(),
         "truth": {
             "capability_from_adapters": True,
             "not_from_ui_presence": True,
             "profitable_backtest_is_not_proof": True,
             "ohlcv_is_not_orderbook": True,
+            "granularity_honesty_required": True,
         },
     }
+
+
+def execution_granularity_matrix() -> list[dict[str, Any]]:
+    """Honest execution capability by market-data granularity.
+
+    OHLCV must never be presented as order-book (L2/L3) data.
+    """
+    return [
+        {
+            "granularity": "BAR_OHLCV",
+            "status": "SUPPORTED",
+            "execution_semantics": "next_bar_fill",
+            "supported_order_types": ["market", "limit", "stop"],
+            "known_limitations": [
+                "intrabar path often AMBIGUOUS",
+                "no queue position",
+                "volume participation is model-based",
+            ],
+            "latency_model": "ASSUMED_CONFIGURABLE",
+            "fill_model": "NextBarFillModel",
+            "cost_model": "CostModelPack",
+            "capacity_assumptions": "UNMEASURED_BY_DEFAULT",
+            "measurement_status": "MEASURED",
+            "truth": {"ohlcv_is_not_orderbook": True},
+        },
+        {
+            "granularity": "QUOTE_L1",
+            "status": "FEATURE_GATED",
+            "execution_semantics": "trade_against_bid_ask_when_quotes_present",
+            "supported_order_types": ["market", "limit"],
+            "known_limitations": ["requires real L1 quotes; not synthesized from OHLCV"],
+            "latency_model": "CONFIGURABLE",
+            "fill_model": "NOT_IMPLEMENTED",
+            "cost_model": "spread_when_measured",
+            "capacity_assumptions": "UNMEASURED",
+            "measurement_status": "UNMEASURED",
+            "truth": {"never_synthesize_from_ohlcv": True},
+        },
+        {
+            "granularity": "BOOK_L2",
+            "status": "UNSUPPORTED",
+            "execution_semantics": "depth_consumption",
+            "supported_order_types": [],
+            "known_limitations": ["requires real depth feed; never fabricate from OHLCV"],
+            "latency_model": "UNMEASURED",
+            "fill_model": "NOT_IMPLEMENTED",
+            "cost_model": "UNMEASURED",
+            "capacity_assumptions": "UNMEASURED",
+            "measurement_status": "NOT_IMPLEMENTED",
+            "truth": {"ohlcv_is_not_orderbook": True, "synthetic_l2_forbidden": True},
+        },
+        {
+            "granularity": "ORDER_EVENT_L3",
+            "status": "UNSUPPORTED",
+            "execution_semantics": "queue_position_order_events",
+            "supported_order_types": [],
+            "known_limitations": ["requires L3 order-event input"],
+            "latency_model": "UNMEASURED",
+            "fill_model": "NOT_IMPLEMENTED",
+            "cost_model": "UNMEASURED",
+            "capacity_assumptions": "UNMEASURED",
+            "measurement_status": "NOT_IMPLEMENTED",
+            "truth": {"unsupported_without_l3_input": True},
+        },
+    ]

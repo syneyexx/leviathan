@@ -122,11 +122,12 @@ class CapabilityTruthTests(unittest.TestCase):
         from Data.modules.market_sim.capabilities import build_market_capabilities
 
         caps = build_market_capabilities(feature_enabled=True, binance_reachable=False, alpaca_paper=False)
-        # Capability matrix must not claim L2/order-book as AVAILABLE for OHLCV families.
-        blob = str(caps).upper()
-        self.assertNotIn("ORDER_BOOK_AVAILABLE\": \"AVAILABLE\"", str(caps).upper().replace("'", '"'))
-        self.assertNotIn('"L2": "AVAILABLE"', blob.replace("'", '"'))
         self.assertTrue(caps["truth"]["ohlcv_is_not_orderbook"])
+        gran = {g["granularity"]: g for g in caps["execution_granularity"]}
+        self.assertEqual(gran["BAR_OHLCV"]["status"], "SUPPORTED")
+        self.assertEqual(gran["BOOK_L2"]["status"], "UNSUPPORTED")
+        self.assertTrue(gran["BOOK_L2"]["truth"]["synthetic_l2_forbidden"])
+        self.assertEqual(gran["ORDER_EVENT_L3"]["status"], "UNSUPPORTED")
         for row in caps.get("markets") or []:
             self.assertEqual(row.get("LIVE_TRADING_AVAILABLE"), "BLOCKED")
 
