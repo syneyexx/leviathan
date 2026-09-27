@@ -495,7 +495,7 @@
     "COMPOSITE": "PASS",
     "MCP": "PASS"
   },
-  "worktree_head": "af0aca8c3a6b6f02fc8107b28ac1dfb1f65de9f1",
+  "worktree_head": "4dfc6565587b0636fac6b4b53a9965985fb8734b",
   "live_proofs": {
     "install_pass_module_ids": [
       "agent-reach",
@@ -639,7 +639,8 @@
       "cognition_job_idempotency": "PASS",
       "regression_guards_191_192_193": "PASS",
       "cognition_external_preferred_offload": "PASS",
-      "cognition_cancel_via_job_runtime": "PASS"
+      "cognition_cancel_via_job_runtime": "PASS",
+      "job_runtime_auto_cancel_probe": "PASS"
     },
     "skill_pack_invoke": {
       "claude-osint": {
