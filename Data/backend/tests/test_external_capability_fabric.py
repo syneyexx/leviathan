@@ -1568,6 +1568,41 @@ class ExternalAssimilationAndScaleTests(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 adapter._render_argv(["{missing}"], {})  # noqa: SLF001
 
+    def test_cli_json_payload_placeholder_and_op_timeout(self) -> None:
+        from Data.modules.module_manager.external.adapters.base import AdapterContext
+        from Data.modules.module_manager.external.adapters.cli import CliAdapter
+
+        cfg = parse_external_config(
+            {
+                "adapter": "CLI",
+                "source_type": "path",
+                "path": "/tmp",
+                "install": {"strategy": "NONE"},
+                "runtime": {
+                    "timeout_seconds": 300,
+                    "operations": [
+                        {
+                            "name": "analyze",
+                            "timeout_seconds": 12,
+                            "command": ["python", "cli.py", "{command}", "?{payload}"],
+                            "defaults": {"command": "get_key_metrics"},
+                        }
+                    ],
+                },
+            }
+        )
+        assert cfg is not None
+        adapter = CliAdapter(AdapterContext(module_id="fin", config=cfg, install_root="/tmp", data_root="/tmp"))
+        argv = adapter._build_argv(  # noqa: SLF001
+            "analyze",
+            {"command": "get_key_metrics", "payload": '{"company":{"ticker":"X"}}'},
+        )
+        self.assertEqual(argv[-1], '{"company":{"ticker":"X"}}')
+        argv_no_payload = adapter._build_argv("analyze", {"command": "get_key_metrics"})  # noqa: SLF001
+        self.assertEqual(argv_no_payload[-1], "get_key_metrics")
+        op = adapter._operation_config("analyze")  # noqa: SLF001
+        self.assertEqual(op.get("timeout_seconds"), 12)
+
 
 class ExternalFabricDoDProofTests(unittest.TestCase):
     """Closable DoD proofs: cognition cancel, SSE events, assim job, process reconcile."""

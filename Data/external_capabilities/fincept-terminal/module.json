@@ -21,6 +21,13 @@
       "strategy": [
         "GIT_CHECKOUT",
         "PYTHON_VENV"
+      ],
+      "python_packages": [
+        "numpy>=2.0,<3",
+        "pandas>=2.0,<3"
+      ],
+      "dependencies": [
+        "python3"
       ]
     },
     "runtime": {
@@ -33,32 +40,48 @@
           "command": [
             "python",
             "financial_analysis_cli.py",
-            "{query}"
-          ]
+            "{command}",
+            "?{payload}"
+          ],
+          "defaults": {
+            "command": "get_key_metrics"
+          }
         },
         {
           "name": "quant",
           "command": [
             "python",
             "quant_analytics_cli.py",
-            "{query}"
-          ]
+            "{command}",
+            "?{payload}"
+          ],
+          "defaults": {
+            "command": "help"
+          }
         },
         {
           "name": "stats",
           "command": [
             "python",
             "statsmodels_cli.py",
-            "{query}"
-          ]
+            "{command}",
+            "?{payload}"
+          ],
+          "defaults": {
+            "command": "help"
+          }
         },
         {
           "name": "fixed_income",
           "command": [
             "python",
             "fixedIncome/cli.py",
-            "{query}"
-          ]
+            "{command}",
+            "?{payload}"
+          ],
+          "defaults": {
+            "command": "help"
+          }
         }
       ]
     },

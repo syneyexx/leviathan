@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import os
+import re
 import signal
 import subprocess
 import threading
 import time
 from pathlib import Path
 from typing import Any, Mapping
+
+_PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_EXACT_PLACEHOLDER_RE = re.compile(r"^\??\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 
 from ...types import ModuleHealth, ModuleResult, ModuleStatus
 from ..install import InstallationService, InstallError
@@ -153,7 +157,12 @@ class CliAdapter:
         elif self.config.runtime.stdin_format == "text":
             stdin_data = str(arguments.get("stdin") or arguments.get("input") or "").encode("utf-8")
 
-        timeout = float(arguments.get("timeout_seconds") or self.config.runtime.timeout_seconds)
+        op_cfg = self._operation_config(operation)
+        timeout = float(
+            arguments.get("timeout_seconds")
+            or (op_cfg or {}).get("timeout_seconds")
+            or self.config.runtime.timeout_seconds
+        )
         if progress:
             progress(0.05, "starting", " ".join(argv[:6]))
         self._state = ExternalRuntimeState.BUSY
@@ -286,17 +295,23 @@ class CliAdapter:
             return self.config.runtime.cwd.replace("$INSTALL_ROOT", self._install_root or "")
         return self._install_root
 
+    def _operation_config(self, operation: str) -> dict[str, Any] | None:
+        for op in self.config.runtime.operations:
+            if str(op.get("name") or op.get("operation") or "") == operation:
+                return dict(op)
+        return None
+
     def _build_argv(self, operation: str, arguments: Mapping[str, Any]) -> list[str]:
         if isinstance(arguments.get("argv"), (list, tuple)) and arguments["argv"]:
             return [str(x).replace("$INSTALL_ROOT", self._install_root or "") for x in arguments["argv"]]
 
-        for op in self.config.runtime.operations:
-            if str(op.get("name") or op.get("operation") or "") == operation:
-                cmd = op.get("command") or op.get("argv")
-                if isinstance(cmd, (list, tuple)) and cmd:
-                    merged = dict(op.get("defaults") or {})
-                    merged.update({k: v for k, v in arguments.items() if v is not None})
-                    return self._render_argv([str(x) for x in cmd], merged)
+        op = self._operation_config(operation)
+        if op is not None:
+            cmd = op.get("command") or op.get("argv")
+            if isinstance(cmd, (list, tuple)) and cmd:
+                merged = dict(op.get("defaults") or {})
+                merged.update({k: v for k, v in arguments.items() if v is not None})
+                return self._render_argv([str(x) for x in cmd], merged)
 
         if self.config.runtime.command:
             return self._render_argv(
@@ -307,21 +322,45 @@ class CliAdapter:
         raise FileNotFoundError(f"No command configured for operation {operation}")
 
     def _render_argv(self, template: list[str], arguments: Mapping[str, Any]) -> list[str]:
+        """Render argv templates.
+
+        Exact segments like ``{payload}`` / ``?{payload}`` accept arbitrary values
+        (including JSON with braces). Mixed segments only replace known ``{key}``
+        placeholders and fail if any remain unsubstituted.
+        """
         install_root = self._install_root or ""
         rendered: list[str] = []
         for part in template:
             text = part.replace("$INSTALL_ROOT", install_root)
+            exact = _EXACT_PLACEHOLDER_RE.fullmatch(text)
+            if exact is not None:
+                key = exact.group(1)
+                optional = text.startswith("?")
+                if key not in arguments or arguments.get(key) is None:
+                    if optional:
+                        continue
+                    raise FileNotFoundError(f"Missing argv substitution for operation template segment: {text}")
+                value = arguments.get(key)
+                if optional and value == "":
+                    continue
+                rendered.append(str(value).replace("$INSTALL_ROOT", install_root))
+                continue
+
+            # Mixed template: substitute known keys, then require no leftover {name}.
             for key, value in arguments.items():
                 if isinstance(value, (str, int, float)):
                     text = text.replace("{" + str(key) + "}", str(value))
-            # Drop optional tokens that still contain unsubstituted placeholders.
-            if text.startswith("?") and "{" in text:
+            if text.startswith("?") and _PLACEHOLDER_RE.search(text):
                 continue
             if text.startswith("?"):
                 text = text[1:]
-            # Unsubstituted required placeholders → clear failure (never pass literal "{x}").
-            if "{" in text and "}" in text:
-                raise FileNotFoundError(f"Missing argv substitution for operation template segment: {text}")
+                if text == "":
+                    continue
+            leftover = _PLACEHOLDER_RE.findall(text)
+            if leftover:
+                raise FileNotFoundError(
+                    f"Missing argv substitution for operation template segment: {text}"
+                )
             rendered.append(text)
         if rendered and self._install_root:
             bin_candidate = Path(self._install_root) / rendered[0]

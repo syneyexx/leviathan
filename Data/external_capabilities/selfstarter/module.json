@@ -39,6 +39,7 @@
         },
         {
           "name": "status",
+          "timeout_seconds": 45,
           "command": [
             "bash",
             "bin/health.sh"
@@ -46,6 +47,7 @@
         },
         {
           "name": "supervise",
+          "timeout_seconds": 30,
           "command": [
             "bash",
             "bin/supervise.sh"
@@ -53,6 +55,7 @@
         },
         {
           "name": "setup",
+          "timeout_seconds": 120,
           "command": [
             "bash",
             "bin/setup-capabilities.sh"
@@ -60,6 +63,7 @@
         },
         {
           "name": "cancel",
+          "timeout_seconds": 10,
           "command": [
             "bash",
             "-c",
