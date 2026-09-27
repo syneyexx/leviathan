@@ -79,17 +79,36 @@ class PromotionQualificationAdapterW12Tests(unittest.TestCase):
         self.assertEqual(blocked["live_trading"], "BLOCKED")
 
     def test_caller_acceptance_cannot_override_missing_qualification(self) -> None:
+        # Scientific entry A1→A2: caller passed=true cannot bypass missing qualification.
         blocked = evaluate_promotion(
-            current_level="A2",
-            target_level="A3",
-            shadow_run_id="shadow-1",
+            current_level="A1",
+            target_level="A2",
+            sealed_pass=True,
             extra_evidence={
                 "acceptance": {"passed": True, "run_id": "fake", "metrics": _passing_metrics()},
-                "shadow_run_id": "shadow-1",
+                "sealed_attempt_id": "seal-1",
             },
         )
         self.assertFalse(blocked["promotable"])
         self.assertEqual(blocked["reason"], "QUALIFICATION_REQUIRED")
+
+    def test_a3_operational_path_without_qualification(self) -> None:
+        # Wave 23: A3 may be operational when shadow receipts exist; not institutional write.
+        out = evaluate_promotion(
+            current_level="A2",
+            target_level="A3",
+            shadow_run_id="shadow-1",
+            paper_shadow_pass=True,
+            extra_evidence={
+                "shadow_run_id": "shadow-1",
+                "paper_shadow_pass": True,
+                "shadow_receipt": {"status": "MEASURED", "shadow_run_id": "shadow-1"},
+            },
+        )
+        self.assertTrue(out["promotable"])
+        self.assertEqual(out["path"], "operational_paper")
+        self.assertFalse(out["truth"]["institutional_lifecycle_write"])
+        self.assertEqual(out["live_trading"], "BLOCKED")
 
     def test_failed_qualification_blocks_even_with_caller_pass(self) -> None:
         blocked = evaluate_promotion(

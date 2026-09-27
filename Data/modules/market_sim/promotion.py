@@ -2,10 +2,15 @@
 
 Promotion never enables live money. A5 remains impossible.
 
-Scientific promotion toward shadow/paper requires a persisted
-QualificationDecision with qualified=True. Caller booleans and
+Scientific promotion from research/backtest into shadow (A2) requires a
+persisted QualificationDecision with qualified=True. Caller booleans and
 extra_evidence["acceptance"]["passed"]=true cannot override a failed or
-missing qualification for institutional targets.
+missing qualification for that institutional entry.
+
+A3/A4 may proceed as operational paper-track promotions when shadow/paper
+receipts exist (Wave 23), but remain non-institutional lifecycle writes
+unless a QUALIFIED decision is also present. CHALLENGER→CHAMPION still
+requires forward-evidence policy elsewhere.
 """
 
 from __future__ import annotations
@@ -15,7 +20,11 @@ from typing import Any
 from .readiness import assert_not_live_level, may_promote_to, normalize_autonomy
 from .wfa import evaluate_acceptance_from_run
 
-_INSTITUTIONAL_TARGETS = frozenset({"A2", "A3", "A4"})
+# Scientific entry into the paper track (research → shadow).
+_SCIENTIFIC_ENTRY_TARGETS = frozenset({"A2"})
+# Operational paper-track steps — receipts required; qualification preferred.
+_OPERATIONAL_TARGETS = frozenset({"A3", "A4"})
+_INSTITUTIONAL_TARGETS = _SCIENTIFIC_ENTRY_TARGETS | _OPERATIONAL_TARGETS
 
 
 def _resolve_qualification(
@@ -117,19 +126,27 @@ def evaluate_promotion(
         extra=extra,
     )
 
-    institutional = target in _INSTITUTIONAL_TARGETS and not legacy_demo
-    qualification_ok = bool(qqualified) if institutional else True
-    if institutional and qqualified is None:
-        qualification_ok = False
-        if "QUALIFICATION_REQUIRED" not in qblockers:
-            qblockers = list(qblockers) + ["QUALIFICATION_REQUIRED"]
-    elif institutional and qqualified is False:
+    scientific_entry = target in _SCIENTIFIC_ENTRY_TARGETS and not legacy_demo
+    operational = target in _OPERATIONAL_TARGETS and not legacy_demo
+
+    # A2 scientific entry: qualification mandatory.
+    # A3/A4: operational receipts may allow promotion without institutional lifecycle write;
+    # explicit failed qualification still blocks; QUALIFIED upgrades path to institutional.
+    qualification_ok = True
+    if scientific_entry:
+        if qqualified is True:
+            qualification_ok = True
+        else:
+            qualification_ok = False
+            if "QUALIFICATION_REQUIRED" not in qblockers:
+                qblockers = list(qblockers) + ["QUALIFICATION_REQUIRED"]
+    elif operational and qqualified is False:
         qualification_ok = False
         if "QUALIFICATION_REQUIRED" not in qblockers:
             qblockers = ["QUALIFICATION_REQUIRED"] + list(qblockers)
 
     evidence: dict[str, Any] = {
-        "accepted": bool(qualification_ok) if institutional else accepted,
+        "accepted": bool(qualification_ok) if scientific_entry else (accepted or bool(qqualified)),
         "sealed_pass": sealed_pass or bool(extra.get("sealed_pass")),
         "acceptance": acceptance,
         "evaluation_refs": list(
@@ -161,7 +178,15 @@ def evaluate_promotion(
 
     gate = may_promote_to(current=current, target=target, evidence=evidence)
     promotable = bool(gate.get("allowed"))
-    if institutional and not qualification_ok:
+    if scientific_entry and not qualification_ok:
+        promotable = False
+        gate = {
+            **gate,
+            "allowed": False,
+            "reason": qblockers[0] if qblockers else "QUALIFICATION_REQUIRED",
+            "qualification_blockers": qblockers,
+        }
+    elif operational and qqualified is False:
         promotable = False
         gate = {
             **gate,
@@ -171,13 +196,22 @@ def evaluate_promotion(
         }
 
     reason = None
-    if institutional and not qualification_ok:
+    if scientific_entry and not qualification_ok:
+        reason = qblockers[0] if qblockers else "QUALIFICATION_REQUIRED"
+    elif operational and qqualified is False:
         reason = qblockers[0] if qblockers else "QUALIFICATION_REQUIRED"
     elif not promotable:
         reason = str(gate.get("reason") or "PROMOTION_DENIED")
-    # Institutional path only when target requires qualification AND it passed.
-    path = "institutional" if (institutional and qualification_ok) else "legacy_non_institutional"
+
     if legacy_demo:
+        path = "legacy_non_institutional"
+    elif scientific_entry and qualification_ok:
+        path = "institutional"
+    elif operational and qqualified:
+        path = "institutional"
+    elif operational:
+        path = "operational_paper"
+    else:
         path = "legacy_non_institutional"
 
     return {
@@ -198,9 +232,10 @@ def evaluate_promotion(
             "a5_impossible": True,
             "no_frontend_authority": True,
             "caller_boolean_not_proof": True,
-            "qualification_required_for_institutional": target in _INSTITUTIONAL_TARGETS,
+            "qualification_required_for_scientific_entry": True,
             "caller_acceptance_cannot_override_qualification": True,
             "legacy_demo": bool(legacy_demo),
+            "operational_paper_path": path == "operational_paper",
             "non_institutional_path": path != "institutional",
             "institutional_lifecycle_write": path == "institutional" and promotable,
         },
