@@ -94,78 +94,79 @@ class McpExecutionExecutor:
             ttl_seconds=float(ctx.get("lease_ttl_seconds") or 30.0),
         )
 
+        # Prove lease / cancel before opening an MCP session (no side effects while unfenced).
+        if cancel_check():
+            current = None
+            try:
+                current = store.get(job.job_id)
+            except Exception:  # noqa: BLE001
+                current = None
+            is_cancel = current is not None and current.state in {
+                JobState.CANCEL_REQUESTED,
+                JobState.CANCELLED,
+            }
+            if is_cancel:
+                payload = {
+                    "status": "cancelled",
+                    "error": {"code": "MCP_CALL_CANCELLED", "message": "Cancelled"},
+                    "worker_pid": os.getpid(),
+                }
+                if current.state != JobState.CANCELLED:
+                    if current.state == JobState.RUNNING:
+                        store.request_cancel(job.job_id, reason="Cancelled")
+                    fenced_transition(
+                        store,
+                        job.job_id,
+                        JobState.CANCELLED,
+                        worker_id=worker_id,
+                        ctx=ctx,
+                        error="MCP_CALL_CANCELLED",
+                        result=payload,
+                    )
+                return payload
+            payload = {
+                "status": "failed",
+                "error": {"code": "LEASE_FENCE", "message": "lease_fence_or_cancel_unreadable"},
+                "worker_pid": os.getpid(),
+            }
+            record_stale_lease_fence(ctx)
+            fenced_transition(
+                store,
+                job.job_id,
+                JobState.FAILED,
+                worker_id=worker_id,
+                ctx=ctx,
+                error="LEASE_FENCE",
+                result=payload,
+            )
+            return payload
+
+        try:
+            heartbeat()
+        except LeaseFenceError as exc:
+            payload = {
+                "status": "failed",
+                "error": {"code": "LEASE_FENCE", "message": str(exc)},
+                "worker_pid": os.getpid(),
+            }
+            record_stale_lease_fence(ctx)
+            fenced_transition(
+                store,
+                job.job_id,
+                JobState.FAILED,
+                worker_id=worker_id,
+                ctx=ctx,
+                error="LEASE_FENCE",
+                result=payload,
+            )
+            return payload
+
         session = McpServerSession(
             config=config,
             limits=DEFAULT_MCP_LIMITS,
             allow_outbound=self.allow_outbound,
         )
         try:
-            if cancel_check():
-                current = None
-                try:
-                    current = store.get(job.job_id)
-                except Exception:  # noqa: BLE001
-                    current = None
-                is_cancel = current is not None and current.state in {
-                    JobState.CANCEL_REQUESTED,
-                    JobState.CANCELLED,
-                }
-                if is_cancel:
-                    payload = {
-                        "status": "cancelled",
-                        "error": {"code": "MCP_CALL_CANCELLED", "message": "Cancelled"},
-                        "worker_pid": os.getpid(),
-                    }
-                    if current.state != JobState.CANCELLED:
-                        if current.state == JobState.RUNNING:
-                            store.request_cancel(job.job_id, reason="Cancelled")
-                        fenced_transition(
-                            store,
-                            job.job_id,
-                            JobState.CANCELLED,
-                            worker_id=worker_id,
-                            ctx=ctx,
-                            error="MCP_CALL_CANCELLED",
-                            result=payload,
-                        )
-                    return payload
-                payload = {
-                    "status": "failed",
-                    "error": {"code": "LEASE_FENCE", "message": "lease_fence_or_cancel_unreadable"},
-                    "worker_pid": os.getpid(),
-                }
-                record_stale_lease_fence(ctx)
-                fenced_transition(
-                    store,
-                    job.job_id,
-                    JobState.FAILED,
-                    worker_id=worker_id,
-                    ctx=ctx,
-                    error="LEASE_FENCE",
-                    result=payload,
-                )
-                return payload
-
-            try:
-                heartbeat()
-            except LeaseFenceError as exc:
-                payload = {
-                    "status": "failed",
-                    "error": {"code": "LEASE_FENCE", "message": str(exc)},
-                    "worker_pid": os.getpid(),
-                }
-                record_stale_lease_fence(ctx)
-                fenced_transition(
-                    store,
-                    job.job_id,
-                    JobState.FAILED,
-                    worker_id=worker_id,
-                    ctx=ctx,
-                    error="LEASE_FENCE",
-                    result=payload,
-                )
-                return payload
-
             session.connect()
             if cancel_check():
                 raise McpError("MCP_CALL_CANCELLED", "Cancelled before tool call")

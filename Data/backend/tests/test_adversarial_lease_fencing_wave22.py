@@ -462,7 +462,7 @@ class EntrypointLeaseRaceTests(unittest.TestCase):
         with mock.patch("Data.modules.db_commit.producer.CommitProducer") as producer_cls:
             producer_cls.return_value.submit.return_value = fake_result
             out = _handler(ctx, claimed)
-        self.assertIn("error", out or {})
+        self.assertEqual((out or {}).get("accepted"), False)
         final = self.store.get(job.job_id)
         assert final is not None
         self.assertEqual(final.state, JobState.COMPLETED)
