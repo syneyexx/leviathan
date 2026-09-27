@@ -185,7 +185,7 @@ export function ResearchLabOverview({
       </section>
 
       <div className="lv-rl-grid-5">
-        <article className="lv-rl-tile">
+        <article className="lv-rl-tile is-pop">
           <div className="lv-rl-tile-ico" aria-hidden="true">
             ⊞
           </div>
@@ -195,7 +195,7 @@ export function ResearchLabOverview({
             <div className="h">candidates</div>
           </div>
         </article>
-        <article className="lv-rl-tile">
+        <article className="lv-rl-tile is-mut">
           <div className="lv-rl-tile-ico" aria-hidden="true">
             ✶
           </div>
@@ -205,7 +205,7 @@ export function ResearchLabOverview({
             <div className="h">per generation</div>
           </div>
         </article>
-        <article className="lv-rl-tile">
+        <article className="lv-rl-tile is-div">
           <div className="lv-rl-tile-ico" aria-hidden="true">
             ◎
           </div>
@@ -217,7 +217,7 @@ export function ResearchLabOverview({
             </div>
           </div>
         </article>
-        <article className="lv-rl-tile">
+        <article className="lv-rl-tile is-trials">
           <div className="lv-rl-tile-ico" aria-hidden="true">
             ▣
           </div>
@@ -229,7 +229,7 @@ export function ResearchLabOverview({
             <div className="h">{Math.round(trialPct)}% of budget</div>
           </div>
         </article>
-        <article className="lv-rl-tile">
+        <article className="lv-rl-tile is-gen">
           <div className="lv-rl-tile-ico" aria-hidden="true">
             ▦
           </div>
