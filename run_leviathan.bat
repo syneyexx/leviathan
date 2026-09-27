@@ -3,6 +3,21 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 title LEVIATHAN
 
+REM Canonical operator path is run_leviathan.exe when it has been built.
+REM LEVIATHAN_LEGACY_CONSOLE=1 keeps this console launcher for recovery.
+if /I not "%LEVIATHAN_LEGACY_CONSOLE%"=="1" (
+  if exist "%~dp0run_leviathan.exe" (
+    start "" "%~dp0run_leviathan.exe"
+    exit /b 0
+  )
+  if exist "%~dp0dist\run_leviathan.exe" (
+    start "" "%~dp0dist\run_leviathan.exe"
+    exit /b 0
+  )
+  echo [LEVIATHAN] run_leviathan.exe was not found. Using the legacy console path.
+  echo [LEVIATHAN] Set LEVIATHAN_LEGACY_CONSOLE=1 to force this path after the exe exists.
+)
+
 REM Relocatable: ensure Data.* imports resolve from this install root on any drive.
 set "PYTHONPATH=%~dp0"
 set "PY=.venv\Scripts\python.exe"

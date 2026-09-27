@@ -184,15 +184,34 @@ if errorlevel 1 (
   )
 )
 
+REM ---- Optional backend-host executable ----
+echo [host] Backend host executable ^(optional^)...
+if "%LEVIATHAN_BUILD_HOST_EXE%"=="1" (
+  echo        LEVIATHAN_BUILD_HOST_EXE=1 — building run_leviathan.exe
+  ".venv\Scripts\python.exe" scripts\build_run_leviathan_exe.py
+  if errorlevel 1 (
+    echo  [ERROR] run_leviathan.exe build failed. Install is not reported as successful.
+    goto :fail
+  )
+  echo        OK - dist\run_leviathan.exe
+) else (
+  echo        NOT BUILT — run_leviathan.exe requires the Rust/Tauri/WebView2 toolchain.
+  echo        Set LEVIATHAN_BUILD_HOST_EXE=1 to build it during install.
+  echo        run_leviathan.bat remains the compatibility launcher until the exe exists.
+)
+
 echo.
 echo  ============================================
 echo    Install complete
 echo  ============================================
 echo.
 echo  Native compute: %NATIVE_STATUS%
+echo  Backend host exe: see the [host] line above
 echo.
 echo  Start Leviathan with:
-echo    run_leviathan.bat
+echo    run_leviathan.exe    ^(canonical, when built^)
+echo    run_leviathan.bat    ^(launches the exe, or the legacy console if it is absent^)
+echo    set LEVIATHAN_LEGACY_CONSOLE=1 ^& run_leviathan.bat
 echo.
 echo  Then open:
 echo    http://127.0.0.1:8765/

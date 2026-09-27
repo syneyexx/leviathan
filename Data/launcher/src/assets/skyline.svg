@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 140" preserveAspectRatio="xMidYMax meet">
+  <path fill="#14110c" d="M0 140 H980 V96 H940 V70 H910 V88 H880 V48 H850 V78 H820 V58 H790 V90 H760 V36 H730 V72 H700 V52 H670 V84 H640 V40 H610 V76 H580 V60 H550 V92 H520 V44 H490 V80 H460 V28 H430 V68 H400 V50 H370 V86 H340 V34 H310 V74 H280 V56 H250 V90 H220 V42 H190 V78 H160 V62 H130 V94 H100 V58 H70 V86 H40 V70 H16 V140 Z"/>
+  <path fill="#1c1812" d="M120 140 V78 H150 V62 H168 V140 Z M250 140 V56 H278 V34 H300 V56 H328 V140 Z M430 140 V50 H458 V28 H490 V50 H518 V140 Z M640 140 V40 H668 V22 H700 V40 H728 V140 Z M820 140 V58 H848 V36 H880 V58 H908 V140 Z"/>
+  <path fill="none" stroke="#8a7040" stroke-width="0.7" d="M278 34 L289 14 L300 34 M458 28 L474 8 L490 28 M668 22 L684 6 L700 22 M848 36 L864 16 L880 36"/>
+  <g fill="none" stroke="#d4b46a" stroke-width="0.45" opacity="0.7">
+    <path d="M160 100 H200 M300 100 H340 M470 100 H510 M690 100 H730 M860 100 H900"/>
+    <path d="M180 110 V90 M320 110 V90 M490 110 V90 M710 110 V90 M880 110 V90"/>
+  </g>
+  <g fill="#d4b46a" opacity="0.35">
+    <rect x="168" y="70" width="3" height="6"/>
+    <rect x="188" y="70" width="3" height="6"/>
+    <rect x="286" y="46" width="3" height="6"/>
+    <rect x="470" y="40" width="3" height="6"/>
+    <rect x="684" y="32" width="3" height="6"/>
+    <rect x="860" y="48" width="3" height="6"/>
+  </g>
+</svg>

@@ -35,6 +35,8 @@ npm run preview
 
 Production builds are emitted to `Data/frontend/dist` and served by the FastAPI backend when present.
 
+`run_leviathan.exe` is the backend host and operator launcher (`Data/launcher`). It is not this user-facing frontend. The host opens the configured loopback frontend in the system browser. It does not embed the operator UI or duplicate its routes.
+
 ### Optional layout editor (W00 CURRENT)
 
 `vite.config.ts` does **not** statically import `../../editor/vite-plugin.mjs`. Default `npm run test` / `npm run build` / `npm run typecheck` resolve without the excluded `editor/` tree. Set `LEVIATHAN_EDITOR=1` only when the editor checkout is present; otherwise Vite fails with an explicit configuration error.

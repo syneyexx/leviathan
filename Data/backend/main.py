@@ -166,6 +166,7 @@ from Data.backend.routes.browser_qa import build_browser_qa_router
 from Data.backend.routes.knowledge import build_knowledge_router, make_enqueue_ingest_scan
 from Data.backend.routes.evaluation import build_evaluation_router
 from Data.backend.routes.neuro import build_neuro_router
+from Data.backend.routes.host_console import build_host_console_router
 from Data.backend.routes.jobs import build_jobs_router
 from Data.backend.routes.workers import build_workers_router
 from Data.backend.routes.memory import build_memory_router
@@ -2254,6 +2255,15 @@ app.include_router(
 )
 app.include_router(build_jobs_router(settings=settings, job_runtime=job_runtime, job_store=job_store))
 app.include_router(build_workers_router(settings=settings, job_runtime=job_runtime))
+app.include_router(
+    build_host_console_router(
+        settings=settings,
+        job_runtime=job_runtime,
+        observability=observability,
+        sqlite_manager=sqlite_manager,
+        version=app.version,
+    )
+)
 app.include_router(build_memory_router(memory_store=memory_store))
 app.include_router(build_evidence_router(evidence_service=evidence_service))
 app.include_router(
