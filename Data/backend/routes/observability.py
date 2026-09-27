@@ -88,6 +88,7 @@ def _tasks_per_min(
         points = []
     if len(points) < 2:
         return None
+    points = sorted(points, key=lambda p: float(p.get("ts_ms") or 0))
     first = points[0]
     last = points[-1]
     try:
