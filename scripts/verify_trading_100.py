@@ -201,8 +201,10 @@ def main(argv: list[str] | None = None) -> int:
         if gates[r["id"]].get("required", True)
         and r["status"] not in {"NOT_TESTED_IN_CI"}
     ]
-    # FEATURE_GATED is an honest terminal for sandbox-gated features (e.g. G16).
-    acceptable = {"PASS", "FEATURE_GATED"}
+    # FEATURE_GATED is an honest non-FAIL terminal for sandbox-gated features
+    # (e.g. G16), but it is NOT a PASS claim — all_required_pass requires
+    # literal PASS on every required gate.
+    exit_acceptable = {"PASS", "FEATURE_GATED"}
     incomplete_statuses = {
         "NOT_STARTED",
         "IN_PROGRESS",
@@ -213,16 +215,27 @@ def main(argv: list[str] | None = None) -> int:
     hard_fail = any(r["status"] == "FAIL" for r in required) or (
         anti is not None and not anti.get("ok")
     )
-    all_pass = all(r["status"] in acceptable for r in required) and (anti is None or anti.get("ok"))
+    all_pass = all(r["status"] == "PASS" for r in required) and (anti is None or anti.get("ok"))
+    exit_ok = all(r["status"] in exit_acceptable for r in required) and (
+        anti is None or anti.get("ok")
+    )
     if hard_fail:
         exit_code = 1
         reason = "FAIL status or anti-shortcut findings"
     elif all_pass and required:
         exit_code = 0
-        reason = "every required offline gate is PASS/FEATURE_GATED"
+        reason = "every required offline gate is PASS"
+    elif exit_ok and required and not args.allow_incomplete:
+        # FEATURE_GATED present: honest non-green, not a PASS claim.
+        exit_code = 1
+        reason = "required gates incomplete (FEATURE_GATED is not PASS)"
     elif args.allow_incomplete:
         # Incomplete is honest — not PASS. Only refuse on FAIL/crash.
-        open_gates = [r["id"] for r in required if r["status"] in incomplete_statuses or r["status"] not in acceptable]
+        open_gates = [
+            r["id"]
+            for r in required
+            if r["status"] in incomplete_statuses or r["status"] not in exit_acceptable
+        ]
         exit_code = 0
         reason = f"incomplete gates reported honestly ({len(open_gates)} open); no FAIL"
         print(f"allow-incomplete: open={open_gates[:12]}{'…' if len(open_gates) > 12 else ''}")

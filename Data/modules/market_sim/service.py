@@ -3073,21 +3073,27 @@ class MarketSimControlPlane:
         from .experiments import build_strategy_memory_record
 
         learned_at = utc_now()
+        # Basic experiment acceptance is VALIDATION evidence — not SEALED.
+        # Rejected validation lessons remain retrievable for critic/postmortem
+        # (prefer_negative); they must never be tagged as sealed holdout.
         self.store.save_strategy_memory(
             build_strategy_memory_record(
                 strategy_id=trial["strategy_id"],
                 strategy_version=strategy_version or 0,
                 features=(metrics.get("features") or {}),
                 applicability=(trial.get("config") or {}).get("applicability") or {},
-                outcome_summary=reason if not passed else "accepted on holdout",
+                outcome_summary=reason if not passed else "accepted on validation",
                 trial_id=trial_id,
                 available_at=learned_at,
                 created_at=learned_at,
                 rejected=not passed,
                 origin="complete_experiment",
                 epistemic_state="REJECTED" if not passed else "MEASURED",
-                validation_stage="holdout",
-                extra_metadata={"acceptance_reason": reason},
+                validation_stage="validation",
+                extra_metadata={
+                    "acceptance_reason": reason,
+                    "evidence_class": "VALIDATION_EVIDENCE",
+                },
             )
         )
         return trial

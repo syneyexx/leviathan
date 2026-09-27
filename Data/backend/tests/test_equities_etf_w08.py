@@ -120,9 +120,12 @@ class EquitiesEtfW08Tests(unittest.TestCase):
         opened = equity_session_is_open(EQUITY_SPY, "2024-07-05", universe=uni)
         self.assertFalse(closed["isOpen"])
         self.assertTrue(opened["isOpen"])
+        # Fail-closed when no universe/calendar is bound (#187): unknown session
+        # must not be treated as open.
         missing = equity_session_is_open(EQUITY_SPY, "2024-07-06")
-        self.assertTrue(missing["isOpen"])
-        self.assertEqual(missing["status"], "UNMEASURED")
+        self.assertFalse(missing["isOpen"])
+        self.assertEqual(missing["status"], "UNKNOWN")
+        self.assertTrue(missing.get("truth", {}).get("fail_closed_on_unknown_calendar"))
 
     def test_adjustment_mode_labelled(self) -> None:
         self.assertEqual(EQUITY_AAPL.normalized_adjustment_mode(), "as_traded")

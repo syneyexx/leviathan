@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -62,19 +63,35 @@ def _plane(tmp: Path) -> MarketSimControlPlane:
 
 class PaperTradingOperatorSurfaceTests(unittest.TestCase):
     def test_fetch_market_bars_returns_provider_bars(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            plane = _plane(Path(td))
-            reg = ProviderRegistry()
-            reg.register(_StubProvider())  # type: ignore[arg-type]
-            plane.providers = reg
+        # Unit-test the in-process provider path; production externalized mode
+        # refuses Control Plane fallback without a bound job_runtime (#191).
+        prev_ext = os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API")
+        prev_runner = os.environ.get("LEVIATHAN_MARKET_SIM_RUNNER")
+        os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = "0"
+        os.environ["LEVIATHAN_MARKET_SIM_RUNNER"] = "inprocess"
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                plane = _plane(Path(td))
+                reg = ProviderRegistry()
+                reg.register(_StubProvider())  # type: ignore[arg-type]
+                plane.providers = reg
 
-            out = plane.fetch_market_bars(
-                provider_id="stub_public", symbol="BTCUSDT", timeframe="1h", limit=20
-            )
-            self.assertEqual(out["count"], 20)
-            self.assertEqual(out["bars"][0]["open"], 100)
-            self.assertTrue(out["truth"]["not_fabricated"])
-            self.assertEqual(out["quote"]["price"], 130.0)
+                out = plane.fetch_market_bars(
+                    provider_id="stub_public", symbol="BTCUSDT", timeframe="1h", limit=20
+                )
+                self.assertEqual(out["count"], 20)
+                self.assertEqual(out["bars"][0]["open"], 100)
+                self.assertTrue(out["truth"]["not_fabricated"])
+                self.assertEqual(out["quote"]["price"], 130.0)
+        finally:
+            if prev_ext is None:
+                os.environ.pop("LEVIATHAN_WORKERS_EXTERNALIZE_API", None)
+            else:
+                os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = prev_ext
+            if prev_runner is None:
+                os.environ.pop("LEVIATHAN_MARKET_SIM_RUNNER", None)
+            else:
+                os.environ["LEVIATHAN_MARKET_SIM_RUNNER"] = prev_runner
 
     def test_portfolio_flatten_all_empty(self) -> None:
         with tempfile.TemporaryDirectory() as td:
