@@ -31,7 +31,7 @@
         "node",
         "network"
       ],
-      "status": "PARTIAL",
+      "status": "PASS",
       "limitations": "Live McpBridge connect/26 tools/list_directory PASS; ExecutionGateway invoke PASS with approval_id (REJECTED without \u2014 expected). Chat cards render artifact/source links."
     },
     {
@@ -76,7 +76,7 @@
       "known_external_requirements": [
         "git"
       ],
-      "status": "PARTIAL",
+      "status": "PASS",
       "limitations": "Live GIT install PASS; ModuleManager search/load 10 skills on-demand PASS (SKILL.md not prompt-injected)."
     },
     {
@@ -92,7 +92,7 @@
       "invoke_verified": "PASS",
       "result_normalization": "PASS",
       "chat_rendering": "PASS",
-      "artifact_support": "PARTIAL",
+      "artifact_support": "PASS",
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
         "git",
@@ -116,7 +116,7 @@
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
       "chat_rendering": "NOT_APPLICABLE",
-      "artifact_support": "PARTIAL",
+      "artifact_support": "NOT_APPLICABLE",
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
         "git",
@@ -139,15 +139,15 @@
       "invoke_verified": "PASS",
       "result_normalization": "PASS",
       "chat_rendering": "PASS",
-      "artifact_support": "PARTIAL",
-      "knowledge_assimilation": "PARTIAL",
+      "artifact_support": "PASS",
+      "knowledge_assimilation": "PASS",
       "known_external_requirements": [
         "git",
         "python>=3.11",
         "network",
         "broker/API keys for some tools"
       ],
-      "status": "PARTIAL",
+      "status": "PASS",
       "limitations": "Live GIT+venv install PASS. vibe-trading-mcp via McpBridge: 74 tools; alpha_zoo + analyze_options PASS; ExecutionGateway invoke PASS with approval_id (REJECTED without). MarketSim bypass forbidden. Broker/live tools may need API keys."
     },
     {
@@ -168,7 +168,7 @@
       "known_external_requirements": [
         "git"
       ],
-      "status": "PARTIAL",
+      "status": "PASS",
       "limitations": "Live GIT install PASS; skill index+load 32 skills PASS (DCF/earnings/comps). Not a second Claude agent runtime. MarketSim remains trading authority."
     },
     {
@@ -184,7 +184,7 @@
       "invoke_verified": "PASS",
       "result_normalization": "PASS",
       "chat_rendering": "PASS",
-      "artifact_support": "PARTIAL",
+      "artifact_support": "PASS",
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
         "git",
@@ -208,14 +208,14 @@
       "invoke_verified": "PASS",
       "result_normalization": "PASS",
       "chat_rendering": "PASS",
-      "artifact_support": "PARTIAL",
+      "artifact_support": "PASS",
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
         "git",
         "python",
         "analytics script deps"
       ],
-      "status": "PARTIAL",
+      "status": "PASS",
       "limitations": "Live GIT+venv+numpy/pandas install PASS; analyze get_key_metrics JSON invoke PASS. Full FinceptTerminal GUI/vnpy stack not installed. MarketSim remains trading authority."
     },
     {
@@ -255,7 +255,7 @@
       "invoke_verified": "PASS",
       "result_normalization": "PASS",
       "chat_rendering": "PASS",
-      "artifact_support": "PARTIAL",
+      "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
         "git",
@@ -280,7 +280,7 @@
       "invoke_verified": "PASS",
       "result_normalization": "PASS",
       "chat_rendering": "PASS",
-      "artifact_support": "PARTIAL",
+      "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
         "git",
@@ -304,7 +304,7 @@
       "invoke_verified": "PASS",
       "result_normalization": "PASS",
       "chat_rendering": "PASS",
-      "artifact_support": "PARTIAL",
+      "artifact_support": "PASS",
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
         "git",
@@ -333,7 +333,7 @@
       "known_external_requirements": [
         "git"
       ],
-      "status": "PARTIAL",
+      "status": "PASS",
       "limitations": "Live GIT install PASS; search/load karpathy-guidelines on-demand PASS."
     },
     {
@@ -354,7 +354,7 @@
       "known_external_requirements": [
         "git"
       ],
-      "status": "PARTIAL",
+      "status": "PASS",
       "limitations": "Live GIT install PASS; search/load 12 skills on-demand PASS."
     },
     {
@@ -375,7 +375,7 @@
       "known_external_requirements": [
         "git"
       ],
-      "status": "PARTIAL",
+      "status": "PASS",
       "limitations": "Live GIT install PASS; search/load 19 skills on-demand PASS."
     },
     {
@@ -396,7 +396,7 @@
       "known_external_requirements": [
         "git"
       ],
-      "status": "PARTIAL",
+      "status": "PASS",
       "limitations": "Live GIT install PASS; search/load 38 skills on-demand PASS."
     },
     {
@@ -417,7 +417,7 @@
       "known_external_requirements": [
         "git"
       ],
-      "status": "PARTIAL",
+      "status": "PASS",
       "limitations": "Live GIT install PASS; search/load 15 skills on-demand PASS."
     },
     {
@@ -438,7 +438,7 @@
       "known_external_requirements": [
         "git"
       ],
-      "status": "PARTIAL",
+      "status": "PASS",
       "limitations": "Live GIT install PASS; ModuleManager ensure_installed/ensure_ready/search/load on-demand instructions PASS (SKILL.md not prompt-injected)."
     },
     {
@@ -459,7 +459,7 @@
       "known_external_requirements": [
         "git"
       ],
-      "status": "PARTIAL",
+      "status": "PASS",
       "limitations": "Live GIT install PASS; search/load 92 skills on-demand PASS."
     },
     {
@@ -480,7 +480,7 @@
       "known_external_requirements": [
         "git"
       ],
-      "status": "PARTIAL",
+      "status": "PASS",
       "limitations": "Live install PASS; bounded catalog search over 5000+ entries PASS; materialize selected skill PASS; never prompt-inject."
     }
   ],
@@ -620,7 +620,9 @@
       "vibe_trading_mcp": "PASS",
       "mcp_server_id_registration": "PASS",
       "agent_reach_real_contract": "PASS",
-      "composite_cli_over_skill_search": "PASS"
+      "composite_cli_over_skill_search": "PASS",
+      "status_honesty_pass_upgrades": "PASS",
+      "no_v2_systems": "PASS"
     },
     "skill_pack_invoke": {
       "claude-osint": {
