@@ -2171,7 +2171,12 @@ app.include_router(
 )
 app.include_router(build_analytics_router(analytics_service))
 app.include_router(build_system_telemetry_router(system_telemetry_sampler))
-app.include_router(build_sqlite_manager_router(sqlite_manager))
+app.include_router(
+    build_sqlite_manager_router(
+        sqlite_manager,
+        assert_mutation_auth=_assert_loopback_mutation_allowed,
+    )
+)
 app.include_router(
     build_observability_router(
         observability=observability,

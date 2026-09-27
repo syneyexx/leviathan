@@ -60,7 +60,14 @@ class OpenAICompatibleAdapter:
                 "openai_compatible requires payload.endpoint",
                 provider=request.provider,
             )
-        if not request.allow_private_hosts:
+        from Data.modules.provider_io.private_host_authority import (
+            resolve_allow_private_hosts_for_url,
+        )
+
+        allow_private = resolve_allow_private_hosts_for_url(
+            endpoint, request_flag=request.allow_private_hosts
+        )
+        if not allow_private:
             try:
                 assert_safe_url(endpoint)
             except ValueError as exc:

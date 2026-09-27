@@ -44,7 +44,14 @@ class GenericHttpAdapter:
         headers = dict(payload.get("headers") or {})
         body = payload.get("body")
         max_bytes = int(payload.get("max_bytes") or policy.settings.max_response_bytes)
-        allow_private = bool(request.allow_private_hosts or payload.get("allow_private_hosts"))
+        from Data.modules.provider_io.private_host_authority import (
+            resolve_allow_private_hosts_for_url,
+        )
+
+        # Re-resolve at adapter boundary — ignore request/payload forgeable flags.
+        allow_private = resolve_allow_private_hosts_for_url(
+            url, request_flag=request.allow_private_hosts
+        )
 
         if not url:
             raise ProviderError(

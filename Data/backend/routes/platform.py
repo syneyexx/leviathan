@@ -288,7 +288,8 @@ def build_platform_router(
         return {"backup": manifest.public_dict()}
 
     @router.post("/api/backup/restore")
-    def restore_backup(payload: BackupRestoreRequest) -> dict:
+    def restore_backup(payload: BackupRestoreRequest, request: Request) -> dict:
+        assert_loopback_fn(request)
         try:
             manifest = backup_service.restore(payload.backup_id, confirm=payload.confirm)
         except BackupError as exc:

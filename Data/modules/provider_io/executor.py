@@ -58,10 +58,17 @@ def _request_from_job_args(args: dict[str, Any], *, job_id: str) -> ProviderRequ
         "tool_choice",
         "response_format",
         "max_bytes",
-        "allow_private_hosts",
+        # allow_private_hosts intentionally omitted — untrusted job payload must not grant it
     ):
         if key in args and key not in payload:
             payload[key] = args[key]
+
+    from Data.modules.provider_io.private_host_authority import (
+        resolve_allow_private_hosts_for_url,
+        strip_untrusted_private_host_flags,
+    )
+
+    strip_untrusted_private_host_flags(args, payload)
 
     assert_no_secrets_in_payload(payload)
     assert_no_secrets_in_payload(
@@ -76,6 +83,14 @@ def _request_from_job_args(args: dict[str, Any], *, job_id: str) -> ProviderRequ
         idem = IdempotencyClass(idem_raw)
     except ValueError:
         idem = IdempotencyClass.READ
+
+    # Authority is URL/policy derived — never from job payload flags.
+    candidate_url = str(
+        payload.get("url") or payload.get("endpoint") or payload.get("base_url") or ""
+    ).strip()
+    allow_private = bool(
+        candidate_url and resolve_allow_private_hosts_for_url(candidate_url)
+    )
 
     return ProviderRequest(
         provider=provider,
@@ -94,9 +109,7 @@ def _request_from_job_args(args: dict[str, Any], *, job_id: str) -> ProviderRequ
         idempotency_class=idem,
         idempotency_key=(str(args.get("idempotency_key") or "").strip() or None),
         credential_ref=(str(args.get("credential_ref") or "").strip() or None),
-        allow_private_hosts=bool(
-            args.get("allow_private_hosts") or payload.get("allow_private_hosts")
-        ),
+        allow_private_hosts=allow_private,
     )
 
 

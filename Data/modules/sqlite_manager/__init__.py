@@ -52,10 +52,10 @@ _MAX_FILTER_CLAUSES = 16
 _INTEGRITY_MAX_ERRORS = 100
 
 # Operator mutations are tiny admin CONTROL_WRITE operations — never COMMIT_WRITE
-# fallbacks and never arbitrary coordinator SQL.
+# fallbacks and never arbitrary coordinator SQL. expected_max_rows is enforced.
 _MUTATE_SPEC = ControlWriteSpec(
     operation="sqlite_manager.mutate",
-    expected_max_rows=500,
+    expected_max_rows=32,
     expected_max_ms=2_000.0,
 )
 
@@ -613,6 +613,7 @@ class SqliteManager:
                 "WRITE_NOT_ALLOWLISTED",
                 "MULTI_STATEMENT_FORBIDDEN",
                 "SCHEMA_MUTATION_FORBIDDEN",
+                "UNBOUNDED_WRITE_FORBIDDEN",
             }:
                 code = "WRITE_NOT_ALLOWLISTED"
             raise SqliteManagerError(
@@ -620,11 +621,12 @@ class SqliteManager:
                 f"{key.value}: mutation rejected ({code})",
                 domain=key.value,
             ) from exc
-        from .sql_safety import normalize_sql
+        from .sql_safety import assert_write_row_bound, normalize_sql
 
         text = normalize_sql(sql)
         path = self._require_file(key)
         started = time.perf_counter()
+        max_rows = int(_MUTATE_SPEC.expected_max_rows)
 
         def _run(conn: sqlite3.Connection) -> int:
             disable_extension_loading(conn)
@@ -638,10 +640,29 @@ class SqliteManager:
             ):
                 # Re-install authorizer after BEGIN (authorizer persists on conn).
                 cur = conn.execute(text)
-                return int(cur.rowcount if cur.rowcount is not None else 0)
+                rowcount = int(cur.rowcount if cur.rowcount is not None else -1)
+                if rowcount < 0:
+                    # Prefer changes() when rowcount is unavailable.
+                    try:
+                        rowcount = int(conn.execute("SELECT changes()").fetchone()[0])
+                    except sqlite3.Error:
+                        rowcount = -1
+                try:
+                    assert_write_row_bound(rowcount, max_rows=max_rows)
+                except ValueError as bound_exc:
+                    # Abort transaction — do not commit unbounded CONTROL_WRITE.
+                    raise SqliteManagerError(
+                        str(bound_exc),
+                        f"{key.value}: raw mutation affected {rowcount} rows "
+                        f"(max {max_rows}); use structured row edit or DB Commit",
+                        domain=key.value,
+                    ) from bound_exc
+                return rowcount
 
         try:
             rowcount = control_write(path, _run, spec=_MUTATE_SPEC)
+        except SqliteManagerError:
+            raise
         except sqlite3.Error as exc:
             code = "DB_BUSY" if is_transient_sqlite_error(exc) else "MUTATION_FAILED"
             raise SqliteManagerError(code, f"{key.value}: {exc}", domain=key.value) from exc
@@ -653,6 +674,7 @@ class SqliteManager:
             "elapsedMs": round(elapsed_ms, 3),
             "writeClass": WriteClass.CONTROL_WRITE.value,
             "mode": "WRITE",
+            "expectedMaxRows": max_rows,
         }
 
     # --- G. structured row editing --------------------------------------

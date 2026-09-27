@@ -243,7 +243,20 @@ def classify_write_sql(sql: str) -> str:
     # Reject UPDATE … OR REPLACE style schema tricks and ATTACH via function calls.
     if re.search(r"\b(ATTACH|DETACH|VACUUM|REINDEX|ALTER|CREATE|DROP)\b", upper):
         raise ValueError("SCHEMA_MUTATION_FORBIDDEN")
-    return _leading_keyword(text)
+    # Unbounded UPDATE/DELETE without WHERE cannot be a tiny CONTROL_WRITE.
+    kind = _leading_keyword(text)
+    if kind in {"UPDATE", "DELETE"} and not re.search(r"\bWHERE\b", upper):
+        raise ValueError("UNBOUNDED_WRITE_FORBIDDEN")
+    return kind
+
+
+def assert_write_row_bound(rowcount: int, *, max_rows: int, operation: str = "mutate") -> None:
+    """Raise if a mutation affected more rows than the CONTROL_WRITE bound."""
+    if rowcount < 0:
+        # SQLite may report -1 when rowcount is unavailable — fail closed for raw DML.
+        raise ValueError("ROWCOUNT_UNAVAILABLE")
+    if rowcount > int(max_rows):
+        raise ValueError("ROW_BOUND_EXCEEDED")
 
 
 def _classify_pragma(text: str, *, write_allowed: bool) -> str:

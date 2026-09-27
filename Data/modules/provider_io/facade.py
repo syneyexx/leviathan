@@ -114,7 +114,8 @@ class ProviderExecutionClient:
             "correlation_id": correlation_id,
             "principal_ref": principal_ref,
             "idempotency_class": idempotency_class,
-            "allow_private_hosts": allow_private_hosts,
+            # allow_private_hosts is NOT accepted from callers — resolved in executor
+            # from trusted endpoint allowlists / operator env only.
         }
         if model is not None:
             arguments["model"] = model
