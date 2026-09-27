@@ -42,7 +42,12 @@
             "{style}",
             "--grammar",
             "{grammar}"
-          ]
+          ],
+          "defaults": {
+            "name": "leviathan-site",
+            "style": "aurora",
+            "grammar": "reveal"
+          }
         },
         {
           "name": "build",

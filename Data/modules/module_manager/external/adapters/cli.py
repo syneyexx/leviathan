@@ -294,7 +294,9 @@ class CliAdapter:
             if str(op.get("name") or op.get("operation") or "") == operation:
                 cmd = op.get("command") or op.get("argv")
                 if isinstance(cmd, (list, tuple)) and cmd:
-                    return self._render_argv([str(x) for x in cmd], arguments)
+                    merged = dict(op.get("defaults") or {})
+                    merged.update({k: v for k, v in arguments.items() if v is not None})
+                    return self._render_argv([str(x) for x in cmd], merged)
 
         if self.config.runtime.command:
             return self._render_argv(
@@ -312,10 +314,14 @@ class CliAdapter:
             for key, value in arguments.items():
                 if isinstance(value, (str, int, float)):
                     text = text.replace("{" + str(key) + "}", str(value))
+            # Drop optional tokens that still contain unsubstituted placeholders.
             if text.startswith("?") and "{" in text:
                 continue
             if text.startswith("?"):
                 text = text[1:]
+            # Unsubstituted required placeholders → clear failure (never pass literal "{x}").
+            if "{" in text and "}" in text:
+                raise FileNotFoundError(f"Missing argv substitution for operation template segment: {text}")
             rendered.append(text)
         if rendered and self._install_root:
             bin_candidate = Path(self._install_root) / rendered[0]

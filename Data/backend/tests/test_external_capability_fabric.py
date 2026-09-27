@@ -1480,6 +1480,46 @@ class ExternalAssimilationAndScaleTests(unittest.TestCase):
             assert ver is not None
             self.assertEqual(ver["module_id"], "mod-a")
 
+    def test_cli_operation_defaults_fill_placeholders(self) -> None:
+        from Data.modules.module_manager.external.adapters.base import AdapterContext
+        from Data.modules.module_manager.external.adapters.cli import CliAdapter
+        from Data.modules.module_manager.external.types import parse_external_config
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tool = Path(tmp) / "echo_tool.py"
+            tool.write_text(
+                "import sys\nprint(' '.join(sys.argv[1:]))\n",
+                encoding="utf-8",
+            )
+            cfg = parse_external_config(
+                {
+                    "adapter": "CLI",
+                    "source_type": "path",
+                    "path": str(tmp),
+                    "install": {"strategy": "NONE"},
+                    "runtime": {
+                        "operations": [
+                            {
+                                "name": "greet",
+                                "command": [sys.executable, str(tool), "{name}", "{style}"],
+                                "defaults": {"name": "world", "style": "plain"},
+                            }
+                        ]
+                    },
+                    "result": {"format": "text"},
+                }
+            )
+            assert cfg is not None
+            adapter = CliAdapter(
+                AdapterContext(module_id="echo", config=cfg, install_root=tmp, data_root=tmp)
+            )
+            argv = adapter._build_argv("greet", {})  # noqa: SLF001
+            self.assertEqual(argv[-2:], ["world", "plain"])
+            argv2 = adapter._build_argv("greet", {"name": "leviathan"})  # noqa: SLF001
+            self.assertEqual(argv2[-2:], ["leviathan", "plain"])
+            with self.assertRaises(FileNotFoundError):
+                adapter._render_argv(["{missing}"], {})  # noqa: SLF001
+
 
 if __name__ == "__main__":
     unittest.main()
