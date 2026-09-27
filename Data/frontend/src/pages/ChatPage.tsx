@@ -8,6 +8,7 @@ import { AppShell } from "../layouts/AppShell";
 import { chatIneligibilityReason, partitionChatModels } from "../lib/chatModels";
 import { useAppToast } from "../state/useAppToast";
 import type {
+  AssistantToolCallTelemetry,
   AssistantTurnTelemetry,
   CapabilityListItem,
   Conversation,
@@ -1329,14 +1330,21 @@ export function ChatPage() {
               ) : (
                 (lastTurn.telemetry?.tool_calls?.length
                   ? lastTurn.telemetry.tool_calls
-                  : (lastTurn.telemetry?.tools_invoked ?? []).map((id) => ({
-                      capability_id: id,
-                      status: "INVOKED",
-                      duration_ms: null,
-                      receipt_id: null,
-                      summary: null,
-                      success: null,
-                    }))
+                  : (lastTurn.telemetry?.tools_invoked ?? []).map(
+                      (id): import("../types/api").AssistantToolCallTelemetry => ({
+                        capability_id: id,
+                        status: "INVOKED",
+                        duration_ms: null,
+                        receipt_id: null,
+                        summary: null,
+                        success: null,
+                        module_id: null,
+                        provider: null,
+                        result_count: null,
+                        source_count: null,
+                        artifact_refs: [],
+                      }),
+                    )
                 ).map((call) => (
                   <div
                     className="lv-tool-item"
