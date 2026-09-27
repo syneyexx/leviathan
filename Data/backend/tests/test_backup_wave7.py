@@ -19,6 +19,8 @@ from Data.modules.backup import (
 
 def _seed_db(path: Path, *, marker: str, with_datasets: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_file():
+        path.unlink()
     with sqlite3.connect(str(path)) as conn:
         conn.execute(
             "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, name TEXT, applied_at TEXT)"
