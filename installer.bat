@@ -188,16 +188,16 @@ REM ---- Optional backend-host executable ----
 echo [host] Backend host executable ^(optional^)...
 if "%LEVIATHAN_BUILD_HOST_EXE%"=="1" (
   echo        LEVIATHAN_BUILD_HOST_EXE=1 — building run_leviathan.exe
-  ".venv\Scripts\python.exe" scripts\build_run_leviathan_exe.py
+  call "%~dp0build_run_leviathan_exe.bat" /nopause
   if errorlevel 1 (
     echo  [ERROR] run_leviathan.exe build failed. Install is not reported as successful.
     goto :fail
   )
-  echo        OK - dist\run_leviathan.exe
+  echo        OK - run_leviathan.exe
 ) else (
-  echo        NOT BUILT — run_leviathan.exe requires the Rust/Tauri/WebView2 toolchain.
-  echo        Set LEVIATHAN_BUILD_HOST_EXE=1 to build it during install.
-  echo        run_leviathan.bat remains the compatibility launcher until the exe exists.
+  echo        NOT BUILT — double-click build_run_leviathan_exe.bat on Windows.
+  echo        That requires Node.js, Rust, the Visual Studio C++ build tools, and WebView2.
+  echo        run_leviathan.bat remains the launcher until the exe exists.
 )
 
 echo.
