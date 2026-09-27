@@ -129,6 +129,38 @@ class RiskGuard:
             kill_switch_allows_risk_reduction=self.limits.kill_switch_allows_risk_reduction,
         )
 
+    def clear_kill_switch(self, reason: str = "cleared") -> None:
+        """Disarm kill switch. State must be explicit — never ambiguous.
+
+        ``reason`` is accepted for audit call-sites; armed/clear flags are the
+        authoritative state via ``kill_switch_state()``.
+        """
+        _ = reason
+        self.killed = False
+        self.kill_reason = None
+        self.limits = RiskLimits(
+            max_position_pct=self.limits.max_position_pct,
+            max_drawdown_pct=self.limits.max_drawdown_pct,
+            per_trade_risk_pct=self.limits.per_trade_risk_pct,
+            max_orders_per_day=self.limits.max_orders_per_day,
+            max_symbol_exposure_pct=self.limits.max_symbol_exposure_pct,
+            leverage_allowed=self.limits.leverage_allowed,
+            kill_switch_armed=False,
+            kill_switch_allows_risk_reduction=self.limits.kill_switch_allows_risk_reduction,
+        )
+
+    def kill_switch_state(self) -> dict[str, Any]:
+        """Clear, unambiguous kill-switch status for callers / tests."""
+        armed = bool(self.killed or self.limits.kill_switch_armed)
+        return {
+            "armed": armed,
+            "clear": not armed,
+            "reason": self.kill_reason,
+            "allows_risk_reduction": bool(self.limits.kill_switch_allows_risk_reduction),
+            "limits_kill_switch_armed": bool(self.limits.kill_switch_armed),
+            "runtime_killed": bool(self.killed),
+        }
+
     def check_drawdown(self, wallet: WalletLedger, price: float) -> bool:
         dd = wallet.drawdown_pct(price)
         if dd >= self.limits.max_drawdown_pct:
