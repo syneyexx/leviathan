@@ -14,6 +14,7 @@ from Data.modules.market_sim.stats_inferential import (
     combinatorial_purged_cv_paths,
     deflated_sharpe_ratio,
     probability_of_backtest_overfitting,
+    probability_of_backtest_overfitting_cscv,
     purge_embargo_indices,
 )
 
@@ -62,6 +63,26 @@ class StatisticalReferenceTests(unittest.TestCase):
         self.assertIsNotNone(mixed["pbo"])
         small = probability_of_backtest_overfitting([1.0, 2.0], seed=1)
         self.assertEqual(small["measurement"], "UNMEASURED")
+
+    def test_pbo_cscv_reference_vector(self) -> None:
+        # T×N matrix: strategy 0 dominates in-sample early, strategy 1 later.
+        # Rectangular random-ish matrix must return MEASURED CSCV PBO in [0,1].
+        rng = __import__("random").Random(7)
+        matrix = [[rng.uniform(-0.02, 0.02) for _ in range(6)] for _ in range(64)]
+        # Make col 0 strong in first half, weak in second → selection overfit signal.
+        for i in range(32):
+            matrix[i][0] += 0.05
+        for i in range(32, 64):
+            matrix[i][0] -= 0.05
+            matrix[i][1] += 0.03
+        out = probability_of_backtest_overfitting_cscv(matrix, n_groups=8)
+        self.assertEqual(out["measurement"], "MEASURED")
+        self.assertFalse(out.get("qualification_authority", True))
+        self.assertIn("cscv", out["truth"]["method"])
+        self.assertGreaterEqual(out["pbo"], 0.0)
+        self.assertLessEqual(out["pbo"], 1.0)
+        empty = probability_of_backtest_overfitting_cscv([[1.0]], n_groups=8)
+        self.assertEqual(empty["measurement"], "UNMEASURED")
 
     def test_fdr_reference_vector(self) -> None:
         # Classic BH: with q=0.05, p=[0.001, 0.01, 0.03, 0.04, 0.2] rejects first few.
