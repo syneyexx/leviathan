@@ -17,6 +17,7 @@ Data/launcher/host-core/target/
 Data/launcher/tests/visual/output/
 Data/logs/launcher/
 dist/
+/run_leviathan.exe
 *.tsbuildinfo
 leviathan_startup.log
 ModelData/
