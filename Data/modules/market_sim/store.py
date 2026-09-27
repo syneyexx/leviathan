@@ -1,4 +1,8 @@
-"""Central SQLite persistence for market_sim (single leviathan.db)."""
+"""Central SQLite persistence for market_sim (MARKET domain database).
+
+Product authority is the MARKET SQLite file (leviathan_market.db after cutover).
+Legacy single leviathan.db is upgrade input only — not post-cutover authority.
+"""
 
 from __future__ import annotations
 
@@ -2722,3 +2726,803 @@ class MarketSimStore:
             }
             for r in rows
         ]
+
+    # --- Qualification authority (Wave 2–3) -----------------------------
+
+    def save_qualification_policy(self, policy: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(policy)
+        policy_json = payload.get("policy_json")
+        if isinstance(policy_json, dict):
+            policy_json_text = json.dumps(policy_json)
+        else:
+            policy_json_text = str(policy_json or "{}")
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_qualification_policies(
+                    policy_id, version, name, policy_hash, policy_json,
+                    created_at, created_by, active
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(policy_id) DO UPDATE SET
+                    version=excluded.version,
+                    name=excluded.name,
+                    policy_hash=excluded.policy_hash,
+                    policy_json=excluded.policy_json,
+                    active=excluded.active
+                """,
+                (
+                    payload["policy_id"],
+                    int(payload.get("version") or 1),
+                    payload.get("name") or "",
+                    payload["policy_hash"],
+                    policy_json_text,
+                    payload.get("created_at") or utc_now(),
+                    payload.get("created_by") or "system",
+                    1 if payload.get("active", True) else 0,
+                ),
+            )
+        return payload
+
+    def get_qualification_policy(self, policy_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM market_qualification_policies WHERE policy_id=?",
+                (policy_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "policy_id": row["policy_id"],
+            "version": int(row["version"]),
+            "name": row["name"],
+            "policy_hash": row["policy_hash"],
+            "policy_json": _loads(row["policy_json"], {}),
+            "created_at": row["created_at"],
+            "created_by": row["created_by"],
+            "active": bool(row["active"]),
+        }
+
+    def create_qualification_run(self, run: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(run)
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_qualification_runs(
+                    qualification_id, policy_id, experiment_id, learning_run_id,
+                    candidate_id, trial_family_id, strategy_id, strategy_version,
+                    strategy_hash, source_id, dataset_id, dataset_version_id,
+                    dataset_hash, git_sha, code_version, seed, status, current_gate,
+                    decision, blockers_json, warnings_json, provenance_hash,
+                    sealed_attempt_id, idempotency_key, created_at, started_at,
+                    finished_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(qualification_id) DO NOTHING
+                """,
+                (
+                    payload["qualification_id"],
+                    payload["policy_id"],
+                    payload.get("experiment_id"),
+                    payload.get("learning_run_id"),
+                    payload.get("candidate_id"),
+                    payload["trial_family_id"],
+                    payload["strategy_id"],
+                    int(payload.get("strategy_version") or 0),
+                    payload["strategy_hash"],
+                    payload["source_id"],
+                    payload.get("dataset_id"),
+                    payload.get("dataset_version_id"),
+                    payload["dataset_hash"],
+                    payload["git_sha"],
+                    payload["code_version"],
+                    int(payload.get("seed") or 0),
+                    payload.get("status") or "CREATED",
+                    payload.get("current_gate"),
+                    payload.get("decision"),
+                    json.dumps(payload.get("blockers") or []),
+                    json.dumps(payload.get("warnings") or []),
+                    payload["provenance_hash"],
+                    payload.get("sealed_attempt_id"),
+                    payload["idempotency_key"],
+                    payload.get("created_at") or now,
+                    payload.get("started_at"),
+                    payload.get("finished_at"),
+                    payload.get("updated_at") or now,
+                ),
+            )
+        return self.get_qualification_run(str(payload["qualification_id"])) or payload
+
+    def get_qualification_run(self, qualification_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM market_qualification_runs WHERE qualification_id=?",
+                (qualification_id,),
+            ).fetchone()
+        return self._row_qualification_run(row)
+
+    def get_qualification_run_by_idempotency(self, idempotency_key: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM market_qualification_runs WHERE idempotency_key=?",
+                (idempotency_key,),
+            ).fetchone()
+        return self._row_qualification_run(row)
+
+    def update_qualification_run(self, qualification_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
+        existing = self.get_qualification_run(qualification_id)
+        if existing is None:
+            return None
+        merged = dict(existing)
+        for key, value in patch.items():
+            if key in {"blockers", "warnings"}:
+                merged[key] = value
+            elif key.endswith("_json"):
+                continue
+            else:
+                merged[key] = value
+        merged["updated_at"] = patch.get("updated_at") or utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE market_qualification_runs SET
+                    policy_id=?, experiment_id=?, learning_run_id=?, candidate_id=?,
+                    trial_family_id=?, strategy_id=?, strategy_version=?, strategy_hash=?,
+                    source_id=?, dataset_id=?, dataset_version_id=?, dataset_hash=?,
+                    git_sha=?, code_version=?, seed=?, status=?, current_gate=?,
+                    decision=?, blockers_json=?, warnings_json=?, provenance_hash=?,
+                    sealed_attempt_id=?, started_at=?, finished_at=?, updated_at=?
+                WHERE qualification_id=?
+                """,
+                (
+                    merged["policy_id"],
+                    merged.get("experiment_id"),
+                    merged.get("learning_run_id"),
+                    merged.get("candidate_id"),
+                    merged["trial_family_id"],
+                    merged["strategy_id"],
+                    int(merged.get("strategy_version") or 0),
+                    merged["strategy_hash"],
+                    merged["source_id"],
+                    merged.get("dataset_id"),
+                    merged.get("dataset_version_id"),
+                    merged["dataset_hash"],
+                    merged["git_sha"],
+                    merged["code_version"],
+                    int(merged.get("seed") or 0),
+                    merged.get("status") or "CREATED",
+                    merged.get("current_gate"),
+                    merged.get("decision"),
+                    json.dumps(merged.get("blockers") or []),
+                    json.dumps(merged.get("warnings") or []),
+                    merged["provenance_hash"],
+                    merged.get("sealed_attempt_id"),
+                    merged.get("started_at"),
+                    merged.get("finished_at"),
+                    merged["updated_at"],
+                    qualification_id,
+                ),
+            )
+        return self.get_qualification_run(qualification_id)
+
+    def _row_qualification_run(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        return {
+            "qualification_id": row["qualification_id"],
+            "policy_id": row["policy_id"],
+            "experiment_id": row["experiment_id"],
+            "learning_run_id": row["learning_run_id"],
+            "candidate_id": row["candidate_id"],
+            "trial_family_id": row["trial_family_id"],
+            "strategy_id": row["strategy_id"],
+            "strategy_version": int(row["strategy_version"]),
+            "strategy_hash": row["strategy_hash"],
+            "source_id": row["source_id"],
+            "dataset_id": row["dataset_id"],
+            "dataset_version_id": row["dataset_version_id"],
+            "dataset_hash": row["dataset_hash"],
+            "git_sha": row["git_sha"],
+            "code_version": row["code_version"],
+            "seed": int(row["seed"]),
+            "status": row["status"],
+            "current_gate": row["current_gate"],
+            "decision": row["decision"],
+            "blockers": _loads(row["blockers_json"], []),
+            "warnings": _loads(row["warnings_json"], []),
+            "provenance_hash": row["provenance_hash"],
+            "sealed_attempt_id": row["sealed_attempt_id"],
+            "idempotency_key": row["idempotency_key"],
+            "created_at": row["created_at"],
+            "started_at": row["started_at"],
+            "finished_at": row["finished_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def upsert_qualification_gate_result(self, result: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(result)
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_qualification_gate_results(
+                    gate_result_id, qualification_id, gate_id, state, passed,
+                    methodology, evidence_json, metrics_json, blockers_json,
+                    warnings_json, input_hash, output_hash, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(qualification_id, gate_id) DO UPDATE SET
+                    gate_result_id=excluded.gate_result_id,
+                    state=excluded.state,
+                    passed=excluded.passed,
+                    methodology=excluded.methodology,
+                    evidence_json=excluded.evidence_json,
+                    metrics_json=excluded.metrics_json,
+                    blockers_json=excluded.blockers_json,
+                    warnings_json=excluded.warnings_json,
+                    input_hash=excluded.input_hash,
+                    output_hash=excluded.output_hash,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    payload.get("gate_result_id") or str(uuid.uuid4()),
+                    payload["qualification_id"],
+                    payload["gate_id"],
+                    payload.get("state") or "UNMEASURED",
+                    1 if payload.get("passed") else 0,
+                    payload.get("methodology") or "",
+                    json.dumps(payload.get("evidence") or {}),
+                    json.dumps(payload.get("metrics") or {}),
+                    json.dumps(payload.get("blockers") or []),
+                    json.dumps(payload.get("warnings") or []),
+                    payload.get("input_hash") or "",
+                    payload.get("output_hash") or "",
+                    payload.get("created_at") or now,
+                    payload.get("updated_at") or now,
+                ),
+            )
+        return payload
+
+    def list_qualification_gate_results(self, qualification_id: str) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM market_qualification_gate_results
+                WHERE qualification_id=? ORDER BY gate_id ASC
+                """,
+                (qualification_id,),
+            ).fetchall()
+        return [
+            {
+                "gate_result_id": r["gate_result_id"],
+                "qualification_id": r["qualification_id"],
+                "gate_id": r["gate_id"],
+                "state": r["state"],
+                "passed": bool(r["passed"]),
+                "methodology": r["methodology"],
+                "evidence": _loads(r["evidence_json"], {}),
+                "metrics": _loads(r["metrics_json"], {}),
+                "blockers": _loads(r["blockers_json"], []),
+                "warnings": _loads(r["warnings_json"], []),
+                "input_hash": r["input_hash"],
+                "output_hash": r["output_hash"],
+                "created_at": r["created_at"],
+                "updated_at": r["updated_at"],
+            }
+            for r in rows
+        ]
+
+    def upsert_wfa_fold(self, fold: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(fold)
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_wfa_folds(
+                    fold_id, qualification_id, fold_index, train_start_ts, train_end_ts,
+                    validation_start_ts, validation_end_ts, test_start_ts, test_end_ts,
+                    purge_bars, embargo_bars, train_run_id, test_run_id,
+                    strategy_id, strategy_version, frozen_params_json, metrics_json,
+                    state, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(qualification_id, fold_index) DO UPDATE SET
+                    fold_id=excluded.fold_id,
+                    train_start_ts=excluded.train_start_ts,
+                    train_end_ts=excluded.train_end_ts,
+                    validation_start_ts=excluded.validation_start_ts,
+                    validation_end_ts=excluded.validation_end_ts,
+                    test_start_ts=excluded.test_start_ts,
+                    test_end_ts=excluded.test_end_ts,
+                    purge_bars=excluded.purge_bars,
+                    embargo_bars=excluded.embargo_bars,
+                    train_run_id=excluded.train_run_id,
+                    test_run_id=excluded.test_run_id,
+                    strategy_id=excluded.strategy_id,
+                    strategy_version=excluded.strategy_version,
+                    frozen_params_json=excluded.frozen_params_json,
+                    metrics_json=excluded.metrics_json,
+                    state=excluded.state
+                """,
+                (
+                    payload.get("fold_id") or str(uuid.uuid4()),
+                    payload["qualification_id"],
+                    int(payload["fold_index"]),
+                    payload["train_start_ts"],
+                    payload["train_end_ts"],
+                    payload.get("validation_start_ts"),
+                    payload.get("validation_end_ts"),
+                    payload["test_start_ts"],
+                    payload["test_end_ts"],
+                    int(payload.get("purge_bars") or 0),
+                    int(payload.get("embargo_bars") or 0),
+                    payload.get("train_run_id"),
+                    payload.get("test_run_id"),
+                    payload["strategy_id"],
+                    int(payload.get("strategy_version") or 0),
+                    json.dumps(payload.get("frozen_params") or payload.get("frozen_params_json") or {}),
+                    json.dumps(payload.get("metrics") or payload.get("metrics_json") or {}),
+                    payload.get("state") or "UNMEASURED",
+                    payload.get("created_at") or utc_now(),
+                ),
+            )
+        return payload
+
+    def list_wfa_folds(self, qualification_id: str) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM market_wfa_folds
+                WHERE qualification_id=? ORDER BY fold_index ASC
+                """,
+                (qualification_id,),
+            ).fetchall()
+        return [
+            {
+                "fold_id": r["fold_id"],
+                "qualification_id": r["qualification_id"],
+                "fold_index": int(r["fold_index"]),
+                "train_start_ts": r["train_start_ts"],
+                "train_end_ts": r["train_end_ts"],
+                "validation_start_ts": r["validation_start_ts"],
+                "validation_end_ts": r["validation_end_ts"],
+                "test_start_ts": r["test_start_ts"],
+                "test_end_ts": r["test_end_ts"],
+                "purge_bars": int(r["purge_bars"]),
+                "embargo_bars": int(r["embargo_bars"]),
+                "train_run_id": r["train_run_id"],
+                "test_run_id": r["test_run_id"],
+                "strategy_id": r["strategy_id"],
+                "strategy_version": int(r["strategy_version"]),
+                "frozen_params": _loads(r["frozen_params_json"], {}),
+                "metrics": _loads(r["metrics_json"], {}),
+                "state": r["state"],
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
+
+    def save_dataset_certification(self, cert: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(cert)
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_dataset_certifications(
+                    certification_id, dataset_id, dataset_version_id, dataset_hash,
+                    data_type, certification_state, pit_state, survivorship_state,
+                    revision_state, corporate_action_state, source_id, license_state,
+                    evidence_json, certification_hash, certified_at, certified_by,
+                    superseded_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(certification_id) DO UPDATE SET
+                    certification_state=excluded.certification_state,
+                    pit_state=excluded.pit_state,
+                    survivorship_state=excluded.survivorship_state,
+                    revision_state=excluded.revision_state,
+                    corporate_action_state=excluded.corporate_action_state,
+                    license_state=excluded.license_state,
+                    evidence_json=excluded.evidence_json,
+                    certification_hash=excluded.certification_hash,
+                    superseded_by=excluded.superseded_by
+                """,
+                (
+                    payload["certification_id"],
+                    payload["dataset_id"],
+                    payload["dataset_version_id"],
+                    payload["dataset_hash"],
+                    payload.get("data_type") or "OHLCV",
+                    payload.get("certification_state") or "UNMEASURED",
+                    payload.get("pit_state") or "UNMEASURED",
+                    payload.get("survivorship_state") or "UNMEASURED",
+                    payload.get("revision_state") or "UNMEASURED",
+                    payload.get("corporate_action_state") or "UNMEASURED",
+                    payload.get("source_id") or "",
+                    payload.get("license_state") or "UNMEASURED",
+                    json.dumps(payload.get("evidence") or {}),
+                    payload["certification_hash"],
+                    payload.get("certified_at") or utc_now(),
+                    payload.get("certified_by") or "system",
+                    payload.get("superseded_by"),
+                ),
+            )
+        return payload
+
+    def get_dataset_certification(
+        self,
+        *,
+        certification_id: str | None = None,
+        dataset_id: str | None = None,
+        dataset_version_id: str | None = None,
+        dataset_hash: str | None = None,
+    ) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = None
+            if certification_id:
+                row = conn.execute(
+                    "SELECT * FROM market_dataset_certifications WHERE certification_id=?",
+                    (certification_id,),
+                ).fetchone()
+            elif dataset_id and dataset_version_id:
+                row = conn.execute(
+                    """
+                    SELECT * FROM market_dataset_certifications
+                    WHERE dataset_id=? AND dataset_version_id=?
+                    ORDER BY certified_at DESC LIMIT 1
+                    """,
+                    (dataset_id, dataset_version_id),
+                ).fetchone()
+            elif dataset_hash:
+                row = conn.execute(
+                    """
+                    SELECT * FROM market_dataset_certifications
+                    WHERE dataset_hash=? ORDER BY certified_at DESC LIMIT 1
+                    """,
+                    (dataset_hash,),
+                ).fetchone()
+        if row is None:
+            return None
+        return {
+            "certification_id": row["certification_id"],
+            "dataset_id": row["dataset_id"],
+            "dataset_version_id": row["dataset_version_id"],
+            "dataset_hash": row["dataset_hash"],
+            "data_type": row["data_type"],
+            "certification_state": row["certification_state"],
+            "pit_state": row["pit_state"],
+            "survivorship_state": row["survivorship_state"],
+            "revision_state": row["revision_state"],
+            "corporate_action_state": row["corporate_action_state"],
+            "source_id": row["source_id"],
+            "license_state": row["license_state"],
+            "evidence": _loads(row["evidence_json"], {}),
+            "certification_hash": row["certification_hash"],
+            "certified_at": row["certified_at"],
+            "certified_by": row["certified_by"],
+            "superseded_by": row["superseded_by"],
+        }
+
+    def save_strategy_behavior_fingerprint(self, fp: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(fp)
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_strategy_behavior_fingerprints(
+                    fingerprint_id, strategy_id, strategy_version, dataset_version_id,
+                    signal_hash, position_hash, trade_timing_hash, return_series_hash,
+                    feature_set_hash, regime_response_hash, summary_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(strategy_id, strategy_version, dataset_version_id) DO UPDATE SET
+                    fingerprint_id=excluded.fingerprint_id,
+                    signal_hash=excluded.signal_hash,
+                    position_hash=excluded.position_hash,
+                    trade_timing_hash=excluded.trade_timing_hash,
+                    return_series_hash=excluded.return_series_hash,
+                    feature_set_hash=excluded.feature_set_hash,
+                    regime_response_hash=excluded.regime_response_hash,
+                    summary_json=excluded.summary_json
+                """,
+                (
+                    payload.get("fingerprint_id") or str(uuid.uuid4()),
+                    payload["strategy_id"],
+                    int(payload.get("strategy_version") or 0),
+                    payload["dataset_version_id"],
+                    payload.get("signal_hash") or "",
+                    payload.get("position_hash") or "",
+                    payload.get("trade_timing_hash") or "",
+                    payload.get("return_series_hash") or "",
+                    payload.get("feature_set_hash") or "",
+                    payload.get("regime_response_hash"),
+                    json.dumps(payload.get("summary") or {}),
+                    payload.get("created_at") or utc_now(),
+                ),
+            )
+        return payload
+
+    def get_strategy_behavior_fingerprint(
+        self,
+        *,
+        strategy_id: str,
+        strategy_version: int,
+        dataset_version_id: str,
+    ) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM market_strategy_behavior_fingerprints
+                WHERE strategy_id=? AND strategy_version=? AND dataset_version_id=?
+                """,
+                (strategy_id, int(strategy_version), dataset_version_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "fingerprint_id": row["fingerprint_id"],
+            "strategy_id": row["strategy_id"],
+            "strategy_version": int(row["strategy_version"]),
+            "dataset_version_id": row["dataset_version_id"],
+            "signal_hash": row["signal_hash"],
+            "position_hash": row["position_hash"],
+            "trade_timing_hash": row["trade_timing_hash"],
+            "return_series_hash": row["return_series_hash"],
+            "feature_set_hash": row["feature_set_hash"],
+            "regime_response_hash": row["regime_response_hash"],
+            "summary": _loads(row["summary_json"], {}),
+            "created_at": row["created_at"],
+        }
+
+    def save_strategy_risk_snapshot(self, snap: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(snap)
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_strategy_risk_snapshots(
+                    snapshot_id, portfolio_id, as_of, strategy_ids_json, sample_count,
+                    covariance_json, correlation_json, risk_contribution_json,
+                    methodology, state, input_hash, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(snapshot_id) DO UPDATE SET
+                    strategy_ids_json=excluded.strategy_ids_json,
+                    sample_count=excluded.sample_count,
+                    covariance_json=excluded.covariance_json,
+                    correlation_json=excluded.correlation_json,
+                    risk_contribution_json=excluded.risk_contribution_json,
+                    methodology=excluded.methodology,
+                    state=excluded.state,
+                    input_hash=excluded.input_hash
+                """,
+                (
+                    payload.get("snapshot_id") or str(uuid.uuid4()),
+                    payload["portfolio_id"],
+                    payload["as_of"],
+                    json.dumps(payload.get("strategy_ids") or []),
+                    int(payload.get("sample_count") or 0),
+                    json.dumps(payload.get("covariance") or {}),
+                    json.dumps(payload.get("correlation") or {}),
+                    json.dumps(payload.get("risk_contribution") or {}),
+                    payload.get("methodology") or "",
+                    payload.get("state") or "UNMEASURED",
+                    payload.get("input_hash") or "",
+                    payload.get("created_at") or utc_now(),
+                ),
+            )
+        return payload
+
+    def latest_strategy_risk_snapshot(self, portfolio_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM market_strategy_risk_snapshots
+                WHERE portfolio_id=? ORDER BY as_of DESC, created_at DESC LIMIT 1
+                """,
+                (portfolio_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "snapshot_id": row["snapshot_id"],
+            "portfolio_id": row["portfolio_id"],
+            "as_of": row["as_of"],
+            "strategy_ids": _loads(row["strategy_ids_json"], []),
+            "sample_count": int(row["sample_count"]),
+            "covariance": _loads(row["covariance_json"], {}),
+            "correlation": _loads(row["correlation_json"], {}),
+            "risk_contribution": _loads(row["risk_contribution_json"], {}),
+            "methodology": row["methodology"],
+            "state": row["state"],
+            "input_hash": row["input_hash"],
+            "created_at": row["created_at"],
+        }
+
+    def save_execution_calibration(self, cal: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(cal)
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_execution_calibrations(
+                    calibration_id, execution_model_id, execution_model_version,
+                    source_deployment_ids_json, symbol, provider_id, order_type,
+                    size_bucket, regime, sample_count, parameters_json, metrics_json,
+                    state, confidence_json, input_hash, created_at, created_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(calibration_id) DO UPDATE SET
+                    sample_count=excluded.sample_count,
+                    parameters_json=excluded.parameters_json,
+                    metrics_json=excluded.metrics_json,
+                    state=excluded.state,
+                    confidence_json=excluded.confidence_json,
+                    input_hash=excluded.input_hash
+                """,
+                (
+                    payload.get("calibration_id") or str(uuid.uuid4()),
+                    payload["execution_model_id"],
+                    payload["execution_model_version"],
+                    json.dumps(payload.get("source_deployment_ids") or []),
+                    payload.get("symbol"),
+                    payload.get("provider_id"),
+                    payload.get("order_type"),
+                    payload.get("size_bucket"),
+                    payload.get("regime"),
+                    int(payload.get("sample_count") or 0),
+                    json.dumps(payload.get("parameters") or {}),
+                    json.dumps(payload.get("metrics") or {}),
+                    payload.get("state") or "UNMEASURED",
+                    json.dumps(payload.get("confidence") or {}),
+                    payload.get("input_hash") or "",
+                    payload.get("created_at") or utc_now(),
+                    payload.get("created_by") or "system",
+                ),
+            )
+        return payload
+
+    def list_execution_calibrations(
+        self,
+        *,
+        execution_model_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            if execution_model_id:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM market_execution_calibrations
+                    WHERE execution_model_id=? ORDER BY created_at DESC LIMIT ?
+                    """,
+                    (execution_model_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM market_execution_calibrations
+                    ORDER BY created_at DESC LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+        return [
+            {
+                "calibration_id": r["calibration_id"],
+                "execution_model_id": r["execution_model_id"],
+                "execution_model_version": r["execution_model_version"],
+                "source_deployment_ids": _loads(r["source_deployment_ids_json"], []),
+                "symbol": r["symbol"],
+                "provider_id": r["provider_id"],
+                "order_type": r["order_type"],
+                "size_bucket": r["size_bucket"],
+                "regime": r["regime"],
+                "sample_count": int(r["sample_count"]),
+                "parameters": _loads(r["parameters_json"], {}),
+                "metrics": _loads(r["metrics_json"], {}),
+                "state": r["state"],
+                "confidence": _loads(r["confidence_json"], {}),
+                "input_hash": r["input_hash"],
+                "created_at": r["created_at"],
+                "created_by": r["created_by"],
+            }
+            for r in rows
+        ]
+
+    def save_strategy_lifecycle(self, row: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(row)
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_strategy_lifecycle(
+                    strategy_id, strategy_version, state, evidence_json, history_json,
+                    notes_json, qualification_id, paper_deployment_id, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(strategy_id, strategy_version) DO UPDATE SET
+                    state=excluded.state,
+                    evidence_json=excluded.evidence_json,
+                    history_json=excluded.history_json,
+                    notes_json=excluded.notes_json,
+                    qualification_id=excluded.qualification_id,
+                    paper_deployment_id=excluded.paper_deployment_id,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    payload["strategy_id"],
+                    int(payload.get("strategy_version") or 0),
+                    payload.get("state") or "IDEA",
+                    json.dumps(payload.get("evidence") or {}),
+                    json.dumps(payload.get("history") or []),
+                    json.dumps(payload.get("notes") or []),
+                    payload.get("qualification_id"),
+                    payload.get("paper_deployment_id"),
+                    payload.get("updated_at") or utc_now(),
+                ),
+            )
+        return payload
+
+    def get_strategy_lifecycle(
+        self, strategy_id: str, strategy_version: int
+    ) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM market_strategy_lifecycle
+                WHERE strategy_id=? AND strategy_version=?
+                """,
+                (strategy_id, int(strategy_version)),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "strategy_id": row["strategy_id"],
+            "strategy_version": int(row["strategy_version"]),
+            "state": row["state"],
+            "evidence": _loads(row["evidence_json"], {}),
+            "history": _loads(row["history_json"], []),
+            "notes": _loads(row["notes_json"], []),
+            "qualification_id": row["qualification_id"],
+            "paper_deployment_id": row["paper_deployment_id"],
+            "updated_at": row["updated_at"],
+        }
+
+    def list_trials_for_family(self, trial_family_id: str) -> list[dict[str, Any]]:
+        """Return trials whose config/metadata carry the given trial_family_id."""
+        family = str(trial_family_id or "")
+        if not family:
+            return []
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM market_experiments
+                WHERE json_extract(config_json, '$.trial_family_id') = ?
+                   OR json_extract(metadata_json, '$.trial_family_id') = ?
+                   OR json_extract(config_json, '$.family') = ?
+                ORDER BY created_at ASC
+                """,
+                (family, family, family),
+            ).fetchall()
+        return [
+            {
+                "trial_id": r["trial_id"],
+                "strategy_id": r["strategy_id"],
+                "strategy_version": r["strategy_version"],
+                "hypothesis": r["hypothesis"],
+                "proposer_agent_id": r["proposer_agent_id"],
+                "data_hash": r["data_hash"],
+                "fingerprint": r["fingerprint"],
+                "status": r["status"],
+                "config": _loads(r["config_json"], {}),
+                "split": _loads(r["split_json"], {}),
+                "results": _loads(r["results_json"], {}),
+                "acceptance_criteria": _loads(r["acceptance_json"], {}),
+                "rejection_reason": r["rejection_reason"],
+                "seed": r["seed"],
+                "created_at": r["created_at"],
+                "finished_at": r["finished_at"],
+                "metadata": _loads(r["metadata_json"], {}),
+            }
+            for r in rows
+        ]
+
+    def count_trials_for_family(self, trial_family_id: str) -> int:
+        return len(self.list_trials_for_family(trial_family_id))
+
+    def distinct_candidate_count_for_family(self, trial_family_id: str) -> int:
+        trials = self.list_trials_for_family(trial_family_id)
+        candidates: set[str] = set()
+        for t in trials:
+            cfg = t.get("config") or {}
+            meta = t.get("metadata") or {}
+            cid = cfg.get("candidate_id") or meta.get("candidate_id") or t.get("trial_id")
+            if cid:
+                candidates.add(str(cid))
+        return len(candidates)
+
