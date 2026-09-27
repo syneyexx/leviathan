@@ -675,7 +675,8 @@
       "skills_page_search_pagination": "PASS_UI limit=40 offset",
       "process_service_port_in_use": "PASS fails closed PORT_IN_USE",
       "modules_skills_frontend_contracts": "PASS vitest modulesSkillsContracts",
-      "modules_page": "see live_proofs.modules_page"
+      "modules_page": "see live_proofs.modules_page",
+      "adversarial_architecture_tests": "PASS no wrappers / no V2 owners / manifest-only / CONTROL store"
     },
     "skill_pack_invoke": {
       "claude-osint": {

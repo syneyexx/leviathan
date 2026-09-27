@@ -3159,6 +3159,87 @@ class ExternalFabricDoDProofTests(unittest.TestCase):
                 os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = prev
 
 
+class ExternalFabricAdversarialArchitectureTests(unittest.TestCase):
+    """§117-style architecture invariants — fail closed on parallel systems / wrappers."""
+
+    _FORBIDDEN_OWNERS = (
+        "ModuleManagerV2",
+        "PluginManagerV2",
+        "ExternalToolManagerV2",
+        "SkillManagerV2",
+        "CapabilityRuntimeV2",
+        "ToolRuntimeV2",
+        "AgentRuntimeV2",
+        "ExecutionGatewayV2",
+        "McpBridgeV2",
+        "ChatRuntimeV2",
+    )
+
+    def test_no_source_specific_wrapper_modules(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        hits: list[str] = []
+        for path in root.rglob("*Wrapper*.py"):
+            rel = str(path.relative_to(root))
+            if any(part in rel for part in ("HADES", "editor", "__pycache__", ".venv")):
+                continue
+            # External fabric must not grow per-repo wrappers.
+            if "external" in rel.lower() or path.name.lower().startswith(
+                ("osintgram", "ghosttrack", "feynman", "openmaic", "scrollcraft", "selfstarter", "agentreach", "agent_reach")
+            ):
+                hits.append(rel)
+        self.assertEqual(hits, [], msg=f"forbidden wrappers: {hits}")
+
+    def test_no_parallel_v2_owner_modules_under_data(self) -> None:
+        root = Path(__file__).resolve().parents[2] / "modules"
+        hits: list[str] = []
+        for path in root.rglob("*.py"):
+            if "HADES" in str(path) or "__pycache__" in str(path):
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            for name in self._FORBIDDEN_OWNERS:
+                # Allow strings used only as forbidden-name denylist / audit literals.
+                if name not in text:
+                    continue
+                # assurance.py lists forbidden names as strings — not implementations.
+                if path.name == "assurance.py" and f'"{name}"' in text:
+                    continue
+                if f"class {name}" in text or f"def {name}" in text:
+                    hits.append(f"{path}:{name}")
+        self.assertEqual(hits, [], msg=f"parallel V2 owners: {hits}")
+
+    def test_external_store_uses_control_sqlite_not_fourth_db(self) -> None:
+        from Data.modules.module_manager.external.store import ExternalCapabilityStore
+
+        src = Path(ExternalCapabilityStore.__module__.replace(".", "/") + ".py")
+        # Resolve from package root.
+        store_path = Path(__file__).resolve().parents[2] / "modules" / "module_manager" / "external" / "store.py"
+        text = store_path.read_text(encoding="utf-8")
+        self.assertIn("CONTROL", text)
+        self.assertNotRegex(text, r"external[_-]tools\.db|fourth.?db", msg=text[:200])
+        # Factory path remains ModuleManager external module — not a parallel runtime.
+        factory = (
+            Path(__file__).resolve().parents[2]
+            / "modules"
+            / "module_manager"
+            / "external"
+            / "module.py"
+        )
+        self.assertTrue(factory.is_file())
+        self.assertIn("create_external_capability_module", factory.read_text(encoding="utf-8"))
+
+    def test_shipped_external_capabilities_are_manifest_only(self) -> None:
+        root = Path(__file__).resolve().parents[2] / "external_capabilities"
+        self.assertTrue(root.is_dir())
+        for mod_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+            py_files = [p for p in mod_dir.rglob("*.py") if "__pycache__" not in str(p)]
+            self.assertEqual(
+                py_files,
+                [],
+                msg=f"{mod_dir.name} must be manifest-only; found {py_files}",
+            )
+            self.assertTrue((mod_dir / "module.json").is_file(), msg=f"missing module.json in {mod_dir}")
+
+
 class ExternalFabricRegressionGuardTests(unittest.TestCase):
     """Prove fabric work did not regress PR #191/#192/#193 surfaces."""
 
