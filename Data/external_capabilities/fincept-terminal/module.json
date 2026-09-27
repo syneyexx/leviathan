@@ -131,6 +131,26 @@
         "READ",
         "NETWORK"
       ]
+    },
+    {
+      "capability_id": "external.fincept.stats",
+      "name": "Fincept Statsmodels",
+      "description": "Run Fincept statsmodels_cli analytics helpers (research only; MarketSim remains trading authority).",
+      "external_name": "stats",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.fincept.fixed_income",
+      "name": "Fincept Fixed Income",
+      "description": "Run Fincept fixedIncome CLI analytics (research only; MarketSim remains trading authority).",
+      "external_name": "fixed_income",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
     }
   ]
 }

@@ -135,6 +135,25 @@
       ]
     },
     {
+      "capability_id": "external.agent_reach.check_update",
+      "name": "Agent-Reach Check Update",
+      "description": "Check whether a newer Agent-Reach package/version is available (CLI check-update).",
+      "external_name": "check_update",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.agent_reach.version",
+      "name": "Agent-Reach Version",
+      "description": "Report installed Agent-Reach CLI version.",
+      "external_name": "version",
+      "side_effects": [
+        "READ"
+      ]
+    },
+    {
       "capability_id": "external.agent_reach.fetch_url",
       "name": "Agent-Reach Fetch URL (Jina)",
       "description": "Read an arbitrary URL via Jina Reader (skill-routed zero-config web path).",

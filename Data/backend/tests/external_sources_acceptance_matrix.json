@@ -9,7 +9,7 @@
     "NOT_APPLICABLE",
     "FAILED"
   ],
-  "notes": "Fixture adapters prove all adapter kinds. Live installs 21/21. Skill packs+catalog PASS. Vibe-Trading MCP 74 tools + ExecutionGateway approval path PASS. Agent-Reach real contract: doctor JSON + SKILL router (no fake search CLI). llm-agent-trader PARTIAL (LLM analyze). GhostTrack PARTIAL: declarative curl argv for audited public APIs (ipwho.is / api.ipify.org); GhostTR.py TUI phone/username remain blocked. COMPOSITE declared CLI ops beat skill-pack name collisions. MCP lazy ensure_ready. Cognition offloads EXTERNAL_REQUIRED MODULE caps via JobRuntime (job.* SSE). capability.discovered emitted on SEARCH. No per-repository wrappers. Closable-gap unit suite covers declared-ops precedence, HTTP 202 accept_statuses, OpenMAIC fail-poll fixture, boot register swallow, route lifecycle+versions, FE versions/logs/jobs contracts. FILE/artifact_globs promote into artifact_refs so cognition emits artifact.created + knowledge.assimilation_queued SSE. ArtifactStore materialize: CLI FILE globs + oversized stdout become artifact_ids (bounded Chat inline). HTTP large body materialize + periodic module idle sweep loop (LEVIATHAN_MODULE_IDLE_SWEEP_SECONDS). Cognition iterative loop returns OBSERVING\u2192REASONING between tools; ActionSelector-driven A\u2192B proven; OwnedProcess stderr flood drain proven.",
+  "notes": "Fixture adapters prove all adapter kinds. Live installs 21/21. Skill packs+catalog PASS. Vibe-Trading MCP 74 tools + ExecutionGateway approval path PASS. Agent-Reach real contract: doctor JSON + SKILL router (no fake search CLI). llm-agent-trader PARTIAL (LLM analyze). GhostTrack PARTIAL: declarative curl argv for audited public APIs (ipwho.is / api.ipify.org); GhostTR.py TUI phone/username remain blocked. COMPOSITE declared CLI ops beat skill-pack name collisions. MCP lazy ensure_ready. Cognition offloads EXTERNAL_REQUIRED MODULE caps via JobRuntime (job.* SSE). capability.discovered emitted on SEARCH. No per-repository wrappers. Closable-gap unit suite covers declared-ops precedence, HTTP 202 accept_statuses, OpenMAIC fail-poll fixture, boot register swallow, route lifecycle+versions, FE versions/logs/jobs contracts. FILE/artifact_globs promote into artifact_refs so cognition emits artifact.created + knowledge.assimilation_queued SSE. ArtifactStore materialize: CLI FILE globs + oversized stdout become artifact_ids (bounded Chat inline). HTTP large body materialize + periodic module idle sweep loop (LEVIATHAN_MODULE_IDLE_SWEEP_SECONDS). Cognition iterative loop returns OBSERVING\u2192REASONING between tools; ActionSelector-driven A\u2192B proven; OwnedProcess stderr flood drain proven. Chat CapabilityResultCards prefer ARTIFACT part names over raw UUID refs; Agent-Reach version/check_update + Fincept stats/fixed_income capabilities declared.",
   "sources": [
     {
       "source": "wonderwhy-er/DesktopCommanderMCP",
@@ -497,7 +497,7 @@
     "COMPOSITE": "PASS",
     "MCP": "PASS"
   },
-  "worktree_head": "718605e3c1f131240f51ba459ddb05972633a9fc",
+  "worktree_head": "3bbd3b398c7a7b647c1dfd1224c6879da7b6e65a",
   "live_proofs": {
     "install_pass_module_ids": [
       "agent-reach",
@@ -698,7 +698,10 @@
       "http_large_body_materialize": "PASS_UNIT",
       "periodic_module_idle_sweep_loop": "PASS_UNIT",
       "owned_process_stderr_drain": "PASS_UNIT",
-      "observing_to_reasoning_multi_tool_fix": "PASS_UNIT"
+      "observing_to_reasoning_multi_tool_fix": "PASS_UNIT",
+      "capability_result_cards_artifact_labels": "PASS_UNIT",
+      "agent_reach_version_check_update_caps": "PASS_MANIFEST",
+      "fincept_stats_fixed_income_caps": "PASS_MANIFEST"
     },
     "skill_pack_invoke": {
       "claude-osint": {

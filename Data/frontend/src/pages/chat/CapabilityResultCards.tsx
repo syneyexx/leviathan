@@ -40,6 +40,33 @@ function artifactHref(ref: string): string {
   return `/api/artifacts/${encodeURIComponent(id)}`;
 }
 
+function artifactLabel(ref: string, parts: unknown[] | undefined): string {
+  const id = ref.replace(/^artifact:/i, "").trim();
+  for (const part of parts || []) {
+    const row = asPartRecord(part);
+    if (!row) continue;
+    if (partKind(row) !== "ARTIFACT") continue;
+    const nested = row.artifacts;
+    if (Array.isArray(nested)) {
+      for (const a of nested) {
+        const art = asPartRecord(a);
+        if (!art) continue;
+        const aid = String(art.artifact_id || art.ref || "").replace(/^artifact:/i, "").trim();
+        if (aid && aid === id) {
+          return String(art.name || art.filename || art.title || ref);
+        }
+      }
+    }
+    const aid = String(row.artifact_id || row.ref || "").replace(/^artifact:/i, "").trim();
+    if (aid && aid === id) {
+      return String(row.name || row.filename || row.title || ref);
+    }
+  }
+  // Prefer short display for bare UUIDs while keeping full ref in title/href.
+  if (/^[0-9a-f-]{36}$/i.test(id)) return `artifact ${id.slice(0, 8)}`;
+  return ref;
+}
+
 function sourceEntries(call: AssistantToolCallTelemetry): Array<{ title: string; url?: string }> {
   const out: Array<{ title: string; url?: string }> = [];
   for (const part of call.parts || []) {
@@ -164,9 +191,10 @@ export function CapabilityResultCards({ toolCalls }: Props) {
                       href={artifactHref(ref)}
                       target="_blank"
                       rel="noreferrer"
+                      title={ref}
                       style={{ color: "inherit", textDecoration: "underline", opacity: 0.9 }}
                     >
-                      {ref}
+                      {artifactLabel(ref, call.parts)}
                     </a>
                   ))}
                 </div>

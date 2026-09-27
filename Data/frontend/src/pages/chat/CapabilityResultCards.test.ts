@@ -22,6 +22,10 @@ describe("CapabilityResultCards", () => {
         parts: [
           { kind: "SOURCE", title: "Example thread", url: "https://example.test/a" },
           { kind: "PROGRESS", text: "Searching Reddit..." },
+          {
+            kind: "ARTIFACT",
+            artifacts: [{ artifact_id: "report-1", name: "Research Report.md" }],
+          },
         ],
       },
     ];
@@ -33,9 +37,26 @@ describe("CapabilityResultCards", () => {
     expect(html).toContain("4.2 s");
     expect(html).toContain("31 results");
     expect(html).toContain("12 sources");
-    expect(html).toContain("artifact:report-1");
+    expect(html).toContain("Research Report.md");
+    expect(html).toContain("/api/artifacts/report-1");
     expect(html).toContain("Example thread");
     expect(html).toContain("Searching Reddit...");
+  });
+
+  it("labels bare UUID artifact refs without inventing filenames", () => {
+    const toolCalls: AssistantToolCallTelemetry[] = [
+      {
+        capability_id: "external.demo.tool",
+        module_id: "demo",
+        status: "COMPLETED",
+        success: true,
+        artifact_refs: ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"],
+        parts: [],
+      },
+    ];
+    const html = renderToStaticMarkup(createElement(CapabilityResultCards, { toolCalls }));
+    expect(html).toContain("artifact a1b2c3d4");
+    expect(html).toContain("/api/artifacts/a1b2c3d4-e5f6-7890-abcd-ef1234567890");
   });
 
   it("returns null when there are no capability rows", () => {
