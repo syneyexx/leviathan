@@ -430,7 +430,7 @@ T2 backend: simulation rounds persist deterministic `MarketState` (regime/trend/
 
 **Slice 16:** TradingCenter UI remains paper/sim-backed only. Live broker stays BLOCKED; A5 is impossible. No mock-success badges. Gate evidence: G41/G42/G48 PASS. Remaining advanced ops gates (G49–G60) stay honest NOT_STARTED.
 
-**Capability honesty (CURRENT):** `/api/market-sim/capabilities` is the sole capability authority for Trading Center. It includes per-family HISTORICAL_SIM / LIVE_PAPER / LIVE_TRADING statuses plus an `execution_granularity` matrix (BAR_OHLCV SUPPORTED; QUOTE_L1 FEATURE_GATED; BOOK_L2 / ORDER_EVENT_L3 UNSUPPORTED). UI must not invent L2/L3 from OHLCV, fabricate connected/provider success, or display SEALED-derived adaptive learning as TRAIN evidence. Unknown/UNMEASURED/BLOCKED states use honest styling — never success chrome.
+**Capability honesty (CURRENT):** `/api/market-sim/capabilities` is the sole capability authority for Trading Center (typed as `MarketSimCapabilities`). It includes per-family HISTORICAL_SIM / LIVE_PAPER / LIVE_TRADING statuses, an `execution_granularity` matrix (BAR_OHLCV SUPPORTED; QUOTE_L1 SUPPORTED via real bid/ask only; BOOK_L2 / ORDER_EVENT_L3 UNSUPPORTED), and a backend-authored `action_matrix` (live broker always BLOCKED). UI must not invent L2/L3 from OHLCV, fabricate connected/provider success, or display SEALED-derived adaptive learning as TRAIN evidence. Unknown/UNMEASURED/BLOCKED states use honest styling — never success chrome. Options/fixed-income trading remain NOT_IMPLEMENTED.
 
 ---
 
