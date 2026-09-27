@@ -129,7 +129,6 @@ def _resolve_data_root(raw: str) -> Path:
     text = raw.strip()
     if not text:
         raise ConfigurationError("LEVIATHAN_DATA_ROOT cannot be empty")
-    # Drive-letter or UNC paths are treated as absolute operator roots.
     if len(text) >= 3 and text[0].isalpha() and text[1] == ":" and text[2] in {"/", "\\"}:
         return Path(text)
     if text.startswith("\\\\") or text.startswith("//"):
@@ -222,7 +221,7 @@ class ManagedServingSettings:
     """Managed local model worker / residency configuration."""
 
     enabled: bool = True
-    allow_inproc_fixture: bool = False  # production must never default to echo/inproc success
+    allow_inproc_fixture: bool = False
     llama_cpp_executable: str | None = None
     vllm_executable: str | None = None
     bind_host: str = "127.0.0.1"
@@ -248,7 +247,7 @@ class KnowledgeSettings:
     embedding_hash_dimensions: int = 256
     reranker_model: str | None = None
     deep_recall_budget: int = 800
-    rerank_policy: str = "auto"  # off | auto | always
+    rerank_policy: str = "auto"
     rerank_candidate_count: int = 20
     rerank_final_count: int = 5
     min_retrieval_score: float = 0.0
@@ -268,14 +267,13 @@ class KnowledgeSettings:
     atlas_expansion_depth: int = 1
     auto_dedupe: bool = True
     integrity_checks: bool = True
-    # Deprecated specialized knowledge.commit lane (max 1). Bulk writes owned by db_commit.
     commit_concurrency: int = 0
 
 
 @dataclass(frozen=True)
 class ReasoningSettings:
     enabled: bool
-    default_mode: str = "adaptive"  # adaptive|fast|standard|deep|maximum
+    default_mode: str = "adaptive"
     allow_fast_path: bool = True
     minimum_evidence_coverage: float = 0.35
     uncertainty_deep_threshold: float = 0.75
@@ -284,7 +282,6 @@ class ReasoningSettings:
     max_retries_global: int = 3
     require_verification_for_high_risk: bool = True
     require_grounding_for_knowledge_tasks: bool = True
-    # Budget profiles (flat fields for settings path mapping)
     fast_max_wall_time_seconds: float = 30.0
     fast_max_model_calls: int = 1
     fast_max_model_tokens: int = 2000
@@ -325,8 +322,6 @@ class ReasoningSettings:
 
 @dataclass(frozen=True)
 class VerificationSettings:
-    """Verification / grounding toggles for high-risk and knowledge paths."""
-
     factual_grounding: bool = True
     contradiction_check: bool = True
     require_evidence: bool = True
@@ -336,8 +331,6 @@ class VerificationSettings:
 
 @dataclass(frozen=True)
 class FeatureFlags:
-    """Experimental switches. Flags must never bypass security policy."""
-
     reasoning_iterative_retrieval: bool
     memory_semantic: bool
     neuro_enabled: bool
@@ -375,30 +368,19 @@ class FeatureFlags:
     cognition_adaptive_depth: bool
     cognition_delegation: bool
     cognition_experience_learning: bool
-    # Wave 0 — durable kernel / architecture guardrails (leases takeover, full envelope emission)
     durable_kernel: bool
-    # Wave 2 — evaluation as release authority (persist reports, scorecards, promotion gates)
     eval_platform: bool
-    # Wave 3 — managed local model serving + measured routing
     model_serving: bool
-    # Wave 4 — context compiler / scoped memory / retrieval thresholds
     context_substrate: bool
-    # Wave 5 — capability world interface (receipts, secrets broker, browser worker)
     capability_world: bool
-    # Wave 6 — coding/research frontier (semantic map, claim graphs, reproducibility)
     coding_research_frontier: bool
-    # Wave 7 — multimodal + realtime voice (media/voice fixture adapters)
     multimodal_realtime: bool
-    # Wave 8 — industrial data + training factory (mixtures, integrity gate)
     data_training_factory: bool
-    # Wave 9 — post-training improvement flywheel (prefs/DPO/promotion)
     posttraining_flywheel: bool
 
 
 @dataclass(frozen=True)
 class CodingSettings:
-    """Coding Agent control-plane settings (workspace + loop bounds)."""
-
     workspace: Path
     max_rounds: int = 12
     max_file_bytes: int = 1_000_000
@@ -419,8 +401,6 @@ class CodingSettings:
 
 @dataclass(frozen=True)
 class MarketSimSettings:
-    """Market simulation control-plane settings (data root + worker bounds)."""
-
     markets_root: Path
     bars_per_slice: int = 50
     default_initial_cash: float = 100_000.0
@@ -440,11 +420,11 @@ class MarketSimSettings:
 
 @dataclass(frozen=True)
 class NeuroRuntimeSettings:
-    residual_kind: str  # unsupported | deterministic | hf | vllm | llama_cpp | trt
+    residual_kind: str
     residual_model_id: str | None
     residual_device: str
     absorb_default_limit: int
-    residual_load_weights: bool = False  # high-memory / dev-only HF weight load
+    residual_load_weights: bool = False
     residual_hook_layers: tuple[int, ...] = ()
     cortex_max_k: int = 2
     memory_tier0_max_slots: int = 64
@@ -453,12 +433,6 @@ class NeuroRuntimeSettings:
 
 @dataclass(frozen=True)
 class WorkersSettings:
-    """Generic execution-fabric worker supervisor / pool knobs.
-
-    Flat fields map 1:1 to settings catalog paths (depth-2 control plane).
-    Env names match ``Data.modules.workers.settings.load_worker_settings``.
-    """
-
     enabled: bool = True
     supervisor_enabled: bool = True
     externalize_api_runners: bool = True
@@ -476,8 +450,6 @@ class WorkersSettings:
 
 @dataclass(frozen=True)
 class DbCommitSettings:
-    """DB Commit Coordinator — serialized COMMIT_WRITE fabric knobs."""
-
     enabled: bool = True
     max_pending_count: int = 2_000
     max_pending_bytes: int = 2_147_483_648
@@ -515,8 +487,6 @@ class ContextSettings:
 
 @dataclass(frozen=True)
 class InferenceSettings:
-    """Inference-efficiency plane knobs (Task C). Catalog paths: inference.*."""
-
     tokenizer_mode: str = "auto"
     context_safety_margin: float = 0.03
     caches_enabled: bool = True
@@ -555,41 +525,27 @@ class ChaosSettings:
 
 @dataclass(frozen=True)
 class ResearchIntegrationSettings:
-    """External data/research integration knobs (secrets + endpoints)."""
-
     hf_token: str = ""
     web_search_endpoint: str | None = None
     web_search_api_key: str = ""
-    # Optional adapter: generic | searxng | brave (auto-detect from endpoint when empty)
     web_search_provider: str = ""
-    # auto | configured_only | fallback_only | off — keyless public fallback when auto
     web_search_mode: str = "auto"
     training_fixture: bool = False
     corpus_root: str = ""
     auto_promote_verified_knowledge: bool = True
     datasets_auto_index_ready_to_knowledge: bool = True
-    # Recovery: optionally auto-enqueue index jobs after sidecar/catalog restore (default off).
     datasets_recovery_auto_reindex: bool = False
     datasets_recovery_max_auto_jobs: int = 8
-    # Dataset learning / job runner: external (production) | inprocess (test/legacy) | none
     dataset_jobs_runner: str = "external"
     dataset_index_batch_size: int = 50
     dataset_max_relations_per_doc: int = 24
     dataset_extract_relations: bool = True
-    # Source ingestion worker: external (production) | inprocess (test/legacy) | none
     source_ingestion_runner: str = "external"
 
 
 @dataclass(frozen=True)
 class NativeComputeSettings:
-    """Rust native data-plane compute mode and memory budgets.
-
-    Catalog paths: ``native_compute.*``. Env overrides also honored by
-    ``resolve_dataset_memory_policy``. Mode ``python`` forces streaming Python;
-    ``rust`` prefers the native binary when available; ``auto`` uses size thresholds.
-    """
-
-    mode: str = "auto"  # auto | python | rust
+    mode: str = "auto"
     memory_budget_mb: int = 512
     max_record_mb: int = 16
     batch_rows: int = 16_384
@@ -599,8 +555,6 @@ class NativeComputeSettings:
 
 @dataclass(frozen=True)
 class AssistantSettings:
-    """Technical assistant orchestration knobs (not BehaviorProfile content policy)."""
-
     auto_web: bool = True
     auto_tools: bool = True
     auto_delegation: bool = True
@@ -613,8 +567,6 @@ class AssistantSettings:
 
 @dataclass(frozen=True)
 class BrowserQaSettings:
-    """Localhost human-journey QA crawler knobs."""
-
     enabled: bool = True
     allowed_hosts: str = "localhost,127.0.0.1,::1"
     max_pages: int = 50
@@ -624,24 +576,6 @@ class BrowserQaSettings:
 
 @dataclass(frozen=True)
 class Settings:
-    """Canonical LEVIATHAN settings.
-
-    Precedence (Settings Control Plane):
-      hard safety invariants
-        > persisted operator overrides (when allowed)
-        > environment / .env defaults
-
-    Bootstrap-critical values (especially database paths) remain environment-owned
-    and are never sourced from the SQLite override store.
-
-    Nested domains are the source of truth. Flat compatibility properties
-    preserve existing callers until they migrate.
-
-    Persistence uses exactly three canonical SQLite databases (Control / Knowledge /
-    Market). ``database_path`` is the Control Plane path (compatibility alias).
-    ``LEVIATHAN_DATABASE_PATH`` is legacy upgrade input only.
-    """
-
     runtime: RuntimeSettings
     model: ModelSettings
     knowledge: KnowledgeSettings
@@ -666,9 +600,7 @@ class Settings:
     browser_qa: BrowserQaSettings
     managed_serving: ManagedServingSettings
     database_paths: DatabasePaths
-    database_path: Path  # Control Plane path (compat alias)
-
-    # --- Compatibility accessors (Step 1 call sites) ---
+    database_path: Path
 
     @property
     def control_database_path(self) -> Path:
@@ -718,7 +650,6 @@ class Settings:
         return self.reasoning.enabled
 
     def public_summary(self) -> dict:
-        """Non-secret configuration snapshot for health/diagnostics."""
         return {
             "runtime": {
                 "host": self.runtime.host,
@@ -868,7 +799,6 @@ class Settings:
                 "max_rounds": self.coding.max_rounds,
                 "max_file_bytes": self.coding.max_file_bytes,
                 "temperature": self.coding.temperature,
-                # Workspace path omitted from public summary (operator-local root).
                 "workspace_configured": bool(str(self.coding.workspace).strip()),
             },
             "market_sim": {
@@ -929,25 +859,15 @@ class Settings:
             "research_integration": {
                 "hf_token_configured": bool(self.research_integration.hf_token.strip()),
                 "web_search_endpoint": self.research_integration.web_search_endpoint,
-                "web_search_key_configured": bool(
-                    self.research_integration.web_search_api_key.strip()
-                ),
+                "web_search_key_configured": bool(self.research_integration.web_search_api_key.strip()),
                 "web_search_provider": self.research_integration.web_search_provider or None,
                 "web_search_mode": self.research_integration.web_search_mode or "auto",
                 "training_fixture": self.research_integration.training_fixture,
                 "corpus_root": self.research_integration.corpus_root or None,
-                "auto_promote_verified_knowledge": (
-                    self.research_integration.auto_promote_verified_knowledge
-                ),
-                "datasets_auto_index_ready_to_knowledge": (
-                    self.research_integration.datasets_auto_index_ready_to_knowledge
-                ),
-                "datasets_recovery_auto_reindex": (
-                    self.research_integration.datasets_recovery_auto_reindex
-                ),
-                "datasets_recovery_max_auto_jobs": (
-                    self.research_integration.datasets_recovery_max_auto_jobs
-                ),
+                "auto_promote_verified_knowledge": self.research_integration.auto_promote_verified_knowledge,
+                "datasets_auto_index_ready_to_knowledge": self.research_integration.datasets_auto_index_ready_to_knowledge,
+                "datasets_recovery_auto_reindex": self.research_integration.datasets_recovery_auto_reindex,
+                "datasets_recovery_max_auto_jobs": self.research_integration.datasets_recovery_max_auto_jobs,
                 "dataset_jobs_runner": self.research_integration.dataset_jobs_runner,
                 "dataset_index_batch_size": self.research_integration.dataset_index_batch_size,
                 "dataset_extract_relations": self.research_integration.dataset_extract_relations,
@@ -989,7 +909,6 @@ class Settings:
         assert_canonical_paths_distinct(database_paths)
         database_path = database_paths.control
 
-        # Bulk corpora root. Configurable; default matches master program.
         data_root_raw = _env_raw("LEVIATHAN_DATA_ROOT", "ModelData") or "ModelData"
         data_root = _resolve_data_root(data_root_raw)
 
@@ -1012,15 +931,11 @@ class Settings:
 
         coding_enabled = _env_bool("LEVIATHAN_FEATURE_CODING", True)
         mcp_enabled = _env_bool("LEVIATHAN_FEATURE_MCP", False)
-        # Hierarchical children: default true only when parent is enabled; explicit
-        # child=true with parent=false is rejected in validate().
         mcp_stdio = _env_bool("LEVIATHAN_FEATURE_MCP_STDIO", True) if mcp_enabled else False
         mcp_http = _env_bool("LEVIATHAN_FEATURE_MCP_HTTP", True) if mcp_enabled else False
         mcp_auto_expand = (
             _env_bool("LEVIATHAN_FEATURE_MCP_AUTO_EXPAND_MODULES", True) if mcp_enabled else False
         )
-        # Default ON for local/dev so TradingCenter Market Sim opens usable.
-        # Explicit LEVIATHAN_FEATURE_MARKET_SIM=false still disables.
         market_sim_enabled = _env_bool("LEVIATHAN_FEATURE_MARKET_SIM", True)
         rag_v3 = _env_bool("LEVIATHAN_FEATURE_RAG_V3", True)
         deep_recall = _env_bool("LEVIATHAN_FEATURE_DEEP_RECALL", True)
@@ -1029,7 +944,6 @@ class Settings:
         chat_streaming = _env_bool("LEVIATHAN_FEATURE_CHAT_STREAMING", False)
         chat_sse = _env_bool("LEVIATHAN_FEATURE_CHAT_SSE", False)
         cognition_enabled = _env_bool("LEVIATHAN_FEATURE_COGNITION", True)
-        # Children are read independently; hierarchy enforced in validate().
         cognition_shadow = _env_bool("LEVIATHAN_FEATURE_COGNITION_SHADOW", False)
         cognition_iterative = _env_bool("LEVIATHAN_FEATURE_COGNITION_ITERATIVE_LOOP", True)
         cognition_belief = _env_bool("LEVIATHAN_FEATURE_COGNITION_BELIEF_STATE", True)
@@ -1051,79 +965,36 @@ class Settings:
         ).strip().lower()
         embedding_model = (_env_raw("LEVIATHAN_EMBEDDING_MODEL", "") or "").strip() or None
         reranker_model = (_env_raw("LEVIATHAN_RERANKER_MODEL", "") or "").strip() or None
-        coding_workspace_raw = (
-            _env_raw("LEVIATHAN_CODING_WORKSPACE", "codingworkspace")
-            or "codingworkspace"
-        )
+        coding_workspace_raw = _env_raw("LEVIATHAN_CODING_WORKSPACE", "codingworkspace") or "codingworkspace"
         coding_workspace = _resolve_data_root(coding_workspace_raw)
-        markets_root_raw = (
-            _env_raw("LEVIATHAN_MARKETS_ROOT", "") or ""
-        ).strip()
+        markets_root_raw = (_env_raw("LEVIATHAN_MARKETS_ROOT", "") or "").strip()
         if not markets_root_raw:
             markets_root_raw = str(data_root / "markets")
         markets_root = _resolve_data_root(markets_root_raw)
-        allowlist_raw = (
-            _env_raw(
-                "LEVIATHAN_CODING_COMMAND_ALLOWLIST",
-                "python,python3,pytest,npm,npx,node,git",
-            )
-            or "python,python3,pytest,npm,npx,node,git"
-        )
-        command_allowlist = tuple(
-            part.strip() for part in allowlist_raw.split(",") if part.strip()
-        )
+        allowlist_raw = _env_raw(
+            "LEVIATHAN_CODING_COMMAND_ALLOWLIST",
+            "python,python3,pytest,npm,npx,node,git",
+        ) or "python,python3,pytest,npm,npx,node,git"
+        command_allowlist = tuple(part.strip() for part in allowlist_raw.split(",") if part.strip())
 
         settings = cls(
             runtime=RuntimeSettings(host=host, port=port, loopback_only=loopback_only),
-            model=ModelSettings(
-                base_url=base_url,
-                model=model,
-                api_key=api_key,
-                timeout_seconds=timeout,
-            ),
+            model=ModelSettings(base_url=base_url, model=model, api_key=api_key, timeout_seconds=timeout),
             managed_serving=ManagedServingSettings(
                 enabled=_env_bool("LEVIATHAN_MANAGED_MODEL_SERVING", True),
                 allow_inproc_fixture=_env_bool("LEVIATHAN_ALLOW_INPROC_MODEL_FIXTURE", False),
-                llama_cpp_executable=(
-                    _env_raw("LEVIATHAN_LLAMA_CPP_EXECUTABLE", "") or ""
-                ).strip()
-                or None,
-                vllm_executable=(
-                    _env_raw("LEVIATHAN_VLLM_EXECUTABLE", "") or ""
-                ).strip()
-                or None,
-                bind_host=(
-                    _env_raw("LEVIATHAN_MANAGED_BIND_HOST", "127.0.0.1") or "127.0.0.1"
-                ).strip(),
+                llama_cpp_executable=(_env_raw("LEVIATHAN_LLAMA_CPP_EXECUTABLE", "") or "").strip() or None,
+                vllm_executable=(_env_raw("LEVIATHAN_VLLM_EXECUTABLE", "") or "").strip() or None,
+                bind_host=(_env_raw("LEVIATHAN_MANAGED_BIND_HOST", "127.0.0.1") or "127.0.0.1").strip(),
                 port_start=_env_int("LEVIATHAN_MANAGED_PORT_START", 29100, minimum=1024, maximum=65000),
                 port_end=_env_int("LEVIATHAN_MANAGED_PORT_END", 29200, minimum=1024, maximum=65535),
-                worker_startup_timeout_seconds=_env_float(
-                    "LEVIATHAN_MANAGED_WORKER_STARTUP_TIMEOUT_SECONDS", 120.0, minimum=5.0
-                ),
-                worker_shutdown_timeout_seconds=_env_float(
-                    "LEVIATHAN_MANAGED_WORKER_SHUTDOWN_TIMEOUT_SECONDS", 15.0, minimum=1.0
-                ),
-                default_residency_policy=(
-                    _env_raw("LEVIATHAN_DEFAULT_RESIDENCY_POLICY", "IDLE_UNLOAD") or "IDLE_UNLOAD"
-                ).strip().upper(),
-                default_idle_unload_seconds=_env_float(
-                    "LEVIATHAN_DEFAULT_IDLE_UNLOAD_SECONDS", 300.0, minimum=0.0
-                ),
-                min_ram_reserve_bytes=_env_int(
-                    "LEVIATHAN_MIN_RAM_RESERVE_BYTES",
-                    1_073_741_824,
-                    minimum=0,
-                    maximum=64_000_000_000,
-                ),
-                min_vram_reserve_bytes=_env_int(
-                    "LEVIATHAN_MIN_VRAM_RESERVE_BYTES",
-                    536_870_912,
-                    minimum=0,
-                    maximum=64_000_000_000,
-                ),
-                max_managed_resident_models=_env_int(
-                    "LEVIATHAN_MAX_MANAGED_RESIDENT_MODELS", 4, minimum=1, maximum=64
-                ),
+                worker_startup_timeout_seconds=_env_float("LEVIATHAN_MANAGED_WORKER_STARTUP_TIMEOUT_SECONDS", 120.0, minimum=5.0),
+                worker_shutdown_timeout_seconds=_env_float("LEVIATHAN_MANAGED_WORKER_SHUTDOWN_TIMEOUT_SECONDS", 15.0, minimum=1.0),
+                default_residency_policy=(_env_raw("LEVIATHAN_DEFAULT_RESIDENCY_POLICY", "IDLE_UNLOAD") or "IDLE_UNLOAD").strip().upper(),
+                default_idle_unload_seconds=_env_float("LEVIATHAN_DEFAULT_IDLE_UNLOAD_SECONDS", 300.0, minimum=0.0),
+                min_ram_reserve_bytes=_env_int("LEVIATHAN_MIN_RAM_RESERVE_BYTES", 1_073_741_824, minimum=0, maximum=64_000_000_000),
+                min_vram_reserve_bytes=_env_int("LEVIATHAN_MIN_VRAM_RESERVE_BYTES", 536_870_912, minimum=0, maximum=64_000_000_000),
+                max_managed_resident_models=_env_int("LEVIATHAN_MAX_MANAGED_RESIDENT_MODELS", 4, minimum=1, maximum=64),
             ),
             knowledge=KnowledgeSettings(
                 top_k=knowledge_top_k,
@@ -1132,94 +1003,43 @@ class Settings:
                 chunk_overlap=chunk_overlap,
                 embedding_provider=embedding_provider,
                 embedding_model=embedding_model,
-                embedding_hash_dimensions=_env_int(
-                    "LEVIATHAN_EMBEDDING_HASH_DIMENSIONS", 256, minimum=32, maximum=4096
-                ),
+                embedding_hash_dimensions=_env_int("LEVIATHAN_EMBEDDING_HASH_DIMENSIONS", 256, minimum=32, maximum=4096),
                 reranker_model=reranker_model,
-                deep_recall_budget=_env_int(
-                    "LEVIATHAN_DEEP_RECALL_BUDGET", 800, minimum=64, maximum=20_000
-                ),
-                rerank_policy=(
-                    _env_raw("LEVIATHAN_RERANK_POLICY", "auto") or "auto"
-                ).strip().lower(),
-                rerank_candidate_count=_env_int(
-                    "LEVIATHAN_RERANK_CANDIDATE_COUNT", 20, minimum=1, maximum=500
-                ),
-                rerank_final_count=_env_int(
-                    "LEVIATHAN_RERANK_FINAL_COUNT", 5, minimum=1, maximum=100
-                ),
-                min_retrieval_score=_env_float(
-                    "LEVIATHAN_KNOWLEDGE_MIN_RETRIEVAL_SCORE", 0.0, minimum=0.0, maximum=1.0
-                ),
-                min_confidence=_env_float(
-                    "LEVIATHAN_KNOWLEDGE_MIN_CONFIDENCE", 0.0, minimum=0.0, maximum=1.0
-                ),
+                deep_recall_budget=_env_int("LEVIATHAN_DEEP_RECALL_BUDGET", 800, minimum=64, maximum=20_000),
+                rerank_policy=(_env_raw("LEVIATHAN_RERANK_POLICY", "auto") or "auto").strip().lower(),
+                rerank_candidate_count=_env_int("LEVIATHAN_RERANK_CANDIDATE_COUNT", 20, minimum=1, maximum=500),
+                rerank_final_count=_env_int("LEVIATHAN_RERANK_FINAL_COUNT", 5, minimum=1, maximum=100),
+                min_retrieval_score=_env_float("LEVIATHAN_KNOWLEDGE_MIN_RETRIEVAL_SCORE", 0.0, minimum=0.0, maximum=1.0),
+                min_confidence=_env_float("LEVIATHAN_KNOWLEDGE_MIN_CONFIDENCE", 0.0, minimum=0.0, maximum=1.0),
                 query_expansion=_env_bool("LEVIATHAN_KNOWLEDGE_QUERY_EXPANSION", True),
-                max_query_expansions=_env_int(
-                    "LEVIATHAN_KNOWLEDGE_MAX_QUERY_EXPANSIONS", 4, minimum=0, maximum=32
-                ),
-                max_retrieval_rounds=_env_int(
-                    "LEVIATHAN_KNOWLEDGE_MAX_RETRIEVAL_ROUNDS", 3, minimum=1, maximum=16
-                ),
+                max_query_expansions=_env_int("LEVIATHAN_KNOWLEDGE_MAX_QUERY_EXPANSIONS", 4, minimum=0, maximum=32),
+                max_retrieval_rounds=_env_int("LEVIATHAN_KNOWLEDGE_MAX_RETRIEVAL_ROUNDS", 3, minimum=1, maximum=16),
                 diversity_enabled=_env_bool("LEVIATHAN_KNOWLEDGE_DIVERSITY_ENABLED", True),
-                diversity_strength=_env_float(
-                    "LEVIATHAN_KNOWLEDGE_DIVERSITY_STRENGTH", 0.3, minimum=0.0, maximum=1.0
-                ),
+                diversity_strength=_env_float("LEVIATHAN_KNOWLEDGE_DIVERSITY_STRENGTH", 0.3, minimum=0.0, maximum=1.0),
                 lexical_enabled=_env_bool("LEVIATHAN_KNOWLEDGE_LEXICAL_ENABLED", True),
                 dense_enabled=_env_bool("LEVIATHAN_KNOWLEDGE_DENSE_ENABLED", True),
                 hybrid_enabled=_env_bool("LEVIATHAN_KNOWLEDGE_HYBRID_ENABLED", True),
                 rrf_k=_env_int("LEVIATHAN_KNOWLEDGE_RRF_K", 60, minimum=1, maximum=10_000),
-                contradiction_detection=_env_bool(
-                    "LEVIATHAN_KNOWLEDGE_CONTRADICTION_DETECTION", True
-                ),
+                contradiction_detection=_env_bool("LEVIATHAN_KNOWLEDGE_CONTRADICTION_DETECTION", True),
                 retrieval_trace=_env_bool("LEVIATHAN_KNOWLEDGE_RETRIEVAL_TRACE", True),
                 atlas_retrieval=_env_bool("LEVIATHAN_KNOWLEDGE_ATLAS_RETRIEVAL", True),
-                atlas_expansion_depth=_env_int(
-                    "LEVIATHAN_KNOWLEDGE_ATLAS_EXPANSION_DEPTH", 1, minimum=0, maximum=8
-                ),
+                atlas_expansion_depth=_env_int("LEVIATHAN_KNOWLEDGE_ATLAS_EXPANSION_DEPTH", 1, minimum=0, maximum=8),
                 auto_dedupe=_env_bool("LEVIATHAN_KNOWLEDGE_AUTO_DEDUPE", True),
                 integrity_checks=_env_bool("LEVIATHAN_KNOWLEDGE_INTEGRITY_CHECKS", True),
-                commit_concurrency=_env_int(
-                    "LEVIATHAN_WORKERS_POOL_KNOWLEDGE_COMMIT_COUNT", 0, minimum=0, maximum=1
-                ),
+                commit_concurrency=_env_int("LEVIATHAN_WORKERS_POOL_KNOWLEDGE_COMMIT_COUNT", 0, minimum=0, maximum=1),
             ),
             reasoning=ReasoningSettings(
                 enabled=_env_bool("LEVIATHAN_REASONING_ENABLED", True),
-                default_mode=(
-                    _env_raw("LEVIATHAN_REASONING_DEFAULT_MODE", "adaptive") or "adaptive"
-                ).strip().lower(),
+                default_mode=(_env_raw("LEVIATHAN_REASONING_DEFAULT_MODE", "adaptive") or "adaptive").strip().lower(),
                 allow_fast_path=_env_bool("LEVIATHAN_REASONING_ALLOW_FAST_PATH", True),
-                minimum_evidence_coverage=_env_float(
-                    "LEVIATHAN_REASONING_MINIMUM_EVIDENCE_COVERAGE",
-                    0.35,
-                    minimum=0.0,
-                    maximum=1.0,
-                ),
-                uncertainty_deep_threshold=_env_float(
-                    "LEVIATHAN_REASONING_UNCERTAINTY_DEEP_THRESHOLD",
-                    0.75,
-                    minimum=0.0,
-                    maximum=1.0,
-                ),
-                contradiction_replan_threshold=_env_float(
-                    "LEVIATHAN_REASONING_CONTRADICTION_REPLAN_THRESHOLD",
-                    0.3,
-                    minimum=0.0,
-                    maximum=1.0,
-                ),
-                max_replans_global=_env_int(
-                    "LEVIATHAN_REASONING_MAX_REPLANS_GLOBAL", 4, minimum=0, maximum=64
-                ),
-                max_retries_global=_env_int(
-                    "LEVIATHAN_REASONING_MAX_RETRIES_GLOBAL", 3, minimum=0, maximum=64
-                ),
-                require_verification_for_high_risk=_env_bool(
-                    "LEVIATHAN_REASONING_REQUIRE_VERIFICATION_FOR_HIGH_RISK", True
-                ),
-                require_grounding_for_knowledge_tasks=_env_bool(
-                    "LEVIATHAN_REASONING_REQUIRE_GROUNDING_FOR_KNOWLEDGE_TASKS", True
-                ),
-                **{  # type: ignore[arg-type]
+                minimum_evidence_coverage=_env_float("LEVIATHAN_REASONING_MINIMUM_EVIDENCE_COVERAGE", 0.35, minimum=0.0, maximum=1.0),
+                uncertainty_deep_threshold=_env_float("LEVIATHAN_REASONING_UNCERTAINTY_DEEP_THRESHOLD", 0.75, minimum=0.0, maximum=1.0),
+                contradiction_replan_threshold=_env_float("LEVIATHAN_REASONING_CONTRADICTION_REPLAN_THRESHOLD", 0.3, minimum=0.0, maximum=1.0),
+                max_replans_global=_env_int("LEVIATHAN_REASONING_MAX_REPLANS_GLOBAL", 4, minimum=0, maximum=64),
+                max_retries_global=_env_int("LEVIATHAN_REASONING_MAX_RETRIES_GLOBAL", 3, minimum=0, maximum=64),
+                require_verification_for_high_risk=_env_bool("LEVIATHAN_REASONING_REQUIRE_VERIFICATION_FOR_HIGH_RISK", True),
+                require_grounding_for_knowledge_tasks=_env_bool("LEVIATHAN_REASONING_REQUIRE_GROUNDING_FOR_KNOWLEDGE_TASKS", True),
+                **{
                     k: v
                     for profile, defaults in _REASONING_BUDGET_DEFAULTS.items()
                     for k, v in _reasoning_budget_kwargs(profile, defaults).items()
@@ -1230,9 +1050,7 @@ class Settings:
                 contradiction_check=_env_bool("LEVIATHAN_VERIFICATION_CONTRADICTION_CHECK", True),
                 require_evidence=_env_bool("LEVIATHAN_VERIFICATION_REQUIRE_EVIDENCE", True),
                 citation_required=_env_bool("LEVIATHAN_VERIFICATION_CITATION_REQUIRED", False),
-                unmeasured_blocks_completion=_env_bool(
-                    "LEVIATHAN_VERIFICATION_UNMEASURED_BLOCKS_COMPLETION", True
-                ),
+                unmeasured_blocks_completion=_env_bool("LEVIATHAN_VERIFICATION_UNMEASURED_BLOCKS_COMPLETION", True),
             ),
             features=FeatureFlags(
                 reasoning_iterative_retrieval=_env_bool("LEVIATHAN_FEATURE_ITERATIVE_RETRIEVAL", True),
@@ -1243,16 +1061,12 @@ class Settings:
                 neuro_residual_injection=_env_bool("LEVIATHAN_FEATURE_NEURO_RESIDUAL_INJECTION", True),
                 neuro_cortex=_env_bool("LEVIATHAN_FEATURE_NEURO_CORTEX", True),
                 neuro_memory_tiers=_env_bool("LEVIATHAN_FEATURE_NEURO_MEMORY_TIERS", True),
-                neuro_residual_orchestrator=_env_bool(
-                    "LEVIATHAN_FEATURE_NEURO_RESIDUAL_ORCHESTRATOR", True
-                ),
+                neuro_residual_orchestrator=_env_bool("LEVIATHAN_FEATURE_NEURO_RESIDUAL_ORCHESTRATOR", True),
                 neuro_cortex_blocks=_env_bool("LEVIATHAN_FEATURE_NEURO_CORTEX_BLOCKS", True),
-                neuro_contrastive_training=_env_bool(
-                    "LEVIATHAN_FEATURE_NEURO_CONTRASTIVE_TRAINING", True
-                ),
+                neuro_contrastive_training=_env_bool("LEVIATHAN_FEATURE_NEURO_CONTRASTIVE_TRAINING", True),
                 neuro_soak_long=_env_bool("LEVIATHAN_FEATURE_NEURO_SOAK_LONG", False),
                 neuro_training_real_worker=_env_bool("LEVIATHAN_NEURO_TRAINING_REAL_WORKER", False),
-                module_manager_enabled=_env_bool("LEVIATHAN_FEATURE_MODULE_MANAGER", False),
+                module_manager_enabled=_env_bool("LEVIATHAN_FEATURE_MODULE_MANAGER", True),
                 module_manager_subprocess=_env_bool("LEVIATHAN_FEATURE_MODULE_MANAGER_SUBPROCESS", False),
                 agents_enabled=_env_bool("LEVIATHAN_FEATURE_AGENTS", True),
                 coding_enabled=coding_enabled,
@@ -1289,320 +1103,147 @@ class Settings:
             coding=CodingSettings(
                 workspace=coding_workspace,
                 max_rounds=_env_int("LEVIATHAN_CODING_MAX_ROUNDS", 12, minimum=1, maximum=64),
-                max_file_bytes=_env_int(
-                    "LEVIATHAN_CODING_MAX_FILE_BYTES", 1_000_000, minimum=1024, maximum=50_000_000
-                ),
+                max_file_bytes=_env_int("LEVIATHAN_CODING_MAX_FILE_BYTES", 1_000_000, minimum=1024, maximum=50_000_000),
                 command_allowlist=command_allowlist or ("python", "python3", "pytest"),
                 temperature=_env_float("LEVIATHAN_CODING_TEMPERATURE", 0.1, minimum=0.0),
                 token_budget=_env_int("LEVIATHAN_CODING_TOKEN_BUDGET", 24_000, minimum=512, maximum=200_000),
-                reserve_response_tokens=_env_int(
-                    "LEVIATHAN_CODING_RESERVE_RESPONSE_TOKENS", 1024, minimum=64, maximum=32_000
-                ),
-                max_file_chars=_env_int(
-                    "LEVIATHAN_CODING_MAX_FILE_CHARS", 8000, minimum=200, maximum=200_000
-                ),
+                reserve_response_tokens=_env_int("LEVIATHAN_CODING_RESERVE_RESPONSE_TOKENS", 1024, minimum=64, maximum=32_000),
+                max_file_chars=_env_int("LEVIATHAN_CODING_MAX_FILE_CHARS", 8000, minimum=200, maximum=200_000),
             ),
             market_sim=MarketSimSettings(
                 markets_root=markets_root,
                 bars_per_slice=_env_int("LEVIATHAN_MARKET_SIM_BARS_PER_SLICE", 50, minimum=1, maximum=10_000),
-                default_initial_cash=_env_float(
-                    "LEVIATHAN_MARKET_SIM_INITIAL_CASH", 100_000.0, minimum=1.0
-                ),
-                default_portfolio_id=(
-                    _env_raw("LEVIATHAN_MARKET_SIM_DEFAULT_PORTFOLIO", "") or ""
-                ).strip(),
-                default_broker_mode=(
-                    _env_raw("LEVIATHAN_MARKET_SIM_DEFAULT_BROKER", "local_paper") or "local_paper"
-                ).strip(),
-                default_provider_id=(
-                    _env_raw("LEVIATHAN_MARKET_SIM_DEFAULT_PROVIDER", "binance_public")
-                    or "binance_public"
-                ).strip(),
-                default_benchmark=(
-                    _env_raw("LEVIATHAN_MARKET_SIM_DEFAULT_BENCHMARK", "BTCUSDT") or "BTCUSDT"
-                ).strip(),
-                paper_fee_bps=_env_float(
-                    "LEVIATHAN_MARKET_SIM_PAPER_FEE_BPS", 5.0, minimum=0.0, maximum=500.0
-                ),
-                paper_slippage_bps=_env_float(
-                    "LEVIATHAN_MARKET_SIM_PAPER_SLIPPAGE_BPS", 2.0, minimum=0.0, maximum=500.0
-                ),
+                default_initial_cash=_env_float("LEVIATHAN_MARKET_SIM_INITIAL_CASH", 100_000.0, minimum=1.0),
+                default_portfolio_id=(_env_raw("LEVIATHAN_MARKET_SIM_DEFAULT_PORTFOLIO", "") or "").strip(),
+                default_broker_mode=(_env_raw("LEVIATHAN_MARKET_SIM_DEFAULT_BROKER", "local_paper") or "local_paper").strip(),
+                default_provider_id=(_env_raw("LEVIATHAN_MARKET_SIM_DEFAULT_PROVIDER", "binance_public") or "binance_public").strip(),
+                default_benchmark=(_env_raw("LEVIATHAN_MARKET_SIM_DEFAULT_BENCHMARK", "BTCUSDT") or "BTCUSDT").strip(),
+                paper_fee_bps=_env_float("LEVIATHAN_MARKET_SIM_PAPER_FEE_BPS", 5.0, minimum=0.0, maximum=500.0),
+                paper_slippage_bps=_env_float("LEVIATHAN_MARKET_SIM_PAPER_SLIPPAGE_BPS", 2.0, minimum=0.0, maximum=500.0),
                 shorting_enabled=_env_bool("LEVIATHAN_MARKET_SIM_SHORTING", False),
-                max_leverage=_env_float(
-                    "LEVIATHAN_MARKET_SIM_MAX_LEVERAGE", 1.0, minimum=0.1, maximum=10.0
-                ),
-                cash_reserve_pct=_env_float(
-                    "LEVIATHAN_MARKET_SIM_CASH_RESERVE_PCT", 10.0, minimum=0.0, maximum=90.0
-                ),
-                decision_cadence_seconds=_env_int(
-                    "LEVIATHAN_MARKET_SIM_DECISION_CADENCE", 60, minimum=5, maximum=3600
-                ),
-                default_orchestra_id=(
-                    _env_raw("LEVIATHAN_MARKET_SIM_DEFAULT_ORCHESTRA", "") or ""
-                ).strip(),
+                max_leverage=_env_float("LEVIATHAN_MARKET_SIM_MAX_LEVERAGE", 1.0, minimum=0.1, maximum=10.0),
+                cash_reserve_pct=_env_float("LEVIATHAN_MARKET_SIM_CASH_RESERVE_PCT", 10.0, minimum=0.0, maximum=90.0),
+                decision_cadence_seconds=_env_int("LEVIATHAN_MARKET_SIM_DECISION_CADENCE", 60, minimum=5, maximum=3600),
+                default_orchestra_id=(_env_raw("LEVIATHAN_MARKET_SIM_DEFAULT_ORCHESTRA", "") or "").strip(),
                 auto_resume_paper=_env_bool("LEVIATHAN_MARKET_SIM_AUTO_RESUME", False),
             ),
             neuro_runtime=NeuroRuntimeSettings(
-                residual_kind=(
-                    _env_raw("LEVIATHAN_NEURO_RESIDUAL_KIND", "unsupported") or "unsupported"
-                ).strip().lower(),
+                residual_kind=(_env_raw("LEVIATHAN_NEURO_RESIDUAL_KIND", "unsupported") or "unsupported").strip().lower(),
                 residual_model_id=(_env_raw("LEVIATHAN_NEURO_RESIDUAL_MODEL", "") or "").strip() or None,
                 residual_device=(_env_raw("LEVIATHAN_NEURO_RESIDUAL_DEVICE", "cpu") or "cpu").strip(),
                 absorb_default_limit=_env_int("LEVIATHAN_NEURO_ABSORB_LIMIT", 50, minimum=1, maximum=5000),
                 residual_load_weights=_env_bool("LEVIATHAN_NEURO_RESIDUAL_LOAD_WEIGHTS", False),
-                residual_hook_layers=_parse_int_csv(
-                    _env_raw("LEVIATHAN_NEURO_RESIDUAL_HOOK_LAYERS", "") or ""
-                ),
+                residual_hook_layers=_parse_int_csv(_env_raw("LEVIATHAN_NEURO_RESIDUAL_HOOK_LAYERS", "") or ""),
                 cortex_max_k=_env_int("LEVIATHAN_NEURO_CORTEX_MAX_K", 2, minimum=0, maximum=16),
-                memory_tier0_max_slots=_env_int(
-                    "LEVIATHAN_NEURO_MEMORY_TIER0_MAX_SLOTS", 64, minimum=1, maximum=10_000
-                ),
-                residual_server_url=(
-                    _env_raw("LEVIATHAN_NEURO_RESIDUAL_SERVER_URL", "") or ""
-                ).strip()
-                or None,
+                memory_tier0_max_slots=_env_int("LEVIATHAN_NEURO_MEMORY_TIER0_MAX_SLOTS", 64, minimum=1, maximum=10_000),
+                residual_server_url=(_env_raw("LEVIATHAN_NEURO_RESIDUAL_SERVER_URL", "") or "").strip() or None,
             ),
             resources=ResourceLimits(
                 max_model_concurrency=_env_int("LEVIATHAN_MAX_MODEL_CONCURRENCY", 1, minimum=1, maximum=64),
                 max_function_concurrency=_env_int("LEVIATHAN_MAX_FUNCTION_CONCURRENCY", 2, minimum=1, maximum=64),
                 max_job_concurrency=_env_int("LEVIATHAN_MAX_JOB_CONCURRENCY", 1, minimum=1, maximum=64),
                 max_history_messages=max_history,
-                background_ram_headroom=_env_float(
-                    "LEVIATHAN_RESOURCE_BACKGROUND_RAM_HEADROOM", 512.0, minimum=0.0
-                ),
-                background_vram_headroom=_env_float(
-                    "LEVIATHAN_RESOURCE_BACKGROUND_VRAM_HEADROOM", 256.0, minimum=0.0
-                ),
+                background_ram_headroom=_env_float("LEVIATHAN_RESOURCE_BACKGROUND_RAM_HEADROOM", 512.0, minimum=0.0),
+                background_vram_headroom=_env_float("LEVIATHAN_RESOURCE_BACKGROUND_VRAM_HEADROOM", 256.0, minimum=0.0),
             ),
             workers=WorkersSettings(
                 enabled=_env_bool("LEVIATHAN_WORKERS_ENABLED", True),
                 supervisor_enabled=_env_bool("LEVIATHAN_WORKERS_SUPERVISOR_ENABLED", True),
                 externalize_api_runners=_env_bool("LEVIATHAN_WORKERS_EXTERNALIZE_API", True),
-                heartbeat_seconds=_env_float(
-                    "LEVIATHAN_WORKERS_HEARTBEAT_SECONDS", 5.0, minimum=0.5
-                ),
-                lease_ttl_seconds=_env_float(
-                    "LEVIATHAN_WORKERS_LEASE_TTL_SECONDS", 30.0, minimum=2.0
-                ),
+                heartbeat_seconds=_env_float("LEVIATHAN_WORKERS_HEARTBEAT_SECONDS", 5.0, minimum=0.5),
+                lease_ttl_seconds=_env_float("LEVIATHAN_WORKERS_LEASE_TTL_SECONDS", 30.0, minimum=2.0),
                 poll_seconds=_env_float("LEVIATHAN_WORKERS_POLL_SECONDS", 0.5, minimum=0.05),
-                shutdown_grace_seconds=_env_float(
-                    "LEVIATHAN_WORKERS_SHUTDOWN_GRACE_SECONDS", 30.0, minimum=1.0
-                ),
-                restart_max_attempts=_env_int(
-                    "LEVIATHAN_WORKERS_RESTART_MAX_ATTEMPTS", 5, minimum=1, maximum=100
-                ),
-                restart_window_seconds=_env_float(
-                    "LEVIATHAN_WORKERS_RESTART_WINDOW_SECONDS", 120.0, minimum=1.0
-                ),
-                restart_base_backoff=_env_float(
-                    "LEVIATHAN_WORKERS_RESTART_BASE_BACKOFF", 2.0, minimum=0.1
-                ),
-                restart_max_backoff=_env_float(
-                    "LEVIATHAN_WORKERS_RESTART_MAX_BACKOFF", 60.0, minimum=1.0
-                ),
-                supervisor_lease_ttl_seconds=_env_float(
-                    "LEVIATHAN_WORKERS_SUPERVISOR_LEASE_TTL_SECONDS", 20.0, minimum=2.0
-                ),
-                pool_db_commit_count=_env_int(
-                    "LEVIATHAN_WORKERS_POOL_DB_COMMIT_COUNT", 1, minimum=0, maximum=1
-                ),
+                shutdown_grace_seconds=_env_float("LEVIATHAN_WORKERS_SHUTDOWN_GRACE_SECONDS", 30.0, minimum=1.0),
+                restart_max_attempts=_env_int("LEVIATHAN_WORKERS_RESTART_MAX_ATTEMPTS", 5, minimum=1, maximum=100),
+                restart_window_seconds=_env_float("LEVIATHAN_WORKERS_RESTART_WINDOW_SECONDS", 120.0, minimum=1.0),
+                restart_base_backoff=_env_float("LEVIATHAN_WORKERS_RESTART_BASE_BACKOFF", 2.0, minimum=0.1),
+                restart_max_backoff=_env_float("LEVIATHAN_WORKERS_RESTART_MAX_BACKOFF", 60.0, minimum=1.0),
+                supervisor_lease_ttl_seconds=_env_float("LEVIATHAN_WORKERS_SUPERVISOR_LEASE_TTL_SECONDS", 20.0, minimum=2.0),
+                pool_db_commit_count=_env_int("LEVIATHAN_WORKERS_POOL_DB_COMMIT_COUNT", 1, minimum=0, maximum=1),
             ),
             db_commit=DbCommitSettings(
                 enabled=_env_bool("LEVIATHAN_DB_COMMIT_ENABLED", True),
-                max_pending_count=_env_int(
-                    "LEVIATHAN_DB_COMMIT_MAX_PENDING_COUNT", 2_000, minimum=10
-                ),
-                max_pending_bytes=_env_int(
-                    "LEVIATHAN_DB_COMMIT_MAX_PENDING_BYTES",
-                    2_147_483_648,
-                    minimum=1_048_576,
-                ),
-                max_batch_rows=_env_int(
-                    "LEVIATHAN_DB_COMMIT_MAX_BATCH_ROWS", 1_000, minimum=50, maximum=50_000
-                ),
-                target_transaction_ms=_env_float(
-                    "LEVIATHAN_DB_COMMIT_TARGET_TRANSACTION_MS", 250.0, minimum=10.0
-                ),
-                retry_limit=_env_int(
-                    "LEVIATHAN_DB_COMMIT_RETRY_LIMIT", 8, minimum=0, maximum=64
-                ),
-                spool_retention_hours=_env_float(
-                    "LEVIATHAN_DB_COMMIT_SPOOL_RETENTION_HOURS", 72.0, minimum=1.0
-                ),
-                applied_retention_hours=_env_float(
-                    "LEVIATHAN_DB_COMMIT_APPLIED_RETENTION_HOURS", 24.0, minimum=0.1
-                ),
-                priority_aging_seconds=_env_float(
-                    "LEVIATHAN_DB_COMMIT_PRIORITY_AGING_SECONDS", 120.0, minimum=1.0
-                ),
+                max_pending_count=_env_int("LEVIATHAN_DB_COMMIT_MAX_PENDING_COUNT", 2_000, minimum=10),
+                max_pending_bytes=_env_int("LEVIATHAN_DB_COMMIT_MAX_PENDING_BYTES", 2_147_483_648, minimum=1_048_576),
+                max_batch_rows=_env_int("LEVIATHAN_DB_COMMIT_MAX_BATCH_ROWS", 1_000, minimum=50, maximum=50_000),
+                target_transaction_ms=_env_float("LEVIATHAN_DB_COMMIT_TARGET_TRANSACTION_MS", 250.0, minimum=10.0),
+                retry_limit=_env_int("LEVIATHAN_DB_COMMIT_RETRY_LIMIT", 8, minimum=0, maximum=64),
+                spool_retention_hours=_env_float("LEVIATHAN_DB_COMMIT_SPOOL_RETENTION_HOURS", 72.0, minimum=1.0),
+                applied_retention_hours=_env_float("LEVIATHAN_DB_COMMIT_APPLIED_RETENTION_HOURS", 24.0, minimum=0.1),
+                priority_aging_seconds=_env_float("LEVIATHAN_DB_COMMIT_PRIORITY_AGING_SECONDS", 120.0, minimum=1.0),
             ),
             context=ContextSettings(
                 token_budget=_env_int("LEVIATHAN_CONTEXT_TOKEN_BUDGET", 6000, minimum=512, maximum=200_000),
-                reserve_response_tokens=_env_int(
-                    "LEVIATHAN_CONTEXT_RESERVE_RESPONSE_TOKENS", 512, minimum=64, maximum=32_000
-                ),
-                max_knowledge_chars=_env_int(
-                    "LEVIATHAN_CONTEXT_MAX_KNOWLEDGE_CHARS", 1800, minimum=200, maximum=50_000
-                ),
+                reserve_response_tokens=_env_int("LEVIATHAN_CONTEXT_RESERVE_RESPONSE_TOKENS", 512, minimum=64, maximum=32_000),
+                max_knowledge_chars=_env_int("LEVIATHAN_CONTEXT_MAX_KNOWLEDGE_CHARS", 1800, minimum=200, maximum=50_000),
                 auto_budget=_env_bool("LEVIATHAN_CONTEXT_AUTO_BUDGET", True),
-                max_context_fraction=_env_float(
-                    "LEVIATHAN_CONTEXT_MAX_CONTEXT_FRACTION", 0.72, minimum=0.05, maximum=1.0
-                ),
-                reserve_response_fraction=_env_float(
-                    "LEVIATHAN_CONTEXT_RESERVE_RESPONSE_FRACTION", 0.18, minimum=0.0, maximum=1.0
-                ),
-                minimum_response_tokens=_env_int(
-                    "LEVIATHAN_CONTEXT_MINIMUM_RESPONSE_TOKENS", 256, minimum=32, maximum=32_000
-                ),
-                retrieval_fraction=_env_float(
-                    "LEVIATHAN_CONTEXT_RETRIEVAL_FRACTION", 0.35, minimum=0.0, maximum=1.0
-                ),
-                memory_fraction=_env_float(
-                    "LEVIATHAN_CONTEXT_MEMORY_FRACTION", 0.2, minimum=0.0, maximum=1.0
-                ),
-                history_fraction=_env_float(
-                    "LEVIATHAN_CONTEXT_HISTORY_FRACTION", 0.25, minimum=0.0, maximum=1.0
-                ),
+                max_context_fraction=_env_float("LEVIATHAN_CONTEXT_MAX_CONTEXT_FRACTION", 0.72, minimum=0.05, maximum=1.0),
+                reserve_response_fraction=_env_float("LEVIATHAN_CONTEXT_RESERVE_RESPONSE_FRACTION", 0.18, minimum=0.0, maximum=1.0),
+                minimum_response_tokens=_env_int("LEVIATHAN_CONTEXT_MINIMUM_RESPONSE_TOKENS", 256, minimum=32, maximum=32_000),
+                retrieval_fraction=_env_float("LEVIATHAN_CONTEXT_RETRIEVAL_FRACTION", 0.35, minimum=0.0, maximum=1.0),
+                memory_fraction=_env_float("LEVIATHAN_CONTEXT_MEMORY_FRACTION", 0.2, minimum=0.0, maximum=1.0),
+                history_fraction=_env_float("LEVIATHAN_CONTEXT_HISTORY_FRACTION", 0.25, minimum=0.0, maximum=1.0),
             ),
             inference=InferenceSettings(
-                tokenizer_mode=(
-                    _env_raw("LEVIATHAN_TOKENIZER_MODE", "auto") or "auto"
-                ).strip().lower(),
-                context_safety_margin=_env_float(
-                    "LEVIATHAN_CONTEXT_SAFETY_MARGIN", 0.03, minimum=0.0, maximum=0.25
-                ),
+                tokenizer_mode=(_env_raw("LEVIATHAN_TOKENIZER_MODE", "auto") or "auto").strip().lower(),
+                context_safety_margin=_env_float("LEVIATHAN_CONTEXT_SAFETY_MARGIN", 0.03, minimum=0.0, maximum=0.25),
                 caches_enabled=_env_bool("LEVIATHAN_INFERENCE_CACHES_ENABLED", True),
                 semantic_cache_enabled=_env_bool("LEVIATHAN_SEMANTIC_CACHE_ENABLED", False),
-                semantic_cache_threshold=_env_float(
-                    "LEVIATHAN_SEMANTIC_CACHE_THRESHOLD", 0.92, minimum=0.5, maximum=0.999
-                ),
-                exact_result_cache_enabled=_env_bool(
-                    "LEVIATHAN_EXACT_RESULT_CACHE_ENABLED", False
-                ),
-                token_cache_max_entries=_env_int(
-                    "LEVIATHAN_TOKEN_CACHE_MAX_ENTRIES", 4096, minimum=64, maximum=100_000
-                ),
-                context_cache_max_entries=_env_int(
-                    "LEVIATHAN_CONTEXT_CACHE_MAX_ENTRIES", 256, minimum=16, maximum=10_000
-                ),
-                prefix_cache_mode=(
-                    _env_raw("LEVIATHAN_PREFIX_CACHE_MODE", "auto") or "auto"
-                ).strip().lower(),
-                continuous_batching_mode=(
-                    _env_raw("LEVIATHAN_CONTINUOUS_BATCHING_MODE", "auto") or "auto"
-                ).strip().lower(),
-                speculative_decoding_mode=(
-                    _env_raw("LEVIATHAN_SPECULATIVE_DECODING_MODE", "auto") or "auto"
-                ).strip().lower(),
+                semantic_cache_threshold=_env_float("LEVIATHAN_SEMANTIC_CACHE_THRESHOLD", 0.92, minimum=0.5, maximum=0.999),
+                exact_result_cache_enabled=_env_bool("LEVIATHAN_EXACT_RESULT_CACHE_ENABLED", False),
+                token_cache_max_entries=_env_int("LEVIATHAN_TOKEN_CACHE_MAX_ENTRIES", 4096, minimum=64, maximum=100_000),
+                context_cache_max_entries=_env_int("LEVIATHAN_CONTEXT_CACHE_MAX_ENTRIES", 256, minimum=16, maximum=10_000),
+                prefix_cache_mode=(_env_raw("LEVIATHAN_PREFIX_CACHE_MODE", "auto") or "auto").strip().lower(),
+                continuous_batching_mode=(_env_raw("LEVIATHAN_CONTINUOUS_BATCHING_MODE", "auto") or "auto").strip().lower(),
+                speculative_decoding_mode=(_env_raw("LEVIATHAN_SPECULATIVE_DECODING_MODE", "auto") or "auto").strip().lower(),
                 observability_enabled=_env_bool("LEVIATHAN_INFERENCE_OBSERVABILITY", True),
             ),
             network=NetworkSettings(allow_outbound=_env_bool("LEVIATHAN_NETWORK_ALLOW_OUTBOUND", True)),
             artifacts=ArtifactSettings(root=artifacts_root),
             backup=BackupSettings(root=backup_root),
-            chaos=ChaosSettings(
-                enabled=chaos_enabled,
-                latency_ms=chaos_latency,
-                error_rate=chaos_error_rate,
-            ),
+            chaos=ChaosSettings(enabled=chaos_enabled, latency_ms=chaos_latency, error_rate=chaos_error_rate),
             research_integration=ResearchIntegrationSettings(
                 hf_token=(_env_raw("LEVIATHAN_HF_TOKEN", "") or "").strip(),
-                web_search_endpoint=(
-                    (_env_raw("LEVIATHAN_WEB_SEARCH_ENDPOINT", "") or "").strip() or None
-                ),
+                web_search_endpoint=(_env_raw("LEVIATHAN_WEB_SEARCH_ENDPOINT", "") or "").strip() or None,
                 web_search_api_key=(_env_raw("LEVIATHAN_WEB_SEARCH_API_KEY", "") or "").strip(),
-                web_search_provider=(
-                    (_env_raw("LEVIATHAN_WEB_SEARCH_PROVIDER", "") or "").strip().lower()
-                ),
-                web_search_mode=(
-                    (_env_raw("LEVIATHAN_WEB_SEARCH_MODE", "auto") or "auto").strip().lower()
-                ),
+                web_search_provider=(_env_raw("LEVIATHAN_WEB_SEARCH_PROVIDER", "") or "").strip().lower(),
+                web_search_mode=(_env_raw("LEVIATHAN_WEB_SEARCH_MODE", "auto") or "auto").strip().lower(),
                 training_fixture=_env_bool("LEVIATHAN_TRAINING_FIXTURE", False),
                 corpus_root=(_env_raw("LEVIATHAN_CORPUS_ROOT", "") or "").strip(),
-                auto_promote_verified_knowledge=_env_bool(
-                    "LEVIATHAN_RESEARCH_AUTO_PROMOTE_VERIFIED_KNOWLEDGE", True
-                ),
-                datasets_auto_index_ready_to_knowledge=_env_bool(
-                    "LEVIATHAN_DATASETS_AUTO_INDEX_READY_TO_KNOWLEDGE", True
-                ),
-                datasets_recovery_auto_reindex=_env_bool(
-                    "LEVIATHAN_DATASETS_RECOVERY_AUTO_REINDEX", False
-                ),
-                datasets_recovery_max_auto_jobs=_env_int(
-                    "LEVIATHAN_DATASETS_RECOVERY_MAX_AUTO_JOBS", 8, minimum=0, maximum=200
-                ),
-                dataset_jobs_runner=(
-                    (_env_raw("LEVIATHAN_DATASET_JOBS_RUNNER", "external") or "external")
-                    .strip()
-                    .lower()
-                ),
-                dataset_index_batch_size=_env_int(
-                    "LEVIATHAN_DATASET_INDEX_BATCH_SIZE", 50, minimum=1, maximum=5000
-                ),
-                dataset_max_relations_per_doc=_env_int(
-                    "LEVIATHAN_DATASET_MAX_RELATIONS_PER_DOC", 24, minimum=1, maximum=200
-                ),
-                dataset_extract_relations=_env_bool(
-                    "LEVIATHAN_DATASET_EXTRACT_RELATIONS", True
-                ),
-                source_ingestion_runner=(
-                    (_env_raw("LEVIATHAN_SOURCE_INGESTION_RUNNER", "external") or "external")
-                    .strip()
-                    .lower()
-                ),
+                auto_promote_verified_knowledge=_env_bool("LEVIATHAN_RESEARCH_AUTO_PROMOTE_VERIFIED_KNOWLEDGE", True),
+                datasets_auto_index_ready_to_knowledge=_env_bool("LEVIATHAN_DATASETS_AUTO_INDEX_READY_TO_KNOWLEDGE", True),
+                datasets_recovery_auto_reindex=_env_bool("LEVIATHAN_DATASETS_RECOVERY_AUTO_REINDEX", False),
+                datasets_recovery_max_auto_jobs=_env_int("LEVIATHAN_DATASETS_RECOVERY_MAX_AUTO_JOBS", 8, minimum=0, maximum=200),
+                dataset_jobs_runner=(_env_raw("LEVIATHAN_DATASET_JOBS_RUNNER", "external") or "external").strip().lower(),
+                dataset_index_batch_size=_env_int("LEVIATHAN_DATASET_INDEX_BATCH_SIZE", 50, minimum=1, maximum=5000),
+                dataset_max_relations_per_doc=_env_int("LEVIATHAN_DATASET_MAX_RELATIONS_PER_DOC", 24, minimum=1, maximum=200),
+                dataset_extract_relations=_env_bool("LEVIATHAN_DATASET_EXTRACT_RELATIONS", True),
+                source_ingestion_runner=(_env_raw("LEVIATHAN_SOURCE_INGESTION_RUNNER", "external") or "external").strip().lower(),
             ),
             native_compute=NativeComputeSettings(
-                mode=(
-                    (_env_raw("LEVIATHAN_NATIVE_COMPUTE_MODE", "auto") or "auto")
-                    .strip()
-                    .lower()
-                ),
-                memory_budget_mb=_env_int(
-                    "LEVIATHAN_NATIVE_MEMORY_BUDGET_MB", 512, minimum=64, maximum=1_048_576
-                ),
-                max_record_mb=_env_int(
-                    "LEVIATHAN_NATIVE_MAX_RECORD_MB", 16, minimum=1, maximum=1024
-                ),
-                batch_rows=_env_int(
-                    "LEVIATHAN_DATASET_BATCH_ROWS", 16_384, minimum=64, maximum=1_000_000
-                ),
+                mode=(_env_raw("LEVIATHAN_NATIVE_COMPUTE_MODE", "auto") or "auto").strip().lower(),
+                memory_budget_mb=_env_int("LEVIATHAN_NATIVE_MEMORY_BUDGET_MB", 512, minimum=64, maximum=1_048_576),
+                max_record_mb=_env_int("LEVIATHAN_NATIVE_MAX_RECORD_MB", 16, minimum=1, maximum=1024),
+                batch_rows=_env_int("LEVIATHAN_DATASET_BATCH_ROWS", 16_384, minimum=64, maximum=1_000_000),
                 threads=_env_int("LEVIATHAN_NATIVE_THREADS", 4, minimum=1, maximum=64),
-                rust_threshold_mb=_env_int(
-                    "LEVIATHAN_NATIVE_RUST_THRESHOLD_MB", 32, minimum=1, maximum=1_048_576
-                ),
+                rust_threshold_mb=_env_int("LEVIATHAN_NATIVE_RUST_THRESHOLD_MB", 32, minimum=1, maximum=1_048_576),
             ),
             assistant=AssistantSettings(
                 auto_web=_env_bool("LEVIATHAN_ASSISTANT_AUTO_WEB", True),
                 auto_tools=_env_bool("LEVIATHAN_ASSISTANT_AUTO_TOOLS", True),
                 auto_delegation=_env_bool("LEVIATHAN_ASSISTANT_AUTO_DELEGATION", True),
                 auto_verification=_env_bool("LEVIATHAN_ASSISTANT_AUTO_VERIFICATION", True),
-                max_tool_calls=_env_int(
-                    "LEVIATHAN_ASSISTANT_MAX_TOOL_CALLS", 20, minimum=0, maximum=200
-                ),
-                max_model_calls=_env_int(
-                    "LEVIATHAN_ASSISTANT_MAX_MODEL_CALLS", 12, minimum=1, maximum=100
-                ),
-                max_specialists=_env_int(
-                    "LEVIATHAN_ASSISTANT_MAX_SPECIALISTS", 4, minimum=0, maximum=16
-                ),
-                factuality_mode=(
-                    (_env_raw("LEVIATHAN_ASSISTANT_FACTUALITY_MODE", "LIGHT") or "LIGHT")
-                    .strip()
-                    .upper()
-                ),
+                max_tool_calls=_env_int("LEVIATHAN_ASSISTANT_MAX_TOOL_CALLS", 20, minimum=0, maximum=200),
+                max_model_calls=_env_int("LEVIATHAN_ASSISTANT_MAX_MODEL_CALLS", 12, minimum=1, maximum=100),
+                max_specialists=_env_int("LEVIATHAN_ASSISTANT_MAX_SPECIALISTS", 4, minimum=0, maximum=16),
+                factuality_mode=(_env_raw("LEVIATHAN_ASSISTANT_FACTUALITY_MODE", "LIGHT") or "LIGHT").strip().upper(),
             ),
             browser_qa=BrowserQaSettings(
                 enabled=_env_bool("LEVIATHAN_BROWSER_QA_ENABLED", True),
-                allowed_hosts=(
-                    _env_raw("LEVIATHAN_BROWSER_QA_ALLOWED_HOSTS", "localhost,127.0.0.1,::1")
-                    or "localhost,127.0.0.1,::1"
-                ).strip(),
+                allowed_hosts=(_env_raw("LEVIATHAN_BROWSER_QA_ALLOWED_HOSTS", "localhost,127.0.0.1,::1") or "localhost,127.0.0.1,::1").strip(),
                 max_pages=_env_int("LEVIATHAN_BROWSER_QA_MAX_PAGES", 50, minimum=1, maximum=500),
-                max_actions=_env_int(
-                    "LEVIATHAN_BROWSER_QA_MAX_ACTIONS", 200, minimum=1, maximum=5000
-                ),
-                allow_destructive_test_actions=_env_bool(
-                    "LEVIATHAN_BROWSER_QA_ALLOW_DESTRUCTIVE", False
-                ),
+                max_actions=_env_int("LEVIATHAN_BROWSER_QA_MAX_ACTIONS", 200, minimum=1, maximum=5000),
+                allow_destructive_test_actions=_env_bool("LEVIATHAN_BROWSER_QA_ALLOW_DESTRUCTIVE", False),
             ),
             database_paths=database_paths,
             database_path=database_path,
@@ -1612,213 +1253,93 @@ class Settings:
 
     def validate(self) -> None:
         if self.chaos.enabled and self.runtime.loopback_only is False:
-            raise ConfigurationError(
-                "LEVIATHAN_CHAOS_ENABLED=true is refused when loopback_only is false"
-            )
+            raise ConfigurationError("LEVIATHAN_CHAOS_ENABLED=true is refused when loopback_only is false")
         if self.features.neuro_residual_injection and not self.features.neuro_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_NEURO_RESIDUAL_INJECTION requires LEVIATHAN_FEATURE_NEURO=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_NEURO_RESIDUAL_INJECTION requires LEVIATHAN_FEATURE_NEURO=true")
         if self.features.neuro_associative_memory and not self.features.neuro_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_NEURO_ASSOCIATIVE_MEMORY requires LEVIATHAN_FEATURE_NEURO=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_NEURO_ASSOCIATIVE_MEMORY requires LEVIATHAN_FEATURE_NEURO=true")
         if self.features.neuro_process_critic and not self.features.neuro_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_NEURO_PROCESS_CRITIC requires LEVIATHAN_FEATURE_NEURO=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_NEURO_PROCESS_CRITIC requires LEVIATHAN_FEATURE_NEURO=true")
         if self.features.neuro_cortex and not self.features.neuro_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_NEURO_CORTEX requires LEVIATHAN_FEATURE_NEURO=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_NEURO_CORTEX requires LEVIATHAN_FEATURE_NEURO=true")
         if self.features.neuro_memory_tiers and not self.features.neuro_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_NEURO_MEMORY_TIERS requires LEVIATHAN_FEATURE_NEURO=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_NEURO_MEMORY_TIERS requires LEVIATHAN_FEATURE_NEURO=true")
         if self.features.neuro_residual_orchestrator and not self.features.neuro_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_NEURO_RESIDUAL_ORCHESTRATOR requires LEVIATHAN_FEATURE_NEURO=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_NEURO_RESIDUAL_ORCHESTRATOR requires LEVIATHAN_FEATURE_NEURO=true")
         if self.features.neuro_cortex_blocks and not self.features.neuro_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_NEURO_CORTEX_BLOCKS requires LEVIATHAN_FEATURE_NEURO=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_NEURO_CORTEX_BLOCKS requires LEVIATHAN_FEATURE_NEURO=true")
         if self.features.neuro_cortex_blocks and not self.features.neuro_cortex:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_NEURO_CORTEX_BLOCKS requires LEVIATHAN_FEATURE_NEURO_CORTEX=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_NEURO_CORTEX_BLOCKS requires LEVIATHAN_FEATURE_NEURO_CORTEX=true")
         if self.features.neuro_contrastive_training and not self.features.neuro_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_NEURO_CONTRASTIVE_TRAINING requires LEVIATHAN_FEATURE_NEURO=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_NEURO_CONTRASTIVE_TRAINING requires LEVIATHAN_FEATURE_NEURO=true")
         if self.features.neuro_soak_long and not self.features.neuro_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_NEURO_SOAK_LONG requires LEVIATHAN_FEATURE_NEURO=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_NEURO_SOAK_LONG requires LEVIATHAN_FEATURE_NEURO=true")
         if self.features.neuro_training_real_worker and not self.features.neuro_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_NEURO_TRAINING_REAL_WORKER requires LEVIATHAN_FEATURE_NEURO=true"
-            )
+            raise ConfigurationError("LEVIATHAN_NEURO_TRAINING_REAL_WORKER requires LEVIATHAN_FEATURE_NEURO=true")
         if self.features.chat_sse and not self.features.chat_streaming:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_CHAT_SSE requires LEVIATHAN_FEATURE_CHAT_STREAMING=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_CHAT_SSE requires LEVIATHAN_FEATURE_CHAT_STREAMING=true")
         if self.features.module_manager_subprocess and not self.features.module_manager_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_MODULE_MANAGER_SUBPROCESS requires LEVIATHAN_FEATURE_MODULE_MANAGER=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_MODULE_MANAGER_SUBPROCESS requires LEVIATHAN_FEATURE_MODULE_MANAGER=true")
         if self.features.coding_enabled and not self.features.agents_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_CODING requires LEVIATHAN_FEATURE_AGENTS=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_CODING requires LEVIATHAN_FEATURE_AGENTS=true")
         if self.features.mcp_stdio and not self.features.mcp_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_MCP_STDIO requires LEVIATHAN_FEATURE_MCP=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_MCP_STDIO requires LEVIATHAN_FEATURE_MCP=true")
         if self.features.mcp_http and not self.features.mcp_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_MCP_HTTP requires LEVIATHAN_FEATURE_MCP=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_MCP_HTTP requires LEVIATHAN_FEATURE_MCP=true")
         if self.features.mcp_auto_expand_modules and not self.features.mcp_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_MCP_AUTO_EXPAND_MODULES requires LEVIATHAN_FEATURE_MCP=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_MCP_AUTO_EXPAND_MODULES requires LEVIATHAN_FEATURE_MCP=true")
         if self.features.mcp_enabled and not self.features.mcp_stdio and not self.features.mcp_http:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_MCP=true requires MCP_STDIO and/or MCP_HTTP"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_MCP=true requires MCP_STDIO and/or MCP_HTTP")
         if self.features.deep_recall and not self.features.rag_v3:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_DEEP_RECALL requires LEVIATHAN_FEATURE_RAG_V3=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_DEEP_RECALL requires LEVIATHAN_FEATURE_RAG_V3=true")
         if self.features.why_library and not self.features.rag_v3:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_WHY_LIBRARY requires LEVIATHAN_FEATURE_RAG_V3=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_WHY_LIBRARY requires LEVIATHAN_FEATURE_RAG_V3=true")
         if self.features.residual_production and not self.features.neuro_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_RESIDUAL_PRODUCTION requires LEVIATHAN_FEATURE_NEURO=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_RESIDUAL_PRODUCTION requires LEVIATHAN_FEATURE_NEURO=true")
         if self.features.residual_production and not self.features.neuro_residual_injection:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_RESIDUAL_PRODUCTION requires LEVIATHAN_FEATURE_NEURO_RESIDUAL_INJECTION=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_RESIDUAL_PRODUCTION requires LEVIATHAN_FEATURE_NEURO_RESIDUAL_INJECTION=true")
         if self.features.cognition_shadow and not self.features.cognition_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_COGNITION_SHADOW requires LEVIATHAN_FEATURE_COGNITION=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_COGNITION_SHADOW requires LEVIATHAN_FEATURE_COGNITION=true")
         if self.features.cognition_iterative_loop and not self.features.cognition_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_COGNITION_ITERATIVE_LOOP requires LEVIATHAN_FEATURE_COGNITION=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_COGNITION_ITERATIVE_LOOP requires LEVIATHAN_FEATURE_COGNITION=true")
         if self.features.cognition_belief_state and not self.features.cognition_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_COGNITION_BELIEF_STATE requires LEVIATHAN_FEATURE_COGNITION=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_COGNITION_BELIEF_STATE requires LEVIATHAN_FEATURE_COGNITION=true")
         if self.features.cognition_neuro and not self.features.cognition_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_COGNITION_NEURO requires LEVIATHAN_FEATURE_COGNITION=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_COGNITION_NEURO requires LEVIATHAN_FEATURE_COGNITION=true")
         if self.features.cognition_neuro and not self.features.neuro_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_COGNITION_NEURO requires LEVIATHAN_FEATURE_NEURO=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_COGNITION_NEURO requires LEVIATHAN_FEATURE_NEURO=true")
         if self.features.cognition_adaptive_depth and not self.features.cognition_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_COGNITION_ADAPTIVE_DEPTH requires LEVIATHAN_FEATURE_COGNITION=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_COGNITION_ADAPTIVE_DEPTH requires LEVIATHAN_FEATURE_COGNITION=true")
         if self.features.cognition_delegation and not self.features.cognition_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_COGNITION_DELEGATION requires LEVIATHAN_FEATURE_COGNITION=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_COGNITION_DELEGATION requires LEVIATHAN_FEATURE_COGNITION=true")
         if self.features.cognition_experience_learning and not self.features.cognition_enabled:
-            raise ConfigurationError(
-                "LEVIATHAN_FEATURE_COGNITION_EXPERIENCE_LEARNING requires LEVIATHAN_FEATURE_COGNITION=true"
-            )
+            raise ConfigurationError("LEVIATHAN_FEATURE_COGNITION_EXPERIENCE_LEARNING requires LEVIATHAN_FEATURE_COGNITION=true")
         emb = self.knowledge.embedding_provider
-        if emb not in {
-            "null",
-            "none",
-            "off",
-            "auto",
-            "hash",
-            "local_hash",
-            "local",
-            "sentence_transformers",
-            "st",
-            "sbert",
-            "huggingface",
-            "hf",
-        }:
+        if emb not in {"null", "none", "off", "auto", "hash", "local_hash", "local", "sentence_transformers", "st", "sbert", "huggingface", "hf"}:
             raise ConfigurationError(f"LEVIATHAN_EMBEDDING_PROVIDER invalid: {emb!r}")
         if self.knowledge.rerank_policy not in {"off", "auto", "always"}:
-            raise ConfigurationError(
-                f"LEVIATHAN_RERANK_POLICY invalid: {self.knowledge.rerank_policy!r}"
-            )
+            raise ConfigurationError(f"LEVIATHAN_RERANK_POLICY invalid: {self.knowledge.rerank_policy!r}")
         if self.knowledge.rerank_final_count > self.knowledge.rerank_candidate_count:
-            raise ConfigurationError(
-                "LEVIATHAN_RERANK_FINAL_COUNT must be <= LEVIATHAN_RERANK_CANDIDATE_COUNT"
-            )
-        if self.reasoning.default_mode not in {
-            "adaptive",
-            "fast",
-            "standard",
-            "deep",
-            "maximum",
-        }:
-            raise ConfigurationError(
-                f"LEVIATHAN_REASONING_DEFAULT_MODE invalid: {self.reasoning.default_mode!r}"
-            )
+            raise ConfigurationError("LEVIATHAN_RERANK_FINAL_COUNT must be <= LEVIATHAN_RERANK_CANDIDATE_COUNT")
+        if self.reasoning.default_mode not in {"adaptive", "fast", "standard", "deep", "maximum"}:
+            raise ConfigurationError(f"LEVIATHAN_REASONING_DEFAULT_MODE invalid: {self.reasoning.default_mode!r}")
         kind = self.neuro_runtime.residual_kind
-        if kind not in {
-            "unsupported",
-            "deterministic",
-            "toy",
-            "deterministic_toy",
-            "hf",
-            "transformers",
-            "huggingface",
-            "vllm",
-            "llama_cpp",
-            "llamacpp",
-            "llama.cpp",
-            "trt",
-            "tensorrt",
-            "tensorrt_llm",
-            "trt_llm",
-        }:
-            raise ConfigurationError(
-                f"LEVIATHAN_NEURO_RESIDUAL_KIND invalid: {kind!r}"
-            )
+        if kind not in {"unsupported", "deterministic", "toy", "deterministic_toy", "hf", "transformers", "huggingface", "vllm", "llama_cpp", "llamacpp", "llama.cpp", "trt", "tensorrt", "tensorrt_llm", "trt_llm"}:
+            raise ConfigurationError(f"LEVIATHAN_NEURO_RESIDUAL_KIND invalid: {kind!r}")
         if self.features.neuro_enabled and self.features.agents_enabled:
-            # Allowed combination — neuro remains advisory; agents still need gateway later.
             pass
         nc_mode = (self.native_compute.mode or "").strip().lower()
         if nc_mode not in {"auto", "python", "rust"}:
-            raise ConfigurationError(
-                f"LEVIATHAN_NATIVE_COMPUTE_MODE invalid: {self.native_compute.mode!r}"
-            )
+            raise ConfigurationError(f"LEVIATHAN_NATIVE_COMPUTE_MODE invalid: {self.native_compute.mode!r}")
 
 
 def _load_database_paths() -> DatabasePaths:
-    """Resolve Control / Knowledge / Market paths (+ optional legacy).
-
-    Rules:
-    - ``LEVIATHAN_{CONTROL,KNOWLEDGE,MARKET}_DATABASE_PATH`` win when set.
-    - Otherwise defaults are the three canonical files under ``Data/backend/data/``.
-    - When only ``LEVIATHAN_DATABASE_PATH`` is customized (tests / old installs),
-      derive co-located ``*_control/_knowledge/_market`` siblings and treat the
-      legacy path as upgrade input when the file exists (or was explicitly set).
-    - ``LEVIATHAN_DATABASE_PATH`` is never the post-cutover product authority.
-    """
     control_raw = _env_raw(ENV_CONTROL)
     knowledge_raw = _env_raw(ENV_KNOWLEDGE)
     market_raw = _env_raw(ENV_MARKET)
     legacy_raw = _env_raw(ENV_LEGACY)
 
-    # Explicit three-path configuration (or defaults).
     if control_raw or knowledge_raw or market_raw:
-        # Empty legacy env from worker supervisor must not resurrect a path.
         legacy_for_resolve = legacy_raw
         if legacy_raw is not None and not str(legacy_raw).strip():
             legacy_for_resolve = None
@@ -1829,7 +1350,6 @@ def _load_database_paths() -> DatabasePaths:
             legacy_raw=legacy_for_resolve,
             resolve_path=_resolve_path,
         )
-        # Only keep legacy if the file exists (or operator set a custom legacy path).
         if paths.legacy is not None and not paths.legacy.is_file():
             if legacy_raw is None or legacy_raw.strip() in {"", DEFAULT_LEGACY_DB_REL}:
                 paths = DatabasePaths(
@@ -1840,7 +1360,6 @@ def _load_database_paths() -> DatabasePaths:
                 )
         return paths
 
-    # No domain env overrides — defaults, with optional legacy from LEVIATHAN_DATABASE_PATH.
     if legacy_raw is not None and legacy_raw.strip() and legacy_raw.strip() != DEFAULT_LEGACY_DB_REL:
         legacy = _resolve_path(legacy_raw.strip())
         stem = legacy.stem
@@ -1849,9 +1368,8 @@ def _load_database_paths() -> DatabasePaths:
             control=parent / f"{stem}_control.db",
             knowledge=parent / f"{stem}_knowledge.db",
             market=parent / f"{stem}_market.db",
-            legacy=legacy if legacy.is_file() else legacy,  # keep for upgrade even if missing yet
+            legacy=legacy if legacy.is_file() else legacy,
         )
-        # Fresh test dirs: no legacy file yet → fresh three-DB install beside stem.
         if not legacy.is_file():
             paths = DatabasePaths(
                 control=paths.control,
@@ -1861,7 +1379,6 @@ def _load_database_paths() -> DatabasePaths:
             )
         return paths
 
-    # Stock defaults: three canonical DBs; legacy only if old leviathan.db exists.
     legacy_default = _resolve_path(DEFAULT_LEGACY_DB_REL)
     return DatabasePaths(
         control=_resolve_path(DEFAULT_CONTROL_DB_REL),
@@ -1872,17 +1389,12 @@ def _load_database_paths() -> DatabasePaths:
 
 
 def load_settings() -> Settings:
-    """Load env defaults, then merge SQLite operator overrides when available.
-
-    Database paths themselves are never taken from the override store (bootstrap-only).
-    """
     base = Settings.from_env()
     try:
         from Data.modules.settings.service import merge_db_overrides_if_available
 
         return merge_db_overrides_if_available(base)
     except Exception:
-        # Settings module / DB unavailable during early import or tests — env only.
         return base
 
 
