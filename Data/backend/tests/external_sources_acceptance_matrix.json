@@ -430,7 +430,7 @@
       "start_verified": "NOT_APPLICABLE",
       "stop_verified": "NOT_APPLICABLE",
       "capability_discovery": "PASS",
-      "invoke_verified": "PARTIAL",
+      "invoke_verified": "PASS",
       "result_normalization": "PASS",
       "chat_rendering": "PARTIAL",
       "artifact_support": "PASS",
@@ -439,7 +439,7 @@
         "git"
       ],
       "status": "PARTIAL",
-      "limitations": "Audited 2026-09-27: SKILL.md roots aligned to live repo layout; importer on-demand; live git materialization BLOCKED_EXTERNAL without network."
+      "limitations": "Live GIT install PASS; ModuleManager ensure_installed/ensure_ready/search/load on-demand instructions PASS (SKILL.md not prompt-injected)."
     },
     {
       "source": "tech-leads-club/agent-skills",
@@ -494,7 +494,7 @@
     "COMPOSITE": "PASS",
     "MCP": "PASS"
   },
-  "worktree_head": "34f5da1131ee67cda37a0c0b501f099a21ad6c63",
+  "worktree_head": "8874f0536630aa170f5768f496ac44e06a079851",
   "live_proofs": {
     "install_pass_module_ids": [
       "agent-reach",
@@ -526,6 +526,13 @@
       "invoke": "list_directory PASS via McpBridge.call_tool",
       "disconnect": "PASS",
       "gateway_approval_required_for_EXECUTE": true
+    },
+    "skill_pack_module_manager_e2e": {
+      "module_id": "cloudflare-security-audit-skill",
+      "ensure_installed": "PASS",
+      "ensure_ready": "PASS",
+      "search": "PASS",
+      "load_on_demand": "PASS"
     }
   }
 }
