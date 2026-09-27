@@ -1,13 +1,13 @@
 {
-  "generated_at": "2026-09-27T14:13:12+00:00",
+  "generated_at": "2026-09-27T14:18:08+00:00",
   "phase": "Slice16/A0-A4",
   "program": "Master Program v4.1",
   "all_required_pass": false,
   "allow_incomplete": true,
   "counts": {
-    "PASS": 59,
+    "PASS": 60,
     "IN_PROGRESS": 5,
-    "NOT_STARTED": 15,
+    "NOT_STARTED": 14,
     "FEATURE_GATED": 1,
     "NOT_TESTED_IN_CI": 1
   },
@@ -573,11 +573,14 @@
       "id": "G46",
       "status": "IN_PROGRESS",
       "evidence": [
-        "Data/modules/market_sim/stats_inferential.py::benjamini_hochberg / deflated_sharpe_ratio / probability_of_backtest_overfitting / minimum_useful_sample",
+        "Data/modules/market_sim/stats_inferential.py::benjamini_hochberg MEASURED",
+        "Data/modules/market_sim/stats_inferential.py::deflated_sharpe_ratio APPROXIMATE (qualification_authority=false)",
+        "Data/modules/market_sim/stats_inferential.py::probability_of_backtest_overfitting APPROXIMATE (not CSCV)",
         "Data/backend/tests/test_trading_lab_w13.py::InferentialStatsTests",
-        "Trial-ledger N feeds DSR; acceptance wiring to experiment harness remains later"
+        "Data/backend/tests/test_statistical_reference_w7.py::StatisticalReferenceTests",
+        "Trial-ledger N feeds DSR; empty bootstrap UNMEASURED"
       ],
-      "notes": "W13D: FDR/PBO/DSR/power primitives MEASURED in unit tests; full calibration suite not yet PASS"
+      "notes": "FDR MEASURED; PBO/DSR APPROXIMATE without qualification authority until reference-validated. Not full PASS."
     },
     {
       "id": "G47",
@@ -619,9 +622,18 @@
     },
     {
       "id": "G52",
-      "status": "NOT_STARTED",
-      "evidence": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "status": "PASS",
+      "evidence": [
+        "Data/backend/tests/test_trading_center.py::PaperIdempotencyTests::test_local_paper_idempotent_client_id",
+        "Data/backend/tests/test_adversarial_w18_paper.py reconnect/replay no duplicate fill",
+        "learning_runtime trial idempotency key learn:{trial_id}",
+        "SealedAttemptBinder single-use + resume same run_id",
+        "documentary:paper client_order_id idempotent",
+        "documentary:feed reconnect no duplicate fill",
+        "documentary:learning trial fingerprint idempotent",
+        "documentary:SEALED resume same attempt"
+      ],
+      "notes": "Reconciled from executable paper/learning/sealed idempotency tests."
     },
     {
       "id": "G53",
@@ -942,5 +954,5 @@
     "feature_gated_is_not_pass_claim": true,
     "baseline_green_does_not_mark_trading_pass": true
   },
-  "exit_reason": "incomplete gates reported honestly (21 open); no FAIL"
+  "exit_reason": "incomplete gates reported honestly (20 open); no FAIL"
 }
