@@ -12,13 +12,16 @@ import time
 from pathlib import Path
 from typing import Any, TextIO
 
+from Data.modules.common.process_stdio import safe_write_line
+
 from .dashboard import build_worker_fabric_dashboard
 from .pools import POOL_CATALOG
 from .settings import WorkerSettings, load_worker_settings
 
 
 def _out(stream: TextIO[str], line: str = "") -> None:
-    print(line, file=stream, flush=True)
+    # Never raise on Windows host-capture flush (OSError Errno 22).
+    safe_write_line(stream, line)
 
 
 def resource_label(classes: tuple[str, ...] | list[str]) -> str:

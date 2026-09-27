@@ -25,7 +25,15 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def _ensure_host_stdio() -> None:
+    """Install resilient stdout/stderr before any operator console writes."""
+    from Data.modules.common.process_stdio import install_host_compatible_stdio
+
+    install_host_compatible_stdio()
+
+
 def run_api(*, host: str | None = None, port: int | None = None) -> int:
+    _ensure_host_stdio()
     from Data.backend.config import load_settings
 
     settings = load_settings()
@@ -54,6 +62,7 @@ def run_api(*, host: str | None = None, port: int | None = None) -> int:
 
 
 def run_supervisor(*, once: bool = False, tick_seconds: float = 1.0) -> int:
+    _ensure_host_stdio()
     from Data.backend.config import load_settings
     from Data.modules.workers.console import (
         FabricConsole,
@@ -226,12 +235,15 @@ def _child_env(root: Path, *, supervisor_restart_count: int = 0) -> dict[str, st
 
 
 def _spawn_supervisor(root: Path, *, restart_count: int) -> subprocess.Popen[Any]:
+    from Data.modules.common.process_stdio import stdio_inheritance_kwargs
+
     env = _child_env(root, supervisor_restart_count=restart_count)
     return subprocess.Popen(  # noqa: S603
         [sys.executable, "-m", "Data.modules.workers.bootstrap", "supervisor"],
         cwd=str(root),
         env=env,
         shell=False,
+        **stdio_inheritance_kwargs(),
     )
 
 
@@ -241,8 +253,13 @@ def run_all() -> int:
     Supervisor death does NOT kill the API. Parent restarts supervisor with a
     rolling-window budget reused from WorkerSettings restart policy.
     API death terminates the stack (existing launcher policy).
+
+    Stdio inheritance is explicit so sibling output stays on the host-captured
+    pipes when ``run_leviathan.exe`` used CREATE_NO_WINDOW + piped stdio.
     """
+    _ensure_host_stdio()
     from Data.backend.config import load_settings
+    from Data.modules.common.process_stdio import stdio_inheritance_kwargs
     from Data.modules.workers.registry import WorkerRegistry
     from Data.modules.workers.settings import load_worker_settings
 
@@ -250,18 +267,21 @@ def run_all() -> int:
     wsettings = load_worker_settings()
     settings = load_settings()
     env = _child_env(root)
+    stdio = stdio_inheritance_kwargs()
 
     api = subprocess.Popen(  # noqa: S603
         [sys.executable, "-m", "Data.modules.workers.bootstrap", "api"],
         cwd=str(root),
         env=env,
         shell=False,
+        **stdio,
     )
     supervisor: subprocess.Popen[Any] | None = subprocess.Popen(  # noqa: S603
         [sys.executable, "-m", "Data.modules.workers.bootstrap", "supervisor"],
         cwd=str(root),
         env=env,
         shell=False,
+        **stdio,
     )
     stop = {"flag": False}
 
@@ -405,6 +425,7 @@ def run_all() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _ensure_host_stdio()
     parser = argparse.ArgumentParser(description="Leviathan bootstrap")
     sub = parser.add_subparsers(dest="cmd", required=True)
     p_api = sub.add_parser("api", help="Run FastAPI only")
