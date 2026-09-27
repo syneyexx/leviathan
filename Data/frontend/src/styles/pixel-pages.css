@@ -418,6 +418,12 @@
   color: var(--lv-danger);
 }
 
+.lv-px-pill.is-muted {
+  border-color: rgba(255, 255, 255, 0.14);
+  color: var(--lv-text-muted);
+  background: rgba(255, 255, 255, 0.04);
+}
+
 .lv-px-status {
   display: inline-flex;
   align-items: center;
