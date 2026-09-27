@@ -2186,6 +2186,7 @@ app.include_router(
         sampler=system_telemetry_sampler,
         component_health_fn=_component_health,
         database_path=settings.database_path,
+        database_paths=settings.database_paths,
     )
 )
 app.include_router(build_brain_router(brain_facade))

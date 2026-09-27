@@ -30,6 +30,7 @@ def build_observability_router(
     sampler: SystemTelemetrySampler,
     component_health_fn: Any | None = None,
     database_path: Any | None = None,
+    database_paths: Any | None = None,
 ) -> APIRouter:
     router = APIRouter(tags=["observability"])
 
@@ -162,8 +163,13 @@ def build_observability_router(
                 "truth": {"unmeasured": True, "unavailable": True},
             }
         try:
-            from Data.modules.common.db_contention import db_contention_snapshot
+            from Data.modules.common.db_contention import (
+                db_contention_snapshot,
+                three_database_contention_snapshot,
+            )
+
             db_contention = db_contention_snapshot(database_path)
+            db_contention_by_domain = three_database_contention_snapshot(database_paths)
         except Exception:  # noqa: BLE001
             db_contention = {
                 "dbFileSize": "UNMEASURED",
@@ -171,6 +177,14 @@ def build_observability_router(
                 "busyRetries": "UNMEASURED",
                 "commitQueueDepth": "UNMEASURED",
                 "truth": {"unmeasured": True},
+            }
+            db_contention_by_domain = {
+                "domains": {
+                    "CONTROL": {"status": "UNMEASURED"},
+                    "KNOWLEDGE": {"status": "UNMEASURED"},
+                    "MARKET": {"status": "UNMEASURED"},
+                },
+                "truth": {"unmeasured": True, "perDomain": True},
             }
         try:
             from Data.modules.workers.native_compute import probe_capabilities
@@ -202,6 +216,7 @@ def build_observability_router(
             "observability": observability.snapshot(),
             "inferenceEfficiency": inference_efficiency,
             "dbContention": db_contention,
+            "dbContentionByDomain": db_contention_by_domain,
             "nativeDataPlane": native_data_plane,
             "product_truth": {
                 "vocabulary": [

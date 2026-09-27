@@ -112,14 +112,53 @@ def _commit_brain_sync(
     source_id = str(payload["source_id"])
     sync = dict(payload.get("sync") or {})
     container = store.get_container(source_id) if hasattr(store, "get_container") else None
-    if container is not None and hasattr(store, "upsert_container"):
+    auxiliary_ok = True
+    auxiliary_error: str | None = None
+    if container is None:
+        # No container to update — brain sync metadata is the authoritative contract.
+        auxiliary_ok = False
+        auxiliary_error = "container_missing"
+    elif hasattr(store, "upsert_container"):
         meta = dict(container.get("metadata") or {})
         meta.update(sync)
         meta["last_brain_sync_commit"] = intent.commit_id
         try:
             store.upsert_container(source_id, metadata=meta)
-        except TypeError:
-            pass
+        except TypeError as exc:
+            # Signature mismatch still means auxiliary persistence did not apply.
+            auxiliary_ok = False
+            auxiliary_error = f"upsert_signature_mismatch:{exc}"[:400]
+        except Exception as exc:  # noqa: BLE001
+            auxiliary_ok = False
+            auxiliary_error = str(exc)[:400]
+    else:
+        auxiliary_ok = False
+        auxiliary_error = "upsert_container_unavailable"
+
+    if not auxiliary_ok:
+        return CommitReceipt(
+            commit_id=intent.commit_id,
+            idempotency_key=intent.idempotency_key,
+            domain="source_ingestion",
+            operation=intent.operation,
+            status=CommitReceiptStatus.REJECTED.value,
+            entity_type="source",
+            entity_id=source_id,
+            payload_hash=intent.payload_hash,
+            applied_at=utc_now(),
+            record_count=0,
+            producer_job_id=intent.source_job_id,
+            trace_id=intent.trace_id,
+            error_code="AUXILIARY_PERSISTENCE_FAILED",
+            error_message=auxiliary_error or "brain sync metadata not persisted",
+            result={
+                "source_id": source_id,
+                "brain_sync": False,
+                "auxiliary_ok": False,
+                "truth": {"false_applied_after_auxiliary_failure": False},
+            },
+        )
+
     return CommitReceipt(
         commit_id=intent.commit_id,
         idempotency_key=intent.idempotency_key,
@@ -133,5 +172,5 @@ def _commit_brain_sync(
         record_count=1,
         producer_job_id=intent.source_job_id,
         trace_id=intent.trace_id,
-        result={"source_id": source_id, "brain_sync": True},
+        result={"source_id": source_id, "brain_sync": True, "auxiliary_ok": True},
     )
