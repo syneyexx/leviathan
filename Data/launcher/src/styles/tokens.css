@@ -1,0 +1,20 @@
+:root {
+  --bg: #05080a;
+  --bg-2: #0a1012;
+  --panel: rgba(7, 12, 14, 0.92);
+  --line: rgba(196, 160, 86, 0.62);
+  --line-dim: rgba(196, 160, 86, 0.28);
+  --gold: #d7b56a;
+  --gold-2: #a68445;
+  --ivory: #e7e1d2;
+  --muted: #9a917f;
+  --emerald: #3dbe7a;
+  --cyan: #3ec6c6;
+  --amber: #e0a23a;
+  --red: #d24b4b;
+  --violet: #9a7adf;
+  --font-display: "Cinzel", "Palatino Linotype", Palatino, serif;
+  --font-ui: "Inter", "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  color-scheme: dark;
+}

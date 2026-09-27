@@ -8,6 +8,15 @@ Data/backend/data/*.db-*
 Data/backend/data/artifacts/
 Data/frontend/node_modules/
 Data/frontend/dist/
+Data/launcher/node_modules/
+Data/launcher/dist/
+Data/launcher/dist-fixture/
+Data/launcher/src-tauri/target/
+Data/launcher/src-tauri/gen/
+Data/launcher/host-core/target/
+Data/launcher/tests/visual/output/
+Data/logs/launcher/
+dist/
 *.tsbuildinfo
 leviathan_startup.log
 ModelData/

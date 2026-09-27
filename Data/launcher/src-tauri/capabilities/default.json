@@ -1,0 +1,26 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Local backend-host window. No shell execution capability.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-focus",
+    "core:event:default",
+    "allow-host-snapshot",
+    "allow-host-preflight",
+    "allow-host-start",
+    "allow-host-stop",
+    "allow-host-restart",
+    "allow-host-emergency",
+    "allow-host-confirm-close",
+    "allow-host-open",
+    "allow-host-console",
+    "allow-host-preferences-get",
+    "allow-host-preferences-set"
+  ]
+}
