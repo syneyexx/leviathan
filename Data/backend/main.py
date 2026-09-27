@@ -2180,6 +2180,28 @@ async def lifespan(_: FastAPI):
                     "external.modules.discovered",
                     payload={"module_id": managed.manifest.module_id},
                 )
+        # Second-pass hydrate: early startup hydrate may skip bindings whose
+        # capabilities were not yet in the catalog. ENABLED still ≠ READY.
+        try:
+            rehydrated = plugin_registry.hydrate_from_store()
+            observability.emit(
+                "external_capability",
+                "plugin_registry.rehydrated",
+                payload={"count": rehydrated},
+            )
+        except Exception as exc:  # noqa: BLE001
+            observability.emit(
+                "external_capability",
+                "plugin_registry.rehydrate_failed",
+                payload={"error": str(exc)},
+                level="warning",
+            )
+        # Optional idle sweep hook — never blocks boot; operator/API also calls this.
+        try:
+            if hasattr(module_manager, "sweep_idle_modules"):
+                module_manager.sweep_idle_modules()
+        except Exception:  # noqa: BLE001
+            pass
         # Wire skill store into capability broker for on-demand skill shortlists.
         if hasattr(cognition_runtime, "broker") and cognition_runtime.broker is not None:
             cognition_runtime.broker._skill_store = external_capability_store  # type: ignore[attr-defined]
