@@ -1936,11 +1936,8 @@ class ExternalFabricDoDProofTests(unittest.TestCase):
                 job_store = JobStore(Path(tmp) / "jobs.db")
                 job_store.initialize()
                 jobs = JobRuntime(job_store, gateway, ResourceManager(2))
-                # Mirror production wiring: gateway cancel probe reads JobRuntime flags.
-                gateway._job_cancel_check = lambda job_id: bool(  # type: ignore[attr-defined]
-                    getattr(jobs, "_cancel_flags", {}).get(job_id)
-                    and getattr(jobs, "_cancel_flags", {}).get(job_id).is_set()
-                )
+                # JobRuntime auto-wires gateway._job_cancel_check when absent.
+                self.assertTrue(callable(getattr(gateway, "_job_cancel_check", None)))
                 runtime = CognitiveRuntime(
                     enabled=True,
                     execution_gateway=gateway,

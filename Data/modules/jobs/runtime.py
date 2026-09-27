@@ -113,6 +113,24 @@ class JobRuntime:
             "leases_recovered": 0,
         }
         self._maintenance_fenced = False
+        # Ensure MODULE/CLI adapters can cooperatively cancel when this runtime
+        # owns the job — without requiring composition-root wiring.
+        self._ensure_gateway_cancel_probe()
+
+    def _ensure_gateway_cancel_probe(self) -> None:
+        """Attach ``gateway._job_cancel_check`` if the composition root did not."""
+        existing = getattr(self.gateway, "_job_cancel_check", None)
+        if callable(existing):
+            return
+
+        def _probe(job_id: str) -> bool:
+            flag = self._cancel_flags.get(job_id)
+            return bool(flag is not None and flag.is_set())
+
+        try:
+            self.gateway._job_cancel_check = _probe  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 — optional probe must not break construction
+            pass
 
     def enter_maintenance_fence(self) -> None:
         """WAVE 21 — reject new enqueues while restore maintenance is active."""
