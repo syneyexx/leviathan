@@ -776,7 +776,7 @@
     "at": "2026-09-27T11:43:53Z",
     "note": "SCHEMA/BACKUP/PROVIDER/MODEL/TRUTH/NUMERIC/MARKET/OBS/VERIFY/CLEANUP revalidated on current branch."
   },
-  "final_head": "3848e497f4ef79f14e76dc67eb8e756702671a80",
+  "final_head": "bf81a5d8063c2861763b6015ae5f76357ebea1fb",
   "waves": {
     "0": "COMPLETE",
     "1": "COMPLETE",
