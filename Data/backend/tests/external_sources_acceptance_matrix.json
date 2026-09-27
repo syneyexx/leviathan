@@ -216,7 +216,7 @@
         "analytics script deps"
       ],
       "status": "PARTIAL",
-      "limitations": "Live GIT+venv install PASS; ensure_ready PASS for analytics CLI composite. GUI not automated; MarketSim bypass forbidden."
+      "limitations": "Live GIT+venv install PASS. Analytics CLIs import-fail without pandas/extra deps in venv (DEPENDENCY_MISSING honest). Not MarketSim qualification."
     },
     {
       "source": "singhharsh1708/scrollcraft",
@@ -265,7 +265,7 @@
         "coding agent CLI"
       ],
       "status": "PARTIAL",
-      "limitations": "Live GIT install PASS; ensure_ready PASS (shell harness present). Full UE 5.8 + coding agent invoke remains BLOCKED_EXTERNAL."
+      "limitations": "Live GIT install PASS; ensure_ready PASS (shell harness present). status/health.sh emits honest PROBLEM lines (no UE/MCP) then may wait \u2014 full UE 5.8 + coding agent invoke remains BLOCKED_EXTERNAL."
     },
     {
       "source": "THU-MAIC/OpenMAIC",
@@ -576,6 +576,16 @@
     "modules_page": {
       "install_start_stop_restart_ensure_ready": "PASS_UI",
       "versions_check_update_install_activate_rollback": "PASS_UI"
+    },
+    "selfstarter": {
+      "install": "PASS",
+      "ensure_ready": "PASS",
+      "status_health_sh": "PARTIAL_PROBLEM_lines_no_UE_MCP",
+      "run_brief": "BLOCKED_EXTERNAL UE5"
+    },
+    "fincept-terminal": {
+      "install": "PASS",
+      "analyze_help": "DEPENDENCY_MISSING pandas"
     }
   }
 }
