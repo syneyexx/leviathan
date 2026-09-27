@@ -17,9 +17,13 @@ describe("Trading Center typed capability contracts", () => {
     expect(types).toContain("export type MarketSimCapabilities");
     expect(types).toContain("export type MarketSimFamilyCapability");
     expect(types).toContain("export type MarketSimExecutionGranularity");
+    expect(types).toContain("export type MarketSimModeCapabilityRow");
+    expect(types).toContain("export type MarketSimPaperDeployment");
     expect(types).toContain("HISTORICAL_SIM_AVAILABLE");
     expect(types).toContain("LIVE_TRADING_AVAILABLE");
     expect(types).toContain("ohlcv_is_not_orderbook");
+    expect(types).toContain("mode_matrix");
+    expect(types).toContain("mode_matrix_machine_derived");
   });
 
   it("types marketSimCapabilities client method", () => {

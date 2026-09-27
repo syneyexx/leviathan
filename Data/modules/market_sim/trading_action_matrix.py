@@ -14,18 +14,6 @@ TRADING_ACTION_MATRIX: list[dict[str, Any]] = [
         "live_money": "BLOCKED",
     },
     {
-        "action": "paper_order",
-        "requires": "LIVE_PAPER_AVAILABLE=AVAILABLE",
-        "blocked_when": ["NOT_IMPLEMENTED", "UNAVAILABLE", "kill_switch"],
-        "live_money": "BLOCKED",
-    },
-    {
-        "action": "shadow_observe",
-        "requires": "paper/shadow session + realtime feed lineage",
-        "blocked_when": ["DEGRADED_GAP without policy", "provider_degraded"],
-        "live_money": "BLOCKED",
-    },
-    {
         "action": "learning_train",
         "requires": "split binding TRAIN + objective version",
         "blocked_when": ["SEALED contamination", "missing split manifest"],
@@ -35,6 +23,42 @@ TRADING_ACTION_MATRIX: list[dict[str, Any]] = [
         "action": "sealed_qualify",
         "requires": "SealedAttemptBinder + unused holdout lineage",
         "blocked_when": ["second_attempt", "adapted_strategy_same_holdout"],
+        "live_money": "BLOCKED",
+    },
+    {
+        "action": "deploy_shadow_paper",
+        "requires": "qualified strategy + PaperDeployment persisted + feed lineage",
+        "blocked_when": ["ASSET_NOT_READY", "INCOMPATIBLE_DEPLOYMENT", "kill_switch"],
+        "live_money": "BLOCKED",
+    },
+    {
+        "action": "shadow_observe",
+        "requires": "paper/shadow session + realtime feed lineage",
+        "blocked_when": ["DEGRADED_GAP without policy", "provider_degraded"],
+        "live_money": "BLOCKED",
+    },
+    {
+        "action": "promote_to_autonomous_paper",
+        "requires": "resolved shadow_run_id receipts + sealed evidence",
+        "blocked_when": ["INSUFFICIENT_SHADOW_EVIDENCE", "caller_boolean_only"],
+        "live_money": "BLOCKED",
+    },
+    {
+        "action": "autonomous_paper_step",
+        "requires": "persisted paper_deployment_id + RiskGuard + healthy feed",
+        "blocked_when": ["kill_switch", "FEED_UNCERTAIN", "SHADOW_NO_ORDERS"],
+        "live_money": "BLOCKED",
+    },
+    {
+        "action": "paper_order",
+        "requires": "LIVE_PAPER_AVAILABLE=AVAILABLE",
+        "blocked_when": ["NOT_IMPLEMENTED", "UNAVAILABLE", "kill_switch"],
+        "live_money": "BLOCKED",
+    },
+    {
+        "action": "paper_drift_review",
+        "requires": "baseline + paper-forward metrics + min sample",
+        "blocked_when": ["insufficient_paper_sample"],
         "live_money": "BLOCKED",
     },
     {

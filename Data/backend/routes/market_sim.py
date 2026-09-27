@@ -108,6 +108,47 @@ class PaperOrderRequest(BaseModel):
     clientOrderId: str | None = None
 
 
+class PaperDeploymentCreate(BaseModel):
+    strategyId: str
+    strategyVersion: int | None = None
+    universe: list[str] | None = None
+    feedId: str = "binance_public"
+    mode: str = "shadow"  # shadow | autonomous_paper
+    symbol: str | None = None
+    brokerId: str = "local_paper"
+    providerId: str | None = None
+    initialCash: float = 100_000.0
+    riskConfig: dict[str, Any] | None = None
+    sizingConfig: dict[str, Any] | None = None
+    qualificationRefs: dict[str, Any] | None = None
+
+
+class ShadowObserveRequest(BaseModel):
+    signalSide: str = "HOLD"
+    proposedQty: float | None = None
+    riskDecision: str = "HOLD"
+
+
+class DeploymentPromoteRequest(BaseModel):
+    targetLevel: str
+    sealedAttemptId: str | None = None
+    minShadowObservations: int = 5
+    minPaperSteps: int = 5
+    acceptanceCriteria: dict[str, Any] | None = None
+
+
+class AutonomousPaperStepRequest(BaseModel):
+    side: str = "HOLD"
+    qty: float | None = None
+
+
+class DeploymentDriftRequest(BaseModel):
+    baselineMetrics: dict[str, float]
+    observedMetrics: dict[str, float]
+    relativeThreshold: float = 0.25
+    spawnChallenger: bool = True
+
+
 class PortfolioCreate(BaseModel):
     name: str = Field(min_length=1, max_length=240)
     initialEquity: float = Field(100_000.0, gt=0)
@@ -582,6 +623,115 @@ def build_market_sim_router(
     def paper_kill(session_id: str, armed: bool = True) -> dict:
         try:
             return {"session": service.paper_kill_switch(session_id, armed=armed)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    # --- A3/A4 paper deployments (durable) ---
+
+    @router.get("/api/market-sim/paper/deployments")
+    def list_paper_deployments(
+        strategyId: str | None = None,
+        mode: str | None = None,
+        limit: int = Query(50, ge=1, le=200),
+    ) -> dict:
+        try:
+            return {
+                "deployments": service.list_paper_deployments(
+                    strategy_id=strategyId, mode=mode, limit=limit
+                ),
+                "truth": {
+                    "persisted": True,
+                    "table": "market_paper_deployments",
+                    "live_money": "BLOCKED",
+                    "simulated_capital": True,
+                },
+            }
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/paper/deployments")
+    def create_paper_deployment(payload: PaperDeploymentCreate) -> dict:
+        try:
+            return service.create_and_persist_paper_deployment(
+                strategy_id=payload.strategyId,
+                strategy_version=payload.strategyVersion,
+                universe=payload.universe,
+                feed_id=payload.feedId,
+                mode=payload.mode,
+                symbol=payload.symbol,
+                broker_id=payload.brokerId,
+                provider_id=payload.providerId,
+                initial_cash=payload.initialCash,
+                risk_config=payload.riskConfig,
+                sizing_config=payload.sizingConfig,
+                qualification_refs=payload.qualificationRefs,
+            )
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/paper/deployments/{deployment_id}")
+    def get_paper_deployment(deployment_id: str) -> dict:
+        try:
+            return {"deployment": service.get_paper_deployment(deployment_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/paper/deployments/{deployment_id}/shadow-observe")
+    def shadow_observe(deployment_id: str, payload: ShadowObserveRequest) -> dict:
+        try:
+            return service.shadow_observe_step(
+                deployment_id,
+                signal_side=payload.signalSide,
+                proposed_qty=payload.proposedQty,
+                risk_decision=payload.riskDecision,
+            )
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/paper/deployments/{deployment_id}/promote")
+    def promote_deployment(deployment_id: str, payload: DeploymentPromoteRequest) -> dict:
+        try:
+            return service.promote_deployment_autonomy(
+                deployment_id,
+                target_level=payload.targetLevel,
+                sealed_attempt_id=payload.sealedAttemptId,
+                min_shadow_observations=payload.minShadowObservations,
+                min_paper_steps=payload.minPaperSteps,
+                acceptance_criteria=payload.acceptanceCriteria,
+            )
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/paper/deployments/{deployment_id}/autonomous-step")
+    def autonomous_step(deployment_id: str, payload: AutonomousPaperStepRequest) -> dict:
+        try:
+            return service.autonomous_paper_step(
+                deployment_id, side=payload.side, qty=payload.qty
+            )
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/paper/deployments/{deployment_id}/drift-review")
+    def drift_review(deployment_id: str, payload: DeploymentDriftRequest) -> dict:
+        try:
+            return service.review_deployment_drift(
+                deployment_id,
+                baseline_metrics=payload.baselineMetrics,
+                observed_metrics=payload.observedMetrics,
+                relative_threshold=payload.relativeThreshold,
+                spawn_challenger=payload.spawnChallenger,
+            )
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/paper/deployments/{deployment_id}/kill-switch")
+    def deployment_kill(deployment_id: str, armed: bool = True, reason: str = "") -> dict:
+        try:
+            return {
+                "deployment": service.paper_deployment_kill_switch(
+                    deployment_id, armed=armed, reason=reason
+                )
+            }
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 

@@ -4188,6 +4188,44 @@ def _m56_institutional_runtime(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m57_market_paper_deployments(conn: sqlite3.Connection) -> None:
+    """Durable PaperDeployment identity for A3 shadow / A4 autonomous paper."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_paper_deployments (
+            deployment_id TEXT PRIMARY KEY,
+            strategy_asset_id TEXT NOT NULL,
+            strategy_version INTEGER NOT NULL DEFAULT 1,
+            status TEXT NOT NULL DEFAULT 'CREATED',
+            mode TEXT NOT NULL DEFAULT 'shadow',
+            feed_id TEXT NOT NULL DEFAULT '',
+            universe_json TEXT NOT NULL DEFAULT '[]',
+            risk_config_json TEXT NOT NULL DEFAULT '{}',
+            sizing_config_json TEXT NOT NULL DEFAULT '{}',
+            cadence TEXT NOT NULL DEFAULT 'every_n_bars',
+            env_fingerprint TEXT NOT NULL DEFAULT '',
+            kill_switch INTEGER NOT NULL DEFAULT 0,
+            session_id TEXT,
+            compatibility_json TEXT NOT NULL DEFAULT '{}',
+            feed_health_json TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            loop_state_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_paper_deployments_strategy "
+        "ON market_paper_deployments(strategy_asset_id, strategy_version, status)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_paper_deployments_mode "
+        "ON market_paper_deployments(mode, status, updated_at)"
+    )
+
+
 def _m55_institutional_core(conn: sqlite3.Connection) -> None:
     """Institutional core additive tables (instruments, breaks, audit, exceptions)."""
     conn.execute(
@@ -4433,6 +4471,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=56,
         name="institutional_runtime",
         apply=_m56_institutional_runtime,
+    ),
+    Migration(
+        version=57,
+        name="market_paper_deployments",
+        apply=_m57_market_paper_deployments,
     ),
 )
 

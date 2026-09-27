@@ -2024,11 +2024,442 @@ class MarketSimControlPlane:
             "count": len(matched),
             "truth": {
                 "durable_path": "market_paper_sessions",
-                "paper_deployment_table": "NOT_PERSISTED",
+                "paper_deployment_table": "PERSISTED",
+                "paper_deployment_table_name": "market_paper_deployments",
                 "paper_only": True,
                 "live_money": "BLOCKED",
             },
         }
+
+    # --- A3 shadow / A4 autonomous paper deployment loop ---
+
+    def create_and_persist_paper_deployment(
+        self,
+        *,
+        strategy_id: str,
+        strategy_version: int | None = None,
+        universe: list[str] | None = None,
+        feed_id: str = "binance_public",
+        mode: str = "shadow",
+        risk_config: dict[str, Any] | None = None,
+        sizing_config: dict[str, Any] | None = None,
+        cadence: str = "every_n_bars",
+        qualification_refs: dict[str, Any] | None = None,
+        symbol: str | None = None,
+        broker_id: str = "local_paper",
+        provider_id: str | None = None,
+        initial_cash: float = 100_000.0,
+    ) -> dict[str, Any]:
+        """Materialize PaperDeployment + durable paper session + loop state.
+
+        Shadow mode: session exists for observe-only receipts (no orders).
+        Autonomous paper mode: session may place paper orders under RiskGuard.
+        """
+        self._require_enabled()
+        from .autonomous_paper_loop import (
+            AUTONOMOUS_PAPER_MODE,
+            SHADOW_MODE,
+            attach_deployment,
+            deployment_row_from_object,
+            materialize_paper_deployment,
+            new_loop_state,
+        )
+        from .strategy_asset import from_strategy_record
+
+        if mode not in {SHADOW_MODE, AUTONOMOUS_PAPER_MODE}:
+            raise MarketSimError("INVALID_DEPLOYMENT_MODE", f"mode={mode}", http_status=400)
+        ver = self.store.get_strategy_version(strategy_id, strategy_version)
+        if ver is None:
+            raise MarketSimError("STRATEGY_VERSION_MISSING", strategy_id, http_status=404)
+        record = self.store.get_strategy(strategy_id)
+        if record is None:
+            raise MarketSimError("STRATEGY_MISSING", strategy_id, http_status=404)
+        # Promote DRAFT-looking assets to RESEARCH for deployability when already versioned.
+        asset = from_strategy_record(record, version=ver)
+        if asset.status == StrategyStatus.DRAFT.value:
+            asset.status = StrategyStatus.RESEARCH.value
+        univ = list(universe or asset.universe_constraints or [])
+        sym = (symbol or (univ[0] if univ else None) or "BTCUSDT").upper()
+        if sym not in univ:
+            univ = [sym, *univ]
+        provider = provider_id or feed_id
+        deployment = materialize_paper_deployment(
+            asset=asset,
+            universe=univ,
+            feed_id=feed_id,
+            risk_config=risk_config,
+            sizing_config=sizing_config,
+            cadence=cadence,
+            mode=mode,
+            qualification_refs=qualification_refs,
+        )
+        session = self.start_paper_session(
+            symbol=sym,
+            strategy_id=strategy_id,
+            strategy_version=ver.version,
+            broker_id=broker_id,
+            provider_id=provider,
+            initial_cash=initial_cash,
+        )
+        meta = dict(session.get("metadata") or {})
+        meta["mode"] = mode
+        meta["deployment_id"] = deployment.deployment_id
+        meta["simulated_capital"] = True
+        session["metadata"] = meta
+        if mode == SHADOW_MODE:
+            # Shadow has no capital authority — mark observe-only.
+            session["status"] = "active"
+            meta["shadow_observe_only"] = True
+            meta["no_paper_order_authority"] = True
+        self.store.upsert_paper_session(session)
+
+        loop = new_loop_state(strategy_id=strategy_id, strategy_version=ver.version)
+        attach_deployment(loop, deployment)
+        if mode == SHADOW_MODE:
+            loop.shadow_session_id = session["session_id"]
+            loop.stage = "SHADOW"
+        else:
+            loop.paper_session_id = session["session_id"]
+            loop.stage = "AUTONOMOUS_PAPER"
+        deployment.metadata = {
+            **deployment.metadata,
+            "session_id": session["session_id"],
+            "loop_id": loop.loop_id,
+        }
+        deployment.status = "RUNNING"
+        row = deployment_row_from_object(deployment)
+        row["session_id"] = session["session_id"]
+        row["loop_state_json"] = loop.public_dict()
+        row["mode"] = mode
+        self.store.upsert_paper_deployment(row)
+        self._emit_event(
+            "paper.deployment.created",
+            {
+                "deployment_id": deployment.deployment_id,
+                "mode": mode,
+                "session_id": session["session_id"],
+                "strategy_id": strategy_id,
+            },
+        )
+        return {
+            "deployment": deployment.public_dict(),
+            "session": session,
+            "loop": loop.public_dict(),
+            "truth": {
+                "persisted": True,
+                "table": "market_paper_deployments",
+                "simulated_capital": True,
+                "live_money": "BLOCKED",
+                "shadow_no_orders": mode == SHADOW_MODE,
+            },
+        }
+
+    def shadow_observe_step(
+        self,
+        deployment_id: str,
+        *,
+        signal_side: str = "HOLD",
+        proposed_qty: float | None = None,
+        risk_decision: str = "HOLD",
+    ) -> dict[str, Any]:
+        """A3 observe-only step — persists shadow observation, never places orders."""
+        self._require_enabled()
+        from .autonomous_paper_loop import (
+            SHADOW_MODE,
+            loop_state_from_dict,
+            record_shadow_observation,
+        )
+
+        row = self.store.get_paper_deployment(deployment_id)
+        if row is None:
+            raise MarketSimError("PAPER_DEPLOYMENT_NOT_FOUND", deployment_id, http_status=404)
+        if str(row.get("mode") or "") != SHADOW_MODE:
+            raise MarketSimError(
+                "NOT_SHADOW_DEPLOYMENT",
+                f"deployment mode={row.get('mode')}",
+                http_status=409,
+            )
+        if row.get("kill_switch"):
+            raise MarketSimError("KILL_SWITCH", "deployment kill switch armed", http_status=409)
+        loop = loop_state_from_dict(row.get("loop_state_json") or {})
+        if loop is None:
+            raise MarketSimError("LOOP_STATE_MISSING", deployment_id, http_status=500)
+        session_id = row.get("session_id") or loop.shadow_session_id
+        if not session_id:
+            raise MarketSimError("SHADOW_SESSION_MISSING", deployment_id, http_status=409)
+        session = self.paper_session_state(session_id)
+        quote = (session.get("metadata") or {}).get("last_quote") or {}
+        price = quote.get("price")
+        obs = record_shadow_observation(
+            loop,
+            symbol=session["symbol"],
+            signal_side=signal_side,
+            proposed_qty=proposed_qty,
+            risk_decision=risk_decision,
+            hypothetical_price=float(price) if price is not None else None,
+            feed_status=str(session.get("feed_status") or "unknown"),
+            market_snapshot_ref=f"quote:{session.get('updated_at')}",
+            metadata={"deployment_id": deployment_id, "no_order": True},
+        )
+        loop.shadow_session_id = session_id
+        row["loop_state_json"] = loop.public_dict()
+        row["updated_at"] = utc_now()
+        meta = dict(row.get("metadata_json") or {})
+        meta["last_shadow_observation"] = obs.public_dict()
+        row["metadata_json"] = meta
+        self.store.upsert_paper_deployment(row)
+        return {
+            "observation": obs.public_dict(),
+            "loop": loop.public_dict(),
+            "deployment_id": deployment_id,
+            "truth": {"no_paper_order": True, "live_money": "BLOCKED"},
+        }
+
+    def promote_deployment_autonomy(
+        self,
+        deployment_id: str,
+        *,
+        target_level: str,
+        sealed_attempt_id: str | None = None,
+        min_shadow_observations: int = 5,
+        min_paper_steps: int = 5,
+        acceptance_criteria: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Promote A2→A3 or A3→A4 using resolved receipts only."""
+        self._require_enabled()
+        from .autonomous_paper_loop import evaluate_loop_promotion, loop_state_from_dict
+
+        row = self.store.get_paper_deployment(deployment_id)
+        if row is None:
+            raise MarketSimError("PAPER_DEPLOYMENT_NOT_FOUND", deployment_id, http_status=404)
+        loop = loop_state_from_dict(row.get("loop_state_json") or {})
+        if loop is None:
+            raise MarketSimError("LOOP_STATE_MISSING", deployment_id, http_status=500)
+        result = evaluate_loop_promotion(
+            loop,
+            target_level=target_level,
+            acceptance_criteria=acceptance_criteria,
+            sealed_attempt_id=sealed_attempt_id,
+            min_shadow_observations=min_shadow_observations,
+            min_paper_steps=min_paper_steps,
+        )
+        row["loop_state_json"] = loop.public_dict()
+        row["updated_at"] = utc_now()
+        if result.get("promotable") and str(target_level).upper() == "A4":
+            # Ensure an autonomous paper session exists (may promote shadow→paper capital).
+            if not loop.paper_session_id:
+                paper = self.create_and_persist_paper_deployment(
+                    strategy_id=loop.strategy_id,
+                    strategy_version=loop.strategy_version,
+                    universe=list(row.get("universe_json") or []),
+                    feed_id=str(row.get("feed_id") or "binance_public"),
+                    mode="autonomous_paper",
+                    qualification_refs={
+                        "from_shadow_deployment_id": deployment_id,
+                        "shadow_run_id": loop.shadow_session_id,
+                    },
+                    symbol=(row.get("universe_json") or [None])[0],
+                )
+                loop.paper_session_id = paper["session"]["session_id"]
+                loop.deployment_id = paper["deployment"]["deployment_id"]
+                row["loop_state_json"] = loop.public_dict()
+                result["autonomous_paper_deployment"] = paper
+        self.store.upsert_paper_deployment(row)
+        return result
+
+    def autonomous_paper_step(
+        self,
+        deployment_id: str,
+        *,
+        side: str = "HOLD",
+        qty: float | None = None,
+    ) -> dict[str, Any]:
+        """A4 paper forward step with RiskGuard — records receipt on deployment loop."""
+        self._require_enabled()
+        from .autonomous_paper_loop import (
+            AUTONOMOUS_PAPER_MODE,
+            assert_deployment_ready_for_orders,
+            loop_state_from_dict,
+        )
+        from .paper_deployment import PaperDeployment, FeedHealth
+        from .strategy_asset import ExecutionCompatibilityManifest
+
+        row = self.store.get_paper_deployment(deployment_id)
+        if row is None:
+            raise MarketSimError("PAPER_DEPLOYMENT_NOT_FOUND", deployment_id, http_status=404)
+        if str(row.get("mode") or "") not in {AUTONOMOUS_PAPER_MODE, "autonomous_paper"}:
+            raise MarketSimError(
+                "NOT_AUTONOMOUS_PAPER_DEPLOYMENT",
+                f"mode={row.get('mode')}",
+                http_status=409,
+            )
+        # Reconstruct minimal deployment for kill/feed checks
+        fh_raw = row.get("feed_health_json")
+        feed_health = None
+        if isinstance(fh_raw, dict) and fh_raw.get("feed_id"):
+            feed_health = FeedHealth(
+                feed_id=str(fh_raw.get("feed_id") or row.get("feed_id") or ""),
+                status=str(fh_raw.get("status") or "UNMEASURED"),
+                last_tick_ts=fh_raw.get("last_tick_ts"),
+                as_of=fh_raw.get("as_of"),
+                staleness_seconds=fh_raw.get("staleness_seconds"),
+                gap_count=int(fh_raw.get("gap_count") or 0),
+                reconnect_count=int(fh_raw.get("reconnect_count") or 0),
+                provenance=str(fh_raw.get("provenance") or ""),
+            )
+        deployment = PaperDeployment(
+            deployment_id=row["deployment_id"],
+            strategy_asset_id=row["strategy_asset_id"],
+            strategy_version=int(row["strategy_version"]),
+            compatibility=ExecutionCompatibilityManifest(),
+            universe=list(row.get("universe_json") or []),
+            feed_id=str(row.get("feed_id") or ""),
+            risk_config=dict(row.get("risk_config_json") or {}),
+            sizing_config=dict(row.get("sizing_config_json") or {}),
+            cadence=str(row.get("cadence") or "every_n_bars"),
+            env_fingerprint=str(row.get("env_fingerprint") or ""),
+            status=str(row.get("status") or "RUNNING"),
+            kill_switch=bool(row.get("kill_switch")),
+            feed_health=feed_health,
+            created_at=str(row.get("created_at") or ""),
+            updated_at=str(row.get("updated_at") or ""),
+            metadata=dict(row.get("metadata_json") or {}),
+        )
+        assert_deployment_ready_for_orders(deployment)
+        loop = loop_state_from_dict(row.get("loop_state_json") or {})
+        if loop is None or not loop.paper_session_id:
+            raise MarketSimError("PAPER_SESSION_MISSING", deployment_id, http_status=409)
+        stepped = self.paper_forward_step(loop.paper_session_id, side=side, qty=qty)
+        receipt = {
+            "step_id": str(uuid.uuid4()),
+            "checkpoint_step": (stepped.get("forward") or {}).get("checkpoint_step"),
+            "allowed": (stepped.get("result") or {}).get("allowed"),
+            "blocked": bool((stepped.get("result") or {}).get("blocked")),
+            "side": side,
+            "order": (stepped.get("result") or {}).get("order"),
+            "filled": bool((stepped.get("result") or {}).get("order")),
+            "at": utc_now(),
+        }
+        loop.paper_step_receipts.append(receipt)
+        loop.stage = "AUTONOMOUS_PAPER"
+        loop.updated_at = utc_now()
+        row["loop_state_json"] = loop.public_dict()
+        row["updated_at"] = utc_now()
+        self.store.upsert_paper_deployment(row)
+        return {
+            "step": stepped,
+            "receipt": receipt,
+            "loop": loop.public_dict(),
+            "truth": {"simulated_capital": True, "live_money": "BLOCKED"},
+        }
+
+    def review_deployment_drift(
+        self,
+        deployment_id: str,
+        *,
+        baseline_metrics: dict[str, float],
+        observed_metrics: dict[str, float],
+        relative_threshold: float = 0.25,
+        spawn_challenger: bool = True,
+    ) -> dict[str, Any]:
+        """Compare research expectation vs paper-forward; persist PAPER_OBSERVED lesson."""
+        self._require_enabled()
+        from .autonomous_paper_loop import (
+            loop_state_from_dict,
+            review_loop_drift,
+            spawn_challenger_from_drift,
+        )
+
+        row = self.store.get_paper_deployment(deployment_id)
+        if row is None:
+            raise MarketSimError("PAPER_DEPLOYMENT_NOT_FOUND", deployment_id, http_status=404)
+        loop = loop_state_from_dict(row.get("loop_state_json") or {})
+        if loop is None:
+            raise MarketSimError("LOOP_STATE_MISSING", deployment_id, http_status=500)
+
+        def _memory_writer(mem: Any) -> Any:
+            return self.store.save_strategy_memory(mem)
+
+        drift = review_loop_drift(
+            loop,
+            baseline_metrics=baseline_metrics,
+            observed_metrics=observed_metrics,
+            strategy_memory_writer=_memory_writer,
+            relative_threshold=relative_threshold,
+        )
+        challenger = None
+        if spawn_challenger and drift.get("status") == "DRIFT_DETECTED":
+            challenger = spawn_challenger_from_drift(loop)
+        row["loop_state_json"] = loop.public_dict()
+        row["updated_at"] = utc_now()
+        self.store.upsert_paper_deployment(row)
+        return {
+            "drift": drift,
+            "challenger": challenger,
+            "loop": loop.public_dict(),
+            "truth": {
+                "does_not_auto_promote": True,
+                "does_not_auto_disable_unless_policy": True,
+                "live_money": "BLOCKED",
+            },
+        }
+
+    def get_paper_deployment(self, deployment_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        from .autonomous_paper_loop import deployment_from_row
+
+        row = self.store.get_paper_deployment(deployment_id)
+        if row is None:
+            raise MarketSimError("PAPER_DEPLOYMENT_NOT_FOUND", deployment_id, http_status=404)
+        public = deployment_from_row(row)
+        public["loop"] = row.get("loop_state_json") or {}
+        public["session_id"] = row.get("session_id")
+        public["mode"] = row.get("mode")
+        return public
+
+    def list_paper_deployments(
+        self,
+        *,
+        strategy_id: str | None = None,
+        mode: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        self._require_enabled()
+        from .autonomous_paper_loop import deployment_from_row
+
+        rows = self.store.list_paper_deployments(
+            strategy_asset_id=strategy_id, mode=mode, limit=limit
+        )
+        out = []
+        for row in rows:
+            public = deployment_from_row(row)
+            public["loop"] = row.get("loop_state_json") or {}
+            public["session_id"] = row.get("session_id")
+            public["mode"] = row.get("mode")
+            out.append(public)
+        return out
+
+    def paper_deployment_kill_switch(
+        self, deployment_id: str, *, armed: bool = True, reason: str = ""
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        row = self.store.get_paper_deployment(deployment_id)
+        if row is None:
+            raise MarketSimError("PAPER_DEPLOYMENT_NOT_FOUND", deployment_id, http_status=404)
+        row["kill_switch"] = bool(armed)
+        row["status"] = "KILLED" if armed else ("PAUSED" if row.get("status") == "KILLED" else row.get("status"))
+        meta = dict(row.get("metadata_json") or {})
+        meta["kill_reason"] = reason or ("armed" if armed else "disarmed")
+        row["metadata_json"] = meta
+        row["updated_at"] = utc_now()
+        self.store.upsert_paper_deployment(row)
+        # Mirror onto bound session
+        if row.get("session_id"):
+            try:
+                self.paper_kill_switch(row["session_id"], armed=armed)
+            except MarketSimError:
+                pass
+        return self.get_paper_deployment(deployment_id)
 
     # --- Paper Portefeuille (multi-asset capital book) ---
 

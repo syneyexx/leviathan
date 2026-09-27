@@ -197,12 +197,14 @@ def create_paper_deployment(
     cadence: str = "every_n_bars",
     feature_pipeline_version: str = FEATURE_PIPELINE_VERSION,
     available_features: set[str] | None = None,
+    available_timeframes: set[str] | None = None,
 ) -> PaperDeployment:
     """Validate compatibility then create a paper deployment. Live always rejected."""
     compat = asset.compatibility
     check = compat.validate_against_runtime(
         feature_pipeline_version=feature_pipeline_version,
         available_features=available_features,
+        available_timeframes=available_timeframes,
         surface=CompatibilitySurface.PAPER,
     )
     if not check.get("ok"):

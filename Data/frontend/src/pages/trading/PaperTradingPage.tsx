@@ -92,8 +92,9 @@ export function PaperTradingPage() {
       <TradingHero title="Paper Trading" image={tradingHeroes.paper} />
       <div className="lv-tp-wrap">
         <p className="lv-tp-lede">
-          Live paper mode uses a local ledger against public quotes. Not historical backtest.
-          Not real money. Live broker orders remain blocked.
+          SIMULATED CAPITAL only. Live paper mode uses a local ledger against public quotes.
+          Not historical backtest. Not real money. A3 shadow and A4 autonomous paper deployments
+          are backend-authoritative via paper/deployments. Live broker orders remain BLOCKED.
         </p>
         {error && <div className="lv-tp-banner is-bad">{error}</div>}
 

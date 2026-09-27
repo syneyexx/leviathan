@@ -125,6 +125,7 @@ import type {
   MarketSimRun,
   MarketSimLiveState,
   MarketSimCapabilities,
+  MarketSimPaperDeployment,
   TradeOrchestra,
   TradeOrchestraSummary,
   TradingDecision,
@@ -2331,6 +2332,109 @@ export const api = {
 
   marketSimCapabilities(): Promise<MarketSimCapabilities> {
     return request("/api/market-sim/capabilities");
+  },
+
+  listPaperDeployments(params?: {
+    strategyId?: string;
+    mode?: string;
+    limit?: number;
+  }): Promise<{ deployments: MarketSimPaperDeployment[]; truth: Record<string, unknown> }> {
+    const q = new URLSearchParams();
+    if (params?.strategyId) q.set("strategyId", params.strategyId);
+    if (params?.mode) q.set("mode", params.mode);
+    if (params?.limit) q.set("limit", String(params.limit));
+    const qs = q.toString();
+    return request(`/api/market-sim/paper/deployments${qs ? `?${qs}` : ""}`);
+  },
+
+  createPaperDeployment(payload: {
+    strategyId: string;
+    strategyVersion?: number | null;
+    universe?: string[];
+    feedId?: string;
+    mode?: "shadow" | "autonomous_paper" | string;
+    symbol?: string;
+    brokerId?: string;
+    providerId?: string;
+    initialCash?: number;
+    riskConfig?: Record<string, unknown>;
+    sizingConfig?: Record<string, unknown>;
+    qualificationRefs?: Record<string, unknown>;
+  }): Promise<Record<string, unknown>> {
+    return request("/api/market-sim/paper/deployments", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getPaperDeployment(deploymentId: string): Promise<{ deployment: MarketSimPaperDeployment }> {
+    return request(`/api/market-sim/paper/deployments/${encodeURIComponent(deploymentId)}`);
+  },
+
+  shadowObserveDeployment(
+    deploymentId: string,
+    payload?: { signalSide?: string; proposedQty?: number | null; riskDecision?: string },
+  ): Promise<Record<string, unknown>> {
+    return request(
+      `/api/market-sim/paper/deployments/${encodeURIComponent(deploymentId)}/shadow-observe`,
+      { method: "POST", body: JSON.stringify(payload || {}) },
+    );
+  },
+
+  promotePaperDeployment(
+    deploymentId: string,
+    payload: {
+      targetLevel: string;
+      sealedAttemptId?: string | null;
+      minShadowObservations?: number;
+      minPaperSteps?: number;
+      acceptanceCriteria?: Record<string, unknown>;
+    },
+  ): Promise<Record<string, unknown>> {
+    return request(
+      `/api/market-sim/paper/deployments/${encodeURIComponent(deploymentId)}/promote`,
+      { method: "POST", body: JSON.stringify(payload) },
+    );
+  },
+
+  autonomousPaperStep(
+    deploymentId: string,
+    payload?: { side?: string; qty?: number | null },
+  ): Promise<Record<string, unknown>> {
+    return request(
+      `/api/market-sim/paper/deployments/${encodeURIComponent(deploymentId)}/autonomous-step`,
+      { method: "POST", body: JSON.stringify(payload || {}) },
+    );
+  },
+
+  reviewPaperDeploymentDrift(
+    deploymentId: string,
+    payload: {
+      baselineMetrics: Record<string, number>;
+      observedMetrics: Record<string, number>;
+      relativeThreshold?: number;
+      spawnChallenger?: boolean;
+    },
+  ): Promise<Record<string, unknown>> {
+    return request(
+      `/api/market-sim/paper/deployments/${encodeURIComponent(deploymentId)}/drift-review`,
+      { method: "POST", body: JSON.stringify(payload) },
+    );
+  },
+
+  paperDeploymentKillSwitch(
+    deploymentId: string,
+    armed = true,
+    reason = "",
+  ): Promise<{ deployment: MarketSimPaperDeployment }> {
+    const q = new URLSearchParams({
+      armed: armed ? "true" : "false",
+      reason,
+    });
+    return request(
+      `/api/market-sim/paper/deployments/${encodeURIComponent(deploymentId)}/kill-switch?${q}`,
+      { method: "POST" },
+    );
   },
 
   listPaperSessions(): Promise<{ sessions: Array<Record<string, unknown>> }> {

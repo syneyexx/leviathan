@@ -196,16 +196,117 @@ def build_market_capabilities(
         "binance_public_reachable": bool(binance_reachable),
         "force_live_blocked": not _env_truthy("LEVIATHAN_LIVE_TRADING_UNLOCK"),
         "markets": [m.public_dict() for m in families],
+        "mode_matrix": build_mode_capability_matrix(feature_enabled=feature_enabled),
         "execution_granularity": execution_granularity_matrix(),
         "action_matrix": trading_action_matrix(),
+        "exchange_venues": _exchange_venue_summary(),
         "truth": {
             "capability_from_adapters": True,
             "not_from_ui_presence": True,
             "profitable_backtest_is_not_proof": True,
             "ohlcv_is_not_orderbook": True,
             "granularity_honesty_required": True,
+            "mode_matrix_machine_derived": True,
         },
     }
+
+
+RESEARCH_MODES = (
+    "HISTORICAL_RESEARCH",
+    "GYM",
+    "LEARNING",
+    "VALIDATION",
+    "ROBUSTNESS",
+    "SEALED",
+    "SHADOW",
+    "AUTONOMOUS_PAPER",
+)
+
+
+def build_mode_capability_matrix(*, feature_enabled: bool) -> list[dict[str, Any]]:
+    """Per family × research/paper mode — machine-derived, not UI-inferred."""
+    if not feature_enabled:
+        return [
+            {
+                "family": fam,
+                "modes": {m: "UNAVAILABLE" for m in RESEARCH_MODES},
+                "live_trading": "BLOCKED",
+            }
+            for fam in (
+                "equity",
+                "crypto_spot",
+                "futures",
+                "forex",
+                "options",
+                "fixed_income",
+                "other",
+            )
+        ]
+
+    def _row(family: str, modes: dict[str, str], *, notes: str = "") -> dict[str, Any]:
+        return {
+            "family": family,
+            "modes": {m: modes.get(m, "NOT_IMPLEMENTED") for m in RESEARCH_MODES},
+            "live_trading": "BLOCKED",
+            "notes": notes,
+        }
+
+    equity_modes = {
+        "HISTORICAL_RESEARCH": "AVAILABLE",
+        "GYM": "AVAILABLE",
+        "LEARNING": "AVAILABLE",
+        "VALIDATION": "AVAILABLE",
+        "ROBUSTNESS": "AVAILABLE",
+        "SEALED": "AVAILABLE",
+        "SHADOW": "AVAILABLE",
+        "AUTONOMOUS_PAPER": "AVAILABLE",
+    }
+    crypto_modes = dict(equity_modes)
+    futures_modes = {
+        "HISTORICAL_RESEARCH": "AVAILABLE",
+        "GYM": "AVAILABLE",
+        "LEARNING": "AVAILABLE",
+        "VALIDATION": "AVAILABLE",
+        "ROBUSTNESS": "AVAILABLE",
+        "SEALED": "AVAILABLE",
+        "SHADOW": "NOT_IMPLEMENTED",
+        "AUTONOMOUS_PAPER": "NOT_IMPLEMENTED",
+    }
+    forex_modes = dict(futures_modes)
+    options_modes = {m: "NOT_IMPLEMENTED" for m in RESEARCH_MODES}
+    fi_modes = {m: "NOT_IMPLEMENTED" for m in RESEARCH_MODES}
+    other_modes = {m: "NOT_IMPLEMENTED" for m in RESEARCH_MODES}
+
+    return [
+        _row("equity", equity_modes, notes="US+EU venues via exchange_calendars; paper local/alpaca"),
+        _row("crypto_spot", crypto_modes, notes="Binance public + local paper; not exchange-matched"),
+        _row(
+            "crypto_perpetual",
+            {
+                **{m: "NOT_IMPLEMENTED" for m in RESEARCH_MODES},
+                "HISTORICAL_RESEARCH": "FEATURE_GATED",
+            },
+            notes="Perp identity exists; spot/perp semantics not mixed; paper NOT_IMPLEMENTED",
+        ),
+        _row("futures", futures_modes, notes="Historical + VM; paper NOT_IMPLEMENTED"),
+        _row("forex", forex_modes, notes="Historical FX pair identity; paper NOT_IMPLEMENTED"),
+        _row("options", options_modes, notes="Contract identity; greeks UNMEASURED; trading NOT_IMPLEMENTED"),
+        _row("fixed_income", fi_modes, notes="Identity/yield stubs; trading NOT_IMPLEMENTED"),
+        _row("other", other_modes, notes="Catch-all — never silent equity fallback"),
+    ]
+
+
+def _exchange_venue_summary() -> dict[str, Any]:
+    try:
+        from .exchange_calendars import european_equity_venues, list_venues
+
+        return {
+            "european_equity_mics": european_equity_venues(),
+            "venues": list_venues(),
+            "truth": {"europe_is_not_one_exchange": True},
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "UNMEASURED", "error": str(exc)[:200]}
 
 
 def execution_granularity_matrix() -> list[dict[str, Any]]:

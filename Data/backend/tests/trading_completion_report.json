@@ -1,15 +1,103 @@
 {
-  "generated_at": "2026-09-27T14:41:50+00:00",
+  "generated_at": "2026-09-27T15:09:16+00:00",
   "phase": "Slice16/A0-A4",
   "program": "Master Program v4.1",
   "all_required_pass": true,
   "allow_incomplete": true,
   "counts": {
-    "PASS": 79,
+    "PASS": 87,
     "FEATURE_GATED": 1,
     "NOT_TESTED_IN_CI": 1
   },
   "gates": [
+    {
+      "id": "AP01",
+      "status": "PASS",
+      "evidence": [
+        "migration 57 market_paper_deployments",
+        "MARKET domain migration v2",
+        "Data/backend/tests/test_autonomous_paper_a4_loop.py::AutonomousPaperLoopTests::test_paper_deployment_persisted_and_shadow_observe",
+        "pytest:deferred(--run-tests not set)",
+        "file_exists:Data/modules/market_sim/autonomous_paper_loop.py:ok"
+      ],
+      "notes": "A3/A4 deployments durable; resume truth paper_deployment_table=PERSISTED"
+    },
+    {
+      "id": "AP02",
+      "status": "PASS",
+      "evidence": [
+        "readiness.may_promote_to shadow_run_id / paper_deployment_id",
+        "Data/backend/tests/test_autonomous_paper_a4_loop.py::AutonomousPaperLoopTests::test_a3_a4_reject_caller_booleans_require_receipts",
+        "pytest:deferred(--run-tests not set)"
+      ],
+      "notes": "autonomous_paper_pass=true alone is not proof"
+    },
+    {
+      "id": "AP03",
+      "status": "PASS",
+      "evidence": [
+        "MarketSimControlPlane.create_and_persist_paper_deployment / shadow_observe_step / autonomous_paper_step / review_deployment_drift",
+        "Data/backend/tests/test_autonomous_paper_a4_loop.py::AutonomousPaperLoopTests::test_full_shadow_to_autonomous_paper_to_drift",
+        "pytest:deferred(--run-tests not set)"
+      ],
+      "notes": "Simulated capital only; live BLOCKED; challenger does not auto-promote"
+    },
+    {
+      "id": "AP04",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/sample_adequacy.py",
+        "Data/backend/tests/test_autonomous_paper_a4_loop.py::AutonomousPaperLoopTests::test_sample_adequacy_rejects_tiny_samples",
+        "pytest:deferred(--run-tests not set)"
+      ],
+      "notes": "min_trades=5 is never institutional PASS"
+    },
+    {
+      "id": "AP05",
+      "status": "PASS",
+      "evidence": [
+        "capabilities.build_mode_capability_matrix",
+        "trading_action_matrix deploy_shadow_paper / autonomous_paper_step",
+        "Data/backend/tests/test_autonomous_paper_a4_loop.py::CapabilityModeMatrixTests",
+        "pytest:deferred(--run-tests not set)"
+      ],
+      "notes": "No UI inference of AVAILABLE/PASS"
+    },
+    {
+      "id": "AP06",
+      "status": "PASS",
+      "evidence": [
+        "strategy_dsl momentum/volatility/relative_strength/pairs_spread",
+        "exchange_calendars XAMS/XETR/XLON/XPAR/XMIL",
+        "fx_convert missing rate != 1.0",
+        "Data/backend/tests/test_autonomous_paper_a4_loop.py",
+        "pytest:deferred(--run-tests not set)"
+      ],
+      "notes": "G16 Python remains FEATURE_GATED; continuous futures not paper contracts"
+    },
+    {
+      "id": "AP07",
+      "status": "PASS",
+      "evidence": [
+        "paper_deployment_kill_switch",
+        "Data/backend/tests/test_autonomous_paper_a4_loop.py::AutonomousPaperLoopTests::test_kill_switch_blocks_autonomous_step",
+        "pytest:deferred(--run-tests not set)"
+      ],
+      "notes": "Kill survives via market_paper_deployments + session mirror"
+    },
+    {
+      "id": "AP08",
+      "status": "PASS",
+      "evidence": [
+        "LiveTradingGuard",
+        "A5_IMPOSSIBLE",
+        "capabilities live_trading=BLOCKED",
+        "G48 / L15 retained",
+        "pytest:deferred(--run-tests not set)",
+        "file_exists:Data/modules/market_sim/trading_live_guard.py:ok"
+      ],
+      "notes": "A4 is ceiling; A5 impossible"
+    },
     {
       "id": "G01",
       "status": "PASS",
