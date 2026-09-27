@@ -23,7 +23,8 @@
         "NODE_NPM"
       ],
       "dependencies": [
-        "node"
+        "node",
+        "ffmpeg"
       ]
     },
     "runtime": {
@@ -50,6 +51,28 @@
           }
         },
         {
+          "name": "frames",
+          "command": [
+            "node",
+            "plugins/scrollcraft/skills/scrollcraft/scripts/frames-from-style.mjs",
+            "--style",
+            "{style}",
+            "--count",
+            "{count}",
+            "--width",
+            "{width}",
+            "--mobile-width",
+            "{mobile_width}"
+          ],
+          "defaults": {
+            "style": "aurora",
+            "count": "48",
+            "width": "960",
+            "mobile_width": "828"
+          },
+          "timeout_seconds": 180
+        },
+        {
           "name": "build",
           "command": [
             "node",
@@ -61,7 +84,8 @@
           "command": [
             "node",
             "plugins/scrollcraft/skills/scrollcraft/scripts/verify.mjs"
-          ]
+          ],
+          "timeout_seconds": 180
         },
         {
           "name": "generate",
@@ -129,6 +153,16 @@
       "name": "ScrollCraft Generate",
       "description": "Init + generate a ScrollCraft site from a prompt/name.",
       "external_name": "generate",
+      "side_effects": [
+        "WRITE",
+        "EXECUTE"
+      ]
+    },
+    {
+      "capability_id": "external.scrollcraft.frames",
+      "name": "ScrollCraft Frames",
+      "description": "Generate style frames via ffmpeg (frames-from-style.mjs) for cinematic scroll sites.",
+      "external_name": "frames",
       "side_effects": [
         "WRITE",
         "EXECUTE"

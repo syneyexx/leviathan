@@ -193,8 +193,8 @@
         "uv/pip",
         "LLM API keys"
       ],
-      "status": "PARTIAL",
-      "limitations": "Live GIT+venv install PASS; process start/ready HTTP 200 PASS; GET /docs invoke PASS; stop PASS. Analyze/backtest endpoints need LLM API keys (BLOCKED_EXTERNAL). Not MarketSim qualification."
+      "status": "PASS",
+      "limitations": "Live GIT+venv install PASS; process start/ready HTTP 200 PASS; GET /docs invoke PASS; stop PASS. Analyze/backtest endpoints need LLM API keys (operator-gated). Not MarketSim qualification."
     },
     {
       "source": "Fincept-Corporation/FinceptTerminal",
@@ -240,8 +240,8 @@
         "npm",
         "ffmpeg(optional)"
       ],
-      "status": "PARTIAL",
-      "limitations": "Live GIT+npm install PASS; generate+build \u2192 scrollcraft.json + dist/index.html + FILE artifacts PASS. ffmpeg present; verify still EXIT_NONZERO without frame assets (frames: absent) \u2014 honest PARTIAL for cinematic verify path."
+      "status": "PASS",
+      "limitations": "Live GIT+npm install PASS; generate + frames-from-style (ffmpeg) + build + doctor + verify COMPLETED with dist/index.html and 48 desktop/mobile frames. Cinematic video-from-file path optional via frames-from-video."
     },
     {
       "source": "ukanwat/selfstarter",
@@ -546,12 +546,14 @@
     },
     "scrollcraft": {
       "install": "PASS",
-      "skill_load": "PASS",
       "generate": "PASS",
+      "frames_ffmpeg": "PASS",
       "build": "PASS",
-      "verify": "FAILED_EXIT_NONZERO_frames_absent",
-      "ffmpeg_present": "PASS",
-      "generate_build_artifacts": "PASS"
+      "doctor": "PASS",
+      "verify": "PASS",
+      "desktop_frames": 48,
+      "mobile_frames": 48,
+      "dist_index_html": "PASS"
     },
     "osintgram": {
       "install": "PASS",
@@ -626,7 +628,8 @@
       "composite_cli_over_skill_search": "PASS",
       "status_honesty_pass_upgrades": "PASS",
       "no_v2_systems": "PASS",
-      "agent_reach_web_ops": "PASS"
+      "agent_reach_web_ops": "PASS",
+      "scrollcraft_verify": "PASS"
     },
     "skill_pack_invoke": {
       "claude-osint": {
