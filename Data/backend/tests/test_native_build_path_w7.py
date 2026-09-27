@@ -49,6 +49,21 @@ class NativeBuildPathTests(unittest.TestCase):
         else:
             self.assertFalse(name.endswith(".exe"))
 
+    def test_installed_unix_binary_exists_after_build_when_present(self) -> None:
+        """Live artifact from scripts/build_native_data_plane.py on Unix hosts."""
+        if sys.platform.startswith("win"):
+            self.skipTest("unix-only live path check")
+        dest = (
+            Path(__file__).resolve().parents[2]
+            / "native"
+            / "bin"
+            / self.mod.binary_filename(windows=False)
+        )
+        if not dest.is_file():
+            self.skipTest(f"native binary not installed at {dest}")
+        self.assertFalse(dest.name.endswith(".exe"))
+        self.assertEqual(dest.name, "leviathan-data-plane")
+
 
 if __name__ == "__main__":
     unittest.main()

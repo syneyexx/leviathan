@@ -22,7 +22,7 @@ export function HardwareInventoryPanel({
 }) {
   if (loading && !hardware) {
     return (
-      <article className="lv-panel lv-card">
+      <article className="lv-panel lv-card lv-hardware-panel">
         <div className="lv-section-label">Hardware</div>
         <p className="lv-muted">Loading hardware inventory…</p>
       </article>
@@ -31,7 +31,7 @@ export function HardwareInventoryPanel({
 
   if (!hardware) {
     return (
-      <article className="lv-panel lv-card">
+      <article className="lv-panel lv-card lv-hardware-panel">
         <div className="lv-section-label">Hardware</div>
         <p className="lv-muted">Hardware telemetry unavailable</p>
       </article>

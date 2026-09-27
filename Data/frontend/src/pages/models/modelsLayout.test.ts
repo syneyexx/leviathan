@@ -40,6 +40,13 @@ describe("models page hardware / catalog layout", () => {
     expect(pagesCss).toContain(".lv-hardware-panel .lv-models-dl");
     expect(pagesCss).toContain("auto-fit");
   });
+
+  it("marks loading and unavailable hardware states with lv-hardware-panel", () => {
+    expect(hardwareSrc).toMatch(/Loading hardware inventory[\s\S]*?lv-hardware-panel|lv-hardware-panel[\s\S]*?Loading hardware inventory/);
+    expect(hardwareSrc).toContain("Hardware telemetry unavailable");
+    const panels = hardwareSrc.match(/lv-hardware-panel/g) || [];
+    expect(panels.length).toBeGreaterThanOrEqual(3);
+  });
 });
 
 /**
