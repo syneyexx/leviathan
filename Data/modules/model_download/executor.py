@@ -236,11 +236,14 @@ class ModelDownloadExecutor:
             return result
         except ModelDownloadError as exc:
             cancelled = exc.code == ModelDownloadErrorCode.MODEL_DOWNLOAD_CANCELLED
-            progress(
-                phase="cancelled" if cancelled else "failed",
-                state=DownloadState.CANCELLED.value if cancelled else DownloadState.FAILED.value,
-                error=exc.message,
-            )
+            try:
+                progress(
+                    phase="cancelled" if cancelled else "failed",
+                    state=DownloadState.CANCELLED.value if cancelled else DownloadState.FAILED.value,
+                    error=exc.message,
+                )
+            except Exception:  # noqa: BLE001
+                pass
             payload = {
                 "status": "cancelled" if cancelled else "failed",
                 "error": exc.public_dict(),
@@ -286,11 +289,14 @@ class ModelDownloadExecutor:
                     pass
             return payload
         except LeaseFenceError as exc:
-            progress(
-                phase="failed",
-                state=DownloadState.FAILED.value,
-                error=str(exc),
-            )
+            try:
+                progress(
+                    phase="failed",
+                    state=DownloadState.FAILED.value,
+                    error=str(exc),
+                )
+            except Exception:  # noqa: BLE001 — progress is best-effort after fence
+                pass
             payload = {
                 "status": "failed",
                 "error": {"code": "LEASE_FENCE", "message": str(exc)},
@@ -301,11 +307,14 @@ class ModelDownloadExecutor:
             record_stale_lease_fence(ctx)
             return payload
         except Exception as exc:  # noqa: BLE001
-            progress(
-                phase="failed",
-                state=DownloadState.FAILED.value,
-                error=str(exc),
-            )
+            try:
+                progress(
+                    phase="failed",
+                    state=DownloadState.FAILED.value,
+                    error=str(exc),
+                )
+            except Exception:  # noqa: BLE001
+                pass
             payload = {
                 "status": "failed",
                 "error": {

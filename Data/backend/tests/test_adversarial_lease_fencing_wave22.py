@@ -396,15 +396,12 @@ class EntrypointLeaseRaceTests(unittest.TestCase):
     def test_maintenance_stale_cannot_overwrite_completed(self) -> None:
         from Data.modules.workers.entrypoints.maintenance import _handler
 
-        job = self.runtime.enqueue(
-            capability_id="system.maintenance",
-            arguments={},
-            worker_pool="maintenance",
-        )
+        job = self.store.create(capability_id="system.maintenance", arguments={})
+        self.store.transition(job.job_id, JobState.QUEUED)
         claimed = self.store.claim_next_queued(
             worker_id="worker-a",
             lease_ttl_seconds=30.0,
-            worker_pool="maintenance",
+            capability_ids={"system.maintenance"},
         )
         assert claimed is not None
         _steal_lease(self.store, job.job_id, new_owner="worker-b")
@@ -529,7 +526,26 @@ class DirectStoreFenceTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def test_a_loses_lease_b_completes_a_late_raises(self) -> None:
+    def test_a_loses_lease_still_running_cannot_complete(self) -> None:
+        job = self.store.create(capability_id="file.read", arguments={})
+        self.store.transition(job.job_id, JobState.QUEUED)
+        claimed = self.store.claim_next_queued(worker_id="worker-a", lease_ttl_seconds=30.0)
+        assert claimed is not None
+        _steal_lease(self.store, job.job_id, new_owner="worker-b")
+        with self.assertRaises(StaleLeaseError):
+            self.store.transition(
+                job.job_id,
+                JobState.COMPLETED,
+                result={"owner": "a"},
+                expected_lease_owner="worker-a",
+            )
+        final = self.store.get(job.job_id)
+        assert final is not None
+        self.assertEqual(final.state, JobState.RUNNING)
+        self.assertEqual(final.lease_owner, "worker-b")
+        self.assertIsNone(final.result)
+
+    def test_a_late_after_b_completed_fenced_helper_no_overwrite(self) -> None:
         job = self.store.create(capability_id="file.read", arguments={})
         self.store.transition(job.job_id, JobState.QUEUED)
         claimed = self.store.claim_next_queued(worker_id="worker-a", lease_ttl_seconds=30.0)
@@ -542,14 +558,18 @@ class DirectStoreFenceTests(unittest.TestCase):
             expected_lease_owner="worker-b",
         )
         self.assertEqual(done.state, JobState.COMPLETED)
-        with self.assertRaises(StaleLeaseError):
-            self.store.transition(
-                job.job_id,
-                JobState.FAILED,
-                error="late-a",
-                result={"owner": "a"},
-                expected_lease_owner="worker-a",
-            )
+        ctx: dict = {}
+        out = fenced_transition(
+            self.store,
+            job.job_id,
+            JobState.FAILED,
+            worker_id="worker-a",
+            ctx=ctx,
+            error="late-a",
+            result={"owner": "a"},
+        )
+        self.assertIsNone(out)
+        self.assertGreaterEqual(int(ctx.get("stale_lease_fenced", 0)), 1)
         final = self.store.get(job.job_id)
         assert final is not None
         self.assertEqual(final.state, JobState.COMPLETED)
