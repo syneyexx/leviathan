@@ -140,20 +140,29 @@ class Wave23SsrfEndpointIdentityTests(unittest.TestCase):
     def test_forged_allow_private_hosts_still_ignored(self) -> None:
         from Data.modules.provider_io.executor import _request_from_job_args
 
-        req = _request_from_job_args(
+        # Isolate from other tests that may set the operator env override.
+        with mock.patch.dict(
+            os.environ,
             {
-                "capability": "http",
-                "provider": "generic",
-                "allow_private_hosts": True,
-                "payload": {
-                    "url": "http://127.0.0.1:9/x",
-                    "allow_private_hosts": True,
-                },
+                "LEVIATHAN_PROVIDER_PRIVATE_HOST_ALLOWLIST": "",
+                "LEVIATHAN_PROVIDER_ALLOW_PRIVATE_HOSTS": "",
             },
-            job_id="j1",
-        )
-        self.assertFalse(req.allow_private_hosts)
-        self.assertNotIn("allow_private_hosts", req.payload)
+            clear=False,
+        ):
+            req = _request_from_job_args(
+                {
+                    "capability": "http",
+                    "provider": "generic",
+                    "allow_private_hosts": True,
+                    "payload": {
+                        "url": "http://127.0.0.1:9/x",
+                        "allow_private_hosts": True,
+                    },
+                },
+                job_id="j1",
+            )
+            self.assertFalse(req.allow_private_hosts)
+            self.assertNotIn("allow_private_hosts", req.payload)
 
     def test_redirect_target_wrong_port_blocked(self) -> None:
         settings = mock.Mock(spec=["model", "managed_serving", "llm_base_url"])
