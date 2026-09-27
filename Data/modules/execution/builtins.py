@@ -1778,6 +1778,37 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
             },
         )
     )
+    catalog.register(
+        CapabilityDefinition(
+            id="market_sim.portfolio_risk.loosen",
+            name="Loosen Portfolio Risk Settings",
+            description=(
+                "Approval-gated identity for loosening paper/portfolio risk settings. "
+                "Not a JobRuntime worker capability — ApprovalService only. "
+                "Must authorize before PortfolioService.patch_portfolio commits."
+            ),
+            side_effects=(SideEffect.WRITE,),
+            provider_kind=CapabilityProviderKind.INTERNAL,
+            provider_ref="market_sim.portfolio_risk.loosen",
+            input_schema={
+                "type": "object",
+                "required": ["portfolio_id"],
+                "properties": {
+                    "portfolio_id": {"type": "string"},
+                    "approval_id": {"type": "string"},
+                    "settings": {"type": "object"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("process.execute",),
+            metadata={
+                "tags": ["market_sim", "portfolio", "risk", "approval"],
+                "domains": ["market_sim"],
+                "execution_class": "INLINE_SAFE",
+                "approval_identity": True,
+            },
+        )
+    )
     _ext(
         cap_id="backup.create",
         name="Create Backup",

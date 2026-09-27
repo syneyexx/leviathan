@@ -169,6 +169,7 @@ class PortfolioPatch(BaseModel):
     orchestraId: str | None = None
     benchmarkSymbol: str | None = None
     settings: dict[str, Any] | None = None
+    approvalId: str | None = None
 
 
 class PortfolioOrderRequest(BaseModel):
@@ -787,6 +788,8 @@ def build_market_sim_router(
                 patch["benchmark_symbol"] = payload.benchmarkSymbol
             if payload.settings is not None:
                 patch["settings"] = payload.settings
+            if getattr(payload, "approvalId", None) is not None:
+                patch["approval_id"] = payload.approvalId
             return {"portfolio": service.patch_portfolio(portfolio_id, patch)}
         except MarketSimError as exc:
             raise_market_sim_error(exc)

@@ -324,12 +324,28 @@ def execution_granularity_matrix() -> list[dict[str, Any]]:
                 "intrabar path often AMBIGUOUS",
                 "no queue position",
                 "volume participation is model-based",
+                "opening short requires supports_short + ShortMarginPolicy",
+                "borrow fee unset ⇒ borrow_cost UNMEASURED",
             ],
             "latency_model": "ASSUMED_CONFIGURABLE",
             "fill_model": "NextBarFillModel",
             "cost_model": "CostModelPack",
             "capacity_assumptions": "UNMEASURED_BY_DEFAULT",
             "measurement_status": "MEASURED",
+            "short_selling": {
+                "historical_sim": "MEASURED",
+                "paper": "FEATURE_GATED",
+                "notes": (
+                    "Historical NextBarFillModel opens/covers shorts with signed qty, "
+                    "margin policy, and borrow honesty. Paper portefeuille shorting exists "
+                    "but remain FEATURE_GATED until borrow/inventory parity is measured."
+                ),
+                "truth": {
+                    "supports_short_alone_is_not_enough": True,
+                    "unset_borrow_fee_is_UNMEASURED": True,
+                    "paper_not_advertised_as_fully_supported": True,
+                },
+            },
             "truth": {"ohlcv_is_not_orderbook": True},
         },
         {

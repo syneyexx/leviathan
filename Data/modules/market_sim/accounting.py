@@ -44,6 +44,10 @@ class WalletLedger:
     W13B: supports multi-symbol ``positions`` while keeping scalar ``position_qty`` /
     ``avg_entry`` as the primary-symbol alias for backward-compatible single-symbol
     engines. Currency mixing is refused unless ``currency_mode`` allows it.
+
+    W14: ``position_qty`` is signed (long +, short −). Opening shorts require
+    ``shorting_enabled`` plus a valid ShortMarginPolicy; BUY beyond flat fails
+    closed unless ``allow_position_reversal`` is set.
     """
 
     wallet_id: str
@@ -63,6 +67,13 @@ class WalletLedger:
     transactions: list[dict[str, Any]] = field(default_factory=list)
     valuation_mode: str = "spot"  # spot | futures_vm
     contract_multiplier: Decimal = field(default_factory=lambda: Decimal("1"))
+    shorting_enabled: bool = False
+    allow_position_reversal: bool = False
+    short_margin_policy: Any | None = None
+    margin_used: Decimal = ZERO
+    short_proceeds: Decimal = ZERO
+    borrow_cost_status: str = "UNMEASURED"
+    borrow_state: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.cash = money(self.cash)
@@ -72,15 +83,43 @@ class WalletLedger:
         self.realized_pnl = money(self.realized_pnl)
         self.fees_paid = money(self.fees_paid)
         self.contract_multiplier = D(self.contract_multiplier)
+        self.margin_used = money(self.margin_used)
+        self.short_proceeds = money(self.short_proceeds)
         if self.peak_equity <= 0:
             self.peak_equity = self.cash
-        # Sync scalar position into positions map when primary known.
         if self.primary_symbol and self.position_qty != ZERO and self.primary_symbol not in self.positions:
             self.positions[self.primary_symbol] = PositionLot(
                 symbol=self.primary_symbol,
                 qty=self.position_qty,
                 avg_entry=self.avg_entry,
             )
+        self._refresh_borrow_cost_status()
+
+    def _refresh_borrow_cost_status(self) -> None:
+        policy = self._resolved_margin_policy()
+        if policy is None:
+            return
+        fee = getattr(policy, "borrow_fee_bps_per_day", None)
+        self.borrow_cost_status = "MEASURED" if fee is not None else "UNMEASURED"
+
+    def _resolved_margin_policy(self) -> Any | None:
+        from .short_margin import ShortMarginPolicy
+        policy = self.short_margin_policy
+        if isinstance(policy, dict):
+            return ShortMarginPolicy.from_dict(policy)
+        return policy
+
+    def short_market_value(self, price: Any) -> Decimal:
+        if self.position_qty >= ZERO:
+            return ZERO
+        return money(abs(self.position_qty) * D(price))
+
+    def initial_margin_for_short(self, qty: Any, price: Any) -> Decimal:
+        policy = self._resolved_margin_policy()
+        if policy is None:
+            return ZERO
+        pct = D(getattr(policy, "initial_margin_pct", 0) or 0)
+        return money(abs(D(qty)) * D(price) * pct / D(100))
 
     def _assert_currency(self, quote_currency: str | None) -> None:
         if self.currency_mode != "single":
@@ -118,18 +157,26 @@ class WalletLedger:
             self.avg_entry = money(only.avg_entry)
 
     def _upsert_lot(self, symbol: str, *, qty_delta: Decimal, price: Decimal) -> None:
+        """Apply signed qty delta. Same-sign adds reweight avg entry; flat removes lot."""
         lot = self.positions.get(symbol)
         if lot is None:
-            if qty_delta <= ZERO:
+            if qty_delta == ZERO:
                 return
-            self.positions[symbol] = PositionLot(symbol=symbol, qty=money(qty_delta), avg_entry=money(price))
+            self.positions[symbol] = PositionLot(
+                symbol=symbol, qty=money(qty_delta), avg_entry=money(price)
+            )
             return
         new_qty = money(lot.qty + qty_delta)
-        if new_qty <= MONEY_QUANT and new_qty >= -MONEY_QUANT:
+        if abs(new_qty) <= MONEY_QUANT:
             del self.positions[symbol]
             return
-        if qty_delta > ZERO and new_qty > ZERO:
-            lot.avg_entry = money((lot.avg_entry * lot.qty + price * qty_delta) / new_qty)
+        same_sign_add = (lot.qty > ZERO and qty_delta > ZERO) or (
+            lot.qty < ZERO and qty_delta < ZERO
+        )
+        if same_sign_add:
+            lot.avg_entry = money(
+                (lot.avg_entry * abs(lot.qty) + price * abs(qty_delta)) / abs(new_qty)
+            )
         lot.qty = new_qty
 
     def equity_at_marks(self, marks: dict[str, Any]) -> Decimal:
@@ -447,9 +494,79 @@ class WalletLedger:
         q = money(qty)
         p = money(price)
         f = money(fee)
+        meta = dict(meta or {})
         if any(t.get("tx_id") == tx_id for t in self.transactions):
             raise ValueError(f"duplicate tx_id rejected: {tx_id}")
-        # Futures: opening does not debit full notional — only fees (margin via RiskGuard).
+        allow_reversal = bool(
+            meta.get("allow_position_reversal", self.allow_position_reversal)
+        )
+        sym = symbol or self.primary_symbol
+
+        if self.position_qty < ZERO:
+            short_qty = money(abs(self.position_qty))
+            cover_q = money(min(q, short_qty))
+            leftover = money(q - cover_q)
+            if leftover > MONEY_QUANT and not allow_reversal:
+                raise ValueError(
+                    "POSITION_REVERSAL_BLOCKED: BUY while short cannot open long "
+                    "without explicit allow_position_reversal"
+                )
+            fee_cover = money(f * cover_q / q) if q else f
+            cost_cover = money(cover_q * p + fee_cover)
+            if cost_cover > self.cash + MONEY_QUANT:
+                raise ValueError("insufficient cash to cover short")
+            pnl = money(cover_q * (self.avg_entry - p) - fee_cover)
+            self.realized_pnl = money(self.realized_pnl + pnl)
+            self.cash = money(self.cash - cost_cover)
+            self.fees_paid = money(self.fees_paid + fee_cover)
+            if self.margin_used > ZERO and short_qty > ZERO:
+                release = money(self.margin_used * cover_q / short_qty)
+                self.margin_used = money(max(ZERO, self.margin_used - release))
+                self.release_reserve(release)
+            if self.short_proceeds > ZERO and short_qty > ZERO:
+                proceeds_release = money(
+                    min(self.short_proceeds, cover_q * self.avg_entry)
+                )
+                self.short_proceeds = money(
+                    max(ZERO, self.short_proceeds - proceeds_release)
+                )
+                # Unlock reserved short proceeds for the covered quantity
+                self.release_reserve(proceeds_release)
+            new_pos = money(self.position_qty + cover_q)
+            if abs(new_pos) <= MONEY_QUANT:
+                self.position_qty = ZERO
+                self.avg_entry = ZERO
+                self.margin_used = ZERO
+                self.short_proceeds = ZERO
+            else:
+                self.position_qty = new_pos
+            if sym:
+                if self.primary_symbol is None:
+                    self.primary_symbol = sym
+                self._upsert_lot(sym, qty_delta=cover_q, price=p)
+                self._sync_primary_from_positions()
+            self.transactions.append(
+                {
+                    "tx_id": tx_id if leftover <= MONEY_QUANT else f"{tx_id}-cover",
+                    "side": "COVER",
+                    "symbol": sym,
+                    "qty": str(cover_q),
+                    "price": str(p),
+                    "fee": str(fee_cover),
+                    "cash_after": str(self.cash),
+                    "position_after": str(self.position_qty),
+                    "realized_pnl_delta": str(pnl),
+                    "valuation_mode": self.valuation_mode,
+                    "borrow_cost": self.borrow_cost_status,
+                    **{k: v for k, v in meta.items() if k != "allow_position_reversal"},
+                }
+            )
+            if leftover <= MONEY_QUANT:
+                return
+            q = leftover
+            f = money(f - fee_cover)
+            tx_id = f"{tx_id}-long"
+
         if self.valuation_mode == "futures_vm":
             cost = f
         else:
@@ -457,11 +574,9 @@ class WalletLedger:
         self.release_reserve(cost if self.valuation_mode != "futures_vm" else f)
         if cost > self.cash + MONEY_QUANT:
             raise ValueError("insufficient cash for buy")
-        sym = symbol or self.primary_symbol
         if sym:
             if self.primary_symbol is None:
                 self.primary_symbol = sym
-            # Migrate legacy scalar lot into the map before the first named fill.
             if (
                 self.position_qty != ZERO
                 and self.primary_symbol not in self.positions
@@ -475,12 +590,16 @@ class WalletLedger:
             self._upsert_lot(sym, qty_delta=q, price=p)
             self._sync_primary_from_positions()
         else:
-            # Legacy single-symbol scalar path (no symbol map yet).
             new_qty = money(self.position_qty + q)
-            if new_qty > 0:
-                self.avg_entry = money(
-                    (self.avg_entry * self.position_qty + p * q) / new_qty
-                )
+            if new_qty > ZERO and self.position_qty >= ZERO:
+                if self.position_qty > ZERO:
+                    self.avg_entry = money(
+                        (self.avg_entry * self.position_qty + p * q) / new_qty
+                    )
+                else:
+                    self.avg_entry = p
+            elif new_qty > ZERO and self.position_qty < ZERO:
+                self.avg_entry = p
             self.position_qty = new_qty
         self.cash = money(self.cash - cost)
         self.fees_paid = money(self.fees_paid + f)
@@ -495,7 +614,7 @@ class WalletLedger:
                 "cash_after": str(self.cash),
                 "position_after": str(self.position_qty),
                 "valuation_mode": self.valuation_mode,
-                **(meta or {}),
+                **meta,
             }
         )
 
@@ -513,60 +632,170 @@ class WalletLedger:
         self._assert_currency(quote_currency)
         p = money(price)
         f = money(fee)
+        meta = dict(meta or {})
         if any(t.get("tx_id") == tx_id for t in self.transactions):
             raise ValueError(f"duplicate tx_id rejected: {tx_id}")
+        requested = money(qty)
         sym = symbol or self.primary_symbol
-        if sym and sym in self.positions:
-            available = self.positions[sym].qty
-            entry = self.positions[sym].avg_entry
-        elif sym is None or (self.primary_symbol is None and not self.positions):
-            available = self.position_qty
-            entry = self.avg_entry
-        elif sym and self.primary_symbol == sym:
-            available = self.position_qty
-            entry = self.avg_entry
-        else:
-            available = ZERO
-            entry = ZERO
-        q = money(min(D(qty), available))
-        if q <= 0:
-            raise ValueError("no position to sell")
-        if self.valuation_mode == "futures_vm":
-            # Close futures: settle residual MTM * multiplier, pay fee from cash.
-            residual = money(q * (p - entry) * self.contract_multiplier)
-            proceeds = money(residual - f)
-            self.realized_pnl = money(self.realized_pnl + residual - f)
-        else:
-            proceeds = money(q * p - f)
-            self.realized_pnl = money(self.realized_pnl + (p - entry) * q - f)
-        if sym and (sym in self.positions or self.primary_symbol == sym or self.positions):
-            if self.primary_symbol is None:
-                self.primary_symbol = sym
-            self._upsert_lot(sym, qty_delta=money(-q), price=p)
-            self._sync_primary_from_positions()
-            if self.primary_symbol and self.primary_symbol not in self.positions:
-                if self.position_qty <= MONEY_QUANT:
+        allow_short = bool(
+            meta.get("allow_short", False)
+            or meta.get("opening_short", False)
+            or self.shorting_enabled
+        )
+
+        long_qty = money(max(ZERO, self.position_qty))
+        sell_from_long = money(min(requested, long_qty)) if long_qty > ZERO else ZERO
+        short_open = money(requested - sell_from_long)
+
+        if sell_from_long > ZERO:
+            fee_long = money(f * sell_from_long / requested) if requested else f
+            if sym and sym in self.positions:
+                entry = self.positions[sym].avg_entry
+            else:
+                entry = self.avg_entry
+            if self.valuation_mode == "futures_vm":
+                residual = money(
+                    sell_from_long * (p - entry) * self.contract_multiplier
+                )
+                proceeds = money(residual - fee_long)
+                self.realized_pnl = money(self.realized_pnl + residual - fee_long)
+            else:
+                proceeds = money(sell_from_long * p - fee_long)
+                self.realized_pnl = money(
+                    self.realized_pnl + (p - entry) * sell_from_long - fee_long
+                )
+            if sym and (
+                sym in self.positions or self.primary_symbol == sym or self.positions
+            ):
+                if self.primary_symbol is None:
+                    self.primary_symbol = sym
+                self._upsert_lot(sym, qty_delta=money(-sell_from_long), price=p)
+                self._sync_primary_from_positions()
+                if self.primary_symbol and self.primary_symbol not in self.positions:
+                    if abs(self.position_qty) <= MONEY_QUANT:
+                        self.position_qty = ZERO
+                        self.avg_entry = ZERO
+            else:
+                self.position_qty = money(self.position_qty - sell_from_long)
+                if abs(self.position_qty) <= MONEY_QUANT:
                     self.position_qty = ZERO
                     self.avg_entry = ZERO
-        else:
-            self.position_qty = money(self.position_qty - q)
-            if self.position_qty <= MONEY_QUANT:
-                self.position_qty = ZERO
-                self.avg_entry = ZERO
+            self.cash = money(self.cash + proceeds)
+            self.fees_paid = money(self.fees_paid + fee_long)
+            self.transactions.append(
+                {
+                    "tx_id": tx_id if short_open <= MONEY_QUANT else f"{tx_id}-long",
+                    "side": "SELL",
+                    "symbol": sym,
+                    "qty": str(sell_from_long),
+                    "price": str(p),
+                    "fee": str(fee_long),
+                    "cash_after": str(self.cash),
+                    "position_after": str(self.position_qty),
+                    "valuation_mode": self.valuation_mode,
+                    **{
+                        k: v
+                        for k, v in meta.items()
+                        if k not in {"allow_short", "opening_short"}
+                    },
+                }
+            )
+            f = money(f - fee_long) if short_open > MONEY_QUANT else ZERO
+
+        if short_open <= MONEY_QUANT:
+            if sell_from_long <= ZERO:
+                raise ValueError("no position to sell")
+            return
+
+        if not allow_short:
+            if sell_from_long > ZERO:
+                return
+            raise ValueError("no position to sell")
+        policy = self._resolved_margin_policy()
+        if policy is None:
+            raise ValueError(
+                "MARGIN_POLICY_REQUIRED: short blocked without ShortMarginPolicy"
+            )
+        from .short_margin import short_open_allowed
+
+        ok, reason = short_open_allowed(
+            supports_short=True,
+            margin_policy=policy,
+            borrow=meta.get("borrow"),
+        )
+        if not ok:
+            raise ValueError(reason)
+
+        fee_short = f if sell_from_long > ZERO else money(f)
+        proceeds = money(short_open * p - fee_short)
+        margin = self.initial_margin_for_short(short_open, p)
+        proceeds_policy = str(
+            getattr(policy, "short_proceeds_policy", "reserved") or "reserved"
+        )
         self.cash = money(self.cash + proceeds)
-        self.fees_paid = money(self.fees_paid + f)
+        # Default: short proceeds are reserved — cannot silently fund new margin.
+        if proceeds_policy == "reserved" and proceeds > ZERO:
+            self.reserved_cash = money(self.reserved_cash + proceeds)
+        if margin > ZERO:
+            if self.available_cash < margin - MONEY_QUANT:
+                # rollback cash + proceeds reservation
+                if proceeds_policy == "reserved" and proceeds > ZERO:
+                    self.reserved_cash = money(max(ZERO, self.reserved_cash - proceeds))
+                self.cash = money(self.cash - proceeds)
+                raise ValueError("insufficient margin for short")
+            self.reserved_cash = money(self.reserved_cash + margin)
+            self.margin_used = money(self.margin_used + margin)
+        self.fees_paid = money(self.fees_paid + fee_short)
+        self.short_proceeds = money(self.short_proceeds + short_open * p)
+        self._refresh_borrow_cost_status()
+        self.borrow_state = {
+            "locatable": True,
+            "borrow_cost": self.borrow_cost_status,
+            "margin_used": str(self.margin_used),
+            "short_proceeds": str(self.short_proceeds),
+            "policy": policy.public_dict() if hasattr(policy, "public_dict") else None,
+        }
+
+        if self.position_qty <= ZERO:
+            old_abs = money(abs(self.position_qty))
+            new_abs = money(old_abs + short_open)
+            if old_abs > ZERO:
+                self.avg_entry = money(
+                    (self.avg_entry * old_abs + p * short_open) / new_abs
+                )
+            else:
+                self.avg_entry = p
+            self.position_qty = money(-new_abs)
+        else:
+            self.position_qty = money(-short_open)
+            self.avg_entry = p
+
+        if sym:
+            if self.primary_symbol is None:
+                self.primary_symbol = sym
+            self.positions[sym] = PositionLot(
+                symbol=sym, qty=self.position_qty, avg_entry=self.avg_entry
+            )
+            self._sync_primary_from_positions()
+
         self.transactions.append(
             {
-                "tx_id": tx_id,
-                "side": "SELL",
+                "tx_id": tx_id if sell_from_long <= MONEY_QUANT else f"{tx_id}-short",
+                "side": "SHORT",
                 "symbol": sym,
-                "qty": str(q),
+                "qty": str(short_open),
                 "price": str(p),
-                "fee": str(f),
+                "fee": str(fee_short),
                 "cash_after": str(self.cash),
                 "position_after": str(self.position_qty),
+                "margin_used": str(self.margin_used),
+                "borrow_cost": self.borrow_cost_status,
                 "valuation_mode": self.valuation_mode,
-                **(meta or {}),
+                **{
+                    k: v
+                    for k, v in meta.items()
+                    if k not in {"allow_short", "opening_short"}
+                },
             }
         )
 
@@ -595,11 +824,26 @@ class WalletLedger:
             "drawdown_pct": self.drawdown_pct(px),
             "transaction_count": len(self.transactions),
             "transactions_tail": self.transactions[-20:],
+            "shorting_enabled": self.shorting_enabled,
+            "allow_position_reversal": self.allow_position_reversal,
+            "margin_used": str(self.margin_used),
+            "short_proceeds": str(self.short_proceeds),
+            "short_market_value": str(self.short_market_value(px)),
+            "borrow_cost_status": self.borrow_cost_status,
+            "borrow_state": dict(self.borrow_state),
+            "short_margin_policy": (
+                self.short_margin_policy.public_dict()
+                if hasattr(self.short_margin_policy, "public_dict")
+                else self.short_margin_policy
+            ),
             "truth": {
                 "agent_wallets_isolated": True,
                 "multi_symbol_positions": True,
                 "no_silent_currency_mix": self.currency_mode == "single",
                 "futures_vm_uses_multiplier": self.valuation_mode == "futures_vm",
+                "position_qty_is_signed": True,
+                "unset_borrow_fee_is_UNMEASURED": self.borrow_cost_status
+                in {"UNMEASURED", "ASSUMED"},
             },
         }
         if marks is not None:
@@ -642,6 +886,13 @@ class WalletLedger:
             transactions=[dict(t) for t in txs if isinstance(t, dict)],
             valuation_mode=str(data.get("valuation_mode") or "spot"),
             contract_multiplier=money(data.get("contract_multiplier") or 1),
+            shorting_enabled=bool(data.get("shorting_enabled")),
+            allow_position_reversal=bool(data.get("allow_position_reversal")),
+            short_margin_policy=data.get("short_margin_policy"),
+            margin_used=money(data.get("margin_used") or 0),
+            short_proceeds=money(data.get("short_proceeds") or 0),
+            borrow_cost_status=str(data.get("borrow_cost_status") or "UNMEASURED"),
+            borrow_state=dict(data.get("borrow_state") or {}),
         )
         return wallet
 

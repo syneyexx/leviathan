@@ -1158,18 +1158,31 @@ class PortfolioService:
         """One autonomous paper cycle. Decision may be injected for tests."""
         with self._lock(portfolio_id):
             row = self._require(portfolio_id)
-            if row["status"] != PortfolioStatus.RUNNING.value:
-                return {
-                    "skipped": True,
-                    "reason": f"status={row['status']}",
-                    "portfolio": self._public_portfolio(row),
-                }
             meta = dict(row.get("metadata") or {})
             settings = dict(row.get("settings") or {})
-            if (
-                row.get("kill_switch")
-                or meta.get("flatten_armed")
+            flatten_armed = bool(
+                meta.get("flatten_armed")
                 or meta.get("no_new_exposure_reason")
+                or row.get("kill_switch")
+            )
+            if row["status"] != PortfolioStatus.RUNNING.value:
+                # Wave 20 — PAUSED / flatten-armed ticks must report no_new_exposure
+                reason = f"status={row['status']}"
+                if (
+                    flatten_armed
+                    or row["status"] == PortfolioStatus.PAUSED.value
+                    or not settings.get("allow_new_positions", True)
+                ):
+                    reason = f"no_new_exposure status={row['status']}"
+                return {
+                    "skipped": True,
+                    "reason": reason,
+                    "kill_switch": bool(row.get("kill_switch")),
+                    "portfolio": self._public_portfolio(row),
+                    "truth": {"paper_only": True},
+                }
+            if (
+                flatten_armed
                 or not settings.get("allow_new_positions", True)
             ):
                 return {
