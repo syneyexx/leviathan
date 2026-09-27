@@ -25,21 +25,9 @@
     },
     "runtime": {
       "mode": "EPHEMERAL",
-      "command": [
-        "python3",
-        "GhostTR.py"
-      ],
       "cwd": "$INSTALL_ROOT",
-      "timeout_seconds": 300,
-      "operations": [
-        {
-          "name": "run",
-          "command": [
-            "python3",
-            "GhostTR.py"
-          ]
-        }
-      ]
+      "timeout_seconds": 30,
+      "operations": []
     },
     "result": {
       "format": "TEXT"
@@ -50,17 +38,20 @@
       "tracking"
     ],
     "domain": "osint",
-    "resource_class": "NETWORK_HEAVY"
+    "resource_class": "NETWORK_HEAVY",
+    "metadata": {
+      "invoke_blocked": "BLOCKED_EXTERNAL",
+      "reason": "GhostTR.py is interactive-only (input() menu); no argv/subcommand machine contract. Install/discover only until upstream adds non-interactive CLI."
+    }
   },
   "capabilities": [
     {
-      "capability_id": "external.ghosttrack.run",
-      "name": "GhostTrack Run",
-      "description": "Run GhostTrack OSINT CLI.",
-      "external_name": "run",
+      "capability_id": "external.ghosttrack.status",
+      "name": "GhostTrack Install Status",
+      "description": "Report GhostTrack installation readiness. Invoke of GhostTR.py is BLOCKED_EXTERNAL (interactive TUI only).",
+      "external_name": "status",
       "side_effects": [
-        "READ",
-        "NETWORK"
+        "READ"
       ]
     }
   ]

@@ -1588,6 +1588,49 @@ class ExternalAssimilationAndScaleTests(unittest.TestCase):
             self.assertEqual(info.get("cwd"), str(root))
             self.assertTrue((root / ".venv").exists())
 
+    def test_install_only_cli_status_without_hanging_invoke(self) -> None:
+        """Interactive/install-only CLIs: status is lifecycle; unknown ops are CAPABILITY_NOT_FOUND."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "mods" / "ghosty"
+            root.mkdir(parents=True)
+            (root / "README.md").write_text("install only\n", encoding="utf-8")
+            manifest = {
+                "module_id": "ghosty",
+                "name": "Ghosty",
+                "version": "0.0.1",
+                "entrypoint": FACTORY,
+                "external": {
+                    "adapter": "CLI",
+                    "source_type": "path",
+                    "path": str(root),
+                    "install": {"strategy": "NONE"},
+                    "runtime": {"mode": "EPHEMERAL", "operations": []},
+                    "result": {"format": "text"},
+                },
+                "capabilities": [
+                    {
+                        "capability_id": "external.ghosty.status",
+                        "name": "Status",
+                        "external_name": "status",
+                        "side_effects": ["READ"],
+                    }
+                ],
+            }
+            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+            manager.discover()
+            manager.initialize(
+                "ghosty",
+                ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp),
+            )
+            manager.ensure_installed("ghosty")
+            status = manager.execute("ghosty", "status", {})
+            self.assertEqual(status.status, "COMPLETED")
+            self.assertIn((status.output or {}).get("status"), {"READY", "INITIALIZED", "LOADED"})
+            missing = manager.execute("ghosty", "run", {})
+            self.assertEqual(missing.status, "FAILED")
+            self.assertEqual(missing.error, "CAPABILITY_NOT_FOUND")
+
     def test_cli_operation_defaults_fill_placeholders(self) -> None:
         from Data.modules.module_manager.external.adapters.base import AdapterContext
         from Data.modules.module_manager.external.adapters.cli import CliAdapter

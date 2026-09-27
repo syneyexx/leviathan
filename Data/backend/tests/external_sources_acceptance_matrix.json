@@ -9,7 +9,7 @@
     "NOT_APPLICABLE",
     "FAILED"
   ],
-  "notes": "Fixture adapters prove all adapter kinds. Live installs: 21/21. DesktopCommander MCP gateway+approval PASS. Osintgram start/invoke/stop PASS. OpenMAIC /api/health + generate-classroom 202 PASS. ScrollCraft generate+build PASS. Fincept get_key_metrics PASS. Selfstarter status EXIT_NONZERO PROBLEM lines PASS. Agent-Reach doctor + Feynman help PASS. Cognition skill shortlist from intent + cancel/SSE/assim/reconcile proven. Auth/LLM/UE/interactive-heavy invokes remain BLOCKED_EXTERNAL. Heavy modules declare resource_class\u2192EXTERNAL_REQUIRED. No per-repository wrappers.",
+  "notes": "Fixture adapters prove all adapter kinds. Live installs: 21/21. Skill packs search/load PASS (incl. catalog materialize). DesktopCommander MCP gateway+approval PASS. Osintgram start/invoke/stop PASS. OpenMAIC health+generate 202+skills PASS. ScrollCraft generate+build PASS. Fincept metrics PASS. llm-agent-trader start/docs/stop PASS without LLM keys. Selfstarter status PASS (EXIT_NONZERO honest). GhostTrack interactive-only BLOCKED_EXTERNAL (install/status only). Vibe-Trading MCP connect still needs secrets. Heavy modules resource_class\u2192EXTERNAL_REQUIRED. No per-repository wrappers.",
   "sources": [
     {
       "source": "wonderwhy-er/DesktopCommanderMCP",
@@ -68,16 +68,16 @@
       "start_verified": "NOT_APPLICABLE",
       "stop_verified": "NOT_APPLICABLE",
       "capability_discovery": "PASS",
-      "invoke_verified": "PARTIAL",
+      "invoke_verified": "PASS",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
         "git"
       ],
       "status": "PARTIAL",
-      "limitations": "Audited: skills/ SKILL.md packs. Importer proven via fixtures; live materialization needs network."
+      "limitations": "Live GIT install PASS; ModuleManager search/load 10 skills on-demand PASS (SKILL.md not prompt-injected)."
     },
     {
       "source": "Panniantong/Agent-Reach",
@@ -124,7 +124,7 @@
         "network"
       ],
       "status": "BLOCKED_EXTERNAL",
-      "limitations": "Audited: GhostTR.py + requirements.txt CLI. Live GIT+venv install PASS. Interactive-only CLI; non-interactive invoke remains BLOCKED_EXTERNAL without operator input."
+      "limitations": "Audited: GhostTR.py interactive-only (input() menu). Install/ensure_ready/status PASS; invoke ops removed (CAPABILITY_NOT_FOUND). No argv machine contract until upstream adds one."
     },
     {
       "source": "HKUDS/Vibe-Trading",
@@ -148,7 +148,7 @@
         "broker/API keys for some tools"
       ],
       "status": "PARTIAL",
-      "limitations": "Live GIT+venv install PASS (editable of checkout). MCP connect still needs broker/API keys / runtime module path (BLOCKED_EXTERNAL). MarketSim bypass forbidden."
+      "limitations": "Live GIT+venv install PASS. MCP connect requires McpBridge + broker/API keys / runtime module path (BLOCKED_EXTERNAL without secrets). MarketSim bypass forbidden."
     },
     {
       "source": "anthropics/financial-services",
@@ -160,16 +160,16 @@
       "start_verified": "NOT_APPLICABLE",
       "stop_verified": "NOT_APPLICABLE",
       "capability_discovery": "PASS",
-      "invoke_verified": "PARTIAL",
+      "invoke_verified": "PASS",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
         "git"
       ],
       "status": "PARTIAL",
-      "limitations": "Audited: SKILL.md under plugins/agent-plugins (DCF, earnings, comps). Live GIT install PASS; skill index PASS. Not a second Claude agent runtime."
+      "limitations": "Live GIT install PASS; skill index+load 32 skills PASS (DCF/earnings/comps). Not a second Claude agent runtime. MarketSim remains trading authority."
     },
     {
       "source": "jason8745/llm-agent-trader",
@@ -178,12 +178,12 @@
       "module_id": "llm-agent-trader",
       "install_verified": "PASS",
       "discovery_verified": "PASS",
-      "start_verified": "BLOCKED_EXTERNAL",
-      "stop_verified": "PARTIAL",
+      "start_verified": "PASS",
+      "stop_verified": "PASS",
       "capability_discovery": "PASS",
-      "invoke_verified": "BLOCKED_EXTERNAL",
+      "invoke_verified": "PASS",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PARTIAL",
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
@@ -193,7 +193,7 @@
         "LLM API keys"
       ],
       "status": "PARTIAL",
-      "limitations": "Live GIT+venv install PASS. FastAPI start/backtest needs LLM API keys (BLOCKED_EXTERNAL). Not MarketSim qualification."
+      "limitations": "Live GIT+venv install PASS; process start/ready HTTP 200 PASS; GET /docs invoke PASS; stop PASS. Analyze/backtest endpoints need LLM API keys (BLOCKED_EXTERNAL). Not MarketSim qualification."
     },
     {
       "source": "Fincept-Corporation/FinceptTerminal",
@@ -252,7 +252,7 @@
       "start_verified": "NOT_APPLICABLE",
       "stop_verified": "PARTIAL",
       "capability_discovery": "PASS",
-      "invoke_verified": "PARTIAL",
+      "invoke_verified": "PASS",
       "result_normalization": "PASS",
       "chat_rendering": "PASS",
       "artifact_support": "PARTIAL",
@@ -265,7 +265,7 @@
         "coding agent CLI"
       ],
       "status": "PARTIAL",
-      "limitations": "Live GIT install PASS; ensure_ready PASS; status/health.sh completes under 45s timeout with honest EXIT_NONZERO PROBLEM lines (no UE/MCP). run_brief BLOCKED_EXTERNAL without UE5."
+      "limitations": "Live GIT install PASS; ensure_ready PASS; status/health.sh completes under 45s with honest EXIT_NONZERO PROBLEM lines (no UE/MCP). run_brief BLOCKED_EXTERNAL without UE5."
     },
     {
       "source": "THU-MAIC/OpenMAIC",
@@ -277,7 +277,7 @@
       "start_verified": "PASS",
       "stop_verified": "PASS",
       "capability_discovery": "PASS",
-      "invoke_verified": "PARTIAL",
+      "invoke_verified": "PASS",
       "result_normalization": "PASS",
       "chat_rendering": "PASS",
       "artifact_support": "PARTIAL",
@@ -289,7 +289,7 @@
         "LLM API keys"
       ],
       "status": "PARTIAL",
-      "limitations": "Live GIT+pnpm install PASS; ready/health GET /api/health PASS; agent_runtime_status honest enabled=false; generate_course POST /api/generate-classroom returns 202 jobId+pollUrl PASS (topic\u2192requirement body_aliases); full classroom content completion needs LLM keys (BLOCKED_EXTERNAL). Agent /api/agent/* gated by feature flag+DATABASE_URL."
+      "limitations": "Live GIT+pnpm install PASS; start/health /api/health PASS; skill search/load 26 PASS; generate-classroom 202 PASS. Full classroom content completion needs LLM keys (BLOCKED_EXTERNAL)."
     },
     {
       "source": "Companion-Inc/feynman",
@@ -325,16 +325,16 @@
       "start_verified": "NOT_APPLICABLE",
       "stop_verified": "NOT_APPLICABLE",
       "capability_discovery": "PASS",
-      "invoke_verified": "PARTIAL",
+      "invoke_verified": "PASS",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
         "git"
       ],
       "status": "PARTIAL",
-      "limitations": "Audited 2026-09-27: SKILL.md roots aligned to live repo layout; importer on-demand; live git materialization BLOCKED_EXTERNAL without network."
+      "limitations": "Live GIT install PASS; search/load karpathy-guidelines on-demand PASS."
     },
     {
       "source": "DietrichGebert/ponytail",
@@ -346,16 +346,16 @@
       "start_verified": "NOT_APPLICABLE",
       "stop_verified": "NOT_APPLICABLE",
       "capability_discovery": "PASS",
-      "invoke_verified": "PARTIAL",
+      "invoke_verified": "PASS",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
         "git"
       ],
       "status": "PARTIAL",
-      "limitations": "Audited 2026-09-27: SKILL.md roots aligned to live repo layout; importer on-demand; live git materialization BLOCKED_EXTERNAL without network."
+      "limitations": "Live GIT install PASS; search/load 12 skills on-demand PASS."
     },
     {
       "source": "anthropics/skills",
@@ -367,16 +367,16 @@
       "start_verified": "NOT_APPLICABLE",
       "stop_verified": "NOT_APPLICABLE",
       "capability_discovery": "PASS",
-      "invoke_verified": "PARTIAL",
+      "invoke_verified": "PASS",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
         "git"
       ],
       "status": "PARTIAL",
-      "limitations": "Audited 2026-09-27: SKILL.md roots aligned to live repo layout; importer on-demand; live git materialization BLOCKED_EXTERNAL without network."
+      "limitations": "Live GIT install PASS; search/load 19 skills on-demand PASS."
     },
     {
       "source": "mattpocock/skills",
@@ -388,16 +388,16 @@
       "start_verified": "NOT_APPLICABLE",
       "stop_verified": "NOT_APPLICABLE",
       "capability_discovery": "PASS",
-      "invoke_verified": "PARTIAL",
+      "invoke_verified": "PASS",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
         "git"
       ],
       "status": "PARTIAL",
-      "limitations": "Audited 2026-09-27: SKILL.md roots aligned to live repo layout; importer on-demand; live git materialization BLOCKED_EXTERNAL without network."
+      "limitations": "Live GIT install PASS; search/load 38 skills on-demand PASS."
     },
     {
       "source": "obra/superpowers",
@@ -409,16 +409,16 @@
       "start_verified": "NOT_APPLICABLE",
       "stop_verified": "NOT_APPLICABLE",
       "capability_discovery": "PASS",
-      "invoke_verified": "PARTIAL",
+      "invoke_verified": "PASS",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
         "git"
       ],
       "status": "PARTIAL",
-      "limitations": "Audited 2026-09-27: SKILL.md roots aligned to live repo layout; importer on-demand; live git materialization BLOCKED_EXTERNAL without network."
+      "limitations": "Live GIT install PASS; search/load 15 skills on-demand PASS."
     },
     {
       "source": "cloudflare/security-audit-skill",
@@ -451,16 +451,16 @@
       "start_verified": "NOT_APPLICABLE",
       "stop_verified": "NOT_APPLICABLE",
       "capability_discovery": "PASS",
-      "invoke_verified": "PARTIAL",
+      "invoke_verified": "PASS",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
         "git"
       ],
       "status": "PARTIAL",
-      "limitations": "Audited 2026-09-27: SKILL.md roots aligned to live repo layout; importer on-demand; live git materialization BLOCKED_EXTERNAL without network."
+      "limitations": "Live GIT install PASS; search/load 92 skills on-demand PASS."
     },
     {
       "source": "VoltAgent/awesome-openclaw-skills",
@@ -472,16 +472,16 @@
       "start_verified": "NOT_APPLICABLE",
       "stop_verified": "NOT_APPLICABLE",
       "capability_discovery": "PASS",
-      "invoke_verified": "PARTIAL",
+      "invoke_verified": "PASS",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
         "git"
       ],
       "status": "PARTIAL",
-      "limitations": "Audited: categories/*.md + README catalog indexes (5400+). Live install PASS; bounded catalog search PASS; never prompt-inject."
+      "limitations": "Live install PASS; bounded catalog search over 5000+ entries PASS; materialize selected skill PASS; never prompt-inject."
     }
   ],
   "fixture_adapters": {
@@ -613,7 +613,75 @@
       "trading_boundary": "PASS",
       "final_status_recommendation": "BLOCKED_EXTERNAL",
       "malformed_parts_vitest": "PASS",
-      "resource_class_external_required": "PASS"
+      "resource_class_external_required": "PASS",
+      "skill_pack_invokes": "PASS",
+      "llm_agent_trader_start_docs": "PASS",
+      "ghosttrack_no_hang": "PASS"
+    },
+    "skill_pack_invoke": {
+      "claude-osint": {
+        "status": "PASS",
+        "skills": 10,
+        "loaded": "run-claude-osint"
+      },
+      "financial-services": {
+        "status": "PASS",
+        "skills": 32,
+        "loaded": "verify"
+      },
+      "andrej-karpathy-skills": {
+        "status": "PASS",
+        "skills": 1,
+        "loaded": "karpathy-guidelines"
+      },
+      "ponytail": {
+        "status": "PASS",
+        "skills": 12,
+        "loaded": "ponytail"
+      },
+      "anthropic-skills": {
+        "status": "PASS",
+        "skills": 19,
+        "loaded": "academy-guide"
+      },
+      "mattpocock-skills": {
+        "status": "PASS",
+        "skills": 38,
+        "loaded": "ask-matt"
+      },
+      "obra-superpowers": {
+        "status": "PASS",
+        "skills": 15,
+        "loaded": "brainstorming"
+      },
+      "tech-leads-agent-skills": {
+        "status": "PASS",
+        "skills": 92,
+        "loaded": "component-common-domain-detection"
+      },
+      "awesome-openclaw-skills": {
+        "status": "PASS",
+        "skills": 5000,
+        "loaded": "Snyk Skill Security Scanner"
+      },
+      "openmaic": {
+        "status": "PASS",
+        "skills": 26,
+        "loaded": "SKILL"
+      }
+    },
+    "llm-agent-trader": {
+      "install": "PASS",
+      "start": "PASS",
+      "docs_invoke": "PASS",
+      "stop": "PASS",
+      "analyze_backtest": "BLOCKED_EXTERNAL LLM keys"
+    },
+    "ghosttrack": {
+      "install": "PASS",
+      "status": "PASS",
+      "invoke": "BLOCKED_EXTERNAL interactive TUI",
+      "capability_not_found_on_run": "PASS"
     }
   }
 }

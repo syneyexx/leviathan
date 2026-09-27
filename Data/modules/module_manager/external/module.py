@@ -134,12 +134,23 @@ class ExternalCapabilityModule:
         if operation == "logs":
             lines = self._adapter.logs(limit=int(arguments.get("limit") or 200))
             return ModuleResult(module_id=self._manifest.module_id, operation=operation, status="COMPLETED", output={"lines": lines})
-        if operation == "health":
+        if operation in {"health", "status"}:
+            health = self.health().public_dict()
+            # Prefer adapter status() when present (MCP/process), else health snapshot.
+            status_out = health
+            status_fn = getattr(self._adapter, "status", None)
+            if callable(status_fn):
+                try:
+                    maybe = status_fn()
+                    if isinstance(maybe, dict):
+                        status_out = {**health, **maybe}
+                except Exception:  # noqa: BLE001
+                    pass
             return ModuleResult(
                 module_id=self._manifest.module_id,
                 operation=operation,
                 status="COMPLETED",
-                output=self.health().public_dict(),
+                output=status_out,
             )
         # Lazy ensure_ready for invoke paths.
         try:

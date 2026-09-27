@@ -142,7 +142,24 @@ class CliAdapter:
                 output={"error": {"code": ExternalFailureCode.NOT_INSTALLED.value}},
             )
 
-        argv = self._build_argv(operation, arguments)
+        try:
+            argv = self._build_argv(operation, arguments)
+        except FileNotFoundError as exc:
+            code = str(exc)
+            if ExternalFailureCode.CAPABILITY_NOT_FOUND.value in code:
+                failure = ExternalFailureCode.CAPABILITY_NOT_FOUND
+            elif ExternalFailureCode.DEPENDENCY_MISSING.value in code:
+                failure = ExternalFailureCode.DEPENDENCY_MISSING
+            else:
+                failure = ExternalFailureCode.CAPABILITY_NOT_FOUND
+            return ModuleResult(
+                module_id=self.ctx.module_id,
+                operation=operation,
+                status="FAILED",
+                error=failure.value,
+                output={"error": {"code": failure.value, "detail": code}},
+            )
+
         cwd = self._resolve_cwd()
         env = os.environ.copy()
         env.update(self.config.runtime.env)
@@ -313,13 +330,23 @@ class CliAdapter:
                 merged.update({k: v for k, v in arguments.items() if v is not None})
                 return self._render_argv([str(x) for x in cmd], merged)
 
+        declared_ops = list(self.config.runtime.operations or [])
+        if declared_ops:
+            # Named operations exist — unknown names must not silently run runtime.command
+            # (interactive TUIs hang forever / EOFError on that path).
+            raise FileNotFoundError(
+                f"{ExternalFailureCode.CAPABILITY_NOT_FOUND.value}: unknown CLI operation {operation!r}"
+            )
         if self.config.runtime.command:
+            # Legacy single-command modules with no operations table: run default argv.
             return self._render_argv(
                 [str(x) for x in self.config.runtime.command],
                 {**dict(arguments), "operation": operation},
             )
-
-        raise FileNotFoundError(f"No command configured for operation {operation}")
+        raise FileNotFoundError(
+            f"{ExternalFailureCode.CAPABILITY_NOT_FOUND.value}: no CLI command/operation configured "
+            f"for {operation!r}"
+        )
 
     def _render_argv(self, template: list[str], arguments: Mapping[str, Any]) -> list[str]:
         """Render argv templates.
