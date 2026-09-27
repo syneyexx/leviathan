@@ -2478,6 +2478,127 @@ class ExternalFabricDoDProofTests(unittest.TestCase):
             self.assertTrue(output.get("source_refs"), msg="expected source_refs")
             self.assertIn("source.observed", event_types)
 
+    def test_cognition_emits_artifact_created_and_assimilation_queued_sse(self) -> None:
+        """CLI artifact_globs + KNOWLEDGE_CANDIDATE must surface artifact.created and assim SSE."""
+        from Data.modules.cognition.runtime import CognitiveRunState, CognitiveRuntime
+        from Data.modules.cognition.task_model import TaskModel
+        from Data.modules.cognition.types import (
+            CognitiveAction,
+            CognitiveActionKind,
+            CognitiveRunStatus,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp) / "work"
+            work.mkdir(parents=True)
+            tool = work / "report_tool.py"
+            tool.write_text(
+                "import json, pathlib, sys\n"
+                "pathlib.Path('report.md').write_text('# Report\\n\\nhello\\n', encoding='utf-8')\n"
+                "print(json.dumps({\n"
+                "  'summary': 'report ready',\n"
+                "  'sources': [{'title': 'S', 'url': 'https://example.com/s',\n"
+                "               'published_at': '2026-09-01T00:00:00Z'}],\n"
+                "}))\n",
+                encoding="utf-8",
+            )
+            root = Path(tmp) / "mods" / "report-cli"
+            root.mkdir(parents=True)
+            manifest = {
+                "module_id": "report-cli",
+                "name": "Report CLI",
+                "version": "0.0.1",
+                "entrypoint": FACTORY,
+                "external": {
+                    "adapter": "CLI",
+                    "source_type": "path",
+                    "path": str(work),
+                    "install": {"strategy": "NONE"},
+                    "assimilation_mode": "KNOWLEDGE_CANDIDATE",
+                    "runtime": {
+                        "cwd": str(work),
+                        "operations": [
+                            {
+                                "name": "run",
+                                "command": [sys.executable, str(tool)],
+                                "result_format": "json",
+                            }
+                        ],
+                    },
+                    "result": {"format": "json", "artifact_globs": ["*.md"]},
+                },
+                "capabilities": [
+                    {
+                        "capability_id": "external.report_cli.run",
+                        "name": "Run",
+                        "external_name": "run",
+                        "side_effects": ["READ"],
+                    }
+                ],
+            }
+            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+            manager.discover()
+            manager.initialize(
+                "report-cli",
+                ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp),
+            )
+
+            class _Job:
+                job_id = "job-assim-sse"
+
+            class _JR:
+                def enqueue(self, **kwargs):  # noqa: ANN003
+                    return _Job()
+
+            catalog = CapabilityCatalog()
+            plugins = PluginRegistry(catalog)
+            managed = manager.get("report-cli")
+            assert managed is not None
+            register_external_module_capabilities(
+                catalog=catalog, plugin_registry=plugins, managed=managed
+            )
+            gateway = ExecutionGateway(catalog=catalog)
+            gateway.module_executor = ExternalModuleExecutor(
+                manager, catalog=catalog, job_runtime=_JR()
+            )
+            runtime = CognitiveRuntime(
+                enabled=True, execution_gateway=gateway, factuality_mode="NONE"
+            )
+            state = CognitiveRunState(
+                run_id="r-art",
+                task=TaskModel(
+                    task_id="t-art",
+                    run_id="r-art",
+                    raw_request="write report",
+                    goal="write report",
+                    domain="test",
+                    task_type="tool",
+                ),
+                status=CognitiveRunStatus.REASONING,
+                trace_id="tr-art",
+            )
+            obs = runtime._execute_action(  # noqa: SLF001
+                state,
+                CognitiveAction(
+                    kind=CognitiveActionKind.INVOKE_CAPABILITY,
+                    action_id="a-art-1",
+                    capability_id="external.report_cli.run",
+                    arguments={},
+                ),
+                history=[],
+            )
+            self.assertTrue(obs.success, msg=obs.error)
+            event_types = [e.get("event_type") for e in state.events]
+            self.assertIn("artifact.created", event_types, msg=event_types)
+            self.assertIn("knowledge.assimilation_queued", event_types, msg=event_types)
+            self.assertIn("source.observed", event_types, msg=event_types)
+            result = (obs.payload or {}).get("result") or {}
+            output = result.get("output") if isinstance(result.get("output"), dict) else {}
+            self.assertTrue(output.get("artifact_refs"), msg=output)
+            assim = (output.get("metadata") or {}).get("assimilation") or {}
+            self.assertTrue(assim.get("queued"), msg=assim)
+
     def test_assimilation_queues_job_runtime(self) -> None:
         from Data.modules.module_manager.external.post_result import queue_or_run_assimilation
         from Data.modules.module_manager.external.types import AssimilationMode

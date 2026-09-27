@@ -9,7 +9,7 @@
     "NOT_APPLICABLE",
     "FAILED"
   ],
-  "notes": "Fixture adapters prove all adapter kinds. Live installs 21/21. Skill packs+catalog PASS. Vibe-Trading MCP 74 tools + ExecutionGateway approval path PASS. Agent-Reach real contract: doctor JSON + SKILL router (no fake search CLI). llm-agent-trader PARTIAL (LLM analyze). GhostTrack PARTIAL: declarative curl argv for audited public APIs (ipwho.is / api.ipify.org); GhostTR.py TUI phone/username remain blocked. COMPOSITE declared CLI ops beat skill-pack name collisions. MCP lazy ensure_ready. Cognition offloads EXTERNAL_REQUIRED MODULE caps via JobRuntime (job.* SSE). capability.discovered emitted on SEARCH. No per-repository wrappers. Closable-gap unit suite covers declared-ops precedence, HTTP 202 accept_statuses, OpenMAIC fail-poll fixture, boot register swallow, route lifecycle+versions, FE versions/logs/jobs contracts.",
+  "notes": "Fixture adapters prove all adapter kinds. Live installs 21/21. Skill packs+catalog PASS. Vibe-Trading MCP 74 tools + ExecutionGateway approval path PASS. Agent-Reach real contract: doctor JSON + SKILL router (no fake search CLI). llm-agent-trader PARTIAL (LLM analyze). GhostTrack PARTIAL: declarative curl argv for audited public APIs (ipwho.is / api.ipify.org); GhostTR.py TUI phone/username remain blocked. COMPOSITE declared CLI ops beat skill-pack name collisions. MCP lazy ensure_ready. Cognition offloads EXTERNAL_REQUIRED MODULE caps via JobRuntime (job.* SSE). capability.discovered emitted on SEARCH. No per-repository wrappers. Closable-gap unit suite covers declared-ops precedence, HTTP 202 accept_statuses, OpenMAIC fail-poll fixture, boot register swallow, route lifecycle+versions, FE versions/logs/jobs contracts. FILE/artifact_globs promote into artifact_refs so cognition emits artifact.created + knowledge.assimilation_queued SSE.",
   "sources": [
     {
       "source": "wonderwhy-er/DesktopCommanderMCP",
@@ -497,7 +497,7 @@
     "COMPOSITE": "PASS",
     "MCP": "PASS"
   },
-  "worktree_head": "d26b420683de33c5c97e6b7567b2479ad1f96823",
+  "worktree_head": "f8e93a158c4c655dfd5db19884d218ddeda67545",
   "live_proofs": {
     "install_pass_module_ids": [
       "agent-reach",
@@ -690,7 +690,9 @@
         "frontend_versions_logs_jobs_contracts": "PASS_UNIT",
         "assimilation_queued_observability": "PASS_UNIT",
         "matrix_worktree_head_ancestor": "PASS_UNIT"
-      }
+      },
+      "artifact_created_sse_from_file_globs": "PASS_UNIT",
+      "knowledge_assimilation_queued_sse": "PASS_UNIT"
     },
     "skill_pack_invoke": {
       "claude-osint": {

@@ -446,10 +446,23 @@ def normalize_capability_parts(
         text = raw_text if len(raw_text) <= max_inline else raw_text[:max_inline] + "\n…[truncated]"
         parts.append({"kind": "TEXT", "text": text, "truncated": len(raw_text) > max_inline})
 
+    # Prefer ArtifactStore ids/refs; fall back to declared file paths so Chat/SSE
+    # can emit artifact.created for CLI artifact_globs before store registration.
+    artifact_ref_list: list[str] = []
+    for a in list(artifacts or []) + list(files or []):
+        if not isinstance(a, Mapping):
+            continue
+        ref = a.get("artifact_id") or a.get("ref") or a.get("path") or a.get("name")
+        if ref is None:
+            continue
+        sref = str(ref)
+        if sref and sref not in artifact_ref_list:
+            artifact_ref_list.append(sref)
+
     output: dict[str, Any] = {
         "summary": summary,
         "parts": parts,
-        "artifact_refs": [a.get("artifact_id") or a.get("ref") for a in (artifacts or []) if isinstance(a, Mapping)],
+        "artifact_refs": artifact_ref_list,
         "source_refs": [s.get("url") or s.get("id") for s in (sources or []) if isinstance(s, Mapping)],
         "stdout_artifact": stdout_artifact,
         "stderr_artifact": stderr_artifact,
