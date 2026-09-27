@@ -1451,6 +1451,35 @@ class ExternalAssimilationAndScaleTests(unittest.TestCase):
             manager.unregister_job("fake-svc", "keep-alive")
             manager.stop("fake-svc")
 
+    def test_missing_binaries_python_alias(self) -> None:
+        from Data.modules.module_manager.external.install import _missing_binaries
+
+        # Environments often ship only python3 — "python" must still resolve.
+        self.assertEqual(_missing_binaries(("python", "python3")), [])
+        missing = _missing_binaries(("definitely-not-a-real-binary-xyz",))
+        self.assertEqual(missing, ["definitely-not-a-real-binary-xyz"])
+
+    def test_add_version_auto_upserts_module_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "control.db"
+            store = ExternalCapabilityStore(db)
+            store.initialize()
+            store.add_version(
+                version_id="mod-a:v1",
+                module_id="mod-a",
+                install_root=str(Path(tmp) / "root"),
+                activate=True,
+                adapter="SKILL_PACK",
+                name="Mod A",
+            )
+            row = store.get_module("mod-a")
+            assert row is not None
+            self.assertEqual(row["adapter"], "SKILL_PACK")
+            self.assertEqual(row["active_version_id"], "mod-a:v1")
+            ver = store.get_version("mod-a:v1")
+            assert ver is not None
+            self.assertEqual(ver["module_id"], "mod-a")
+
 
 if __name__ == "__main__":
     unittest.main()

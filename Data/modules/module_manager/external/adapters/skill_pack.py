@@ -45,6 +45,8 @@ class SkillPackAdapter:
                     install_strategies=result.strategies,
                     dependency_versions=result.dependency_versions,
                     activate=True,
+                    adapter="SKILL_PACK",
+                    name=self.ctx.module_id,
                 )
             install_info = result.public_dict()
         else:

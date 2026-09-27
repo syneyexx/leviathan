@@ -313,8 +313,20 @@ class ExternalCapabilityStore:
         status: str = "INSTALLED",
         metadata: dict[str, Any] | None = None,
         activate: bool = False,
+        adapter: str | None = None,
+        name: str | None = None,
     ) -> dict[str, Any]:
         now = utc_now()
+        # Ensure parent module row exists (FK) without requiring callers to pre-register.
+        if self.get_module(module_id) is None:
+            self.upsert_module(
+                module_id=module_id,
+                name=name or module_id,
+                adapter=adapter or "EXTERNAL",
+                source={"install_root": install_root, "source_ref": source_ref},
+                desired_state="STOPPED",
+                runtime_state="INSTALLED" if activate else "DISCOVERED",
+            )
         with self.connect() as conn:
             self._ensure_schema(conn)
             conn.execute(

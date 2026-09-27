@@ -20,13 +20,13 @@
       ],
       "requirements_file": "requirements.txt",
       "dependencies": [
-        "python"
+        "python3"
       ]
     },
     "runtime": {
       "mode": "EPHEMERAL",
       "command": [
-        "python",
+        "python3",
         "GhostTR.py"
       ],
       "cwd": "$INSTALL_ROOT",
@@ -35,7 +35,7 @@
         {
           "name": "run",
           "command": [
-            "python",
+            "python3",
             "GhostTR.py"
           ]
         }

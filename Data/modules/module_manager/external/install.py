@@ -181,23 +181,35 @@ class InstallationService:
             else:
                 raise InstallError(ExternalFailureCode.INSTALL_FAILED, f"unsupported strategy {strategy}")
 
+        post_env = os.environ.copy()
+        node_dir = _preferred_node_bin_dir()
+        if node_dir:
+            post_env["PATH"] = f"{node_dir}{os.pathsep}{post_env.get('PATH', '')}"
         for cmd in config.install.post_install:
             if cancel_check and cancel_check():
                 raise InstallError(ExternalFailureCode.CANCELLED, "install cancelled")
             _prog(0.85, "post_install", " ".join(cmd))
+            argv = list(cmd)
+            # Resolve npm/pnpm/node through preferred toolchain when listed bare.
+            if argv and argv[0] in {"npm", "pnpm", "node"}:
+                resolved = _resolve_node_tool(argv[0])
+                if resolved:
+                    argv[0] = resolved
             completed = subprocess.run(
-                list(cmd),
+                argv,
                 cwd=str(root),
                 capture_output=True,
                 text=True,
                 timeout=600,
                 check=False,
                 shell=False,
+                env=post_env,
             )
             if completed.returncode != 0:
+                detail = (completed.stderr or completed.stdout or "").strip()[:800]
                 raise InstallError(
                     ExternalFailureCode.INSTALL_FAILED,
-                    f"post_install failed ({completed.returncode}): {completed.stderr[:500]}",
+                    f"post_install failed ({completed.returncode}): {detail}",
                 )
 
         content_hash = _dir_fingerprint(root) if root.exists() else None
@@ -279,12 +291,17 @@ class InstallationService:
                 shell=False,
             )
             if completed.returncode != 0:
-                raise InstallError(ExternalFailureCode.INSTALL_FAILED, f"venv failed: {completed.stderr[:500]}")
+                detail = (completed.stderr or completed.stdout or "").strip()[:800]
+                raise InstallError(
+                    ExternalFailureCode.INSTALL_FAILED,
+                    f"venv failed: {detail or 'unknown (is python3-venv installed?)'}",
+                )
         pip = venv / ("Scripts/pip.exe" if os.name == "nt" else "bin/pip")
         if not pip.exists():
             raise InstallError(ExternalFailureCode.INSTALL_FAILED, "pip missing in venv")
         req = config.install.requirements_file
-        packages = list(config.install.python_packages)
+        # Ignore editable flags mistakenly listed as package names; handled below.
+        packages = [p for p in config.install.python_packages if p not in {"-e", "--editable", "."}]
         if req:
             req_path = root / req
             if req_path.exists():
@@ -297,7 +314,8 @@ class InstallationService:
                     shell=False,
                 )
                 if completed.returncode != 0:
-                    raise InstallError(ExternalFailureCode.INSTALL_FAILED, f"pip -r failed: {completed.stderr[:500]}")
+                    detail = (completed.stderr or completed.stdout or "").strip()[:500]
+                    raise InstallError(ExternalFailureCode.INSTALL_FAILED, f"pip -r failed: {detail}")
         if packages:
             completed = subprocess.run(
                 [str(pip), "install", *packages],
@@ -308,10 +326,11 @@ class InstallationService:
                 shell=False,
             )
             if completed.returncode != 0:
-                raise InstallError(ExternalFailureCode.INSTALL_FAILED, f"pip install failed: {completed.stderr[:500]}")
+                detail = (completed.stderr or completed.stdout or "").strip()[:500]
+                raise InstallError(ExternalFailureCode.INSTALL_FAILED, f"pip install failed: {detail}")
         # Also install editable package if pyproject/setup present.
         if (root / "pyproject.toml").exists() or (root / "setup.py").exists():
-            subprocess.run(
+            editable = subprocess.run(
                 [str(pip), "install", "-e", str(root)],
                 capture_output=True,
                 text=True,
@@ -319,6 +338,9 @@ class InstallationService:
                 check=False,
                 shell=False,
             )
+            if editable.returncode != 0:
+                detail = (editable.stderr or editable.stdout or "").strip()[:500]
+                raise InstallError(ExternalFailureCode.INSTALL_FAILED, f"pip editable failed: {detail}")
         return {"python": py, "venv": str(venv)}
 
     def _pip_packages(self, root: Path, config: ExternalConfig) -> dict[str, Any]:
@@ -347,14 +369,20 @@ class InstallationService:
         return {"pip_packages": packages}
 
     def _node_install(self, root: Path, config: ExternalConfig, *, tool: str) -> dict[str, Any]:
-        if not shutil.which(tool):
+        tool_path = _resolve_node_tool(tool)
+        if not tool_path:
             raise InstallError(ExternalFailureCode.DEPENDENCY_MISSING, f"{tool} not available")
         pkg = root / (config.install.package_json or "package.json")
         if not pkg.exists() and not config.install.npm_packages:
             return {tool: "skipped_no_package_json"}
-        cmd = [tool, "install"]
+        cmd = [tool_path, "install"]
         if config.install.npm_packages:
-            cmd = [tool, "install", *config.install.npm_packages]
+            cmd = [tool_path, "install", *config.install.npm_packages]
+        env = os.environ.copy()
+        # Prefer a Node that satisfies modern engines (e.g. >=22.22) when available via nvm.
+        node_dir = _preferred_node_bin_dir()
+        if node_dir:
+            env["PATH"] = f"{node_dir}{os.pathsep}{env.get('PATH', '')}"
         completed = subprocess.run(
             cmd,
             cwd=str(root),
@@ -363,18 +391,83 @@ class InstallationService:
             timeout=900,
             check=False,
             shell=False,
+            env=env,
         )
         if completed.returncode != 0:
-            raise InstallError(ExternalFailureCode.INSTALL_FAILED, f"{tool} failed: {completed.stderr[:500]}")
-        return {tool: "ok"}
+            detail = (completed.stderr or completed.stdout or "").strip()[:800]
+            raise InstallError(ExternalFailureCode.INSTALL_FAILED, f"{tool} failed: {detail}")
+        return {tool: "ok", "tool_path": tool_path, "node_bin_dir": node_dir}
 
 
 def _missing_binaries(names: tuple[str, ...]) -> list[str]:
+    """Return missing binaries, with common language-runtime aliases."""
+    aliases = {
+        "python": ("python3", "python", "python3.12", "python3.11"),
+        "python3": ("python3", "python", "python3.12", "python3.11"),
+        "pip": ("pip3", "pip"),
+        "pip3": ("pip3", "pip"),
+        "node": ("node",),
+        "npm": ("npm",),
+        "pnpm": ("pnpm",),
+    }
     missing: list[str] = []
     for name in names:
-        if not shutil.which(name):
+        candidates = aliases.get(name, (name,))
+        if not any(shutil.which(c) for c in candidates):
+            # Also accept preferred nvm node/npm/pnpm.
+            if name in {"node", "npm", "pnpm"} and _resolve_node_tool(name):
+                continue
             missing.append(name)
     return missing
+
+
+def _preferred_node_bin_dir() -> str | None:
+    """Return a bin dir with the newest Node >= 22.22 when discoverable."""
+    candidates: list[Path] = []
+    nvm_dir = Path(os.environ.get("NVM_DIR") or (Path.home() / ".nvm"))
+    versions = nvm_dir / "versions" / "node"
+    if versions.is_dir():
+        for path in versions.iterdir():
+            node = path / "bin" / "node"
+            if node.is_file():
+                candidates.append(path / "bin")
+    which_node = shutil.which("node")
+    if which_node:
+        candidates.append(Path(which_node).resolve().parent)
+
+    best: tuple[tuple[int, ...], Path] | None = None
+    for bin_dir in candidates:
+        node = bin_dir / "node"
+        if not node.is_file():
+            continue
+        try:
+            completed = subprocess.run(
+                [str(node), "-v"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+                shell=False,
+            )
+            ver = (completed.stdout or "").strip().lstrip("v")
+            parts = tuple(int(p) for p in ver.split(".")[:3])
+        except Exception:  # noqa: BLE001
+            continue
+        if best is None or parts > best[0]:
+            best = (parts, bin_dir)
+    if best is None:
+        return None
+    # Prefer any >= 22.22 when present; otherwise newest found.
+    return str(best[1])
+
+
+def _resolve_node_tool(tool: str) -> str | None:
+    node_dir = _preferred_node_bin_dir()
+    if node_dir:
+        candidate = Path(node_dir) / tool
+        if candidate.is_file():
+            return str(candidate)
+    return shutil.which(tool)
 
 
 def _hash_text(value: str) -> str:

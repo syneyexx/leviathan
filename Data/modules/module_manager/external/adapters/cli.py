@@ -54,6 +54,8 @@ class CliAdapter:
                 install_strategies=result.strategies,
                 dependency_versions=result.dependency_versions,
                 activate=True,
+                adapter="CLI",
+                name=self.ctx.module_id,
             )
             self.ctx.store.set_runtime_state(self.ctx.module_id, ExternalRuntimeState.INSTALLED.value)
         return result.public_dict()

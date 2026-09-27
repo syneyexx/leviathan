@@ -44,6 +44,8 @@ class CatalogSourceAdapter:
                     content_hash=result.content_hash,
                     install_strategies=result.strategies,
                     activate=True,
+                    adapter="CATALOG_SOURCE",
+                    name=self.ctx.module_id,
                 )
             info = result.public_dict()
         else:

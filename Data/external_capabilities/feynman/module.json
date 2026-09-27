@@ -24,6 +24,13 @@
       ],
       "dependencies": [
         "node"
+      ],
+      "post_install": [
+        [
+          "npm",
+          "run",
+          "build"
+        ]
       ]
     },
     "skill_roots": [
@@ -36,15 +43,31 @@
       "command": [
         "node",
         "bin/feynman.js",
-        "--help"
+        "help"
       ],
       "operations": [
+        {
+          "name": "help",
+          "command": [
+            "node",
+            "bin/feynman.js",
+            "help"
+          ]
+        },
+        {
+          "name": "doctor",
+          "command": [
+            "node",
+            "bin/feynman.js",
+            "doctor"
+          ]
+        },
         {
           "name": "research",
           "command": [
             "node",
             "bin/feynman.js",
-            "{topic}"
+            "--prompt={topic}"
           ]
         },
         {
@@ -70,7 +93,7 @@
           "command": [
             "node",
             "bin/feynman.js",
-            "{topic}"
+            "--prompt={topic}"
           ]
         },
         {
