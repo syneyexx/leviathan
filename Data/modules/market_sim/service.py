@@ -914,30 +914,84 @@ class MarketSimControlPlane:
         fee_bps: float = 5.0,
         slippage_bps: float = 2.0,
         metadata: dict[str, Any] | None = None,
+        sealed_attempt_id: str | None = None,
+        objective_hash: str | None = None,
+        require_split_binding: bool | None = None,
     ) -> dict[str, Any]:
         """Create a TradingGym episode (SimRun with gym metadata).
 
         mode=interactive → caller may gym_reset/gym_step in control plane.
         mode=complete → must be started via start_gym_episode (worker-owned).
+
+        VAL/SEALED (and any caller that sets require_split_binding) MUST supply
+        dataset_id/dataset_version so start/end come from the frozen manifest.
+        SEALED always goes through SealedAttemptBinder — no bypass path.
         """
         self._require_enabled()
         from .gym import TradingGym, resolve_split_window
-        from .split_manifest import SplitRole
+        from .sealed_attempts import SealedAttemptBinder, SealedAttemptStatus
+        from .split_manifest import (
+            ResearchEpisodeBinding,
+            SplitRole,
+            resolve_research_episode_binding,
+        )
 
         role = str(split_role or SplitRole.TRAIN).upper()
+        meta_in = dict(metadata or {})
+        ds_id = dataset_id or meta_in.get("dataset_id")
+        ds_ver = dataset_version or meta_in.get("dataset_version")
+        # Resolve dataset lineage from source when learning/gym omit explicit ids.
+        if (not ds_id or not ds_ver) and source_id:
+            try:
+                source = self.data.get_source(source_id)
+                smeta = dict(source.metadata or {})
+                ds_id = ds_id or smeta.get("dataset_id")
+                ds_ver = ds_ver or smeta.get("dataset_version")
+            except MarketSimError:
+                pass
+
+        must_bind = bool(
+            require_split_binding
+            if require_split_binding is not None
+            else role in {SplitRole.VAL, "VALIDATION", SplitRole.SEALED}
+            or meta_in.get("learning_run_id")
+        )
         start_ts = end_ts = None
         manifest = None
-        if dataset_id and dataset_version:
+        binding: ResearchEpisodeBinding | None = None
+        if must_bind or (ds_id and ds_ver):
+            if not ds_id or not ds_ver:
+                raise MarketSimError(
+                    "SPLIT_BINDING_REQUIRED",
+                    f"{role} episodes require dataset_id + dataset_version bound to a split manifest",
+                    http_status=400,
+                )
             manifest = self.store.get_split_manifest(
-                dataset_id=dataset_id, dataset_version=dataset_version
+                dataset_id=str(ds_id), dataset_version=str(ds_ver)
+            )
+            if manifest is None:
+                raise MarketSimError(
+                    "SPLIT_MANIFEST_NOT_FOUND",
+                    f"no split manifest for {ds_id}@{ds_ver}",
+                    http_status=404,
+                )
+            binding = resolve_research_episode_binding(
+                manifest,
+                split_role=role,
+                strategy_id=str(strategy_id or ""),
+                strategy_version=int(strategy_version or 0),
+                objective_hash=str(objective_hash or meta_in.get("objective_hash") or ""),
+                run_fingerprint=str(meta_in.get("run_fingerprint") or meta_in.get("input_fingerprint") or ""),
+                source_id=source_id,
+                require_frozen=(role == SplitRole.SEALED),
+            )
+            start_ts, end_ts = binding.start_ts, binding.end_ts
+        elif ds_id and ds_ver:
+            # legacy path kept only when must_bind is false and ids present
+            manifest = self.store.get_split_manifest(
+                dataset_id=str(ds_id), dataset_version=str(ds_ver)
             )
             start_ts, end_ts = resolve_split_window(manifest, role)
-            if role == SplitRole.SEALED and (not manifest or not manifest.get("frozen")):
-                raise MarketSimError(
-                    "SPLIT_NOT_FROZEN",
-                    "SEALED gym episode requires frozen DatasetSplitManifest",
-                    http_status=409,
-                )
 
         created = self.create_run(
             source_id=source_id,
@@ -951,17 +1005,96 @@ class MarketSimControlPlane:
             slippage_bps=slippage_bps,
             agents=[],  # single-agent gym
             metadata={
-                **dict(metadata or {}),
+                **meta_in,
                 "gym": True,
                 "gym_mode": str(mode or "interactive"),
                 "split_role": role,
-                "dataset_id": dataset_id,
-                "dataset_version": dataset_version,
-                "split_manifest_id": (manifest or {}).get("manifest_id") if manifest else None,
+                "dataset_id": ds_id,
+                "dataset_version": ds_ver,
+                "split_manifest_id": (
+                    binding.split_manifest_id
+                    if binding
+                    else ((manifest or {}).get("manifest_id") if manifest else None)
+                ),
+                "split_binding": binding.public_dict() if binding else None,
                 "engine": "gym",
             },
         )
         run_id = created["run_id"]
+
+        sealed_attempt_payload = None
+        if role == SplitRole.SEALED:
+            if binding is None:
+                raise MarketSimError(
+                    "SPLIT_BINDING_REQUIRED",
+                    "SEALED gym episode requires frozen DatasetSplitManifest binding",
+                    http_status=409,
+                )
+            if not strategy_id:
+                raise MarketSimError(
+                    "SEALED_STRATEGY_REQUIRED",
+                    "SEALED episodes require strategy_id + strategy_version",
+                    http_status=400,
+                )
+            binder = SealedAttemptBinder(self.store)
+            # Resume path: if an active attempt already exists for this strategy
+            # version, refuse a new run and force resume of the bound run_id.
+            existing = self.store.find_sealed_attempt(
+                dataset_id=binding.dataset_id,
+                dataset_version=binding.dataset_version,
+                strategy_id=str(strategy_id),
+                strategy_version=int(strategy_version or 0),
+            )
+            if existing and str(existing.get("status")) != SealedAttemptStatus.COMPLETED:
+                resume_run = str(existing.get("run_id") or "")
+                if resume_run and resume_run != run_id:
+                    # Soft-delete the freshly created run; caller/worker must resume.
+                    try:
+                        run_obj = self._get_run(run_id)
+                        run_obj.status = "CANCELLED"
+                        run_obj.metadata = {
+                            **dict(run_obj.metadata or {}),
+                            "superseded_by_sealed_resume": True,
+                            "resume_run_id": resume_run,
+                            "sealed_attempt_id": existing.get("sealed_attempt_id"),
+                        }
+                        self.store.update_run(run_obj)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    raise MarketSimError(
+                        "SEALED_ATTEMPT_BOUND_TO_OTHER_RUN",
+                        f"attempt {existing.get('sealed_attempt_id')} bound to run {resume_run}, "
+                        f"refusing new run {run_id}; resume the original run_id "
+                        f"(resume_run_id={resume_run})",
+                        http_status=409,
+                    )
+            attempt = binder.bind_or_resume(
+                dataset_id=binding.dataset_id,
+                dataset_version=binding.dataset_version,
+                split_manifest_id=binding.split_manifest_id,
+                strategy_id=str(strategy_id),
+                strategy_version=int(strategy_version or 0),
+                run_id=run_id,
+                sealed_attempt_id=sealed_attempt_id or meta_in.get("sealed_attempt_id"),
+                objective_hash=str(objective_hash or meta_in.get("objective_hash") or ""),
+                metadata={
+                    "source_id": source_id,
+                    "learning_run_id": meta_in.get("learning_run_id"),
+                    "candidate_id": meta_in.get("candidate_id"),
+                    "objective_hash": str(objective_hash or meta_in.get("objective_hash") or ""),
+                    "split_manifest_hash": binding.split_manifest_hash,
+                },
+            )
+            binder.mark_running(attempt.sealed_attempt_id)
+            sealed_attempt_payload = attempt.public_dict()
+            run_obj = self._get_run(run_id)
+            sm = dict(run_obj.metadata or {})
+            sm["sealed_attempt_id"] = attempt.sealed_attempt_id
+            sm["sealed_attempt"] = sealed_attempt_payload
+            run_obj.metadata = sm
+            self.store.update_run(run_obj)
+            created = run_obj.public_dict()
+
         if str(mode).lower() == "interactive":
             run = self._get_run(run_id)
             gym = TradingGym(self.store, self.engine)
@@ -982,19 +1115,27 @@ class MarketSimControlPlane:
                 "episode": run.public_dict(),
                 "observation": obs.public_dict(),
                 "mode": "interactive",
+                "split_binding": binding.public_dict() if binding else None,
+                "sealed_attempt": sealed_attempt_payload,
                 "truth": {
                     "via_trading_gym": True,
                     "worker_owned_complete_episode": False,
+                    "split_binding_enforced": binding is not None,
+                    "sealed_binder_enforced": role == SplitRole.SEALED,
                 },
             }
         return {
             "episode": created,
             "observation": None,
             "mode": "complete",
+            "split_binding": binding.public_dict() if binding else None,
+            "sealed_attempt": sealed_attempt_payload,
             "truth": {
                 "via_trading_gym": True,
                 "worker_owned_complete_episode": True,
                 "start_required": True,
+                "split_binding_enforced": binding is not None,
+                "sealed_binder_enforced": role == SplitRole.SEALED,
             },
         }
 
@@ -1113,11 +1254,84 @@ class MarketSimControlPlane:
         """Execute a complete gym episode (called only from market_sim worker)."""
         from .gym import TradingGym
         from .policy import resolve_gym_policy, strategy_requires_policy
+        from .sealed_attempts import SealedAttemptBinder, SealedAttemptStatus
+        from .split_manifest import SplitRole, resolve_research_episode_binding
 
         run = self._get_run(run_id)
         meta = dict(run.metadata or {})
         if not meta.get("gym"):
             raise MarketSimError("NOT_A_GYM_EPISODE", run_id, http_status=400)
+
+        role = str(meta.get("split_role") or "TRAIN").upper()
+        sealed_attempt_id = meta.get("sealed_attempt_id")
+        # Worker re-verifies split binding — caller cannot expand window via metadata.
+        ds_id = meta.get("dataset_id")
+        ds_ver = meta.get("dataset_version")
+        if role in {SplitRole.VAL, "VALIDATION", SplitRole.SEALED} or meta.get("learning_run_id"):
+            if not ds_id or not ds_ver:
+                raise MarketSimError(
+                    "SPLIT_BINDING_REQUIRED",
+                    f"worker refused {role} episode without dataset split binding",
+                    http_status=409,
+                )
+            manifest = self.store.get_split_manifest(
+                dataset_id=str(ds_id), dataset_version=str(ds_ver)
+            )
+            if manifest is None:
+                raise MarketSimError(
+                    "SPLIT_MANIFEST_NOT_FOUND",
+                    f"no split manifest for {ds_id}@{ds_ver}",
+                    http_status=404,
+                )
+            binding = resolve_research_episode_binding(
+                manifest,
+                split_role=role,
+                strategy_id=str(run.strategy_id or ""),
+                strategy_version=int(run.strategy_version or 0),
+                objective_hash=str(meta.get("objective_hash") or ""),
+                source_id=run.source_id,
+                require_frozen=(role == SplitRole.SEALED),
+            )
+            # Enforce exact manifest bounds (no expansion).
+            if run.start_ts and str(run.start_ts) < binding.start_ts:
+                raise MarketSimError(
+                    "SPLIT_WINDOW_EXPANSION_FORBIDDEN",
+                    "run start_ts precedes manifest TRAIN/VAL/SEALED window",
+                    http_status=409,
+                )
+            if run.end_ts and str(run.end_ts) > binding.end_ts:
+                raise MarketSimError(
+                    "SPLIT_WINDOW_EXPANSION_FORBIDDEN",
+                    "run end_ts exceeds manifest window",
+                    http_status=409,
+                )
+            run.start_ts = binding.start_ts
+            run.end_ts = binding.end_ts
+            meta["split_binding"] = binding.public_dict()
+            run.metadata = meta
+            self.store.update_run(run)
+
+        if role == SplitRole.SEALED:
+            if not sealed_attempt_id:
+                raise MarketSimError(
+                    "SEALED_ATTEMPT_REQUIRED",
+                    "SEALED worker episode requires sealed_attempt_id from SealedAttemptBinder",
+                    http_status=409,
+                )
+            binder = SealedAttemptBinder(self.store)
+            attempt_raw = self.store.get_sealed_attempt(str(sealed_attempt_id))
+            if attempt_raw is None:
+                raise MarketSimError("SEALED_ATTEMPT_NOT_FOUND", str(sealed_attempt_id), http_status=404)
+            if str(attempt_raw.get("status")) == SealedAttemptStatus.COMPLETED:
+                raise MarketSimError("SEALED_ALREADY_CONSUMED", str(sealed_attempt_id), http_status=409)
+            if str(attempt_raw.get("run_id")) != run_id:
+                raise MarketSimError(
+                    "SEALED_ATTEMPT_BOUND_TO_OTHER_RUN",
+                    f"attempt {sealed_attempt_id} bound to {attempt_raw.get('run_id')}",
+                    http_status=409,
+                )
+            binder.mark_running(str(sealed_attempt_id), checkpoint_bar_index=int(run.bar_index or 0))
+
         gym = TradingGym(self.store, self.engine)
         strat = self._resolve_strategy_payload(run)
         bars_path = self._resolve_bars_path(run)
@@ -1138,26 +1352,35 @@ class MarketSimControlPlane:
         except MarketSimError:
             raise
         except Exception as exc:  # noqa: BLE001 — fail closed, never silent HOLD
+            if role == SplitRole.SEALED and sealed_attempt_id:
+                SealedAttemptBinder(self.store).fail(str(sealed_attempt_id), reason=str(exc))
             raise MarketSimError(
                 "POLICY_LOAD_FAILED",
                 f"cannot load strategy policy for gym episode: {exc}",
                 http_status=400,
             ) from exc
         max_steps = meta.get("max_episode_bars") or meta.get("max_steps")
-        result = gym.run_episode(
-            run,
-            bars_path=bars_path,
-            split_role=str(meta.get("split_role") or "TRAIN"),
-            start_ts=run.start_ts or None,
-            end_ts=run.end_ts or None,
-            strategy_params=strat.get("parameters"),
-            entry_rules=strat.get("entry_rules") or {"kind": "hold"},
-            exit_rules=strat.get("exit_rules") or {"kind": "hold"},
-            policy=policy,
-            require_policy=requires,
-            policy_id=getattr(policy, "policy_id", None),
-            max_steps=int(max_steps) if max_steps is not None else None,
-        )
+        try:
+            result = gym.run_episode(
+                run,
+                bars_path=bars_path,
+                split_role=role,
+                start_ts=run.start_ts or None,
+                end_ts=run.end_ts or None,
+                strategy_params=strat.get("parameters"),
+                entry_rules=strat.get("entry_rules") or {"kind": "hold"},
+                exit_rules=strat.get("exit_rules") or {"kind": "hold"},
+                policy=policy,
+                require_policy=requires,
+                policy_id=getattr(policy, "policy_id", None),
+                max_steps=int(max_steps) if max_steps is not None else None,
+            )
+        except Exception as exc:
+            if role == SplitRole.SEALED and sealed_attempt_id:
+                SealedAttemptBinder(self.store).fail(str(sealed_attempt_id), reason=str(exc))
+            raise
+        if role == SplitRole.SEALED and sealed_attempt_id:
+            SealedAttemptBinder(self.store).complete(str(sealed_attempt_id))
         self.store.add_event(
             run_id,
             kind="gym_episode_finished",
@@ -1166,6 +1389,8 @@ class MarketSimControlPlane:
                 "status": result.get("status"),
                 "policy": result.get("policy"),
                 "non_hold_actions": result.get("non_hold_actions"),
+                "split_role": role,
+                "sealed_attempt_id": sealed_attempt_id,
             },
         )
         return result

@@ -174,9 +174,10 @@ class WalletLedger:
             raise ValueError("NaN in wallet state")
         if self.reserved_cash < ZERO - MONEY_QUANT:
             raise ValueError("negative reserved cash")
-        if self.reserved_cash > self.cash + MONEY_QUANT and self.cash >= ZERO:
-            # reserved cannot exceed cash+epsilon when cash positive
-            pass
+        if self.reserved_cash > self.cash + MONEY_QUANT:
+            raise ValueError(
+                f"reserved_cash ({self.reserved_cash}) exceeds cash ({self.cash}) + epsilon"
+            )
         fees = money(sum(D(t.get("fee") or 0) for t in self.transactions))
         if abs(fees - self.fees_paid) > MONEY_QUANT * 10:
             raise ValueError(f"fees_paid mismatch: ledger={self.fees_paid} sum_tx={fees}")

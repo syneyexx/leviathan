@@ -24,6 +24,107 @@ class EvaluationWindow(str, Enum):
     LIVE_PAPER = "LIVE_PAPER"
 
 
+class EvidenceClass(str, Enum):
+    """Epistemic classification for trading evidence / StrategyMemory.
+
+    Only TRAIN_ADAPTIVE may mutate learner priors / adaptive StrategyMemory
+    retrieval. SEALED_QUALIFICATION_EVIDENCE is an epistemic sink: auditable,
+    never adaptive.
+    """
+
+    TRAIN_ADAPTIVE = "TRAIN_ADAPTIVE"
+    VALIDATION_EVIDENCE = "VALIDATION_EVIDENCE"
+    ROBUSTNESS_EVIDENCE = "ROBUSTNESS_EVIDENCE"
+    SEALED_QUALIFICATION_EVIDENCE = "SEALED_QUALIFICATION_EVIDENCE"
+    PAPER_FORWARD_EVIDENCE = "PAPER_FORWARD_EVIDENCE"
+    AUDIT_ONLY = "AUDIT_ONLY"
+
+
+# Stages/roles that must never enter adaptive retrieval / learner priors.
+_NON_ADAPTIVE_EVIDENCE = {
+    EvidenceClass.SEALED_QUALIFICATION_EVIDENCE.value,
+    EvidenceClass.AUDIT_ONLY.value,
+    "SEALED",
+    "sealed",
+    "SEALED_TEST",
+    "sealed_test",
+    "SEALED_EVALUATION",
+}
+
+_ADAPTIVE_EVIDENCE = {
+    EvidenceClass.TRAIN_ADAPTIVE.value,
+    "TRAIN",
+    "train",
+    "RESEARCH",
+}
+
+
+def evidence_class_for_split_role(split_role: str | None) -> EvidenceClass:
+    """Map a research split role to its epistemic evidence class."""
+    role = str(split_role or "").strip().upper()
+    if role in {"TRAIN", "RESEARCH"}:
+        return EvidenceClass.TRAIN_ADAPTIVE
+    if role in {"VAL", "VALIDATION", "VALIDATING"}:
+        return EvidenceClass.VALIDATION_EVIDENCE
+    if role in {"ROBUSTNESS", "ROBUST"}:
+        return EvidenceClass.ROBUSTNESS_EVIDENCE
+    if role in {"SEALED", "SEALED_TEST", "SEALED_EVALUATION"}:
+        return EvidenceClass.SEALED_QUALIFICATION_EVIDENCE
+    if role in {"PAPER", "SHADOW", "PAPER_FORWARD", "LIVE_PAPER", "LIVE_SHADOW"}:
+        return EvidenceClass.PAPER_FORWARD_EVIDENCE
+    return EvidenceClass.AUDIT_ONLY
+
+
+def is_adaptive_evidence(
+    *,
+    evidence_class: str | None = None,
+    validation_stage: str | None = None,
+    split_role: str | None = None,
+) -> bool:
+    """True iff evidence may influence adaptive discovery / StrategyMemory retrieval."""
+    for raw in (evidence_class, validation_stage, split_role):
+        if not raw:
+            continue
+        text = str(raw).strip()
+        upper = text.upper()
+        if text in _NON_ADAPTIVE_EVIDENCE or upper in _NON_ADAPTIVE_EVIDENCE:
+            return False
+        if upper in {"SEALED", "SEALED_TEST", "SEALED_EVALUATION", "SEALED_QUALIFICATION_EVIDENCE"}:
+            return False
+    for raw in (evidence_class, validation_stage, split_role):
+        if not raw:
+            continue
+        text = str(raw).strip()
+        upper = text.upper()
+        if text in _ADAPTIVE_EVIDENCE or upper in {"TRAIN", "TRAIN_ADAPTIVE", "RESEARCH"}:
+            return True
+    # Missing classification on StrategyMemory defaults to non-adaptive fail-closed
+    # for retrieval into discovery loops when stage looks sealed-ish; otherwise
+    # TRAIN-era memories without explicit class remain adaptive-compatible.
+    if evidence_class is None and validation_stage is None and split_role is None:
+        return True
+    return False
+
+
+def assert_adaptive_write_allowed(
+    *,
+    evidence_class: str | None = None,
+    validation_stage: str | None = None,
+    split_role: str | None = None,
+) -> None:
+    """Refuse adaptive StrategyMemory writes from SEALED / audit-only evidence."""
+    if not is_adaptive_evidence(
+        evidence_class=evidence_class,
+        validation_stage=validation_stage,
+        split_role=split_role,
+    ):
+        raise MarketSimError(
+            "SEALED_ADAPTIVE_MEMORY_FORBIDDEN",
+            "SEALED/qualification evidence cannot become adaptive StrategyMemory",
+            http_status=409,
+        )
+
+
 class TemporalClass(str, Enum):
     """Information temporal class for historical decision access."""
 

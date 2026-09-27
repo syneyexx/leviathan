@@ -172,12 +172,36 @@ class PointInTimeUniverse:
             if a.symbol == symbol and a.effective_at <= as_of
         ]
 
-    def is_trading_day(self, date: str, *, exchange: str = "") -> bool:
+    def trading_day_state(self, date: str, *, exchange: str = "") -> str:
+        """Return OPEN | HALF_DAY | CLOSED | UNKNOWN for an institutional calendar day.
+
+        Missing calendar configuration or missing day entry is UNKNOWN — never
+        silently OPEN. Callers that require session truth must BLOCK on UNKNOWN.
+        """
+        if not self.calendar:
+            return "UNKNOWN"
+        matched = False
         for day in self.calendar:
-            if day.date == date and (not exchange or day.exchange == exchange):
-                return day.session in {"open", "half_day"}
-        # No calendar entry ⇒ assume open (UNMEASURED calendar).
-        return True
+            if day.date != date:
+                continue
+            if exchange and day.exchange and day.exchange != exchange:
+                continue
+            matched = True
+            session = str(day.session or "").lower()
+            if session in {"open", "regular", "rth"}:
+                return "OPEN"
+            if session in {"half_day", "half", "early_close"}:
+                return "HALF_DAY"
+            if session in {"closed", "holiday", "weekend"}:
+                return "CLOSED"
+            return "UNKNOWN"
+        # Calendar present but this date absent → unknown institutional state.
+        return "UNKNOWN" if not matched else "UNKNOWN"
+
+    def is_trading_day(self, date: str, *, exchange: str = "") -> bool:
+        """True only for measured open/half-day. Unknown/closed → False (fail-closed)."""
+        state = self.trading_day_state(date, exchange=exchange)
+        return state in {"OPEN", "HALF_DAY"}
 
     def public_dict(self) -> dict[str, Any]:
         return {

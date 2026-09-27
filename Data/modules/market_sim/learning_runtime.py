@@ -97,6 +97,110 @@ def _completed_candidate_ids(run: StrategyLearningRun, generation: int, stage: s
     return done
 
 
+def _resolve_learning_split_binding(
+    plane: Any,
+    run: StrategyLearningRun,
+    split_role: str,
+    *,
+    strategy_id: str,
+    strategy_version: int,
+) -> tuple[str | None, str | None, dict[str, Any] | None]:
+    """Resolve dataset_id/version + authoritative split ref for a learning episode."""
+    from .split_manifest import SplitRole, resolve_research_episode_binding, split_refs_from_manifest
+
+    role = str(split_role or SplitRole.TRAIN).upper()
+    role_key = {
+        SplitRole.TRAIN: "train_split_ref",
+        SplitRole.VAL: "validation_split_ref",
+        "VALIDATION": "validation_split_ref",
+        "ROBUSTNESS": "robustness_split_ref",
+        SplitRole.SEALED: "sealed_split_ref",
+    }.get(role, "train_split_ref")
+    ref = dict(getattr(run, role_key, None) or {})
+    ds_id = ref.get("dataset_id")
+    ds_ver = ref.get("dataset_version")
+
+    if not ds_id or not ds_ver:
+        # Promote scanned source into a versioned dataset + frozen split manifest.
+        source = plane.data.get_source(run.source_id)
+        smeta = dict(source.metadata or {})
+        ds_id = ds_id or smeta.get("dataset_id")
+        ds_ver = ds_ver or smeta.get("dataset_version")
+
+    if not ds_id or not ds_ver:
+        source = plane.data.get_source(run.source_id)
+        smeta = dict(source.metadata or {})
+        abs_path = smeta.get("absolute_path") or source.path
+        imported = plane.data.import_and_validate(
+            abs_path,
+            symbol=source.symbol,
+            timeframe=source.timeframe,
+            seal=True,
+            role="SEALED_TEST",
+        )
+        ds_payload = imported.get("dataset") or {}
+        ds_id = ds_payload.get("dataset_id")
+        ds_ver = ds_payload.get("version") or ds_payload.get("dataset_version")
+        if (not ds_id or not ds_ver) and imported.get("source"):
+            src_meta = dict((imported["source"] or {}).get("metadata") or {})
+            ds_id = ds_id or src_meta.get("dataset_id")
+            ds_ver = ds_ver or src_meta.get("dataset_version")
+
+    if not ds_id or not ds_ver:
+        raise MarketSimError(
+            "SPLIT_BINDING_REQUIRED",
+            "learning episodes require source dataset_id/dataset_version for split binding",
+            http_status=409,
+        )
+
+    manifest = plane.store.get_split_manifest(dataset_id=str(ds_id), dataset_version=str(ds_ver))
+    if manifest is None or (role == SplitRole.SEALED and not manifest.get("frozen")):
+        # Seal (or re-seal) to attach frozen split when possible.
+        try:
+            plane.seal_market_dataset(str(ds_id), str(ds_ver))
+        except MarketSimError:
+            pass
+        manifest = plane.store.get_split_manifest(dataset_id=str(ds_id), dataset_version=str(ds_ver))
+    if manifest is None:
+        raise MarketSimError(
+            "SPLIT_MANIFEST_NOT_FOUND",
+            f"learning cannot bind {role} without split manifest for {ds_id}@{ds_ver}",
+            http_status=404,
+        )
+
+    # Persist split refs on the run if missing (durable lineage).
+    if not run.train_split_ref or not run.sealed_split_ref:
+        refs = split_refs_from_manifest(
+            manifest,
+            source_id=run.source_id,
+            strategy_id=run.strategy_id,
+            strategy_version=run.parent_strategy_version,
+            objective_hash=run.objective_hash,
+        )
+        if refs.get(SplitRole.TRAIN):
+            run.train_split_ref = dict(refs[SplitRole.TRAIN])
+        if refs.get(SplitRole.VAL):
+            run.validation_split_ref = dict(refs[SplitRole.VAL])
+        if refs.get(SplitRole.SEALED):
+            run.sealed_split_ref = dict(refs[SplitRole.SEALED])
+        if not run.robustness_split_ref and run.validation_split_ref:
+            # Robustness reuses VAL window geometry unless a dedicated ref exists.
+            run.robustness_split_ref = dict(run.validation_split_ref)
+
+    binding_role = SplitRole.VAL if role in {"ROBUSTNESS", "ROBUST"} else role
+    binding = resolve_research_episode_binding(
+        manifest,
+        split_role=binding_role,
+        strategy_id=strategy_id,
+        strategy_version=strategy_version,
+        objective_hash=run.objective_hash,
+        run_fingerprint=run.input_fingerprint,
+        source_id=run.source_id,
+        require_frozen=(role == SplitRole.SEALED),
+    )
+    return str(ds_id), str(ds_ver), binding.public_dict()
+
+
 def _run_candidate_episode(
     plane: Any,
     *,
@@ -105,6 +209,15 @@ def _run_candidate_episode(
     split_role: str,
     seed: int,
 ) -> dict[str, Any]:
+    from .split_manifest import SplitRole
+
+    ds_id, ds_ver, binding = _resolve_learning_split_binding(
+        plane,
+        run,
+        split_role,
+        strategy_id=candidate.strategy_id,
+        strategy_version=candidate.strategy_version,
+    )
     meta = {
         "learning_run_id": run.learning_run_id,
         "candidate_id": candidate.candidate_id,
@@ -112,10 +225,43 @@ def _run_candidate_episode(
         "split_role": split_role,
         "objective_hash": run.objective_hash,
         "learner_state_hash": candidate.learner_state_hash,
+        "run_fingerprint": run.input_fingerprint,
+        "input_fingerprint": run.input_fingerprint,
         "gym": True,
+        "dataset_id": ds_id,
+        "dataset_version": ds_ver,
+        "split_binding": binding,
     }
     if run.objective_spec and run.objective_spec.max_episode_bars:
         meta["max_episode_bars"] = run.objective_spec.max_episode_bars
+
+    # SEALED resume: if an active attempt exists, continue its run_id.
+    if str(split_role).upper() == SplitRole.SEALED:
+        existing = plane.store.find_sealed_attempt(
+            dataset_id=str(ds_id),
+            dataset_version=str(ds_ver),
+            strategy_id=candidate.strategy_id,
+            strategy_version=candidate.strategy_version,
+        )
+        if existing and str(existing.get("status")) in {"BOUND", "RUNNING", "FAILED"}:
+            resume_run_id = str(existing.get("run_id") or "")
+            if resume_run_id:
+                meta["sealed_attempt_id"] = existing.get("sealed_attempt_id")
+                sim_result = plane.run_gym_episode_on_worker(resume_run_id)
+                fresh = plane._get_run(resume_run_id)  # noqa: SLF001
+                metrics = dict(sim_result.get("metrics") or fresh.metrics or {})
+                return {
+                    "run_id": resume_run_id,
+                    "metrics": metrics,
+                    "sim_result": sim_result,
+                    "status": fresh.status,
+                    "non_hold_actions": sim_result.get("non_hold_actions"),
+                    "policy": sim_result.get("policy"),
+                    "split_binding": binding,
+                    "sealed_attempt_id": existing.get("sealed_attempt_id"),
+                    "resumed": True,
+                }
+
     episode = plane.create_gym_episode(
         source_id=run.source_id,
         strategy_id=candidate.strategy_id,
@@ -123,9 +269,13 @@ def _run_candidate_episode(
         seed=seed,
         mode="complete",
         split_role=split_role,
+        dataset_id=ds_id,
+        dataset_version=ds_ver,
+        objective_hash=run.objective_hash,
+        require_split_binding=True,
         metadata=meta,
     )
-    # Stamp split role onto run metadata
+    # Stamp split role + binding onto run metadata
     run_id = str((episode.get("episode") or {}).get("run_id") or "")
     if not run_id:
         raise MarketSimError("LEARNING_TRIAL_NO_RUN", "gym episode missing run_id")
@@ -134,6 +284,12 @@ def _run_candidate_episode(
     sm["split_role"] = split_role
     sm["learning_run_id"] = run.learning_run_id
     sm["candidate_id"] = candidate.candidate_id
+    sm["dataset_id"] = ds_id
+    sm["dataset_version"] = ds_ver
+    sm["split_binding"] = binding
+    if episode.get("sealed_attempt"):
+        sm["sealed_attempt_id"] = (episode["sealed_attempt"] or {}).get("sealed_attempt_id")
+        sm["sealed_attempt"] = episode["sealed_attempt"]
     if run.objective_spec and run.objective_spec.max_episode_bars:
         sm["max_episode_bars"] = run.objective_spec.max_episode_bars
     sim_run.metadata = sm
@@ -149,6 +305,8 @@ def _run_candidate_episode(
         "status": fresh.status,
         "non_hold_actions": sim_result.get("non_hold_actions"),
         "policy": sim_result.get("policy"),
+        "split_binding": binding,
+        "sealed_attempt_id": sm.get("sealed_attempt_id"),
     }
 
 
@@ -228,10 +386,17 @@ def _append_trial(
             },
         }
     )
-    # Durable StrategyMemory for successes AND failures (available_at = when learned).
+    # Durable StrategyMemory — SEALED is an epistemic sink (audit only, never adaptive).
     try:
+        from .epistemic import evidence_class_for_split_role, is_adaptive_evidence
         from .experiments import build_strategy_memory_record
 
+        evidence_class = evidence_class_for_split_role(split_role)
+        adaptive = is_adaptive_evidence(
+            evidence_class=evidence_class.value,
+            validation_stage=str(split_role or "").lower(),
+            split_role=split_role,
+        )
         rejected = str(status).lower() in {
             "rejected",
             "failed",
@@ -252,6 +417,7 @@ def _append_trial(
         )
         if failure_cats:
             summary = f"{summary}; failures={failure_cats[:4]}"
+        split_binding = dict((episode or {}).get("split_binding") or {})
         plane.store.save_strategy_memory(
             build_strategy_memory_record(
                 strategy_id=candidate.strategy_id,
@@ -265,6 +431,8 @@ def _append_trial(
                 applicability={
                     "family": candidate.family,
                     "regimes": [features["regime"]] if features.get("regime") else [],
+                    "adaptive": adaptive,
+                    "evidence_class": evidence_class.value,
                 },
                 origin="learning_trial",
                 epistemic_state="REJECTED" if rejected else "MEASURED",
@@ -274,6 +442,13 @@ def _append_trial(
                     "candidate_id": candidate.candidate_id,
                     "hypothesis": candidate.hypothesis[:300],
                     "failure_categories": failure_cats[:8],
+                    "evidence_class": evidence_class.value,
+                    "adaptive": adaptive,
+                    "split_binding": split_binding,
+                    "dataset_id": split_binding.get("dataset_id"),
+                    "dataset_version": split_binding.get("dataset_version"),
+                    "split_manifest_id": split_binding.get("split_manifest_id"),
+                    "objective_hash": run.objective_hash,
                 },
             )
         )
@@ -761,22 +936,51 @@ def run_learning_on_worker(plane: Any, learning_run_id: str) -> dict[str, Any]:
                         "run_id": episode["run_id"],
                         "learner_state_unchanged": True,
                         "pre_learner_hash": pre_learner_hash,
+                        "sealed_attempt_id": episode.get("sealed_attempt_id"),
+                        "split_binding": episode.get("split_binding"),
                     }
                     run.trials_used += 1
                     if sealed_pass:
                         sealed_candidate = cid
-                    # Mark sealed lineage consumption on lab if present
-                    if run.lab_id:
+                    # Mark sealed lineage consumption — disclosed holdout stays disclosed.
+                    attempt_id = str(
+                        episode.get("sealed_attempt_id")
+                        or f"learn-sealed-{run.learning_run_id}"
+                    )
+                    ds_id = str(
+                        ((episode.get("split_binding") or {}).get("dataset_id"))
+                        or (run.sealed_split_ref or {}).get("dataset_id")
+                        or ""
+                    )
+                    run.metadata.setdefault("sealed_lineages", {})[cand.strategy_id] = {
+                        "attempt": attempt_id,
+                        "candidate_id": cid,
+                        "dataset_id": ds_id,
+                        "strategy_version": cand.strategy_version,
+                    }
+                    if run.lab_id and ds_id:
                         try:
-                            from .agent_lab import mark_sealed_revealed
+                            from .agent_lab import AgentLabRun, mark_sealed_revealed
 
                             lab_row = plane.store.get_agent_lab(run.lab_id)
                             if lab_row:
-                                # store alias map in learning metadata
-                                run.metadata.setdefault("sealed_lineages", {})[cand.strategy_id] = {
-                                    "attempt": f"learn-sealed-{run.learning_run_id}",
-                                    "candidate_id": cid,
-                                }
+                                lab = AgentLabRun.from_dict(lab_row) if hasattr(AgentLabRun, "from_dict") else None
+                                if lab is None:
+                                    # Best-effort dict-shaped lab mutate via store helpers.
+                                    sealed_map = dict(lab_row.get("sealed_lineages_consumed") or {})
+                                    key = f"{cand.strategy_id}@parent={run.parent_strategy_version}::{ds_id}"
+                                    sealed_map[key] = attempt_id
+                                    lab_row["sealed_lineages_consumed"] = sealed_map
+                                    plane.store.upsert_agent_lab(lab_row)
+                                else:
+                                    mark_sealed_revealed(
+                                        lab,
+                                        strategy_id=cand.strategy_id,
+                                        parent_version=run.parent_strategy_version,
+                                        sealed_dataset_id=ds_id,
+                                        sealed_attempt_id=attempt_id,
+                                    )
+                                    plane.store.upsert_agent_lab(lab.public_dict())
                         except Exception:  # noqa: BLE001
                             pass
                 except Exception as exc:  # noqa: BLE001
