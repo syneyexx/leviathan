@@ -19,8 +19,13 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_DB = ROOT / "Data" / "leviathan.db"
-DEFAULT_OUT = ROOT / "Data" / "backend" / "tests" / "large_payload_db_audit.json"
+# Full scan output is ephemeral — do not commit machine-local raw scans.
+DEFAULT_OUT = ROOT / "Data" / "backend" / "data" / "artifacts" / "large_payload_db_audit.full.json"
+DEFAULT_SUMMARY_OUT = ROOT / "Data" / "backend" / "tests" / "large_payload_db_audit.summary.json"
+# Legacy single-DB default — prefer --domains or settings three-DB paths.
+DEFAULT_DB = ROOT / "Data" / "backend" / "data" / "leviathan_control.db"
+DEFAULT_SAMPLE_LIMIT = 5000
+FULL_SCAN_SENTINEL = 10**12
 
 # Classification thresholds (bytes)
 METADATA_MAX = 64 * 1024  # typical config/schema JSON
@@ -154,13 +159,21 @@ def _classify(
     }
 
 
-def audit_database(db_path: Path, *, sample_limit: int = 5000) -> dict[str, Any]:
+def audit_database(
+    db_path: Path,
+    *,
+    sample_limit: int = DEFAULT_SAMPLE_LIMIT,
+    full_scan: bool = False,
+    domain: str | None = None,
+) -> dict[str, Any]:
     if not db_path.is_file():
         return {
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "generatedAt": _utcnow(),
             "databasePath": str(db_path),
+            "databaseDomain": domain,
             "databaseExists": False,
+            "boundedMode": not full_scan,
             "columns": [],
             "summary": {
                 "metadata_sized": 0,
@@ -188,7 +201,7 @@ def audit_database(db_path: Path, *, sample_limit: int = 5000) -> dict[str, Any]
         columns_out: list[dict[str, Any]] = []
         for table in tables:
             try:
-                info = conn.execute(f"PRAGMA table_info({table})").fetchall()
+                info = conn.execute(f'PRAGMA table_info("{table}")').fetchall()
             except sqlite3.Error:
                 continue
             for col in info:
@@ -201,7 +214,6 @@ def audit_database(db_path: Path, *, sample_limit: int = 5000) -> dict[str, Any]
                     or "CLOB" in ctype_u
                     or ctype_u in {"", "JSON"}
                 ):
-                    # SQLite affinity: untyped often holds text — include common payload names
                     if col_name not in {
                         "content",
                         "body",
@@ -217,6 +229,7 @@ def audit_database(db_path: Path, *, sample_limit: int = 5000) -> dict[str, Any]
                     } and not col_name.endswith("_json"):
                         continue
                 try:
+                    # Bounded mode (default): sample only — never force full aggregates.
                     row = conn.execute(
                         f"""
                         SELECT
@@ -230,18 +243,19 @@ def audit_database(db_path: Path, *, sample_limit: int = 5000) -> dict[str, Any]
                         """,
                         (sample_limit,),
                     ).fetchone()
-                    # Also get true counts when table is small
-                    full = conn.execute(
-                        f"""
-                        SELECT
-                          COUNT(*) AS row_count,
-                          SUM(CASE WHEN "{col_name}" IS NULL THEN 1 ELSE 0 END) AS null_count,
-                          COALESCE(MAX(LENGTH("{col_name}")), 0) AS max_len,
-                          COALESCE(SUM(LENGTH("{col_name}")), 0) AS total_len
-                        FROM "{table}"
-                        """
-                    ).fetchone()
-                    stats_row = full if full and int(full["row_count"] or 0) <= sample_limit else row
+                    stats_row = row
+                    if full_scan:
+                        full = conn.execute(
+                            f"""
+                            SELECT
+                              COUNT(*) AS row_count,
+                              SUM(CASE WHEN "{col_name}" IS NULL THEN 1 ELSE 0 END) AS null_count,
+                              COALESCE(MAX(LENGTH("{col_name}")), 0) AS max_len,
+                              COALESCE(SUM(LENGTH("{col_name}")), 0) AS total_len
+                            FROM "{table}"
+                            """
+                        ).fetchone()
+                        stats_row = full
                 except sqlite3.Error as exc:
                     columns_out.append(
                         {
@@ -285,7 +299,6 @@ def audit_database(db_path: Path, *, sample_limit: int = 5000) -> dict[str, Any]
                 summary[key] = 0
             summary[key] += 1
 
-        # Clear-win check: dataset tables must not store bulk row corpora inline
         clear_wins: list[str] = []
         dataset_unbounded = [
             c
@@ -294,7 +307,6 @@ def audit_database(db_path: Path, *, sample_limit: int = 5000) -> dict[str, Any]
             and str(c.get("table") or "").startswith("dataset")
             and c.get("role") == "bulk_text_inline"
         ]
-        # No schema migration applied — dataset corpora already use storage_path file refs.
         truth_note = (
             "Dataset bulk payloads already use file refs (storage_path / raw_path). "
             "No clear-win schema move without KnowledgeStore redesign."
@@ -306,12 +318,15 @@ def audit_database(db_path: Path, *, sample_limit: int = 5000) -> dict[str, Any]
             )
 
         return {
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "wave": "W177",
             "generatedAt": _utcnow(),
             "databasePath": str(db_path.resolve()),
+            "databaseDomain": domain,
             "databaseExists": True,
+            "boundedMode": not full_scan,
             "sampleLimit": sample_limit,
+            "fullScan": bool(full_scan),
             "thresholds": {
                 "metadataMaxBytes": METADATA_MAX,
                 "reasonableMaxBytes": REASONABLE_MAX,
@@ -325,28 +340,150 @@ def audit_database(db_path: Path, *, sample_limit: int = 5000) -> dict[str, Any]
                 "datasetBulkAlreadyFileBacked": True,
                 "clearWinFixesApplied": clear_wins,
                 "note": truth_note,
+                "notCentralSingleDb": True,
             },
         }
     finally:
         conn.close()
 
 
+def audit_canonical_domains(
+    *,
+    sample_limit: int = DEFAULT_SAMPLE_LIMIT,
+    full_scan: bool = False,
+) -> dict[str, Any]:
+    """Audit CONTROL / KNOWLEDGE / MARKET separately — never as one central DB."""
+    try:
+        from Data.backend.config import load_settings
+
+        settings = load_settings()
+        paths = {
+            "CONTROL": Path(settings.control_database_path),
+            "KNOWLEDGE": Path(settings.knowledge_database_path),
+            "MARKET": Path(settings.market_database_path),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "schemaVersion": 2,
+            "generatedAt": _utcnow(),
+            "error": f"settings_unavailable: {exc}",
+            "domains": {},
+        }
+    domains: dict[str, Any] = {}
+    for name, path in paths.items():
+        domains[name] = audit_database(
+            path, sample_limit=sample_limit, full_scan=full_scan, domain=name
+        )
+    return {
+        "schemaVersion": 2,
+        "wave": "W177",
+        "generatedAt": _utcnow(),
+        "mode": "three_database",
+        "boundedMode": not full_scan,
+        "fullScan": bool(full_scan),
+        "domains": domains,
+        "truth": {
+            "notCentralSingleDb": True,
+            "canonicalDomains": ["CONTROL", "KNOWLEDGE", "MARKET"],
+            "heavyFullScanOptIn": True,
+        },
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db", type=Path, default=DEFAULT_DB)
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=None,
+        help="Optional single DB path (legacy). Prefer --domains.",
+    )
+    parser.add_argument("--domains", action="store_true", default=True,
+                        help="Audit CONTROL/KNOWLEDGE/MARKET (default).")
+    parser.add_argument("--single-db", action="store_true",
+                        help="Force single --db path mode.")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
-    parser.add_argument("--sample-limit", type=int, default=5000)
+    parser.add_argument("--sample-limit", type=int, default=DEFAULT_SAMPLE_LIMIT)
+    parser.add_argument(
+        "--full-scan",
+        action="store_true",
+        help="HEAVY: run complete aggregates over every table (opt-in).",
+    )
     args = parser.parse_args(argv)
-    report = audit_database(args.db, sample_limit=max(100, int(args.sample_limit)))
+    if args.single_db or args.db is not None:
+        db_path = args.db or DEFAULT_DB
+        report = audit_database(
+            db_path,
+            sample_limit=max(100, int(args.sample_limit)),
+            full_scan=bool(args.full_scan),
+            domain="SINGLE",
+        )
+    else:
+        report = audit_canonical_domains(
+            sample_limit=max(100, int(args.sample_limit)),
+            full_scan=bool(args.full_scan),
+        )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    # Always refresh the bounded committed summary (no per-column firehose).
+    summary = {
+        "program": "large_payload_db_audit",
+        "artifactKind": "bounded_summary",
+        "schemaVersion": report.get("schemaVersion"),
+        "generatedAt": report.get("generatedAt"),
+        "mode": report.get("mode") or "single",
+        "boundedMode": report.get("boundedMode", True),
+        "fullScan": report.get("fullScan", False),
+        "truth": {
+            **dict(report.get("truth") or {}),
+            "rawScanNotCommitted": True,
+            "fullReportPath": str(args.out),
+        },
+        "domains": {},
+        "result": "SUMMARY_ONLY",
+    }
+    for name, body in (report.get("domains") or {}).items():
+        if not isinstance(body, dict):
+            continue
+        cols = body.get("columns") or []
+        notable = [
+            {
+                "table": c.get("table"),
+                "column": c.get("column"),
+                "classification": c.get("classification"),
+                "role": c.get("role"),
+            }
+            for c in cols
+            if c.get("classification") in {"unbounded", "large", "file_ref"}
+        ][:32]
+        summary["domains"][name] = {
+            "databaseExists": body.get("databaseExists"),
+            "boundedMode": body.get("boundedMode"),
+            "summary": body.get("summary"),
+            "columnCount": len(cols),
+            "notableColumns": notable,
+        }
+    if not summary["domains"] and report.get("summary") is not None:
+        summary["legacySingleDbSummary"] = report.get("summary")
+        summary["columnCount"] = len(report.get("columns") or [])
+    DEFAULT_SUMMARY_OUT.parent.mkdir(parents=True, exist_ok=True)
+    DEFAULT_SUMMARY_OUT.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
     print(
         json.dumps(
             {
                 "ok": True,
                 "out": str(args.out),
-                "columns": len(report.get("columns") or []),
-                "summary": report.get("summary"),
+                "summaryOut": str(DEFAULT_SUMMARY_OUT),
+                "mode": report.get("mode") or "single",
+                "boundedMode": report.get("boundedMode", True),
+                "fullScan": report.get("fullScan", False),
+                "summary": report.get("summary")
+                or {
+                    d: (report.get("domains") or {}).get(d, {}).get("summary")
+                    for d in ("CONTROL", "KNOWLEDGE", "MARKET")
+                },
             },
             indent=2,
         )

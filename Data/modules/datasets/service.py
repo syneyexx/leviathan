@@ -290,7 +290,9 @@ class DatasetService:
         job_runtime: JobRuntime | None = None,
     ) -> "DatasetService":
         settings = settings or load_settings()
-        path = db_path or Path(getattr(settings, "knowledge_database_path", None) or settings.database_path)
+        from Data.modules.common.database_domains import knowledge_path_from_settings
+
+        path = db_path or knowledge_path_from_settings(settings)
         store = DatasetStore(path)
         store.initialize()
         corpus = build_corpus_layout(settings)

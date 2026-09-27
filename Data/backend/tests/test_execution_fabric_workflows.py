@@ -228,6 +228,10 @@ class MarketSimExternalizeTests(unittest.TestCase):
             features = _Feat()
             market_sim = _MS()
             database_path = self.db
+            # Explicit single-temp-DB injection (Wave 23 — no silent CONTROL fallback).
+            market_database_path = self.db
+            control_database_path = self.db
+            knowledge_database_path = self.db
 
         self.plane = MarketSimControlPlane.from_settings(_S())
         self.plane.bind_job_runtime(self.jobs)

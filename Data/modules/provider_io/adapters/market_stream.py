@@ -265,7 +265,7 @@ def normalize_binance_stream_message(
 
 
 class _CheckpointWriter:
-    """Coalesced CONTROL-sized snapshot writer — never one row per tick."""
+    """Coalesced MARKET checkpoint writer — never one row per tick."""
 
     def __init__(
         self,
@@ -461,8 +461,24 @@ class MarketStreamAdapter:
                 provider=provider_id,
             )
         stream_kinds = list(payload.get("stream_kinds") or ["kline_1m", "trade"])
-        feed_id = str(payload.get("feed_id") or f"feed_{os.getpid()}")
-        connection_id = str(payload.get("connection_id") or f"conn_{os.getpid()}")
+        feed_id = str(payload.get("feed_id") or "").strip()
+        if not feed_id:
+            # Stable identity across restart — not PID-only (MARKET-002).
+            import hashlib
+
+            identity_key = "|".join(
+                [
+                    provider_id,
+                    ",".join(symbols),
+                    ",".join(str(k) for k in stream_kinds),
+                    str(payload.get("timeframe") or payload.get("interval") or ""),
+                ]
+            )
+            digest = hashlib.sha256(identity_key.encode("utf-8")).hexdigest()[:16]
+            feed_id = f"feed_{provider_id}_{digest}"
+        connection_id = str(payload.get("connection_id") or "").strip()
+        if not connection_id:
+            connection_id = f"{feed_id}:conn"
         max_runtime = float(payload.get("max_runtime_seconds") or 3600.0)
         gap_recovery_enabled = bool(payload.get("gap_recovery_enabled", True))
         checkpoint_interval = float(payload.get("checkpoint_interval_seconds") or 5.0)
@@ -483,12 +499,13 @@ class MarketStreamAdapter:
         if emit is None and callable(payload.get("emit")):
             emit = payload["emit"]
 
-        db_path = str(
-            payload.get("db_path")
-            or ctx.get("db_path")
-            or os.environ.get("LEVIATHAN_DB_PATH")
-            or ""
-        )
+        # WAVE 23: never take market_db_path/db_path from untrusted payload.
+        # Trusted authority only — executor-injected ctx or DatabasePaths.market.
+        db_path = str(ctx.get("market_db_path") or ctx.get("db_path") or "").strip()
+        if not db_path:
+            from Data.modules.common.database_domains import resolve_market_database_path
+
+            db_path = str(resolve_market_database_path())
         checkpoint: _CheckpointWriter | None = None
         if db_path and not ingest:
             checkpoint = _CheckpointWriter(
@@ -654,10 +671,18 @@ class MarketStreamAdapter:
                     )
                 return recovered
             except Exception as exc:  # noqa: BLE001
+                metrics["continuity"] = "DEGRADED_GAP"
+                metrics["gap_recovery_error"] = str(exc)[:240]
+                # Do not appear fully healthy/live after failed gap recovery (MARKET-001).
+                set_state(FeedConnectionState.DEGRADED, error=f"gap_recovery_failed: {exc}"[:240])
                 if emit:
                     emit(
                         "market.feed.gap_recovery_failed",
-                        {"feed_id": feed_id, "error": str(exc)[:240]},
+                        {
+                            "feed_id": feed_id,
+                            "error": str(exc)[:240],
+                            "continuity": "DEGRADED_GAP",
+                        },
                     )
                 return 0
 
@@ -689,7 +714,15 @@ class MarketStreamAdapter:
                 set_state(FeedConnectionState.SYNCING)
                 if last_exchange_ts and gap_recovery_enabled:
                     run_gap_recovery(last_exchange_ts, _utc_now())
-                set_state(FeedConnectionState.LIVE)
+                if metrics.get("continuity") == "DEGRADED_GAP":
+                    # Stay degraded — do not paint over failed gap recovery as LIVE.
+                    set_state(
+                        FeedConnectionState.DEGRADED,
+                        error=str(metrics.get("gap_recovery_error") or "gap_recovery_failed")[:240],
+                    )
+                else:
+                    metrics.setdefault("continuity", "LIVE")
+                    set_state(FeedConnectionState.LIVE)
 
                 while time.monotonic() < deadline:
                     if cancelled():

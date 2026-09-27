@@ -13,6 +13,12 @@ from typing import Any, Callable
 
 import httpx
 
+from Data.modules.jobs.leases import (
+    LeaseFenceError,
+    fenced_transition,
+    make_lease_bound_checks,
+    record_stale_lease_fence,
+)
 from Data.modules.jobs.states import JobState
 from Data.modules.model_download.errors import ModelDownloadError, ModelDownloadErrorCode
 from Data.modules.models.contracts import (
@@ -91,11 +97,9 @@ class ModelDownloadExecutor:
     """Process-local executor owned by one model_download worker."""
 
     def __init__(self, *, db_path: str | Path | None = None) -> None:
-        path = Path(
-            db_path
-            or os.environ.get("LEVIATHAN_DB_PATH")
-            or "Data/state/leviathan.db"
-        )
+        from Data.modules.common.database_domains import resolve_control_database_path
+
+        path = resolve_control_database_path(explicit=db_path)
         self.db_path = path
         self.store = ModelStore(path)
         self.registry = ModelRegistry(self.store)
@@ -136,28 +140,18 @@ class ModelDownloadExecutor:
         worker_id = str(ctx.get("worker_id") or f"model_download-{os.getpid()}")
         source = str(args.get("source") or "huggingface").strip().lower()
 
-        def cancel_check() -> bool:
-            try:
-                current = store.get(job.job_id)
-            except Exception:  # noqa: BLE001
-                return False
-            if current is None:
-                return True
-            if current.state == JobState.CANCEL_REQUESTED:
-                return True
+        def _download_cancel(_current: Any) -> bool:
             row = self.store.get_download(download_id)
             return bool(row and row.get("state") == DownloadState.CANCELLED.value)
 
-        def heartbeat() -> None:
-            try:
-                if hasattr(store, "heartbeat_lease"):
-                    store.heartbeat_lease(
-                        job.job_id,
-                        worker_id=worker_id,
-                        ttl_seconds=float(ctx.get("lease_ttl_seconds") or 60.0),
-                    )
-            except Exception:  # noqa: BLE001
-                pass
+        cancel_check, heartbeat = make_lease_bound_checks(
+            ctx,
+            store,
+            job.job_id,
+            worker_id=worker_id,
+            ttl_seconds=float(ctx.get("lease_ttl_seconds") or 60.0),
+            extra_cancel=_download_cancel,
+        )
 
         def progress(
             *,
@@ -231,34 +225,96 @@ class ModelDownloadExecutor:
                 result = self._run_hf(args, cancel_check=cancel_check, progress=progress, heartbeat=heartbeat)
             result["worker_pid"] = os.getpid()
             result["download_id"] = download_id
-            store.transition(job.job_id, JobState.COMPLETED, result=result)
+            fenced_transition(
+                store,
+                job.job_id,
+                JobState.COMPLETED,
+                worker_id=worker_id,
+                ctx=ctx,
+                result=result,
+            )
             return result
         except ModelDownloadError as exc:
             cancelled = exc.code == ModelDownloadErrorCode.MODEL_DOWNLOAD_CANCELLED
-            progress(
-                phase="cancelled" if cancelled else "failed",
-                state=DownloadState.CANCELLED.value if cancelled else DownloadState.FAILED.value,
-                error=exc.message,
-            )
+            try:
+                progress(
+                    phase="cancelled" if cancelled else "failed",
+                    state=DownloadState.CANCELLED.value if cancelled else DownloadState.FAILED.value,
+                    error=exc.message,
+                )
+            except Exception:  # noqa: BLE001
+                pass
             payload = {
                 "status": "cancelled" if cancelled else "failed",
                 "error": exc.public_dict(),
                 "worker_pid": os.getpid(),
                 "download_id": download_id,
             }
-            store.transition(
-                job.job_id,
-                JobState.CANCELLED if cancelled else JobState.FAILED,
-                error=exc.code.value,
-                result=payload,
-            )
+            try:
+                current = store.get(job.job_id)
+            except Exception:  # noqa: BLE001
+                current = None
+            if cancelled and current is not None and current.state == JobState.RUNNING:
+                try:
+                    store.request_cancel(job.job_id, reason=exc.message)
+                except Exception:  # noqa: BLE001
+                    pass
+            target = JobState.CANCELLED if cancelled else JobState.FAILED
+            written = None
+            try:
+                written = fenced_transition(
+                    store,
+                    job.job_id,
+                    target,
+                    worker_id=worker_id,
+                    ctx=ctx,
+                    error=exc.code.value,
+                    result=payload,
+                )
+            except Exception:  # noqa: BLE001 — already terminal / illegal path
+                written = None
+            # CANCELLED may be illegal from some states; try FAILED under the same fence only.
+            if written is None and cancelled:
+                try:
+                    fenced_transition(
+                        store,
+                        job.job_id,
+                        JobState.FAILED,
+                        worker_id=worker_id,
+                        ctx=ctx,
+                        error=exc.code.value,
+                        result=payload,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            return payload
+        except LeaseFenceError as exc:
+            try:
+                progress(
+                    phase="failed",
+                    state=DownloadState.FAILED.value,
+                    error=str(exc),
+                )
+            except Exception:  # noqa: BLE001 — progress is best-effort after fence
+                pass
+            payload = {
+                "status": "failed",
+                "error": {"code": "LEASE_FENCE", "message": str(exc)},
+                "worker_pid": os.getpid(),
+                "download_id": download_id,
+            }
+            # After download side effects: do not overwrite canonical job truth.
+            record_stale_lease_fence(ctx)
             return payload
         except Exception as exc:  # noqa: BLE001
-            progress(
-                phase="failed",
-                state=DownloadState.FAILED.value,
-                error=str(exc),
-            )
+            try:
+                progress(
+                    phase="failed",
+                    state=DownloadState.FAILED.value,
+                    error=str(exc),
+                )
+            except Exception:  # noqa: BLE001
+                pass
             payload = {
                 "status": "failed",
                 "error": {
@@ -268,7 +324,15 @@ class ModelDownloadExecutor:
                 "worker_pid": os.getpid(),
                 "download_id": download_id,
             }
-            store.transition(job.job_id, JobState.FAILED, error=str(exc), result=payload)
+            fenced_transition(
+                store,
+                job.job_id,
+                JobState.FAILED,
+                worker_id=worker_id,
+                ctx=ctx,
+                error=str(exc),
+                result=payload,
+            )
             return payload
 
     def _auth_headers(self, credential_ref: str | None) -> dict[str, str]:

@@ -174,6 +174,7 @@ import {
   requestBlob,
 } from "./http";
 import { marketSimLabApi } from "./domains/marketSimLab";
+import { parseChatDonePayload, streamEventText } from "./chatContract";
 
 export { ApiError, detailMessage, request, requestBlob };
 
@@ -362,11 +363,44 @@ export const api = {
       throw new ApiError(response.status, detail);
     }
 
-    // Feature flag OFF → normal JSON response.
+    // Feature flag OFF / TEAM JSON → normal JSON response (still runtime-validated).
     if (!contentType.includes("text/event-stream")) {
-      const data = (await response.json()) as ChatResponse;
-      handlers.onDone?.(data);
-      return data;
+      const raw = (await response.json()) as unknown;
+      const parsed = parseChatDonePayload(raw);
+      if (!parsed.ok) {
+        const reason = parsed.failure.reason;
+        const provisional = parsed.failure.provisional_content;
+        const failureResponse = {
+          conversation_id: parsed.failure.conversation_id ?? "",
+          user_message: {
+            id: 0,
+            conversation_id: parsed.failure.conversation_id ?? "",
+            role: "user" as const,
+            content: "",
+            created_at: new Date(0).toISOString(),
+          },
+          assistant_message: {
+            id: 0,
+            conversation_id: parsed.failure.conversation_id ?? "",
+            role: "assistant" as const,
+            content: provisional ?? "",
+            created_at: new Date().toISOString(),
+          },
+          model: "",
+          reasoning: { intent: "", complexity: "", use_knowledge: false, steps: [] },
+          knowledge_sources: [],
+          truth: {
+            model_output_is_not_evidence: true,
+            streaming_degraded: true,
+          },
+          protocol_failure: reason,
+          provisional: true,
+        } as ChatResponse & { protocol_failure?: string; provisional?: boolean };
+        handlers.onDone?.(failureResponse);
+        return failureResponse;
+      }
+      handlers.onDone?.(parsed.response);
+      return parsed.response;
     }
 
     const reader = response.body?.getReader();
@@ -376,9 +410,11 @@ export const api = {
     const decoder = new TextDecoder();
     let buffer = "";
     let donePayload: ChatResponse | null = null;
+    let protocolFailure: string | null = null;
     let eventName = "message";
     const seenSequences = new Set<string>();
     let finalized = false;
+    let streamClosed = false;
 
     const flushBlock = (block: string) => {
       // Normalize CRLF → LF so Windows-framed SSE parses correctly.
@@ -397,6 +433,8 @@ export const api = {
       try {
         parsed = JSON.parse(dataLines.join("\n")) as Record<string, unknown>;
       } catch {
+        // Malformed JSON SSE: ignore the block; do not crash the page.
+        eventName = "message";
         return;
       }
       const seq = typeof parsed.sequence === "number" ? parsed.sequence : undefined;
@@ -408,7 +446,12 @@ export const api = {
         }
         seenSequences.add(dedupeKey);
       }
-      const text = typeof parsed.text === "string" ? parsed.text : "";
+      // After terminal done: ignore late tokens / snapshots (idempotent stream close).
+      if (streamClosed && (eventName === "token" || eventName === "delta" || eventName === "snapshot" || eventName === "replace" || eventName === "meta")) {
+        eventName = "message";
+        return;
+      }
+      const text = streamEventText(parsed);
       const model = typeof parsed.model === "string" ? parsed.model : undefined;
       const kind = typeof parsed.kind === "string" ? parsed.kind : eventName;
       if (eventName === "meta") {
@@ -424,8 +467,45 @@ export const api = {
           return;
         }
         finalized = true;
-        donePayload = parsed as unknown as ChatResponse;
-        handlers.onDone?.(donePayload);
+        streamClosed = true;
+        const validated = parseChatDonePayload(parsed);
+        if (!validated.ok) {
+          protocolFailure = validated.failure.reason;
+          const provisional = validated.failure.provisional_content;
+          // Surface a protocol-failure ChatResponse so callers can keep provisional text
+          // without treating it as a canonical persisted success.
+          donePayload = {
+            conversation_id: validated.failure.conversation_id ?? "",
+            user_message: {
+              id: 0,
+              conversation_id: validated.failure.conversation_id ?? "",
+              role: "user",
+              content: "",
+              created_at: new Date(0).toISOString(),
+            },
+            assistant_message: {
+              id: 0,
+              conversation_id: validated.failure.conversation_id ?? "",
+              role: "assistant",
+              content: provisional ?? "",
+              created_at: new Date().toISOString(),
+            },
+            model: "",
+            reasoning: { intent: "", complexity: "", use_knowledge: false, steps: [] },
+            knowledge_sources: [],
+            truth: {
+              model_output_is_not_evidence: true,
+              streaming_degraded: true,
+            },
+            streamed: true,
+            protocol_failure: protocolFailure,
+            provisional: true,
+          } as ChatResponse & { protocol_failure?: string; provisional?: boolean };
+          handlers.onDone?.(donePayload);
+        } else {
+          donePayload = validated.response;
+          handlers.onDone?.(donePayload);
+        }
       } else if (eventName === "cancelled") {
         handlers.onCancelled?.(parsed);
         throw new ApiError(499, typeof parsed.reason === "string" ? parsed.reason : "cancelled");
@@ -459,6 +539,8 @@ export const api = {
     if (!donePayload) {
       throw new ApiError(503, "Stream ended without done event");
     }
+    // Protocol failure on done is returned (not thrown) so callers can keep
+    // provisional streamed text without treating it as persisted success.
     return donePayload;
   },
 

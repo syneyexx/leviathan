@@ -377,7 +377,7 @@ export function WorkflowsPage() {
       activeMode="explore"
       modeLabel="Workflows Mode"
       searchPlaceholder="Search workflows, capabilities, schedules..."
-      systemItems={["SYSTEMS OPERATIONAL", "LLM", "Neural", "Memory", "Tools"]}
+      systemItems={["WORKFLOWS", "LLM", "Neural", "Memory", "Tools"]}
       layout="wide"
       pageClass="lv-app--trading"
     >

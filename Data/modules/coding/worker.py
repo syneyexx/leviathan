@@ -11,6 +11,7 @@ from __future__ import annotations
 import threading
 from typing import Any
 
+from Data.modules.jobs.leases import fenced_transition
 from Data.modules.jobs.states import JobState
 
 from .loop import CodingLoop
@@ -93,19 +94,32 @@ class CodingWorker:
         if job is None:
             return False
         leased = job
+        worker_id = f"coding-worker-{id(self)}"
         args = dict(getattr(leased, "arguments", None) or {})
         session_id = str(args.get("session_id") or "")
         approval_id = args.get("approval_id")
         if not session_id:
             try:
-                store.transition(leased.job_id, JobState.FAILED, error="missing session_id")
+                fenced_transition(
+                    store,
+                    leased.job_id,
+                    JobState.FAILED,
+                    worker_id=worker_id,
+                    error="missing session_id",
+                )
             except Exception:  # noqa: BLE001
                 pass
             return True
         session = self.store.get_session(session_id)
         if session is None:
             try:
-                store.transition(leased.job_id, JobState.FAILED, error="session not found")
+                fenced_transition(
+                    store,
+                    leased.job_id,
+                    JobState.FAILED,
+                    worker_id=worker_id,
+                    error="session not found",
+                )
             except Exception:  # noqa: BLE001
                 pass
             return True
@@ -117,7 +131,12 @@ class CodingWorker:
                 worker_pid=None,
             )
             try:
-                store.transition(leased.job_id, JobState.CANCELLED)
+                fenced_transition(
+                    store,
+                    leased.job_id,
+                    JobState.CANCELLED,
+                    worker_id=worker_id,
+                )
             except Exception:  # noqa: BLE001
                 pass
             return True
@@ -126,7 +145,12 @@ class CodingWorker:
             result = self.loop.run_round(session_id, approval_ids=approval_ids)
             if result.status == SessionStatus.RUNNING:
                 try:
-                    store.transition(leased.job_id, JobState.COMPLETED)
+                    fenced_transition(
+                        store,
+                        leased.job_id,
+                        JobState.COMPLETED,
+                        worker_id=worker_id,
+                    )
                 except Exception:  # noqa: BLE001
                     pass
                 try:
@@ -143,7 +167,12 @@ class CodingWorker:
                 return True
             self.store.update_session(session_id, worker_pid=None)
             try:
-                store.transition(leased.job_id, JobState.COMPLETED)
+                fenced_transition(
+                    store,
+                    leased.job_id,
+                    JobState.COMPLETED,
+                    worker_id=worker_id,
+                )
             except Exception:  # noqa: BLE001
                 pass
             return True
@@ -155,7 +184,13 @@ class CodingWorker:
                 worker_pid=None,
             )
             try:
-                store.transition(leased.job_id, JobState.FAILED, error=str(exc)[:2000])
+                fenced_transition(
+                    store,
+                    leased.job_id,
+                    JobState.FAILED,
+                    worker_id=worker_id,
+                    error=str(exc)[:2000],
+                )
             except Exception:  # noqa: BLE001
                 pass
             return True

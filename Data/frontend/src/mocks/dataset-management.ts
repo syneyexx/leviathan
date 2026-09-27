@@ -1,6 +1,13 @@
 /** FINALBETA Dataset Management mock data (UI-only). */
 
-export type DatasetMgmtStatus = "Klaar" | "Verwerkt" | "Bezig" | "Wachtrij" | "Waarschuwing" | "Fout";
+export type DatasetMgmtStatus =
+  | "Klaar"
+  | "Verwerkt"
+  | "Bezig"
+  | "Wachtrij"
+  | "Waarschuwing"
+  | "Fout"
+  | "Onbekend";
 
 export type DatasetMgmtRow = {
   id: string;
@@ -135,7 +142,15 @@ export const DM_CATEGORY_FILTERS = [
   "RESEARCH_PUBLICATIONS",
   "EDUCATION_LANGUAGE",
 ];
-export const DM_STATUS_FILTERS = ["Alle statussen", "Klaar", "Verwerkt", "Bezig", "Wachtrij", "Waarschuwing"];
+export const DM_STATUS_FILTERS = [
+  "Alle statussen",
+  "Klaar",
+  "Verwerkt",
+  "Bezig",
+  "Wachtrij",
+  "Waarschuwing",
+  "Onbekend",
+];
 
 export const DM_TAG_OPTIONS = ["nl", "wiki", "kennis", "code", "instruct", "medisch", "chat", "legal", "eu", "news"];
 

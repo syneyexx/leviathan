@@ -275,7 +275,7 @@ deep_recall_service = DeepRecallService(
 )
 staged_retriever.deep_recall = deep_recall_service
 assimilation_service = KnowledgeAssimilationService(
-    database_path=KNOWLEDGE_DB,
+    database_path=CONTROL_DB,  # intelligence_assimilation_receipts ∈ CONTROL
     knowledge_store=knowledge,
     atlas_store=atlas_store,
 )
@@ -889,6 +889,11 @@ backup_service = BackupService(
     corpus_root=_backup_corpus_root(),
     database_paths=settings.database_paths,
 )
+# WAVE 21 — single maintenance authority; JobRuntime / db_commit consult this fence.
+from Data.modules.backup import register_process_coordinator
+
+backup_service.maintenance.bind_job_runtime(job_runtime)
+register_process_coordinator(backup_service.maintenance)
 
 
 def _sqlite_manager_backup_list() -> list[dict]:
@@ -1205,16 +1210,21 @@ task_service = TaskService(
 
 
 def _knowledge_search(query: str, limit: int = 6):
-    try:
-        if staged_retriever is not None and hasattr(staged_retriever, "retrieve"):
+    """Retrieve knowledge hits. Store/retriever failures raise — empty is not failure."""
+    last_err: Exception | None = None
+    if staged_retriever is not None and hasattr(staged_retriever, "retrieve"):
+        try:
             return staged_retriever.retrieve(query, limit=limit)
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        if hasattr(knowledge, "search"):
+        except Exception as exc:  # noqa: BLE001
+            last_err = exc
+    if hasattr(knowledge, "search"):
+        try:
             return knowledge.search(query, limit=limit)
-    except Exception:  # noqa: BLE001
-        return []
+        except Exception:
+            # Authoritative knowledge failure must not look like "no hits".
+            raise
+    if last_err is not None:
+        raise last_err
     return []
 
 
@@ -1555,7 +1565,21 @@ def _assess_product_truth_report():
         else:
             browser_capable = False
 
-    model_cards = model_plane.status_cards()
+    try:
+        model_cards = model_plane.status_cards()
+    except Exception as exc:  # noqa: BLE001 — truth posture must not crash on unread schema
+        observability.emit(
+            "product_truth.model_plane_unmeasured",
+            {"error": type(exc).__name__, "detail": str(exc)[:240]},
+        )
+        model_cards = {
+            "gatewayHealth": "unknown",
+            "providerCount": 0,
+            "runtime": "—",
+            "availableModels": 0,
+            "activeModel": None,
+            "loadedModels": 0,
+        }
     # Media/voice services are real entry points but fixture/stub backends are not production.
     media_capable = False
     voice_capable = False
@@ -1840,6 +1864,28 @@ def live_settings():
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # WAVE 21 — BEFORE any normal store/worker operation against canonical DBs:
+    # refuse boot when restore journal says RECOVERY_REQUIRED or mixed cutover.
+    from Data.modules.backup import (
+        RestoreStartupBlocked,
+        assert_startup_allows_canonical_db_use,
+    )
+
+    try:
+        assert_startup_allows_canonical_db_use(settings.backup.root)
+    except RestoreStartupBlocked as exc:
+        observability.emit(
+            "backup",
+            "startup.recovery_required",
+            payload={"error": str(exc), "journal": getattr(exc, "journal", {})},
+            level="error",
+            message="Refusing normal startup — restore recovery required",
+        )
+        raise RuntimeError(
+            f"RECOVERY_REQUIRED: {exc} — recovery-only mode; "
+            "complete/resume restore before normal operation"
+        ) from exc
+
     from Data.backend.db_upgrade import upgrade_all_databases
     _upgrade_report = upgrade_all_databases(settings.database_paths)
     if not _upgrade_report.completed:
@@ -2172,7 +2218,12 @@ app.include_router(
 )
 app.include_router(build_analytics_router(analytics_service))
 app.include_router(build_system_telemetry_router(system_telemetry_sampler))
-app.include_router(build_sqlite_manager_router(sqlite_manager))
+app.include_router(
+    build_sqlite_manager_router(
+        sqlite_manager,
+        assert_mutation_auth=_assert_loopback_mutation_allowed,
+    )
+)
 app.include_router(
     build_observability_router(
         observability=observability,
@@ -2182,6 +2233,7 @@ app.include_router(
         sampler=system_telemetry_sampler,
         component_health_fn=_component_health,
         database_path=settings.database_path,
+        database_paths=settings.database_paths,
     )
 )
 app.include_router(build_brain_router(brain_facade))
@@ -2899,20 +2951,33 @@ async def chat(payload: ChatRequest, request: Request):
         )
         return {
             "conversation_id": conversation_id,
+            "user_message": user_message,
+            "assistant_message": assistant_message,
+            # Legacy alias retained for older clients; canonical field is assistant_message.
             "message": assistant_message,
+            "model": "",
             "run_id": run.run_id,
             "team_run_id": team_state.run_id,
             "collaboration_strategy": "team",
             "collaboration_description": USER_FACING_TEAM_DESCRIPTION,
             "team": team_state.public_dict(),
             "provisional": provisional,
+            "knowledge_sources": [],
             "reasoning": {
+                "intent": "team_collaboration",
+                "complexity": "team",
+                "use_knowledge": False,
+                "steps": [],
                 "mode": {
                     "requested": payload.reasoning_mode or "auto",
                     "effective": payload.reasoning_mode or "auto",
                     "source": "team_collaboration",
                     "notes": ["collaboration_strategy=team is orthogonal to reasoning depth"],
-                }
+                },
+            },
+            "truth": {
+                "model_output_is_not_evidence": True,
+                "team_provisional": provisional,
             },
         }
 

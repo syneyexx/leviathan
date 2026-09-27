@@ -4,6 +4,7 @@ from __future__ import annotations
 from Data.modules.workers.entrypoints._cli import main_for_pool
 
 def _handler(ctx, job):
+    from Data.modules.jobs.leases import fenced_transition
     from Data.modules.jobs.states import JobState
     from Data.modules.source_ingestion.worker import build_service_from_env
     service, _settings = build_service_from_env()
@@ -20,7 +21,7 @@ def _handler(ctx, job):
     if refreshed and refreshed.state == JobState.RUNNING:
         # Domain path may not have transitioned kernel job — complete conservatively
         try:
-            ctx["job_store"].transition(job.job_id, JobState.COMPLETED, result={"delegated": True})
+            fenced_transition(ctx["job_store"], job.job_id, JobState.COMPLETED, result={"delegated": True}, worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         except Exception:
             pass
     return {}

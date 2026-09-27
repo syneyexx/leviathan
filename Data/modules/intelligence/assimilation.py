@@ -119,22 +119,11 @@ class KnowledgeAssimilationService:
             conn.close()
 
     def _ensure_sqlite(self) -> None:
+        from Data.backend.db_upgrade import apply_wave3_canonical_ddl
+
         with self._lock:
             with self._connect() as conn:
-                conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS intelligence_assimilation_receipts (
-                        receipt_id TEXT PRIMARY KEY,
-                        kind TEXT NOT NULL,
-                        created_at TEXT NOT NULL,
-                        ok INTEGER NOT NULL,
-                        success_count INTEGER NOT NULL,
-                        failure_count INTEGER NOT NULL,
-                        skipped_count INTEGER NOT NULL,
-                        payload_json TEXT NOT NULL
-                    )
-                    """
-                )
+                apply_wave3_canonical_ddl(conn, "intelligence_assimilation_receipts")
 
     def _store_receipt(self, receipt: AssimilationReceipt) -> None:
         with self._lock:

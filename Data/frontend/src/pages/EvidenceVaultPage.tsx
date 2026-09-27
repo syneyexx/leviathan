@@ -209,7 +209,7 @@ export function EvidenceVaultPage() {
       modeLabel="Evidence Mode"
       searchPlaceholder="Search evidence, sources, content, hash, or tags..."
       systemItems={[
-        "SYSTEMS OPERATIONAL",
+        "EVIDENCE VAULT",
         `${counts.total} ITEMS`,
         loading ? "LOADING" : error ? "ERROR" : "LIVE",
       ]}

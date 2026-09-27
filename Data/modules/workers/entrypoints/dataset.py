@@ -11,6 +11,7 @@ from Data.modules.workers.entrypoints._cli import main_for_pool
 
 def _handler(ctx, job):
     from Data.modules.datasets.worker import build_service_from_env
+    from Data.modules.jobs.leases import fenced_transition
     from Data.modules.jobs.states import JobState
 
     service, _settings = build_service_from_env()
@@ -32,14 +33,17 @@ def _handler(ctx, job):
                 if domain is not None:
                     result["status"] = domain.status.value
                     if domain.status.value == "failed":
-                        ctx["job_store"].transition(
-                            job.job_id,
-                            JobState.FAILED,
+                        fenced_transition(
+            ctx["job_store"],
+            job.job_id,
+            JobState.FAILED,
                             error=domain.error,
                             result=result,
-                        )
+            worker_id=str(ctx.get("worker_id") or ""),
+            ctx=ctx,
+        )
                         return {}
-            ctx["job_store"].transition(job.job_id, JobState.COMPLETED, result=result)
+            fenced_transition(ctx["job_store"], job.job_id, JobState.COMPLETED, result=result, worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         except Exception:
             pass
     return {}

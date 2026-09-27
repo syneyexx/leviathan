@@ -28,25 +28,54 @@ def build_research_worker_context(
     from Data.modules.knowledge.embeddings import build_embedding_provider
     from Data.modules.observability import ObservabilityHub
     from Data.modules.research.service import ResearchService
+    from Data.modules.common.database_domains import (
+        knowledge_path_from_settings,
+        resolve_control_database_path,
+    )
 
-    db_path = Path(settings.database_path)
+    def _settings_path(value: Any, *, fallback: Path) -> Path:
+        if isinstance(value, Path):
+            return value
+        if isinstance(value, str) and value.strip():
+            return Path(value)
+        return fallback
+
+    db_path = _settings_path(
+        getattr(settings, "database_path", None),
+        fallback=resolve_control_database_path(),
+    )
+    # WAVE 23: never fall back knowledge → CONTROL. Tests inject knowledge_database_path.
+    knowledge_db = knowledge_path_from_settings(settings)
     observability = ObservabilityHub(capacity=2000, db_path=db_path)
+
+    def _embedding_dims(knowledge_settings: Any) -> int:
+        for attr in ("embedding_hash_dimensions", "hash_dimensions"):
+            val = getattr(knowledge_settings, attr, None)
+            if isinstance(val, bool):
+                continue
+            if isinstance(val, int):
+                return val
+            if isinstance(val, float) and val == int(val):
+                return int(val)
+            if isinstance(val, str) and val.strip().lstrip("-").isdigit():
+                return int(val.strip())
+        return 256
 
     provider = build_embedding_provider(
         kind=settings.knowledge.embedding_provider,
         model_name=settings.knowledge.embedding_model,
-        hash_dimensions=getattr(settings.knowledge, "hash_dimensions", 256),
+        hash_dimensions=_embedding_dims(settings.knowledge),
     )
     knowledge = KnowledgeStore(
-        db_path,
+        knowledge_db,
         data_root=Path(settings.knowledge.data_root),
         embedding_provider=provider,
     )
     knowledge.initialize()
 
-    atlas_store = AtlasStore(db_path)
+    atlas_store = AtlasStore(knowledge_db)
     assimilation_service = KnowledgeAssimilationService(
-        database_path=db_path,
+        database_path=db_path,  # receipts are CONTROL-owned
         knowledge_store=knowledge,
         atlas_store=atlas_store,
     )

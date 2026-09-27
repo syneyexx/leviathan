@@ -15,6 +15,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable
 
 
@@ -95,11 +96,17 @@ class StreamCancelToken:
 class ServingSupervisor:
     """Tracks managed serving workers and reconciles killed processes honestly."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, registry_path: Path | str | None = None) -> None:
         self._workers: dict[str, ServingWorker] = {}
         self._processes: dict[str, subprocess.Popen[Any]] = {}
         self._lock = threading.RLock()
         self._inproc_loaded: dict[str, dict[str, Any]] = {}
+        self._stderr_tails: dict[str, str] = {}
+        self._stderr_threads: dict[str, threading.Thread] = {}
+        self.registry_path = Path(registry_path) if registry_path else None
+        if self.registry_path is not None:
+            self.registry_path.parent.mkdir(parents=True, exist_ok=True)
+            self.reconcile_persisted_orphans()
 
     def list_workers(self) -> list[ServingWorker]:
         with self._lock:
@@ -178,6 +185,8 @@ class ServingSupervisor:
             return worker
 
         try:
+            # MODEL-001: stderr=PIPE must be drained continuously or the child
+            # deadlocks once the OS pipe buffer fills.
             proc = subprocess.Popen(
                 command,
                 stdout=subprocess.DEVNULL,
@@ -214,6 +223,8 @@ class ServingSupervisor:
                 self._workers[worker_id] = worker
             return worker
 
+        self._start_stderr_drain(worker_id, proc)
+
         worker = ServingWorker(
             worker_id=worker_id,
             provider_id=provider_id,
@@ -233,25 +244,76 @@ class ServingSupervisor:
         deadline = time.monotonic() + ready_timeout_seconds
         while time.monotonic() < deadline:
             if proc.poll() is not None:
-                err = ""
-                try:
-                    err = (proc.stderr.read() or b"").decode("utf-8", errors="replace")[:400]
-                except Exception:  # noqa: BLE001
-                    err = "process exited during start"
+                err = self._stderr_tail(worker_id) or ""
+                if not err:
+                    try:
+                        # Drain thread may still be finishing; best-effort leftover read.
+                        if proc.stderr is not None:
+                            err = (proc.stderr.read() or b"").decode(
+                                "utf-8", errors="replace"
+                            )[:400]
+                    except Exception:  # noqa: BLE001
+                        err = "process exited during start"
                 worker.state = WorkerState.DEAD
                 worker.last_error = err or f"exit code {proc.returncode}"
+                self._persist_registry()
                 return worker
-            if ready_check is None or ready_check():
+            # READY only after health proof — never claim READY without ready_check.
+            if ready_check is not None and ready_check():
                 worker.state = WorkerState.READY
                 worker.last_health_at = _utc_now()
                 worker.health_score = 1.0
+                self._persist_registry()
+                return worker
+            if ready_check is None:
+                # Process alive but unproven — leave STARTING for health reconcile.
+                self._persist_registry()
                 return worker
             time.sleep(0.1)
 
         worker.state = WorkerState.UNHEALTHY
         worker.last_error = "ready timeout — process still starting or unhealthy"
         worker.health_score = 0.0
+        self._persist_registry()
         return worker
+
+    def _start_stderr_drain(self, worker_id: str, proc: subprocess.Popen[Any]) -> None:
+        """Background reader so PIPE stderr cannot fill and stall the child."""
+
+        def _drain() -> None:
+            chunks: list[str] = []
+            total = 0
+            try:
+                stream = proc.stderr
+                if stream is None:
+                    return
+                while True:
+                    raw = stream.readline()
+                    if not raw:
+                        break
+                    line = raw.decode("utf-8", errors="replace")
+                    chunks.append(line)
+                    total += len(line)
+                    # Bound retained tail to avoid unbounded memory.
+                    while total > 8_000 and chunks:
+                        dropped = chunks.pop(0)
+                        total -= len(dropped)
+            except Exception:  # noqa: BLE001
+                pass
+            with self._lock:
+                self._stderr_tails[worker_id] = "".join(chunks)[-400:]
+
+        thread = threading.Thread(
+            target=_drain,
+            name=f"serving-stderr-{worker_id[:8]}",
+            daemon=True,
+        )
+        self._stderr_threads[worker_id] = thread
+        thread.start()
+
+    def _stderr_tail(self, worker_id: str) -> str:
+        with self._lock:
+            return str(self._stderr_tails.get(worker_id) or "")
 
     def stop(self, worker_id: str, *, drain: bool = True) -> ServingWorker:
         with self._lock:
@@ -281,6 +343,7 @@ class ServingSupervisor:
             worker.pid = None
             worker.health_score = 0.0
             worker.last_health_at = _utc_now()
+            self._persist_registry()
             return worker
 
     def mark_dead(self, worker_id: str, reason: str) -> ServingWorker:
@@ -343,33 +406,160 @@ class ServingSupervisor:
                     worker.pid = None
                     self._processes.pop(worker_id, None)
                     changed.append(worker)
+        if changed:
+            self._persist_registry()
         return changed
+
+    def reconcile_persisted_orphans(self) -> list[ServingWorker]:
+        """MODEL-002: after API restart, reconcile prior managed children.
+
+        Ownership proof uses (pid, start identity fingerprint, endpoint). Never
+        kill a process solely because a PID number is reused by an unrelated
+        process.
+        """
+        import json
+
+        if self.registry_path is None or not self.registry_path.is_file():
+            return []
+        try:
+            raw = json.loads(self.registry_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return []
+        entries = list(raw.get("workers") or [])
+        changed: list[ServingWorker] = []
+        for entry in entries:
+            worker_id = str(entry.get("worker_id") or "")
+            if not worker_id:
+                continue
+            pid = entry.get("pid")
+            endpoint = str(entry.get("endpoint") or "")
+            fingerprint = str(entry.get("pid_fingerprint") or "")
+            state = str(entry.get("state") or WorkerState.DEAD.value)
+            alive = isinstance(pid, int) and _pid_alive(int(pid))
+            same_identity = alive and fingerprint and fingerprint == _pid_fingerprint(int(pid))
+            if not same_identity:
+                # Stale PID / reuse / gone — record as DEAD orphan, do not kill.
+                worker = ServingWorker(
+                    worker_id=worker_id,
+                    provider_id=str(entry.get("provider_id") or ""),
+                    model_id=str(entry.get("model_id") or ""),
+                    backend_kind=str(entry.get("backend_kind") or "unknown"),
+                    endpoint=endpoint,
+                    state=WorkerState.DEAD,
+                    pid=int(pid) if isinstance(pid, int) else None,
+                    started_at=entry.get("started_at"),
+                    last_error="orphan reconcile: pid gone or reused — not killed",
+                    health_score=0.0,
+                    last_health_at=_utc_now(),
+                    revision_id=entry.get("revision_id"),
+                    metadata={
+                        "orphan_reconciled": True,
+                        "prior_state": state,
+                        "pid_alive": alive,
+                        "identity_matched": bool(same_identity),
+                    },
+                )
+            else:
+                # Still our process — adopt as UNHEALTHY until health proves READY.
+                worker = ServingWorker(
+                    worker_id=worker_id,
+                    provider_id=str(entry.get("provider_id") or ""),
+                    model_id=str(entry.get("model_id") or ""),
+                    backend_kind=str(entry.get("backend_kind") or "unknown"),
+                    endpoint=endpoint,
+                    state=WorkerState.UNHEALTHY,
+                    pid=int(pid),
+                    started_at=entry.get("started_at"),
+                    last_error="adopted after control-plane restart — awaiting health",
+                    health_score=None,
+                    last_health_at=_utc_now(),
+                    revision_id=entry.get("revision_id"),
+                    metadata={
+                        "orphan_reconciled": True,
+                        "adopted": True,
+                        "pid_fingerprint": fingerprint,
+                    },
+                )
+            with self._lock:
+                self._workers[worker_id] = worker
+            changed.append(worker)
+        self._persist_registry()
+        return changed
+
+    def _persist_registry(self) -> None:
+        import json
+
+        if self.registry_path is None:
+            return
+        with self._lock:
+            workers = []
+            for w in self._workers.values():
+                if w.backend_kind == "inproc":
+                    continue
+                if w.state in (WorkerState.STOPPED, WorkerState.UNAVAILABLE):
+                    continue
+                workers.append(
+                    {
+                        "worker_id": w.worker_id,
+                        "provider_id": w.provider_id,
+                        "model_id": w.model_id,
+                        "backend_kind": w.backend_kind,
+                        "endpoint": w.endpoint,
+                        "state": w.state.value,
+                        "pid": w.pid,
+                        "started_at": w.started_at,
+                        "revision_id": w.revision_id,
+                        "pid_fingerprint": _pid_fingerprint(w.pid) if w.pid else "",
+                    }
+                )
+            payload = {"updated_at": _utc_now(), "workers": workers}
+        try:
+            tmp = self.registry_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            tmp.replace(self.registry_path)
+        except OSError:
+            pass
+
+
+def _pid_fingerprint(pid: int | None) -> str:
+    """Best-effort identity for a PID to detect reuse without scanning / killing."""
+    from Data.modules.common.process import pid_fingerprint
+
+    return pid_fingerprint(pid)
 
 
 def _pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
+    from Data.modules.common.process import pid_is_alive
+
+    return pid_is_alive(pid)
 
 
 # Process-wide supervisor used by managed adapters (one per deployment).
 _GLOBAL_SUPERVISOR: ServingSupervisor | None = None
 
 
+def default_serving_registry_path() -> Path:
+    """Durable registry beside CONTROL so API restart can reconcile orphans."""
+    try:
+        from Data.modules.common.database_domains import resolve_control_database_path
+
+        return resolve_control_database_path().parent / "serving_registry.json"
+    except Exception:  # noqa: BLE001 — keep serving usable without settings bootstrap
+        return Path("Data/backend/data/serving_registry.json")
+
+
 def get_serving_supervisor() -> ServingSupervisor:
     global _GLOBAL_SUPERVISOR
     if _GLOBAL_SUPERVISOR is None:
-        _GLOBAL_SUPERVISOR = ServingSupervisor()
+        raw = (os.environ.get("LEVIATHAN_SERVING_REGISTRY_PATH") or "").strip()
+        registry = Path(raw) if raw else default_serving_registry_path()
+        _GLOBAL_SUPERVISOR = ServingSupervisor(registry_path=registry)
     return _GLOBAL_SUPERVISOR
 
 
-def reset_serving_supervisor_for_tests() -> ServingSupervisor:
+def reset_serving_supervisor_for_tests(
+    *, registry_path: Path | str | None = None
+) -> ServingSupervisor:
     global _GLOBAL_SUPERVISOR
-    _GLOBAL_SUPERVISOR = ServingSupervisor()
+    _GLOBAL_SUPERVISOR = ServingSupervisor(registry_path=registry_path)
     return _GLOBAL_SUPERVISOR

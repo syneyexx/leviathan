@@ -112,22 +112,35 @@ def build_service_from_env():
     from Data.modules.source_ingestion.service import SourceIngestionService
     from Data.modules.source_ingestion.settings import load_source_ingestion_settings
 
+    def _embedding_dims(knowledge_settings) -> int:
+        for attr in ("embedding_hash_dimensions", "hash_dimensions"):
+            val = getattr(knowledge_settings, attr, None)
+            if isinstance(val, bool):
+                continue
+            if isinstance(val, int):
+                return val
+            if isinstance(val, float) and val == int(val):
+                return int(val)
+            if isinstance(val, str) and val.strip().lstrip("-").isdigit():
+                return int(val.strip())
+        return 256
+
     settings = load_settings()
     corpus = build_corpus_layout(settings).ensure()
-    research = ResearchStore(settings.database_path)
+    research = ResearchStore(settings.database_path)  # CONTROL
     research.initialize()
     provider = build_embedding_provider(
         kind=settings.knowledge.embedding_provider,
         model_name=settings.knowledge.embedding_model,
-        hash_dimensions=getattr(settings.knowledge, "hash_dimensions", 256),
+        hash_dimensions=_embedding_dims(settings.knowledge),
     )
     knowledge = KnowledgeStore(
-        settings.database_path,
+        settings.knowledge_database_path,
         data_root=Path(settings.knowledge.data_root),
         embedding_provider=provider,
     )
     knowledge.initialize()
-    job_store = JobStore(settings.database_path)
+    job_store = JobStore(settings.database_path)  # CONTROL
     job_store.initialize()
     catalog = build_default_catalog()
     gateway = ExecutionGateway(catalog=catalog)
@@ -137,7 +150,7 @@ def build_service_from_env():
     service = SourceIngestionService.from_corpus(
         research_store=research,
         corpus=corpus,
-        database_path=settings.database_path,
+        database_path=settings.knowledge_database_path,  # source_ingestion_* ∈ KNOWLEDGE
         knowledge=knowledge,
         job_runtime=job_runtime,
         settings=si_settings,

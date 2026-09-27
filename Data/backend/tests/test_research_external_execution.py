@@ -574,11 +574,13 @@ class ExternalModelAndBrainTests(unittest.TestCase):
         base = load_settings()
         settings = mock.MagicMock()
         settings.database_path = self.db
+        settings.knowledge_database_path = self.db
         settings.knowledge = mock.Mock(
             data_root=str(self.data_root),
             embedding_provider="hash",
             embedding_model="hash",
             hash_dimensions=64,
+            embedding_hash_dimensions=64,
         )
         settings.network = mock.Mock(allow_outbound=False)
         settings.resources = mock.Mock(max_job_concurrency=2, max_model_concurrency=2)

@@ -1,7 +1,16 @@
 """Job Runtime — durable capability jobs with bounded concurrency."""
 
 from .budgets import ResourceBudgetEnvelope
-from .leases import WORKER_PROTOCOL_VERSION, LeaseState, WorkerLease, WorkerProtocolInfo
+from .leases import (
+    WORKER_PROTOCOL_VERSION,
+    LeaseFenceError,
+    LeaseState,
+    WorkerLease,
+    WorkerProtocolInfo,
+    make_lease_bound_checks,
+    observe_job_cancel_state,
+    require_lease_heartbeat,
+)
 from .priority import (
     LATENCY_CLASS_PRIORITY,
     PRIORITY_BACKGROUND,
@@ -35,6 +44,7 @@ __all__ = [
     "JobStore",
     "LATENCY_CLASS_PRIORITY",
     "LatencyClass",
+    "LeaseFenceError",
     "LeaseState",
     "PRIORITY_BACKGROUND",
     "PRIORITY_DEFAULT",
@@ -49,6 +59,9 @@ __all__ = [
     "WorkerLease",
     "WorkerProtocolInfo",
     "aged_priority",
+    "make_lease_bound_checks",
+    "observe_job_cancel_state",
     "priority_for_latency_class",
+    "require_lease_heartbeat",
     "validate_job_transition",
 ]

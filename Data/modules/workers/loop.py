@@ -9,7 +9,8 @@ import time
 import traceback
 from typing import Any, Callable
 
-from Data.modules.jobs.states import JobState
+from Data.modules.jobs.leases import LeaseFenceError, observe_job_cancel_state, require_lease_heartbeat
+from Data.modules.jobs.states import JobState, StaleLeaseError
 
 from .admission import ResourceAdmission, ResourceClass
 from .events import get_worker_event_emitter, resolve_human_title
@@ -137,7 +138,10 @@ def run_pool_loop(
             exact = {k for k in defn.job_kinds if not k.endswith(".")}
             capability_ids = exact or None
 
-        claim_kwargs: dict[str, Any] = {}
+        claim_kwargs: dict[str, Any] = {
+            "worker_id": worker_id,
+            "lease_ttl_seconds": lease_ttl,
+        }
         if capability_ids:
             claim_kwargs["capability_ids"] = capability_ids
         # Prefer worker_pool column when store supports it
@@ -149,11 +153,26 @@ def run_pool_loop(
             )
         else:
             job = store.claim_next_queued(**claim_kwargs)
-            if job is not None and hasattr(store, "acquire_lease"):
+            # claim_next_queued already attaches the lease atomically. A follow-up
+            # acquire is only for stores that claim without leasing — never swallow
+            # acquisition failure and execute anyway (WORKER-001).
+            if job is not None and getattr(job, "lease_owner", None) != worker_id:
+                if not hasattr(store, "acquire_lease"):
+                    print(
+                        f"[{pool_id}-worker] lease unproven for job={job.job_id} — skipping",
+                        flush=True,
+                    )
+                    time.sleep(poll)
+                    continue
                 try:
                     store.acquire_lease(job.job_id, worker_id=worker_id, ttl_seconds=lease_ttl)
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    print(
+                        f"[{pool_id}-worker] lease acquire failed job={job.job_id}: {exc}",
+                        flush=True,
+                    )
+                    time.sleep(poll)
+                    continue
 
         if job is None:
             if once:
@@ -199,22 +218,58 @@ def run_pool_loop(
                 human_title=human,
                 domain=getattr(job, "domain", None) or pool_id,
             )
+            # WORKER-008: transition while lease is held, then release. Never swallow
+            # state-mutation failure after admission rejection.
+            recovery_error: str | None = None
             try:
-                if hasattr(store, "transition"):
-                    from Data.modules.jobs.states import JobState as JS
-
-                    # Soft release: mark retry wait briefly via metadata when available
+                if hasattr(store, "schedule_retry"):
+                    store.schedule_retry(
+                        job.job_id,
+                        delay_seconds=poll * 4,
+                        error=str(decision.reason or "RESOURCE_UNAVAILABLE"),
+                        error_code="RESOURCE_UNAVAILABLE",
+                        retryable=True,
+                        expected_lease_owner=worker_id,
+                    )
+                elif hasattr(store, "transition"):
+                    store.transition(
+                        job.job_id,
+                        JobState.QUEUED,
+                        error=str(decision.reason or "RESOURCE_UNAVAILABLE"),
+                        expected_lease_owner=worker_id,
+                    )
+                else:
+                    recovery_error = "store_cannot_requeue_after_admission_reject"
+            except Exception as exc:  # noqa: BLE001
+                recovery_error = f"{type(exc).__name__}: {exc}"
+                try:
+                    store.transition(
+                        job.job_id,
+                        JobState.FAILED,
+                        error=f"resource_admission_recovery_failed: {recovery_error}",
+                        error_code="RESOURCE_ADMISSION_RECOVERY_FAILED",
+                        expected_lease_owner=worker_id,
+                    )
+                except Exception as fence_exc:  # noqa: BLE001
+                    print(
+                        f"[{pool_id}-worker] admission recovery failed job={job.job_id}: "
+                        f"{recovery_error}; fence also failed: {fence_exc}",
+                        flush=True,
+                    )
+            finally:
+                try:
                     store.release_lease(job.job_id, worker_id=worker_id)
-                    if hasattr(store, "schedule_retry"):
-                        store.schedule_retry(
-                            job.job_id,
-                            delay_seconds=poll * 4,
-                            error=decision.reason,
-                        )
-                    else:
-                        store.transition(job.job_id, JS.QUEUED, error=decision.reason)
-            except Exception:  # noqa: BLE001
-                pass
+                except Exception as release_exc:  # noqa: BLE001
+                    print(
+                        f"[{pool_id}-worker] release after admission reject failed "
+                        f"job={job.job_id}: {release_exc}",
+                        flush=True,
+                    )
+            if recovery_error:
+                print(
+                    f"[{pool_id}-worker] admission recovery error job={job.job_id}: {recovery_error}",
+                    flush=True,
+                )
             registry.heartbeat(worker_id, state=WorkerInstanceState.READY, clear_job=True)
             time.sleep(poll)
             continue
@@ -249,25 +304,17 @@ def run_pool_loop(
         )
 
         def _job_cancel_check() -> bool:
-            if lease_lost.is_set() or cancel_fence.is_set() or stop["flag"]:
-                return True
-            try:
-                refreshed = store.get(job.job_id)
-            except Exception:  # noqa: BLE001
-                return False
-            if refreshed is None:
-                return True
-            state_name = getattr(getattr(refreshed, "state", None), "name", None) or str(
-                getattr(refreshed, "state", "")
-            )
-            if state_name in {"CANCEL_REQUESTED", "CANCELLED"}:
-                return True
-            owner = getattr(refreshed, "lease_owner", None)
-            if owner and owner != worker_id:
-                lease_lost.set()
-                cancel_fence.set()
-                return True
-            return False
+            # Fail closed on cancel-state read failure (WORKER-003).
+            return observe_job_cancel_state(
+                store,
+                job.job_id,
+                worker_id=worker_id,
+                ctx={
+                    "lease_lost": lease_lost,
+                    "job_cancel_fence": cancel_fence,
+                    # Do not pass job_cancel_check here — we *are* that check.
+                },
+            ) or stop["flag"]
 
         ctx["job_cancel_check"] = _job_cancel_check
 
@@ -294,28 +341,35 @@ def run_pool_loop(
                                 flush=True,
                             )
                         return False
-                except Exception:  # noqa: BLE001
-                    pass
-                if hb_stop.is_set():
-                    return False
-                try:
-                    if hasattr(store, "heartbeat_lease"):
-                        store.heartbeat_lease(
-                            job.job_id,
-                            worker_id=worker_id,
-                            ttl_seconds=lease_ttl,
-                        )
-                except ValueError as exc:
+                except Exception as exc:  # noqa: BLE001 — registry loss fences work
                     if not hb_stop.is_set():
                         lease_lost.set()
                         cancel_fence.set()
+                        print(
+                            f"[{pool_id}-worker] registry heartbeat failed job={job.job_id}: {exc}",
+                            flush=True,
+                        )
+                    return False
+                if hb_stop.is_set():
+                    return False
+                try:
+                    require_lease_heartbeat(
+                        store,
+                        job.job_id,
+                        worker_id=worker_id,
+                        ttl_seconds=lease_ttl,
+                        ctx={
+                            "lease_lost": lease_lost,
+                            "job_cancel_fence": cancel_fence,
+                        },
+                    )
+                except LeaseFenceError as exc:
+                    if not hb_stop.is_set():
                         print(
                             f"[{pool_id}-worker] job lease lost job={job.job_id}: {exc}",
                             flush=True,
                         )
                     return False
-                except Exception:  # noqa: BLE001
-                    pass
                 return True
 
             # Immediate beat so long handlers never wait a full interval before renewing.
@@ -333,20 +387,36 @@ def run_pool_loop(
         hb_thread.start()
 
         try:
-            # Cooperative cancel observation
-            refreshed = store.get(job.job_id)
+            # Cooperative cancel observation — fail closed if state unreadable.
+            try:
+                refreshed = store.get(job.job_id)
+            except Exception as exc:  # noqa: BLE001
+                cancel_fence.set()
+                lease_lost.set()
+                try:
+                    store.transition(
+                        job.job_id,
+                        JobState.FAILED,
+                        error=f"cancel_state_unreadable: {exc}",
+                        expected_lease_owner=worker_id,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+                refreshed = None
             if refreshed is not None and refreshed.state.name == "CANCEL_REQUESTED":
                 store.transition(
                     job.job_id,
                     JobState.CANCELLED,
                     error=getattr(refreshed, "cancel_reason", None) or "Cancelled by request",
+                    expected_lease_owner=worker_id,
                 )
-            elif lease_lost.is_set():
+            elif lease_lost.is_set() or cancel_fence.is_set():
                 try:
                     store.transition(
                         job.job_id,
                         JobState.FAILED,
                         error="lease_lost_before_handler",
+                        expected_lease_owner=worker_id,
                     )
                 except Exception:  # noqa: BLE001
                     pass
@@ -354,11 +424,13 @@ def run_pool_loop(
                 if handler is not None:
                     result = handler(ctx, job)
                 else:
-                    result = _default_gateway_execute(runtime, store, job, worker_id, lease_ttl)
+                    result = _default_gateway_execute(
+                        runtime, store, job, worker_id, lease_ttl, ctx=ctx
+                    )
                 if result is not None and refreshed is not None:
                     pass  # handler owns transitions
                 # If lease was lost mid-flight and handler did not fail the job, fence.
-                if lease_lost.is_set():
+                if lease_lost.is_set() or cancel_fence.is_set():
                     latest = store.get(job.job_id)
                     if latest is not None and latest.state == JobState.RUNNING:
                         try:
@@ -366,13 +438,19 @@ def run_pool_loop(
                                 job.job_id,
                                 JobState.FAILED,
                                 error="lease_lost_during_handler",
+                                expected_lease_owner=worker_id,
                             )
                         except Exception:  # noqa: BLE001
                             pass
         except Exception as exc:  # noqa: BLE001
             err = f"{type(exc).__name__}: {exc}"
             try:
-                store.transition(job.job_id, JobState.FAILED, error=err)
+                store.transition(
+                    job.job_id,
+                    JobState.FAILED,
+                    error=err,
+                    expected_lease_owner=worker_id,
+                )
             except Exception:  # noqa: BLE001
                 print(traceback.format_exc(), flush=True)
         finally:
@@ -466,21 +544,66 @@ def _default_gateway_execute(
     job: Any,
     worker_id: str,
     lease_ttl: float,
+    *,
+    ctx: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """Execute via JobRuntime gateway path for general capabilities."""
+    """Execute via JobRuntime gateway path for general capabilities.
+
+    WORKER-004: never continue after definitive lease loss / unproven heartbeat.
+    """
     from Data.modules.execution import CapabilityRequest, CapabilityStatus
 
-    # Heartbeat mid-flight
-    try:
-        store.heartbeat_lease(job.job_id, worker_id=worker_id, ttl_seconds=lease_ttl)
-    except Exception:  # noqa: BLE001
-        pass
+    work_ctx = ctx or {}
+    lease_lost = work_ctx.get("lease_lost")
 
-    cancel_states = {"CANCEL_REQUESTED", "CANCELLED"}
-    refreshed = store.get(job.job_id)
-    if refreshed is not None and refreshed.state.value in cancel_states:
-        if refreshed.state != JobState.CANCELLED:
-            store.transition(job.job_id, JobState.CANCELLED, error="Cancelled by request")
+    try:
+        require_lease_heartbeat(
+            store,
+            job.job_id,
+            worker_id=worker_id,
+            ttl_seconds=lease_ttl,
+            ctx=work_ctx,
+        )
+    except LeaseFenceError:
+        try:
+            store.transition(
+                job.job_id,
+                JobState.FAILED,
+                error="lease_lost_before_gateway",
+                expected_lease_owner=worker_id,
+            )
+        except Exception:  # noqa: BLE001 — stale lease / concurrent terminal
+            pass
+        return None
+
+    if observe_job_cancel_state(store, job.job_id, worker_id=worker_id, ctx=work_ctx):
+        refreshed = None
+        try:
+            refreshed = store.get(job.job_id)
+        except Exception:  # noqa: BLE001
+            refreshed = None
+        cancel_states = {"CANCEL_REQUESTED", "CANCELLED"}
+        if refreshed is not None and _state_name(refreshed.state) in cancel_states:
+            if refreshed.state != JobState.CANCELLED:
+                try:
+                    store.transition(
+                        job.job_id,
+                        JobState.CANCELLED,
+                        error="Cancelled by request",
+                        expected_lease_owner=worker_id,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+        else:
+            try:
+                store.transition(
+                    job.job_id,
+                    JobState.FAILED,
+                    error="lease_lost_or_cancel_unreadable_before_gateway",
+                    expected_lease_owner=worker_id,
+                )
+            except Exception:  # noqa: BLE001
+                pass
         return None
 
     try:
@@ -505,25 +628,69 @@ def _default_gateway_execute(
             pass
         return None
 
-    if cap_result.status == CapabilityStatus.COMPLETED:
-        store.transition(
+    # Re-prove lease before durable completion (WORKER-004).
+    if lease_lost is not None and getattr(lease_lost, "is_set", lambda: False)():
+        try:
+            store.transition(
+                job.job_id,
+                JobState.FAILED,
+                error="lease_lost_during_gateway",
+                expected_lease_owner=worker_id,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return None
+    try:
+        require_lease_heartbeat(
+            store,
             job.job_id,
-            JobState.COMPLETED,
-            result={"output": getattr(cap_result, "output", None) or cap_result.public_dict()},
-            expected_lease_owner=worker_id,
+            worker_id=worker_id,
+            ttl_seconds=lease_ttl,
+            ctx=work_ctx,
         )
-    elif cap_result.status == CapabilityStatus.REJECTED:
-        store.transition(
-            job.job_id,
-            JobState.FAILED,
-            error=str(getattr(cap_result, "error", "rejected")),
-            expected_lease_owner=worker_id,
-        )
-    else:
-        store.transition(
-            job.job_id,
-            JobState.FAILED,
-            error=str(getattr(cap_result, "error", None) or cap_result.status),
-            expected_lease_owner=worker_id,
-        )
-    return {"status": cap_result.status.value if hasattr(cap_result.status, "value") else str(cap_result.status)}
+    except LeaseFenceError:
+        try:
+            store.transition(
+                job.job_id,
+                JobState.FAILED,
+                error="lease_lost_after_gateway",
+                expected_lease_owner=worker_id,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return None
+
+    try:
+        if cap_result.status == CapabilityStatus.COMPLETED:
+            store.transition(
+                job.job_id,
+                JobState.COMPLETED,
+                result={"output": getattr(cap_result, "output", None) or cap_result.public_dict()},
+                expected_lease_owner=worker_id,
+            )
+        elif cap_result.status == CapabilityStatus.REJECTED:
+            store.transition(
+                job.job_id,
+                JobState.FAILED,
+                error=str(getattr(cap_result, "error", "rejected")),
+                expected_lease_owner=worker_id,
+            )
+        else:
+            store.transition(
+                job.job_id,
+                JobState.FAILED,
+                error=str(getattr(cap_result, "error", None) or cap_result.status),
+                expected_lease_owner=worker_id,
+            )
+    except StaleLeaseError:
+        return None
+    return {
+        "status": cap_result.status.value if hasattr(cap_result.status, "value") else str(cap_result.status)
+    }
+
+
+def _state_name(state: Any) -> str:
+    if state is None:
+        return ""
+    name = getattr(state, "name", None) or getattr(state, "value", None)
+    return str(name or state)

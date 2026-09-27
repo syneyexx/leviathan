@@ -123,6 +123,16 @@ class CommitProducer:
         if not self.settings.enabled:
             raise DbCommitSpoolUnavailableError("db_commit disabled")
 
+        try:
+            from Data.modules.backup.maintenance import assert_writes_allowed
+
+            assert_writes_allowed(op=f"db_commit:{operation}")
+        except Exception as exc:  # noqa: BLE001
+            from Data.modules.backup.maintenance import MaintenanceError
+
+            if isinstance(exc, MaintenanceError):
+                raise DbCommitBackpressureError(str(exc)) from exc
+
         # Idempotency short-circuit against durable receipts.
         if idempotency_key:
             existing = self.receipts.get_by_idempotency_key(idempotency_key)

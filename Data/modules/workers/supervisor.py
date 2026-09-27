@@ -112,6 +112,8 @@ class WorkerSupervisor:
         }
         # Avoid re-introducing legacy single-path authority in child processes.
         env["LEVIATHAN_DATABASE_PATH"] = ""
+        # Deprecated alias: point at CONTROL so old readers never create Data/state/leviathan.db.
+        env["LEVIATHAN_DB_PATH"] = str(paths.control)
         return env
 
     def _apply_desired_overrides(self) -> None:

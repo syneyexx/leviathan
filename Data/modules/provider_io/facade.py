@@ -32,8 +32,12 @@ class ProviderExecutionClient:
         self.job_runtime = job_runtime
         self.settings = settings or ProviderIoSettings.load()
         db_path = getattr(getattr(job_runtime, "store", None), "path", None)
+        if not db_path:
+            from Data.modules.common.database_domains import resolve_control_database_path
+
+            db_path = resolve_control_database_path()
         self.stream_store = stream_store or ProviderStreamStore(
-            db_path or "Data/state/leviathan.db",
+            db_path,
             max_events_per_job=self.settings.max_buffered_stream_events,
         )
         try:
@@ -46,8 +50,12 @@ class ProviderExecutionClient:
         try:
             queued = store.list(state=JobState.QUEUED, limit=self.settings.queue_capacity + 1)
             return sum(1 for j in queued if getattr(j, "worker_pool", None) == "provider_io")
-        except Exception:  # noqa: BLE001
-            return 0
+        except Exception as exc:  # noqa: BLE001 — fail closed: unknown depth is not free capacity
+            raise ProviderError(
+                ProviderErrorCode.EXECUTION_CAPACITY_EXHAUSTED,
+                "Provider queue depth unmeasured; refusing submit (fail-closed).",
+                retryable=True,
+            ) from exc
 
     def submit(
         self,
@@ -63,7 +71,6 @@ class ProviderExecutionClient:
         idempotency_key: str | None = None,
         idempotency_class: str = "READ",
         deadline_seconds: float | None = None,
-        allow_private_hosts: bool = False,
         latency_class: str = "interactive",
         priority: int | None = None,
         requested_by: str = "api",
@@ -110,7 +117,8 @@ class ProviderExecutionClient:
             "correlation_id": correlation_id,
             "principal_ref": principal_ref,
             "idempotency_class": idempotency_class,
-            "allow_private_hosts": allow_private_hosts,
+            # allow_private_hosts is NOT accepted from callers — resolved in executor
+            # from trusted endpoint allowlists / operator env only.
         }
         if model is not None:
             arguments["model"] = model
@@ -191,6 +199,7 @@ class ProviderExecutionClient:
         )
 
     def submit_and_wait(self, **kwargs: Any) -> ProviderExecutionResult:
+        kwargs.pop("allow_private_hosts", None)  # untrusted — policy-owned only
         job = self.submit(**kwargs)
         return self.await_result(
             job.job_id,

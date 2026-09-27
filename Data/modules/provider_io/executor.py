@@ -6,6 +6,12 @@ import os
 import time
 from typing import Any, Callable
 
+from Data.modules.jobs.leases import (
+    LeaseFenceError,
+    fenced_transition,
+    make_lease_bound_checks,
+    record_stale_lease_fence,
+)
 from Data.modules.jobs.states import JobState
 from Data.modules.provider_io.adapters.alpaca_paper import AlpacaPaperAdapter
 from Data.modules.provider_io.adapters.generic_http import GenericHttpAdapter
@@ -58,10 +64,17 @@ def _request_from_job_args(args: dict[str, Any], *, job_id: str) -> ProviderRequ
         "tool_choice",
         "response_format",
         "max_bytes",
-        "allow_private_hosts",
+        # allow_private_hosts intentionally omitted — untrusted job payload must not grant it
     ):
         if key in args and key not in payload:
             payload[key] = args[key]
+
+    from Data.modules.provider_io.private_host_authority import (
+        resolve_allow_private_hosts_for_url,
+        strip_untrusted_private_host_flags,
+    )
+
+    strip_untrusted_private_host_flags(args, payload)
 
     assert_no_secrets_in_payload(payload)
     assert_no_secrets_in_payload(
@@ -76,6 +89,24 @@ def _request_from_job_args(args: dict[str, Any], *, job_id: str) -> ProviderRequ
         idem = IdempotencyClass(idem_raw)
     except ValueError:
         idem = IdempotencyClass.READ
+
+    # Authority is URL/policy derived — never from job payload flags.
+    # Model-provider endpoints may use configured base_url trust; generic HTTP must not.
+    candidate_url = str(
+        payload.get("url") or payload.get("endpoint") or payload.get("base_url") or ""
+    ).strip()
+    trust_model = capability in {
+        "chat.complete",
+        "chat.stream",
+        "openai_compatible",
+    } or provider in {"openai_compatible", "openai", "ollama", "vllm", "llama_cpp"}
+    allow_private = bool(
+        candidate_url
+        and resolve_allow_private_hosts_for_url(
+            candidate_url,
+            trust_model_endpoints=trust_model,
+        )
+    )
 
     return ProviderRequest(
         provider=provider,
@@ -94,9 +125,7 @@ def _request_from_job_args(args: dict[str, Any], *, job_id: str) -> ProviderRequ
         idempotency_class=idem,
         idempotency_key=(str(args.get("idempotency_key") or "").strip() or None),
         credential_ref=(str(args.get("credential_ref") or "").strip() or None),
-        allow_private_hosts=bool(
-            args.get("allow_private_hosts") or payload.get("allow_private_hosts")
-        ),
+        allow_private_hosts=allow_private,
     )
 
 
@@ -113,7 +142,11 @@ class ProviderIoExecutor:
         self.policy = ProviderPolicyRegistry(self.settings)
         self.clients = ProviderClientPool(self.settings)
         self.stream_store = ProviderStreamStore(
-            db_path or os.environ.get("LEVIATHAN_DB_PATH") or "Data/state/leviathan.db",
+            db_path
+            or __import__(
+                "Data.modules.common.database_domains",
+                fromlist=["resolve_control_database_path"],
+            ).resolve_control_database_path(),
             max_events_per_job=self.settings.max_buffered_stream_events,
         )
         self.stream_store.initialize()
@@ -139,26 +172,13 @@ class ProviderIoExecutor:
         args = dict(job.arguments or {})
         request = _request_from_job_args(args, job_id=job.job_id)
         worker_id = str(ctx.get("worker_id") or f"provider_io-{os.getpid()}")
-
-        def cancel_check() -> bool:
-            try:
-                current = store.get(job.job_id)
-            except Exception:  # noqa: BLE001
-                return False
-            if current is None:
-                return True
-            return current.state == JobState.CANCEL_REQUESTED
-
-        def heartbeat() -> None:
-            try:
-                if hasattr(store, "heartbeat_lease"):
-                    store.heartbeat_lease(
-                        job.job_id,
-                        worker_id=worker_id,
-                        ttl_seconds=float(ctx.get("lease_ttl_seconds") or 30.0),
-                    )
-            except Exception:  # noqa: BLE001
-                pass
+        cancel_check, heartbeat = make_lease_bound_checks(
+            ctx,
+            store,
+            job.job_id,
+            worker_id=worker_id,
+            ttl_seconds=float(ctx.get("lease_ttl_seconds") or 30.0),
+        )
 
         deadline = float(
             request.deadline_seconds
@@ -199,25 +219,70 @@ class ProviderIoExecutor:
         for attempt in range(self.settings.max_attempts):
             budget.raise_if_exhausted()
             if cancel_check():
+                # Distinguish cooperative cancel from lease/cancel-read fence.
+                current = None
+                try:
+                    current = store.get(job.job_id)
+                except Exception:  # noqa: BLE001
+                    current = None
+                is_cancel = current is not None and current.state in {
+                    JobState.CANCEL_REQUESTED,
+                    JobState.CANCELLED,
+                }
+                if is_cancel:
+                    result = ProviderExecutionResult(
+                        status="cancelled",
+                        provider=request.provider,
+                        model=request.model,
+                        error=ProviderError(
+                            ProviderErrorCode.EXECUTION_CANCELLED,
+                            "Cancelled",
+                            provider=request.provider,
+                        ).public_dict(),
+                        worker_pid=os.getpid(),
+                    )
+                    if current.state != JobState.CANCELLED:
+                        if current.state == JobState.RUNNING:
+                            store.request_cancel(job.job_id, reason="Cancelled")
+                        fenced_transition(
+                            store,
+                            job.job_id,
+                            JobState.CANCELLED,
+                            worker_id=worker_id,
+                            ctx=ctx,
+                            telemetry=self.policy.telemetry,
+                            error="EXECUTION_CANCELLED",
+                            result=result.public_dict(),
+                        )
+                    self.policy.telemetry["cancelled"] = (
+                        int(self.policy.telemetry.get("cancelled", 0)) + 1
+                    )
+                    return result.public_dict()
                 result = ProviderExecutionResult(
-                    status="cancelled",
+                    status="failed",
                     provider=request.provider,
                     model=request.model,
                     error=ProviderError(
                         ProviderErrorCode.EXECUTION_CANCELLED,
-                        "Cancelled",
+                        "lease_fence_or_cancel_unreadable",
                         provider=request.provider,
+                        retryable=False,
                     ).public_dict(),
                     worker_pid=os.getpid(),
                 )
-                store.transition(
+                record_stale_lease_fence(ctx, telemetry=self.policy.telemetry)
+                fenced_transition(
+                    store,
                     job.job_id,
-                    JobState.CANCELLED,
-                    error="EXECUTION_CANCELLED",
+                    JobState.FAILED,
+                    worker_id=worker_id,
+                    ctx=ctx,
+                    telemetry=self.policy.telemetry,
+                    error="LEASE_FENCE",
                     result=result.public_dict(),
                 )
-                self.policy.telemetry["cancelled"] = (
-                    int(self.policy.telemetry.get("cancelled", 0)) + 1
+                self.policy.telemetry["failure"] = (
+                    int(self.policy.telemetry.get("failure", 0)) + 1
                 )
                 return result.public_dict()
 
@@ -248,8 +313,8 @@ class ProviderIoExecutor:
                 time.sleep(self.policy.backoff(attempt))
                 continue
 
-            heartbeat()
             try:
+                heartbeat()
                 emit_cb = None
                 if callable(ctx.get("emit")):
                     emit_cb = ctx.get("emit")
@@ -265,19 +330,31 @@ class ProviderIoExecutor:
                 }
                 # Market stream adapter accepts optional emit/ingest/ctx.
                 if request.capability in {"market.stream", "market.stream.stop"}:
+                    from Data.modules.common.database_domains import (
+                        resolve_market_database_path,
+                    )
+
                     store_path = getattr(store, "path", None)
                     execute_kwargs["emit"] = emit_cb
                     execute_kwargs["ingest"] = ctx.get("ingest") or request.payload.get(
                         "ingest_callback"
                     )
+                    # Checkpoints are MARKET-owned; JobStore path is CONTROL — do not conflate.
+                    # Ignore payload market_db_path/db_path — untrusted job input must not
+                    # choose the market authority DB (WAVE 23).
+                    request.payload.pop("market_db_path", None)
+                    request.payload.pop("db_path", None)
+                    market_path = resolve_market_database_path()
                     execute_kwargs["ctx"] = {
                         **{k: v for k, v in ctx.items() if k != "job_store"},
-                        "db_path": str(
+                        "db_path": str(market_path),
+                        "control_db_path": str(
                             store_path
-                            or os.environ.get("LEVIATHAN_DB_PATH")
+                            or os.environ.get("LEVIATHAN_CONTROL_DATABASE_PATH")
                             or self.stream_store.db_path
                             or ""
                         ),
+                        "market_db_path": str(market_path),
                         "emit": emit_cb,
                     }
                 result = adapter.execute(request, **execute_kwargs)
@@ -291,9 +368,13 @@ class ProviderIoExecutor:
                 self.policy.telemetry["success"] = (
                     int(self.policy.telemetry.get("success", 0)) + 1
                 )
-                store.transition(
+                fenced_transition(
+                    store,
                     job.job_id,
                     JobState.COMPLETED,
+                    worker_id=worker_id,
+                    ctx=ctx,
+                    telemetry=self.policy.telemetry,
                     result=result.public_dict(),
                 )
                 return result.public_dict()
@@ -315,9 +396,13 @@ class ProviderIoExecutor:
                             {"reason": "cancel_requested"},
                             correlation_id=request.correlation_id,
                         )
-                    store.transition(
+                    fenced_transition(
+                        store,
                         job.job_id,
                         JobState.CANCELLED,
+                        worker_id=worker_id,
+                        ctx=ctx,
+                        telemetry=self.policy.telemetry,
                         error=exc.code.value,
                         result=ProviderExecutionResult(
                             status="cancelled",
@@ -357,6 +442,19 @@ class ProviderIoExecutor:
                     continue
                 circuit.record_failure()
                 break
+            except LeaseFenceError as exc:
+                # After any side effect / mid-flight fence: do not overwrite job state.
+                last_error = ProviderError(
+                    ProviderErrorCode.EXECUTION_CANCELLED,
+                    f"lease_fence: {exc}",
+                    provider=request.provider,
+                    retryable=False,
+                )
+                record_stale_lease_fence(ctx, telemetry=self.policy.telemetry)
+                self.policy.telemetry["failure"] = (
+                    int(self.policy.telemetry.get("failure", 0)) + 1
+                )
+                return {"status": "failed", "error": last_error.public_dict()}
             except Exception as exc:  # noqa: BLE001
                 last_error = ProviderError(
                     ProviderErrorCode.UNKNOWN,
@@ -382,10 +480,13 @@ class ProviderIoExecutor:
             error=err.public_dict(),
             worker_pid=os.getpid(),
         )
-        # Non-retryable or exhausted → FAILED (job kernel may still schedule retry on lease)
-        store.transition(
+        fenced_transition(
+            store,
             job.job_id,
             JobState.FAILED,
+            worker_id=worker_id,
+            ctx=ctx,
+            telemetry=self.policy.telemetry,
             error=err.code.value,
             result=result.public_dict(),
         )

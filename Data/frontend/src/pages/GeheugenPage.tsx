@@ -407,7 +407,7 @@ export function GeheugenPage() {
       modeLabel="Research Mode"
       searchPlaceholder="Search memories, knowledge, research, agents..."
       systemItems={[
-        "SYSTEMS ONLINE",
+        "MEMORY SURFACE",
         "MEMORY",
         loading ? "LOADING" : error ? "ERROR" : `${memories.length} ACTIVE`,
       ]}

@@ -10,6 +10,7 @@ from Data.modules.workers.entrypoints._cli import main_for_pool
 def _handle_news_poll(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
     """market_sim.news.poll — feeds are fetched through provider_io (provider.http), parsed
     here (Tier 0) and stored with a causal ``available_at``. No Control-Plane HTTP."""
+    from Data.modules.jobs.leases import fenced_transition
     from Data.modules.jobs.states import JobState
 
     args = dict(getattr(job, "arguments", None) or {})
@@ -21,20 +22,23 @@ def _handle_news_poll(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
         from Data.modules.market_sim.orchestra.store import OrchestraStore
 
         settings = ctx["settings"]
-        market_db = getattr(settings, "market_database_path", None) or settings.database_path
+        from Data.modules.common.database_domains import market_path_from_settings
+
+        market_db = market_path_from_settings(settings)
         store = OrchestraStore(Path(market_db))
         service = TradingOrchestraService(store=store, job_runtime=ctx.get("job_runtime"))
         result = service.poll_now(feed_id=feed_id, job_runtime=ctx.get("job_runtime"))
         result["executed_via"] = "market_sim_worker"
-        ctx["job_store"].transition(job.job_id, JobState.COMPLETED, result=result)
+        fenced_transition(ctx["job_store"], job.job_id, JobState.COMPLETED, result=result, worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         return result
     except Exception as exc:  # noqa: BLE001
-        ctx["job_store"].transition(job.job_id, JobState.FAILED, error=str(exc)[:500])
+        fenced_transition(ctx["job_store"], job.job_id, JobState.FAILED, error=str(exc)[:500], worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         return {"error": str(exc)}
 
 
 def _handle_gym_episode(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
     """market_sim.gym_episode — complete TradingGym episode on the worker."""
+    from Data.modules.jobs.leases import fenced_transition
     from Data.modules.jobs.states import JobState
 
     args = dict(getattr(job, "arguments", None) or {})
@@ -59,7 +63,7 @@ def _handle_gym_episode(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
             f"steps={result.get('steps')}",
             flush=True,
         )
-        ctx["job_store"].transition(job.job_id, JobState.COMPLETED, result=result)
+        fenced_transition(ctx["job_store"], job.job_id, JobState.COMPLETED, result=result, worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         return result
     except Exception as exc:  # noqa: BLE001
         print(
@@ -67,12 +71,13 @@ def _handle_gym_episode(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
             f"MISLUKT — {exc}",
             flush=True,
         )
-        ctx["job_store"].transition(job.job_id, JobState.FAILED, error=str(exc)[:500])
+        fenced_transition(ctx["job_store"], job.job_id, JobState.FAILED, error=str(exc)[:500], worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         return {"error": str(exc)}
 
 
 def _handle_research_campaign(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
     """market_sim.research_campaign — durable/resumable ResearchCampaign on worker."""
+    from Data.modules.jobs.leases import fenced_transition
     from Data.modules.jobs.states import JobState
 
     args = dict(getattr(job, "arguments", None) or {})
@@ -100,7 +105,7 @@ def _handle_research_campaign(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
             f"iters={result.get('checkpoint_iteration')}",
             flush=True,
         )
-        ctx["job_store"].transition(job.job_id, JobState.COMPLETED, result=result)
+        fenced_transition(ctx["job_store"], job.job_id, JobState.COMPLETED, result=result, worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         return result
     except Exception as exc:  # noqa: BLE001
         print(
@@ -108,12 +113,13 @@ def _handle_research_campaign(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
             f"MISLUKT — {exc}",
             flush=True,
         )
-        ctx["job_store"].transition(job.job_id, JobState.FAILED, error=str(exc)[:500])
+        fenced_transition(ctx["job_store"], job.job_id, JobState.FAILED, error=str(exc)[:500], worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         return {"error": str(exc)}
 
 
 def _handle_portfolio_tick(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
     """market_sim.portfolio_tick — autonomous paper Portefeuille cycle on worker."""
+    from Data.modules.jobs.leases import fenced_transition
     from Data.modules.jobs.states import JobState
 
     args = dict(getattr(job, "arguments", None) or {})
@@ -146,15 +152,16 @@ def _handle_portfolio_tick(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
                 result["continuation_job_id"] = nxt.job_id
             except Exception:  # noqa: BLE001
                 pass
-        ctx["job_store"].transition(job.job_id, JobState.COMPLETED, result=result)
+        fenced_transition(ctx["job_store"], job.job_id, JobState.COMPLETED, result=result, worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         return result
     except Exception as exc:  # noqa: BLE001
-        ctx["job_store"].transition(job.job_id, JobState.FAILED, error=str(exc)[:500])
+        fenced_transition(ctx["job_store"], job.job_id, JobState.FAILED, error=str(exc)[:500], worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         return {"error": str(exc)}
 
 
 def _handle_scan_batch(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
     """market_sim.scan_batch — batch source scan / bounded provider refresh on worker."""
+    from Data.modules.jobs.leases import fenced_transition
     from Data.modules.jobs.states import JobState
 
     args = dict(getattr(job, "arguments", None) or {})
@@ -176,15 +183,16 @@ def _handle_scan_batch(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
             limit=limit,
         )
         result["executed_via"] = "market_sim_worker"
-        ctx["job_store"].transition(job.job_id, JobState.COMPLETED, result=result)
+        fenced_transition(ctx["job_store"], job.job_id, JobState.COMPLETED, result=result, worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         return result
     except Exception as exc:  # noqa: BLE001
-        ctx["job_store"].transition(job.job_id, JobState.FAILED, error=str(exc)[:500])
+        fenced_transition(ctx["job_store"], job.job_id, JobState.FAILED, error=str(exc)[:500], worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         return {"error": str(exc)}
 
 
 def _handle_learning_run(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
     """market_sim.learning_run — durable/resumable Strategy Learning Loop on worker."""
+    from Data.modules.jobs.leases import fenced_transition
     from Data.modules.jobs.states import JobState
 
     args = dict(getattr(job, "arguments", None) or {})
@@ -208,7 +216,7 @@ def _handle_learning_run(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
             f"stage={result.get('stage')} gen={result.get('current_generation')}",
             flush=True,
         )
-        ctx["job_store"].transition(job.job_id, JobState.COMPLETED, result=result)
+        fenced_transition(ctx["job_store"], job.job_id, JobState.COMPLETED, result=result, worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         return result
     except Exception as exc:  # noqa: BLE001
         print(
@@ -216,11 +224,12 @@ def _handle_learning_run(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
             f"'{learning_run_id[:8] if learning_run_id else '?'}' MISLUKT — {exc}",
             flush=True,
         )
-        ctx["job_store"].transition(job.job_id, JobState.FAILED, error=str(exc)[:500])
+        fenced_transition(ctx["job_store"], job.job_id, JobState.FAILED, error=str(exc)[:500], worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         return {"error": str(exc)}
 
 
 def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
+    from Data.modules.jobs.leases import fenced_transition
     from Data.modules.jobs.states import JobState
     from Data.modules.market_sim.types import RunStatus, TERMINAL_RUN_STATUSES
 
@@ -277,10 +286,10 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
                     except Exception:  # noqa: BLE001
                         pass
 
-        ctx["job_store"].transition(job.job_id, JobState.COMPLETED, result=result)
+        fenced_transition(ctx["job_store"], job.job_id, JobState.COMPLETED, result=result, worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         return result
     except Exception as exc:  # noqa: BLE001
-        ctx["job_store"].transition(job.job_id, JobState.FAILED, error=str(exc)[:500])
+        fenced_transition(ctx["job_store"], job.job_id, JobState.FAILED, error=str(exc)[:500], worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         return {"error": str(exc)}
 
 

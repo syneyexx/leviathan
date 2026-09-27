@@ -11,7 +11,11 @@ from Data.backend.reasoning import ReasoningEngine
 class DatabaseTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.db = Database(Path(self.tmp.name) / "leviathan-test.db")
+        root = Path(self.tmp.name)
+        self.db = Database(
+            root / "leviathan-test.db",
+            knowledge_path=root / "leviathan_knowledge.db",
+        )
         self.db.initialize()
 
     def tearDown(self) -> None:

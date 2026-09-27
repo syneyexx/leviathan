@@ -16,10 +16,12 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
     from Data.modules.db_commit.producer import CommitProducer
     from Data.modules.db_commit.receipts import CommitReceiptStore
     from Data.modules.db_commit.types import CommitPriority
+    from Data.modules.jobs.leases import fenced_transition
     from Data.modules.jobs.states import JobState
 
     store = ctx["job_store"]
     settings = ctx["settings"]
+    worker_id = str(ctx.get("worker_id") or "")
     args = dict(getattr(job, "arguments", None) or {})
     artifact = args.get("artifact") or {}
     if hasattr(artifact, "public_dict"):
@@ -45,7 +47,9 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
         pass
 
     # Route producer + receipt polls to the Knowledge lane DB (not Control).
-    knowledge_db = getattr(settings, "knowledge_database_path", None) or settings.database_path
+    from Data.modules.common.database_domains import knowledge_path_from_settings
+
+    knowledge_db = knowledge_path_from_settings(settings)
     producer = CommitProducer(knowledge_db, domain="knowledge")
     result = producer.submit(
         operation="knowledge.commit_prepared",
@@ -65,18 +69,24 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
     )
 
     if not result.accepted:
-        store.transition(
+        fenced_transition(
+            store,
             job.job_id,
             JobState.FAILED,
+            worker_id=worker_id,
+            ctx=ctx,
             error=f"{result.ack_status}: {result.message}"[:500],
             metadata_update={"commit_phase": "COMMIT_FAILED"},
         )
         return result.public_dict()
 
     if result.committed and result.receipt is not None:
-        store.transition(
+        fenced_transition(
+            store,
             job.job_id,
             JobState.COMPLETED,
+            worker_id=worker_id,
+            ctx=ctx,
             result=result.receipt.to_dict(),
             metadata_update={"commit_phase": "COMPLETED"},
         )
@@ -89,9 +99,12 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
         if receipt is None and idem:
             receipt = receipts.get_by_idempotency_key(str(idem))
         if receipt is not None:
-            store.transition(
+            fenced_transition(
+                store,
                 job.job_id,
                 JobState.COMPLETED,
+                worker_id=worker_id,
+                ctx=ctx,
                 result=receipt.to_dict(),
                 metadata_update={"commit_phase": "COMPLETED"},
             )
@@ -102,9 +115,12 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
             pass
         time.sleep(0.1)
 
-    store.transition(
+    fenced_transition(
+        store,
         job.job_id,
         JobState.FAILED,
+        worker_id=worker_id,
+        ctx=ctx,
         error="COMMIT_TIMEOUT waiting for db_commit receipt",
         metadata_update={"commit_phase": "COMMIT_FAILED"},
     )

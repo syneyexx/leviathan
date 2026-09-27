@@ -11,7 +11,6 @@ import {
   DM_SPLIT_FILTERS,
   DM_STATUS_FILTERS,
   DM_TYPE_FILTERS,
-  type DatasetMgmtStatus,
   type DatasetSampleTab,
 } from "../../mocks/dataset-management";
 import { useAppToast } from "../../state/useAppToast";
@@ -25,6 +24,7 @@ import type {
 import { DatasetActivityConsole } from "../datasets/DatasetActivityConsole";
 import { isActiveJob, isCompletedJob } from "../datasets/datasetActivity";
 import { useDatasetActivity } from "../datasets/useDatasetActivity";
+import { mapDatasetStatus, toneForDatasetStatus as toneForStatus } from "./datasetStatus";
 import { PxHero, PxIcon, PxKpi } from "./pixel-shared";
 
 const UPLOAD_ACCEPT =
@@ -86,38 +86,6 @@ function formatCompactCount(n: number | null | undefined): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
-}
-
-function mapDatasetStatus(
-  status: string,
-  brainStatus?: string | null,
-  canonicalState?: string | null,
-): DatasetMgmtStatus {
-  const canonical = (canonicalState || "").toUpperCase();
-  if (canonical === "LEARNED" || canonical === "STALE_JOB") return "Klaar";
-  if (canonical === "REBUILDING" || canonical === "INDEXING") return "Bezig";
-  if (canonical === "INDEX_QUEUED") return "Wachtrij";
-  if (canonical === "FAILED") return "Fout";
-  const brain = (brainStatus || "").toLowerCase();
-  if (brain === "learned") return "Klaar";
-  if (brain === "indexing" || brain === "queued") return brain === "queued" ? "Wachtrij" : "Bezig";
-  if (brain === "failed") return "Fout";
-  const s = status.toLowerCase();
-  if (s === "ready" || s === "complete" || s === "completed") return "Verwerkt";
-  if (s === "processed" || s === "materialized" || s === "raw") return "Verwerkt";
-  if (s === "running" || s === "processing" || s === "importing") return "Bezig";
-  if (s === "queued" || s === "pending") return "Wachtrij";
-  if (s === "warning" || s === "degraded") return "Waarschuwing";
-  if (s === "failed" || s === "error" || s === "cancelled") return "Fout";
-  return "Verwerkt";
-}
-
-function toneForStatus(status: DatasetMgmtStatus) {
-  if (status === "Klaar") return "green";
-  if (status === "Verwerkt" || status === "Bezig") return "cyan";
-  if (status === "Wachtrij") return "gold";
-  if (status === "Waarschuwing") return "orange";
-  return "red";
 }
 
 function mapSourceLabel(sourceType: string): string {

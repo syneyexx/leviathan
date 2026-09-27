@@ -129,12 +129,13 @@ def _repo_data_root() -> Path:
 
 def default_binary_candidates() -> list[Path]:
     root = _repo_data_root()
-    return [
-        root / "native" / "bin" / BINARY_NAME,
-        root / "native" / "bin" / f"{BINARY_NAME}.exe",
-        root / "native" / "target" / "release" / BINARY_NAME,
-        root / "native" / "target" / "debug" / BINARY_NAME,
-    ]
+    names = [BINARY_NAME, f"{BINARY_NAME}.exe"]
+    out: list[Path] = []
+    for name in names:
+        out.append(root / "native" / "bin" / name)
+        out.append(root / "native" / "target" / "release" / name)
+        out.append(root / "native" / "target" / "debug" / name)
+    return out
 
 
 def resolve_native_binary(
@@ -452,6 +453,24 @@ def run_native_task(
     This is not OS hard cgroup enforcement.
     """
     started = time.monotonic()
+    operation = str(task.get("operation") or "")
+    task_id = str(task.get("taskId") or "")
+    # Reject unsupported operations before binary resolution so honesty does not
+    # depend on whether the native binary happens to be built in this environment.
+    if operation not in SUPPORTED_OPERATIONS:
+        return NativeRunResult(
+            ok=False,
+            receipt=None,
+            status="error",
+            exit_code=None,
+            stdout="",
+            stderr="",
+            duration_ms=0,
+            error_code="NATIVE_UNSUPPORTED_OPERATION",
+            error_message=f"unsupported operation: {operation}",
+            memory_enforcement=MEMORY_ENFORCEMENT_SOFT,
+        )
+
     path = binary or resolve_native_binary()
     if path is None:
         return NativeRunResult(
@@ -464,22 +483,6 @@ def run_native_task(
             duration_ms=0,
             error_code="NATIVE_BINARY_MISSING",
             error_message="allowlisted binary not found",
-            memory_enforcement=MEMORY_ENFORCEMENT_SOFT,
-        )
-
-    operation = str(task.get("operation") or "")
-    task_id = str(task.get("taskId") or "")
-    if operation not in SUPPORTED_OPERATIONS:
-        return NativeRunResult(
-            ok=False,
-            receipt=None,
-            status="error",
-            exit_code=None,
-            stdout="",
-            stderr="",
-            duration_ms=0,
-            error_code="NATIVE_UNSUPPORTED_OPERATION",
-            error_message=f"unsupported operation: {operation}",
             memory_enforcement=MEMORY_ENFORCEMENT_SOFT,
         )
 

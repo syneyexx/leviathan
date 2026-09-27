@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
+import { displayMessageContent, normalizeMessage } from "../api/chatContract";
 import { media } from "../assets/media";
 import { BrandMark, BotAvatar } from "../components/BrandMark";
 import { AppShell } from "../layouts/AppShell";
@@ -27,6 +28,23 @@ type DisplayMessage = {
   pending?: boolean;
   error?: boolean;
 };
+
+function toDisplayMessages(
+  items: unknown[] | null | undefined,
+): DisplayMessage[] {
+  const out: DisplayMessage[] = [];
+  for (const item of items || []) {
+    const normalized = normalizeMessage(item);
+    if (!normalized) continue;
+    if (normalized.role !== "user" && normalized.role !== "assistant") continue;
+    out.push({
+      role: normalized.role,
+      content: displayMessageContent(normalized.content),
+      created_at: normalized.created_at,
+    });
+  }
+  return out;
+}
 
 type LastTurnMeta = {
   model: string | null;
@@ -232,16 +250,9 @@ export function ChatPage() {
     setConversationId(id);
     syncUrl(id);
     setTitle(data.conversation.title);
-    setMessages(
-      (data.messages || [])
-        .filter((item) => item.role === "user" || item.role === "assistant")
-        .map((item) => ({
-          role: item.role as "user" | "assistant",
-          content: item.content,
-          created_at: item.created_at,
-        })),
-    );
+    setMessages(toDisplayMessages(data.messages));
     setLastTurn(EMPTY_TURN);
+    setTeamPanel(null);
     const list = known ?? (await refreshConversations(id));
     setConversations(list);
   }
@@ -252,15 +263,7 @@ export function ChatPage() {
       setConversationId(id);
       syncUrl(id);
       setTitle(data.conversation.title);
-      setMessages(
-        (data.messages || [])
-          .filter((item) => item.role === "user" || item.role === "assistant")
-          .map((item) => ({
-            role: item.role as "user" | "assistant",
-            content: item.content,
-            created_at: item.created_at,
-          })),
-      );
+      setMessages(toDisplayMessages(data.messages));
       await refreshConversations(id);
     } catch (error) {
       toast(
@@ -279,6 +282,7 @@ export function ChatPage() {
       setTitle(data.conversation.title);
       setMessages([]);
       setLastTurn(EMPTY_TURN);
+      setTeamPanel(null);
       syncUrl(data.conversation.id);
       await refreshConversations(data.conversation.id);
       requestAnimationFrame(() => composerRef.current?.focus());
@@ -528,21 +532,58 @@ export function ChatPage() {
       );
       setConversationId(data.conversation_id);
       syncUrl(data.conversation_id);
+
+      const protocolFailure =
+        typeof (data as { protocol_failure?: unknown }).protocol_failure === "string"
+          ? String((data as { protocol_failure?: string }).protocol_failure)
+          : null;
+      const isProvisional = Boolean(data.provisional) || Boolean(protocolFailure);
+      const assistantNormalized = normalizeMessage(data.assistant_message);
+      const assistantContent = assistantNormalized
+        ? displayMessageContent(assistantNormalized.content)
+        : "";
+
       setMessages((current) => {
         const withoutPending = current.filter((item) => !item.pending);
-        // Reconcile once: replace pending with canonical persisted assistant turn.
-        if (doneOnce || data.assistant_message) {
+        // Prefer canonical assistant message when valid; else keep streamed provisional text.
+        if (doneOnce || assistantNormalized) {
+          const streamedProvisional = current.find((item) => item.pending && item.role === "assistant");
+          const streamedText =
+            streamedProvisional && streamedProvisional.content !== "Thinking…"
+              ? streamedProvisional.content
+              : "";
+          const content =
+            assistantContent ||
+            (isProvisional ? streamedText : streamedText) ||
+            (protocolFailure
+              ? `Stream protocol failure (${protocolFailure}). Partial reply may be incomplete.`
+              : "");
           return [
             ...withoutPending,
             {
               role: "assistant",
-              content: data.assistant_message.content,
-              created_at: data.assistant_message.created_at,
+              content,
+              created_at: assistantNormalized?.created_at ?? new Date().toISOString(),
+              error: Boolean(protocolFailure),
             },
           ];
         }
         return withoutPending;
       });
+
+      if (protocolFailure) {
+        setLastTurn((prev) => ({ ...prev, streaming: "failed" }));
+        toast(`Chat protocol failure: ${protocolFailure}`);
+        // Clear stale TEAM state on every terminal turn without team payload.
+        setTeamPanel(null);
+        const list = await refreshConversations(data.conversation_id || activeId);
+        if (data.conversation_id) {
+          const active = list.find((item) => item.id === data.conversation_id);
+          if (active) setTitle(active.title);
+        }
+        return;
+      }
+
       const degraded = Boolean(data.truth?.streaming_degraded);
       const cog = data.cognition && typeof data.cognition === "object" ? data.cognition : null;
       const cogDecision =
@@ -587,10 +628,11 @@ export function ChatPage() {
         verification: verificationLabel,
         telemetry,
       });
-      const teamPayload = (data as Record<string, unknown>).team;
+      // TEAM state must never linger into a later normal response.
+      const teamPayload = data.team;
       if (teamPayload && typeof teamPayload === "object") {
-        setTeamPanel(teamPayload as Record<string, unknown>);
-      } else if (collaborationStrategy !== "team") {
+        setTeamPanel(teamPayload);
+      } else {
         setTeamPanel(null);
       }
       const list = await refreshConversations(data.conversation_id);
@@ -599,13 +641,21 @@ export function ChatPage() {
     } catch (error) {
       const detail = error instanceof Error ? error.message : "Request failed";
       setLastTurn((prev) => ({ ...prev, streaming: "failed" }));
+      setTeamPanel(null);
       setMessages((current) => {
         const withoutPending = current.filter((item) => !item.pending);
+        const streamed = current.find((item) => item.pending && item.role === "assistant");
+        const provisional =
+          streamed && streamed.content && streamed.content !== "Thinking…"
+            ? streamed.content
+            : null;
         return [
           ...withoutPending,
           {
             role: "assistant",
-            content: `Leviathan could not reach the configured LLM. ${detail}`,
+            content: provisional
+              ? `${provisional}\n\n[Provisional — request failed: ${detail}]`
+              : `Leviathan could not reach the configured LLM. ${detail}`,
             created_at: new Date().toISOString(),
             error: true,
           },

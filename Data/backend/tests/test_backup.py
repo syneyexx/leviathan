@@ -43,9 +43,16 @@ class BackupServiceTests(unittest.TestCase):
         self.assertEqual(len(listed), 1)
         with self.assertRaises(BackupError):
             self.service.restore(manifest.backup_id, confirm=False)
-        # Mutate live DB then restore
+        with self.assertRaises(BackupError):
+            self.service.restore(manifest.backup_id, confirm=True, maintenance_boundary=True)
+        with self.assertRaises(BackupError):
+            self.service.restore(manifest.backup_id, confirm=True)
+        # Mutate live DB then restore with coordinator proof
         self.db.write_bytes(b"corrupted")
-        restored = self.service.restore(manifest.backup_id, confirm=True)
+        proof = self.service.maintenance.enter_for_restore(reason="test")
+        restored = self.service.restore(
+            manifest.backup_id, confirm=True, maintenance_proof=proof
+        )
         self.assertEqual(restored.backup_id, manifest.backup_id)
         self.assertGreater(self.db.stat().st_size, 10)
 

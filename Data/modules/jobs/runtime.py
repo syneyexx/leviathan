@@ -111,6 +111,28 @@ class JobRuntime:
             "retries_scheduled": 0,
             "leases_recovered": 0,
         }
+        self._maintenance_fenced = False
+
+    def enter_maintenance_fence(self) -> None:
+        """WAVE 21 — reject new enqueues while restore maintenance is active."""
+        self._maintenance_fenced = True
+
+    def clear_maintenance_fence(self) -> None:
+        self._maintenance_fenced = False
+
+    def maintenance_busy(self) -> bool:
+        """True when non-terminal work may still hold writers (drain probe)."""
+        if self._maintenance_fenced:
+            try:
+                from .states import JobState
+
+                for state in (JobState.QUEUED, JobState.RUNNING, JobState.RETRY_WAIT):
+                    if self.list(state=state, limit=1):
+                        return True
+            except Exception:  # noqa: BLE001 — unproven → busy
+                return True
+            return False
+        return False
 
     def enqueue(
         self,
@@ -142,6 +164,22 @@ class JobRuntime:
     ) -> JobRecord:
         if self.gateway.get_capability(capability_id) is None:
             raise KeyError(f"Unknown capability: {capability_id}")
+        if self._maintenance_fenced:
+            raise RuntimeError(
+                f"writes rejected during maintenance: enqueue({capability_id}) fenced"
+            )
+        try:
+            from Data.modules.backup.maintenance import assert_writes_allowed
+
+            assert_writes_allowed(op=f"job_enqueue:{capability_id}")
+        except Exception as exc:  # noqa: BLE001 — map coordinator fence
+            from Data.modules.backup.maintenance import MaintenanceError
+
+            if isinstance(exc, MaintenanceError):
+                raise RuntimeError(str(exc)) from exc
+            # Import/init failures must not block enqueue outside maintenance.
+            if "writes rejected during maintenance" in str(exc):
+                raise
         if idempotency_key:
             existing = self.store.get_by_idempotency_key(idempotency_key)
             if existing is not None:
@@ -307,8 +345,47 @@ class JobRuntime:
     def _cancel_requested(self, job_id: str, cancel_flag: threading.Event) -> bool:
         if cancel_flag.is_set():
             return True
-        current = self.store.get(job_id)
-        return current is not None and current.state == JobState.CANCEL_REQUESTED
+        try:
+            current = self.store.get(job_id)
+        except Exception:  # noqa: BLE001 — cancel-state read failure fails closed
+            return True
+        if current is None:
+            return True
+        return current.state == JobState.CANCEL_REQUESTED
+
+    def _prove_lease(self, job_id: str) -> None:
+        """Heartbeat the claim lease; reclaim only our expired lease. Never execute unproven."""
+        from .leases import LeaseFenceError
+
+        try:
+            self.store.heartbeat_lease(
+                job_id,
+                worker_id=self.worker_id,
+                ttl_seconds=self.lease_ttl_seconds,
+            )
+            return
+        except ValueError:
+            pass
+        except Exception as exc:  # noqa: BLE001
+            raise LeaseFenceError(
+                f"lease heartbeat failed for job {job_id}: {exc}",
+                job_id=job_id,
+                worker_id=self.worker_id,
+                reason="heartbeat_failed",
+            ) from exc
+        try:
+            self.store.acquire_lease(
+                job_id,
+                worker_id=self.worker_id,
+                ttl_seconds=self.lease_ttl_seconds,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise LeaseFenceError(
+                f"lease acquire failed for job {job_id}: {exc}",
+                job_id=job_id,
+                worker_id=self.worker_id,
+                reason="acquire_failed",
+            ) from exc
 
     def _finalize_cancel(
         self,
@@ -339,18 +416,19 @@ class JobRuntime:
                 return self._finalize_cancel(job.job_id, error="Cancelled before execution")
 
             # Lease already attached by claim_next_queued; refresh heartbeat.
+            # WORKER-001: never swallow acquire failure and execute anyway.
+            from .leases import LeaseFenceError
+
             try:
-                self.store.heartbeat_lease(
-                    job.job_id,
-                    worker_id=self.worker_id,
-                    ttl_seconds=self.lease_ttl_seconds,
+                self._prove_lease(job.job_id)
+            except LeaseFenceError:
+                self.telemetry["stale_lease_fenced"] = (
+                    int(self.telemetry.get("stale_lease_fenced", 0)) + 1
                 )
-            except ValueError:
-                self.store.acquire_lease(
-                    job.job_id,
-                    worker_id=self.worker_id,
-                    ttl_seconds=self.lease_ttl_seconds,
-                )
+                current = self.store.get(job.job_id)
+                if current is not None:
+                    return current
+                raise
 
             cap_result = self.gateway.execute(
                 CapabilityRequest(
@@ -429,9 +507,10 @@ class JobRuntime:
             self.telemetry["failed"] += 1
             return record
         except Exception as exc:  # noqa: BLE001
+            from .leases import LeaseFenceError
             from .states import StaleLeaseError
 
-            if isinstance(exc, StaleLeaseError):
+            if isinstance(exc, (StaleLeaseError, LeaseFenceError)):
                 self.telemetry["stale_lease_fenced"] = (
                     int(self.telemetry.get("stale_lease_fenced", 0)) + 1
                 )

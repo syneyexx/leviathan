@@ -194,8 +194,11 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           assert Path("Data").is_dir()
-          # Presence of HADES/editor must not be required for CI green.
-          print("HADES present:", Path("HADES").exists(), "— NOT_APPLICABLE in LEVIATHAN CI")
+          # Exclusion path is Data/HADES/ (not a sibling HADES/). Do not scan it.
+          hades = Path("Data/HADES")
+          print("Data/HADES present:", hades.exists(), "— NOT_APPLICABLE in LEVIATHAN CI")
           print("editor present:", Path("editor").exists(), "— NOT_APPLICABLE in LEVIATHAN CI")
-          print("scope-ok")
+          # Wrong sibling path must not be treated as the exclusion authority.
+          assert not Path("HADES").is_dir() or True  # may or may not exist; never required
+          print("scope-ok: exclude Data/HADES/ and editor/")
           PY

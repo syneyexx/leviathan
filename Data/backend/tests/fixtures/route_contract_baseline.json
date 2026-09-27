@@ -26,7 +26,7 @@
     },
     {
       "method": "DELETE",
-      "path": "/api/models/{model_id}"
+      "path": "/api/models/{model_id:path}"
     },
     {
       "method": "DELETE",
@@ -734,19 +734,19 @@
     },
     {
       "method": "GET",
-      "path": "/api/models/{model_id}"
+      "path": "/api/models/{model_id:path}"
     },
     {
       "method": "GET",
-      "path": "/api/models/{model_id}/capabilities"
+      "path": "/api/models/{model_id:path}/capabilities"
     },
     {
       "method": "GET",
-      "path": "/api/models/{model_id}/profile"
+      "path": "/api/models/{model_id:path}/profile"
     },
     {
       "method": "GET",
-      "path": "/api/models/{model_id}/residency"
+      "path": "/api/models/{model_id:path}/residency"
     },
     {
       "method": "GET",
@@ -1802,31 +1802,31 @@
     },
     {
       "method": "POST",
-      "path": "/api/models/{model_id}/activate"
+      "path": "/api/models/{model_id:path}/activate"
     },
     {
       "method": "POST",
-      "path": "/api/models/{model_id}/benchmark"
+      "path": "/api/models/{model_id:path}/benchmark"
     },
     {
       "method": "POST",
-      "path": "/api/models/{model_id}/load"
+      "path": "/api/models/{model_id:path}/load"
     },
     {
       "method": "POST",
-      "path": "/api/models/{model_id}/placement-preflight"
+      "path": "/api/models/{model_id:path}/placement-preflight"
     },
     {
       "method": "POST",
-      "path": "/api/models/{model_id}/probe"
+      "path": "/api/models/{model_id:path}/probe"
     },
     {
       "method": "POST",
-      "path": "/api/models/{model_id}/test"
+      "path": "/api/models/{model_id:path}/test"
     },
     {
       "method": "POST",
-      "path": "/api/models/{model_id}/unload"
+      "path": "/api/models/{model_id:path}/unload"
     },
     {
       "method": "POST",
@@ -2154,11 +2154,11 @@
     },
     {
       "method": "PUT",
-      "path": "/api/models/{model_id}/profile"
+      "path": "/api/models/{model_id:path}/profile"
     },
     {
       "method": "PUT",
-      "path": "/api/models/{model_id}/residency-policy"
+      "path": "/api/models/{model_id:path}/residency-policy"
     },
     {
       "method": "PUT",

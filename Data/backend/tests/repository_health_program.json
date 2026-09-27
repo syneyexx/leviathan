@@ -1,0 +1,82 @@
+{
+  "program": "leviathan_institutional_defect_eradication",
+  "version": 3,
+  "updated": "2026-09-27",
+  "audit_baseline_sha": "95fe8658638ff016115d9a05c9a2a8d835ccfb97",
+  "original_pr181_handoff_sha": "41e7033ea7e360a54cafbb268036b1b1540cc312",
+  "integrated_main_sha": "8605b725ac3d549d0210a60496d3d1898fca402e",
+  "verification_code_sha": "438fbb7cae7ad5666ec005226bd403c40cb2b22b",
+  "pr": 181,
+  "branch": "cursor/institutional-defect-eradication-bfd4",
+  "scope": {
+    "excluded_trees": ["Data/HADES/", "editor/"],
+    "canonical_databases": ["CONTROL", "KNOWLEDGE", "MARKET"],
+    "excluded_diff_vs_main_count": 0
+  },
+  "pr180_preservation": {
+    "settings_multiline_textareas": "PROTECTED",
+    "models_hardware_inventory_layout": "PROTECTED",
+    "slash_model_id_routes": "PROTECTED",
+    "relations_batch_persistence": "PROTECTED",
+    "fingerprint_skip": "PROTECTED",
+    "native_windows_exe_path": "PROTECTED",
+    "forced_rust_honesty": "PROTECTED"
+  },
+  "waves": {
+    "0_18": "COMPLETE",
+    "19_main_integration": "COMPLETE",
+    "20_misplaced_noloss": "COMPLETE",
+    "21_restore_maintenance": "COMPLETE",
+    "22_lease_fencing": "COMPLETE",
+    "23_db_path_ssrf": "COMPLETE",
+    "24_schema_process_owner": "COMPLETE",
+    "25_commit_receipt_truth": "COMPLETE",
+    "26_evidence_docs": "COMPLETE",
+    "27_final_az": "COMPLETE",
+    "28_final_verification": "COMPLETE"
+  },
+  "verification": {
+    "timestamp_utc": "2026-09-27T13:40:00Z",
+    "github_ci": "NOT RUN",
+    "commands": [
+      {
+        "command": "pytest Data/backend/tests -q",
+        "result": "PASS",
+        "counts": {"passed": 2210, "skipped": 17, "xfailed": 5, "failed": 0}
+      },
+      {
+        "command": "npm run typecheck (Data/frontend)",
+        "result": "PASS"
+      },
+      {
+        "command": "npm run lint (Data/frontend)",
+        "result": "PASS",
+        "notes": "pre-existing warnings only"
+      },
+      {
+        "command": "npm test -- --run (Data/frontend)",
+        "result": "PASS",
+        "counts": {"passed": 213, "failed": 0}
+      },
+      {
+        "command": "npm run build (Data/frontend)",
+        "result": "PASS"
+      },
+      {
+        "command": "cargo check --manifest-path Data/launcher/host-core/Cargo.toml",
+        "result": "PASS"
+      },
+      {
+        "command": "cargo check --manifest-path Data/native/leviathan_data_plane/Cargo.toml",
+        "result": "NOT_EXECUTED_TOOLCHAIN",
+        "notes": "Cargo 1.83 cannot parse arrow-data edition2024 dependency"
+      },
+      {
+        "command": "Windows live run_leviathan.exe execution",
+        "result": "NOT_EXECUTED_PLATFORM_WINDOWS"
+      }
+    ]
+  },
+  "result": "READY_FOR_INDEPENDENT_PRE_MERGE_REVIEW",
+  "remaining_issues": "No known P0/P1 correctness defects remain after final A–Z audit."
+}

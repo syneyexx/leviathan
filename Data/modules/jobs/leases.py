@@ -2,6 +2,11 @@
 
 Foundation only: durable fields + negotiation helpers. Full takeover semantics
 activate behind ``LEVIATHAN_FEATURE_DURABLE_KERNEL``.
+
+Lease fencing helpers (Wave 4 WORKER-001..008):
+- No side effect without a proven lease.
+- Lease lost → fence (stop work).
+- Cancel-state read failure → fail closed (treat as cancelled / stop).
 """
 
 from __future__ import annotations
@@ -9,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Callable
 
 WORKER_PROTOCOL_VERSION = 1
 
@@ -19,6 +24,267 @@ class LeaseState(str, Enum):
     HELD = "HELD"
     EXPIRED = "EXPIRED"
     RELEASED = "RELEASED"
+
+
+class LeaseFenceError(RuntimeError):
+    """Worker must stop side effects — lease unproven or lost."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        job_id: str | None = None,
+        worker_id: str | None = None,
+        reason: str = "lease_fence",
+    ) -> None:
+        super().__init__(message)
+        self.job_id = job_id
+        self.worker_id = worker_id
+        self.reason = reason
+
+
+def _signal_fence(ctx: dict[str, Any] | None) -> None:
+    if ctx is None:
+        return
+    ctx["lease_fenced"] = True
+    for key in ("lease_lost", "job_cancel_fence"):
+        ev = ctx.get(key)
+        if ev is not None and hasattr(ev, "set"):
+            ev.set()
+
+
+def _fence_already_signaled(ctx: dict[str, Any] | None) -> bool:
+    if ctx is None:
+        return False
+    if ctx.get("lease_fenced"):
+        return True
+    for key in ("lease_lost", "job_cancel_fence"):
+        ev = ctx.get(key)
+        if ev is not None and getattr(ev, "is_set", lambda: False)():
+            return True
+    return False
+
+
+def _state_name(state: Any) -> str:
+    if state is None:
+        return ""
+    name = getattr(state, "name", None) or getattr(state, "value", None)
+    return str(name or state)
+
+
+def observe_job_cancel_state(
+    store: Any,
+    job_id: str,
+    *,
+    worker_id: str | None = None,
+    ctx: dict[str, Any] | None = None,
+    cancel_states: frozenset[str] | None = None,
+) -> bool:
+    """Return True when work must stop (cancel / missing job / wrong owner).
+
+    Fail-closed: any inability to read authoritative job state returns True.
+    """
+    if _fence_already_signaled(ctx):
+        return True
+    parent = (ctx or {}).get("job_cancel_check") if ctx else None
+    # Avoid re-entrancy when this helper *is* the parent check.
+    if callable(parent) and getattr(parent, "_leviathan_lease_bound", False) is not True:
+        try:
+            if parent():
+                _signal_fence(ctx)
+                return True
+        except Exception:  # noqa: BLE001 — cancel probe failure fails closed
+            _signal_fence(ctx)
+            return True
+    stopped = cancel_states or frozenset({"CANCEL_REQUESTED", "CANCELLED"})
+    try:
+        current = store.get(job_id)
+    except Exception:  # noqa: BLE001
+        _signal_fence(ctx)
+        return True
+    if current is None:
+        _signal_fence(ctx)
+        return True
+    if _state_name(getattr(current, "state", None)) in stopped:
+        return True
+    owner = getattr(current, "lease_owner", None)
+    if worker_id and owner and owner != worker_id:
+        _signal_fence(ctx)
+        return True
+    return False
+
+
+def require_lease_heartbeat(
+    store: Any,
+    job_id: str,
+    *,
+    worker_id: str,
+    ttl_seconds: float,
+    ctx: dict[str, Any] | None = None,
+) -> None:
+    """Extend the lease or fence. Never swallow definitive / unproven lease health."""
+    if not hasattr(store, "heartbeat_lease"):
+        raise LeaseFenceError(
+            f"store cannot heartbeat lease for job {job_id}",
+            job_id=job_id,
+            worker_id=worker_id,
+            reason="heartbeat_unsupported",
+        )
+    try:
+        store.heartbeat_lease(job_id, worker_id=worker_id, ttl_seconds=float(ttl_seconds))
+    except Exception as exc:  # noqa: BLE001
+        _signal_fence(ctx)
+        raise LeaseFenceError(
+            f"lease heartbeat failed for job {job_id}: {exc}",
+            job_id=job_id,
+            worker_id=worker_id,
+            reason="heartbeat_failed",
+        ) from exc
+
+
+def make_lease_bound_checks(
+    ctx: dict[str, Any],
+    store: Any,
+    job_id: str,
+    *,
+    worker_id: str,
+    ttl_seconds: float,
+    extra_cancel: Callable[[Any], bool] | None = None,
+) -> tuple[Callable[[], bool], Callable[[], None]]:
+    """Shared cancel_check + heartbeat for provider_io / MCP / model_download / gateway."""
+
+    def cancel_check() -> bool:
+        if observe_job_cancel_state(store, job_id, worker_id=worker_id, ctx=ctx):
+            return True
+        if extra_cancel is None:
+            return False
+        try:
+            current = store.get(job_id)
+        except Exception:  # noqa: BLE001
+            _signal_fence(ctx)
+            return True
+        try:
+            return bool(extra_cancel(current))
+        except Exception:  # noqa: BLE001 — extra cancel probe fails closed
+            _signal_fence(ctx)
+            return True
+
+    cancel_check._leviathan_lease_bound = True  # type: ignore[attr-defined]
+
+    def heartbeat() -> None:
+        require_lease_heartbeat(
+            store,
+            job_id,
+            worker_id=worker_id,
+            ttl_seconds=ttl_seconds,
+            ctx=ctx,
+        )
+
+    return cancel_check, heartbeat
+
+
+def record_stale_lease_fence(
+    ctx: dict[str, Any] | None = None,
+    *,
+    telemetry: dict[str, Any] | None = None,
+) -> None:
+    """Emit telemetry when a stale worker is fenced from mutating canonical job truth."""
+    _signal_fence(ctx)
+    sinks: list[dict[str, Any]] = []
+    if isinstance(telemetry, dict):
+        sinks.append(telemetry)
+    if isinstance(ctx, dict):
+        sinks.append(ctx)
+        nested = ctx.get("telemetry")
+        if isinstance(nested, dict):
+            sinks.append(nested)
+        policy = ctx.get("policy")
+        if policy is not None:
+            pt = getattr(policy, "telemetry", None)
+            if isinstance(pt, dict):
+                sinks.append(pt)
+    seen: set[int] = set()
+    for sink in sinks:
+        sid = id(sink)
+        if sid in seen:
+            continue
+        seen.add(sid)
+        sink["stale_lease_fenced"] = int(sink.get("stale_lease_fenced", 0)) + 1
+
+
+def fenced_transition(
+    store: Any,
+    job_id: str,
+    new_state: Any,
+    *,
+    worker_id: str,
+    ctx: dict[str, Any] | None = None,
+    telemetry: dict[str, Any] | None = None,
+    **kwargs: Any,
+) -> Any | None:
+    """``JobStore.transition`` under ``expected_lease_owner``.
+
+    On ``StaleLeaseError`` (lost lease / takeover): emit telemetry and do **not**
+    overwrite canonical job state. Callers that already performed side effects
+    must treat ``None`` as fenced — never fall back to an unfenced mutation.
+
+    Also treats ``InvalidJobTransition`` into an already-terminal job as a fence
+    (worker A late after worker B completed) — never overwrite terminal truth.
+    """
+    from Data.modules.jobs.states import (
+        InvalidJobTransition,
+        StaleLeaseError,
+        TERMINAL_JOB_STATES,
+    )
+
+    owner = str(worker_id or "").strip()
+    if not owner:
+        try:
+            current = store.get(job_id)
+            owner = str(getattr(current, "lease_owner", None) or "").strip()
+        except Exception:  # noqa: BLE001
+            owner = ""
+    if not owner:
+        # Job never acquired a lease (legacy/test harness paths that transition to
+        # RUNNING without claim). Do not pass expected_lease_owner="" — SQLite NULL
+        # never equals ''. Production claim paths always set a non-empty owner.
+        try:
+            return store.transition(job_id, new_state, **kwargs)
+        except InvalidJobTransition:
+            current = None
+            try:
+                current = store.get(job_id)
+            except Exception:  # noqa: BLE001
+                current = None
+            if current is not None and current.state in TERMINAL_JOB_STATES:
+                record_stale_lease_fence(ctx, telemetry=telemetry)
+                return None
+            raise
+
+    try:
+        return store.transition(
+            job_id,
+            new_state,
+            expected_lease_owner=owner,
+            **kwargs,
+        )
+    except StaleLeaseError:
+        record_stale_lease_fence(ctx, telemetry=telemetry)
+        return None
+    except InvalidJobTransition:
+        current = None
+        try:
+            current = store.get(job_id)
+        except Exception:  # noqa: BLE001
+            current = None
+        if current is not None and current.state in TERMINAL_JOB_STATES:
+            record_stale_lease_fence(ctx, telemetry=telemetry)
+            return None
+        lease_owner = getattr(current, "lease_owner", None) if current is not None else None
+        if owner and lease_owner and lease_owner != owner:
+            record_stale_lease_fence(ctx, telemetry=telemetry)
+            return None
+        raise
 
 
 @dataclass(frozen=True)

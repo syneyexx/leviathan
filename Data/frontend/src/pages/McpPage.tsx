@@ -798,7 +798,7 @@ export function McpPage() {
       activeMode="explore"
       modeLabel="Research Mode"
       searchPlaceholder="Zoek servers, tools, transports..."
-      systemItems={["SYSTEMS ONLINE", "LLM", "NEURAL", "MEMORY", "TOOLS"]}
+      systemItems={["MCP CONTROL", "LLM", "NEURAL", "MEMORY", "TOOLS"]}
       layout="wide"
       pageClass="lv-app--plugin-runtime"
     >

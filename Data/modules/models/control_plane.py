@@ -322,49 +322,118 @@ class ModelControlPlane:
         return binding
 
     def reconcile_persisted_serving_workers(self) -> list[dict[str, Any]]:
-        """On restart: persisted READY/STARTING with dead/missing pid → DEAD (honest)."""
-        from Data.modules.common.process import pid_is_alive
+        """On restart: single-owner reconcile via ServingSupervisor.
 
+        MODEL-002 / WAVE 24: ModelControlPlane must not independently adopt/kill
+        with a conflicting policy. ServingSupervisor owns process identity,
+        PID-reuse safety (Windows-safe fingerprint), and READY-only-after-health.
+        """
+        # Ensure durable registry orphans are reconciled (idempotent).
+        serving = getattr(self, "serving", None)
+        if serving is None:
+            from Data.modules.model_runtime.serving import get_serving_supervisor
+
+            serving = get_serving_supervisor()
+            self.serving = serving
+        serving.reconcile_persisted_orphans()
+        by_id = {w.worker_id: w for w in serving.list_workers()}
         changed: list[dict[str, Any]] = []
         for row in self.store.list_serving_workers():
             state = str(row.get("state") or "")
             if state not in {"READY", "STARTING", "DRAINING", "UNHEALTHY"}:
                 continue
-            pid = row.get("pid")
-            alive = isinstance(pid, int) and pid_is_alive(pid)
-            if alive:
-                # Do not auto-reattach into in-memory supervisor from SQLite alone.
-                continue
-            updated = {
-                "worker_id": row["worker_id"],
-                "provider_id": row["provider_id"],
-                "model_id": row["model_id"],
-                "backend_kind": row.get("backend_kind") or "unknown",
-                "endpoint": row.get("endpoint"),
-                "state": "DEAD",
-                "pid": None,
-                "health_score": 0.0,
-                "revision_id": row.get("revision_id"),
-                "last_error": row.get("last_error")
-                or "stale serving worker after application restart",
-                "started_at": row.get("started_at"),
-                "last_health_at": row.get("last_health_at"),
-                "metadata": {
-                    **(row.get("metadata") or {}),
-                    "reconcile_note": "process restart — prior READY is not current truth",
-                },
-            }
-            self.store.upsert_serving_worker(updated)
-            try:
-                self.registry.set_lifecycle(
-                    row["model_id"],
-                    ModelLifecycleState.OFFLINE,
-                    health=ModelHealthState.OFFLINE,
-                    loaded=False,
-                    error=updated["last_error"],
+            worker = by_id.get(row["worker_id"])
+            meta = dict(row.get("metadata") or {})
+            if worker is not None:
+                # Supervisor is the sole process-reconcile authority.
+                updated = {
+                    "worker_id": worker.worker_id,
+                    "provider_id": worker.provider_id,
+                    "model_id": worker.model_id,
+                    "backend_kind": worker.backend_kind,
+                    "endpoint": worker.endpoint,
+                    "state": worker.state.value,
+                    "pid": worker.pid,
+                    "health_score": worker.health_score,
+                    "revision_id": worker.revision_id,
+                    "last_error": worker.last_error,
+                    "started_at": worker.started_at,
+                    "last_health_at": worker.last_health_at,
+                    "metadata": {
+                        **meta,
+                        **dict(worker.metadata or {}),
+                        "reconcile_owner": "ServingSupervisor",
+                    },
+                }
+            else:
+                # Not in supervisor registry — never kill; mark DEAD without SIGKILL.
+                from Data.modules.common.process import pid_fingerprint, pid_is_alive
+
+                pid = row.get("pid")
+                alive = isinstance(pid, int) and pid_is_alive(int(pid))
+                prior_fp = str(meta.get("pid_fingerprint") or "")
+                same = (
+                    alive
+                    and prior_fp
+                    and prior_fp == pid_fingerprint(int(pid))
                 )
-            except Exception:  # noqa: BLE001
-                pass
+                updated = {
+                    "worker_id": row["worker_id"],
+                    "provider_id": row["provider_id"],
+                    "model_id": row["model_id"],
+                    "backend_kind": row.get("backend_kind") or "unknown",
+                    "endpoint": row.get("endpoint"),
+                    "state": "DEAD",
+                    # DEAD without ownership proof: clear live PID; keep orphan_pid in metadata.
+                    "pid": int(pid) if (isinstance(pid, int) and alive and same) else None,
+                    "health_score": 0.0,
+                    "revision_id": row.get("revision_id"),
+                    "last_error": (
+                        row.get("last_error")
+                        or (
+                            "orphan serving worker after application restart — "
+                            "not in ServingSupervisor registry; not killed"
+                            if alive
+                            else "stale serving worker after application restart"
+                        )
+                    ),
+                    "started_at": row.get("started_at"),
+                    "last_health_at": row.get("last_health_at"),
+                    "metadata": {
+                        **meta,
+                        "reconcile_note": "store_row_absent_from_supervisor",
+                        "reconcile_owner": "ServingSupervisor",
+                        "orphan_pid": pid,
+                        "pid_alive": alive,
+                        "identity_matched": bool(same),
+                        "ownership_verified": False,
+                        "kill_skipped": True,
+                    },
+                }
+            self.store.upsert_serving_worker(updated)
+            if str(updated.get("state") or "") in {"DEAD", "STOPPED", "UNAVAILABLE"}:
+                try:
+                    self.registry.set_lifecycle(
+                        row["model_id"],
+                        ModelLifecycleState.OFFLINE,
+                        health=ModelHealthState.OFFLINE,
+                        loaded=False,
+                        error=updated.get("last_error"),
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            elif str(updated.get("state") or "") == "UNHEALTHY":
+                # Adopted but unproven — not READY, not falsely loaded.
+                try:
+                    self.registry.set_lifecycle(
+                        row["model_id"],
+                        ModelLifecycleState.OFFLINE,
+                        health=ModelHealthState.DEGRADED,
+                        loaded=False,
+                        error=updated.get("last_error"),
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
             changed.append(updated)
         return changed
 

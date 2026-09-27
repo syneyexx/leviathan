@@ -6,6 +6,8 @@ __pycache__/
 Data/backend/data/*.db
 Data/backend/data/*.db-*
 Data/backend/data/artifacts/
+Data/backend/tests/large_payload_db_audit.json
+Data/backend/tests/large_payload_db_audit.full.json
 Data/frontend/node_modules/
 Data/frontend/dist/
 Data/launcher/node_modules/

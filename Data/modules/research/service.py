@@ -61,6 +61,7 @@ class ResearchService:
         model_caller: Callable[..., dict[str, Any]] | None = None,
         job_runtime: Any | None = None,
         dataset_service: Any | None = None,
+        knowledge_database_path: Path | None = None,
     ) -> None:
         self.store = store
         self.knowledge = knowledge
@@ -72,6 +73,9 @@ class ResearchService:
         self.model_caller = model_caller
         self.job_runtime = job_runtime
         self.dataset_service = dataset_service
+        self._knowledge_database_path = (
+            Path(knowledge_database_path) if knowledge_database_path is not None else None
+        )
         if corpus is not None:
             self.snapshots_root = corpus.research_snapshots
             self.reports_root = corpus.research_reports
@@ -100,6 +104,11 @@ class ResearchService:
             snapshots_root=self.snapshots_root,
         )
         self.source_ingestion = None
+        self.source_ingestion_status: dict[str, Any] = {
+            "state": "NOT_INITIALIZED",
+            "reason": None,
+            "error_class": None,
+        }
         try:
             from Data.modules.source_ingestion.service import SourceIngestionService
             from Data.modules.source_ingestion.settings import load_source_ingestion_settings
@@ -132,17 +141,52 @@ class ResearchService:
                     models_cache=self.sources_root.parent / "models" / "cache",
                     hf_cache=self.sources_root.parent / "hf_cache",
                 )
+            ingestion_db: Path | None = self._knowledge_database_path
+            if ingestion_db is None and knowledge is not None:
+                raw = getattr(knowledge, "db_path", None) or getattr(knowledge, "path", None)
+                if raw is not None:
+                    ingestion_db = Path(raw)
+            if ingestion_db is None:
+                raise RuntimeError(
+                    "SourceIngestion requires knowledge_database_path or a KnowledgeStore"
+                )
             self.source_ingestion = SourceIngestionService.from_corpus(
                 research_store=store,
                 corpus=layout,
-                database_path=store.db_path,
+                database_path=ingestion_db,
                 knowledge=knowledge,
                 job_runtime=job_runtime,
                 dataset_service=dataset_service,
                 settings=load_source_ingestion_settings(),
             )
-        except Exception:  # noqa: BLE001 — keep Research usable if SI init fails
+            self.source_ingestion_status = {
+                "state": "READY",
+                "reason": None,
+                "error_class": None,
+            }
+        except Exception as exc:  # noqa: BLE001 — keep Research usable if SI init fails
+            # TRUTH-001: record cause — silent None alone is forbidden.
             self.source_ingestion = None
+            err_cls = type(exc).__name__
+            msg = str(exc)[:400]
+            if "knowledge_database_path" in msg or "KnowledgeStore" in msg:
+                reason = "configuration_error"
+            elif "OperationalError" in err_cls or "schema" in msg.lower():
+                reason = "db_schema_error"
+            elif err_cls in {"ImportError", "ModuleNotFoundError"}:
+                reason = "dependency_absent"
+            else:
+                reason = "runtime_initialization_failure"
+            self.source_ingestion_status = {
+                "state": "UNAVAILABLE",
+                "reason": reason,
+                "error_class": err_cls,
+                "error": msg,
+                "truth": {
+                    "silent_none_forbidden": True,
+                    "feature_not_intentionally_disabled": True,
+                },
+            }
         self.runner = ResearchRunner(
             store,
             local=self.local,
@@ -218,6 +262,11 @@ class ResearchService:
             search_provider=search_provider,
             search_mode=search_mode,
         )
+        knowledge_db = None
+        if hasattr(settings, "knowledge_database_path"):
+            knowledge_db = Path(settings.knowledge_database_path)
+        elif knowledge is not None:
+            knowledge_db = Path(knowledge.db_path)
         svc = cls(
             store,
             knowledge=knowledge,
@@ -231,6 +280,7 @@ class ResearchService:
             model_caller=model_caller,
             job_runtime=job_runtime,
             dataset_service=dataset_service,
+            knowledge_database_path=knowledge_db,
         )
         svc._web_search_endpoint = endpoint
         svc._web_search_api_key_configured = bool((api_key or "").strip())

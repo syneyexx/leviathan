@@ -8,6 +8,7 @@ from Data.modules.workers.entrypoints._cli import main_for_pool
 
 
 def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
+    from Data.modules.jobs.leases import fenced_transition
     from Data.modules.jobs.states import JobState
     from Data.modules.workflows.runtime import WorkflowRuntime
     from Data.modules.workflows.store import WorkflowStore
@@ -15,7 +16,7 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
     args = dict(getattr(job, "arguments", None) or {})
     workflow_id = str(args.get("workflow_id") or "")
     if not workflow_id:
-        ctx["job_store"].transition(job.job_id, JobState.FAILED, error="missing workflow_id")
+        fenced_transition(ctx["job_store"], job.job_id, JobState.FAILED, error="missing workflow_id", worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         return {}
     store = WorkflowStore(ctx["settings"].database_path)
     store.initialize()
@@ -37,16 +38,19 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
             )
         except Exception:  # noqa: BLE001
             pass
-    ctx["job_store"].transition(
-        job.job_id,
-        JobState.COMPLETED,
+    fenced_transition(
+            ctx["job_store"],
+            job.job_id,
+            JobState.COMPLETED,
         result={
             "workflow_id": record.workflow_id,
             "state": record.state.value,
             "current_step": record.current_step,
             "steps_total": len(record.steps),
         },
-    )
+            worker_id=str(ctx.get("worker_id") or ""),
+            ctx=ctx,
+        )
     return {"workflow_id": workflow_id, "state": record.state.value}
 
 

@@ -77,6 +77,13 @@ export type ChatResponse = {
     model_output_is_not_evidence?: boolean;
     [key: string]: boolean | undefined;
   };
+  /** Present when terminal payload failed runtime validation. */
+  protocol_failure?: string;
+  /** True when content is provisional and must not be treated as persisted success. */
+  provisional?: boolean;
+  /** TEAM collaboration panel payload when collaboration_strategy=team. */
+  team?: Record<string, unknown>;
+  collaboration_strategy?: string;
 };
 
 /** Public tool-call row for Chat Tools tab — status/duration/receipt only. */

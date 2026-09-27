@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Iterable, Iterator, Mapping
+from typing import Any, Iterable, Iterator, Mapping
 
 
 class DatabaseDomain(str, Enum):
@@ -32,6 +32,8 @@ ENV_CONTROL = "LEVIATHAN_CONTROL_DATABASE_PATH"
 ENV_KNOWLEDGE = "LEVIATHAN_KNOWLEDGE_DATABASE_PATH"
 ENV_MARKET = "LEVIATHAN_MARKET_DATABASE_PATH"
 ENV_LEGACY = "LEVIATHAN_DATABASE_PATH"
+# Deprecated process-local alias — must never invent a fourth product DB.
+ENV_LEGACY_ALIAS = "LEVIATHAN_DB_PATH"
 
 
 @dataclass(frozen=True)
@@ -168,3 +170,91 @@ def assert_canonical_paths_distinct(paths: DatabasePaths) -> None:
 
 def iter_domains() -> Iterable[DatabaseDomain]:
     return tuple(DatabaseDomain)
+
+
+def _env_path(name: str) -> Path | None:
+    import os
+
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return None
+    return Path(raw)
+
+
+def resolve_control_database_path(*, explicit: str | Path | None = None) -> Path:
+    """Resolve CONTROL without inventing Data/state/leviathan.db as a fourth product DB."""
+    if explicit is not None and str(explicit).strip():
+        return Path(explicit)
+    for env_name in (ENV_CONTROL, ENV_LEGACY_ALIAS, ENV_LEGACY):
+        found = _env_path(env_name)
+        if found is not None:
+            return found
+    try:
+        from Data.backend.config import load_settings
+
+        return Path(load_settings().control_database_path)
+    except Exception:  # noqa: BLE001
+        return Path(DEFAULT_CONTROL_DB_REL)
+
+
+def resolve_knowledge_database_path(*, explicit: str | Path | None = None) -> Path:
+    if explicit is not None and str(explicit).strip():
+        return Path(explicit)
+    found = _env_path(ENV_KNOWLEDGE)
+    if found is not None:
+        return found
+    try:
+        from Data.backend.config import load_settings
+
+        return Path(load_settings().knowledge_database_path)
+    except Exception:  # noqa: BLE001
+        return Path(DEFAULT_KNOWLEDGE_DB_REL)
+
+
+def knowledge_path_from_settings(
+    settings: Any | None = None,
+    *,
+    explicit: str | Path | None = None,
+) -> Path:
+    """Resolve the KNOWLEDGE DB path without falling back to CONTROL.
+
+    Production must never map ``knowledge_database_path → settings.database_path``.
+    Tests inject an explicit path or ``settings.knowledge_database_path`` (may be
+    the same temp file used for a single-DB harness).
+    """
+    if explicit is not None and str(explicit).strip():
+        return Path(explicit)
+    if settings is not None:
+        kd = getattr(settings, "knowledge_database_path", None)
+        if kd is not None and str(kd).strip():
+            return Path(kd)
+    return resolve_knowledge_database_path()
+
+
+def resolve_market_database_path(*, explicit: str | Path | None = None) -> Path:
+    if explicit is not None and str(explicit).strip():
+        return Path(explicit)
+    found = _env_path(ENV_MARKET)
+    if found is not None:
+        return found
+    try:
+        from Data.backend.config import load_settings
+
+        return Path(load_settings().market_database_path)
+    except Exception:  # noqa: BLE001
+        return Path(DEFAULT_MARKET_DB_REL)
+
+
+def market_path_from_settings(
+    settings: Any | None = None,
+    *,
+    explicit: str | Path | None = None,
+) -> Path:
+    """Resolve MARKET DB from trusted settings / env — never from job payloads."""
+    if explicit is not None and str(explicit).strip():
+        return Path(explicit)
+    if settings is not None:
+        md = getattr(settings, "market_database_path", None)
+        if md is not None and str(md).strip():
+            return Path(md)
+    return resolve_market_database_path()

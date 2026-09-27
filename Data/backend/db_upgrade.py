@@ -285,6 +285,185 @@ def repair_incompatible_quality_schema(conn: sqlite3.Connection) -> bool:
     return True
 
 
+def _retire_stub_table(conn: sqlite3.Connection, table: str) -> None:
+    if table not in _table_names(conn):
+        return
+    count = _row_count(conn, table)
+    if count > 0:
+        backup = f"{table}_upgrade_stub_backup"
+        if backup in _table_names(conn):
+            conn.execute(f'DROP TABLE IF EXISTS "{backup}"')
+        conn.execute(f'ALTER TABLE "{table}" RENAME TO "{backup}"')
+    else:
+        conn.execute(f'DROP TABLE IF EXISTS "{table}"')
+
+
+# Fingerprints used by _wave3_table_is_stub (documentation / test helpers).
+WAVE3_PRODUCT_TABLES: tuple[str, ...] = (
+    "provider_stream_events",
+    "intelligence_assimilation_receipts",
+    "knowledge_commit_receipts",
+    "source_ingestion_commit_records",
+    "dataset_commit_index_rows",
+    "market_sim_commit_batches",
+)
+
+
+def _wave3_table_is_stub(conn: sqlite3.Connection, table: str) -> bool:
+    """True when table exists but matches the incompatible bootstrap stub shape."""
+    if table not in _table_names(conn):
+        return False
+    cols = {row[1] for row in conn.execute(f'PRAGMA table_info("{table}")').fetchall()}
+    if table == "provider_stream_events":
+        return "stream_id" in cols or ("job_id" not in cols and "sequence" not in cols)
+    if table == "intelligence_assimilation_receipts":
+        return "subject_id" in cols or "kind" not in cols
+    if table == "knowledge_commit_receipts":
+        return "receipt_id" in cols or "artifact_id" not in cols
+    if table == "source_ingestion_commit_records":
+        return "container_id" in cols or "source_id" not in cols
+    if table == "dataset_commit_index_rows":
+        # Stub: row_id PK alone + created_at, missing commit_id/applied_at.
+        return "commit_id" not in cols or "applied_at" not in cols
+    if table == "market_sim_commit_batches":
+        return "batch_id" in cols or "kind" not in cols
+    return False
+
+
+_WAVE3_CANONICAL_DDL: dict[str, str] = {
+    "provider_stream_events": """
+        CREATE TABLE IF NOT EXISTS provider_stream_events (
+            job_id TEXT NOT NULL,
+            sequence INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            correlation_id TEXT,
+            payload_json TEXT NOT NULL,
+            PRIMARY KEY (job_id, sequence)
+        );
+        CREATE INDEX IF NOT EXISTS idx_provider_stream_job
+            ON provider_stream_events(job_id, sequence);
+    """,
+    "intelligence_assimilation_receipts": """
+        CREATE TABLE IF NOT EXISTS intelligence_assimilation_receipts (
+            receipt_id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            ok INTEGER NOT NULL,
+            success_count INTEGER NOT NULL,
+            failure_count INTEGER NOT NULL,
+            skipped_count INTEGER NOT NULL,
+            payload_json TEXT NOT NULL
+        );
+    """,
+    "knowledge_commit_receipts": """
+        CREATE TABLE IF NOT EXISTS knowledge_commit_receipts (
+            commit_id TEXT PRIMARY KEY,
+            artifact_id TEXT NOT NULL,
+            idempotency_key TEXT,
+            receipt_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_commit_idempotency
+            ON knowledge_commit_receipts(idempotency_key)
+            WHERE idempotency_key IS NOT NULL;
+    """,
+    "source_ingestion_commit_records": """
+        CREATE TABLE IF NOT EXISTS source_ingestion_commit_records (
+            source_id TEXT NOT NULL,
+            record_id TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            commit_id TEXT NOT NULL,
+            applied_at TEXT NOT NULL,
+            PRIMARY KEY (source_id, record_id)
+        );
+    """,
+    "dataset_commit_index_rows": """
+        CREATE TABLE IF NOT EXISTS dataset_commit_index_rows (
+            dataset_id TEXT NOT NULL,
+            row_id TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            commit_id TEXT NOT NULL,
+            applied_at TEXT NOT NULL,
+            PRIMARY KEY (dataset_id, row_id)
+        );
+    """,
+    "market_sim_commit_batches": """
+        CREATE TABLE IF NOT EXISTS market_sim_commit_batches (
+            run_id TEXT NOT NULL,
+            record_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            commit_id TEXT NOT NULL,
+            sequence_number INTEGER NOT NULL DEFAULT 0,
+            applied_at TEXT NOT NULL,
+            PRIMARY KEY (run_id, record_id, kind)
+        );
+    """,
+}
+
+# Public alias — stores/handlers/bootstrap must reuse this single source.
+WAVE3_CANONICAL_DDL: dict[str, str] = _WAVE3_CANONICAL_DDL
+
+
+def wave3_canonical_ddl(table: str) -> str:
+    """Return canonical DDL script for one WAVE3 product table."""
+    try:
+        return _WAVE3_CANONICAL_DDL[table]
+    except KeyError as exc:
+        raise KeyError(f"Unknown WAVE3 table: {table!r}") from exc
+
+
+def apply_wave3_canonical_ddl(
+    conn: sqlite3.Connection,
+    *tables: str,
+) -> None:
+    """Execute canonical DDL for the given WAVE3 tables (default: all six)."""
+    targets = tables or WAVE3_PRODUCT_TABLES
+    for table in targets:
+        conn.executescript(_WAVE3_CANONICAL_DDL[table])
+
+
+def repair_incompatible_wave3_product_schemas(conn: sqlite3.Connection) -> list[str]:
+    """Replace SCHEMA-001..006 bootstrap stubs with canonical store schemas.
+
+    Bounded migration compatibility only — not a permanent parallel schema engine.
+    Returns names of tables that were repaired.
+    """
+    repaired: list[str] = []
+    for table, ddl in _WAVE3_CANONICAL_DDL.items():
+        if not _wave3_table_is_stub(conn, table):
+            continue
+        _retire_stub_table(conn, table)
+        conn.executescript(ddl)
+        repaired.append(table)
+    return repaired
+
+
+def repair_domain_wave3_schemas(paths: DatabasePaths) -> dict[str, list[str]]:
+    """Apply WAVE3 stub repairs on each canonical domain DB that owns the tables."""
+    out: dict[str, list[str]] = {}
+    for domain, path in paths:
+        if not path.is_file():
+            continue
+        conn = _connect(path)
+        try:
+            owned = {t for t in _WAVE3_CANONICAL_DDL if ownership_for(t) is domain}
+            repaired: list[str] = []
+            for table in owned:
+                if not _wave3_table_is_stub(conn, table):
+                    continue
+                _retire_stub_table(conn, table)
+                conn.executescript(_WAVE3_CANONICAL_DDL[table])
+                repaired.append(table)
+            if repaired:
+                conn.commit()
+            out[domain.value] = repaired
+        finally:
+            conn.close()
+    return out
+
+
 def _connect(path: Path, *, set_wal: bool = False) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = open_sqlite_connection(path, set_wal=set_wal)
@@ -301,6 +480,523 @@ def _table_names(conn: sqlite3.Connection) -> set[str]:
 def _row_count(conn: sqlite3.Connection, table: str) -> int:
     row = conn.execute(f'SELECT COUNT(*) AS c FROM "{table}"').fetchone()
     return int(row[0] if not isinstance(row, sqlite3.Row) else row["c"])
+
+
+# Misplaced-table reconciliation actions (UNKNOWN => BLOCK, never MIGRATE).
+MISPLACED_SKIP_EMPTY = "SKIP_EMPTY"
+MISPLACED_MIGRATE = "MIGRATE"
+MISPLACED_EQUIVALENT_RETIRE = "EQUIVALENT_RETIRE"
+MISPLACED_BLOCK_UNKNOWN = "BLOCK_UNKNOWN"
+MISPLACED_BLOCK_UNREADABLE = "BLOCK_UNREADABLE"
+MISPLACED_BLOCK_MISSING_TARGET = "BLOCK_MISSING_TARGET"
+MISPLACED_BLOCK_SCHEMA_MISMATCH = "BLOCK_SCHEMA_MISMATCH"
+MISPLACED_BLOCK_CONFLICT = "BLOCK_CONFLICT"
+MISPLACED_BLOCK_OPERATOR_REVIEW = "BLOCK_OPERATOR_REVIEW"
+
+_MISPLACED_BLOCK_ACTIONS = frozenset(
+    {
+        MISPLACED_BLOCK_UNKNOWN,
+        MISPLACED_BLOCK_UNREADABLE,
+        MISPLACED_BLOCK_MISSING_TARGET,
+        MISPLACED_BLOCK_SCHEMA_MISMATCH,
+        MISPLACED_BLOCK_CONFLICT,
+        MISPLACED_BLOCK_OPERATOR_REVIEW,
+    }
+)
+
+MISPLACED_JOURNAL_TABLE = "misplaced_reconcile_journal"
+
+
+@dataclass
+class MisplacedTableFinding:
+    table: str
+    found_in: DatabaseDomain
+    owned_by: DatabaseDomain
+    row_count: int
+    target_row_count: int | None
+    action: str
+    detail: str = ""
+
+
+@dataclass
+class MisplacedReconcileReport:
+    findings: list[MisplacedTableFinding] = field(default_factory=list)
+    migrated: list[str] = field(default_factory=list)
+    retired_equivalent: list[str] = field(default_factory=list)
+    blocked: list[str] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    receipt_path: str | None = None
+    completed: bool = False
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "findings": [
+                {
+                    "table": f.table,
+                    "found_in": f.found_in.value,
+                    "owned_by": f.owned_by.value,
+                    "row_count": f.row_count,
+                    "target_row_count": f.target_row_count,
+                    "action": f.action,
+                    "detail": f.detail,
+                }
+                for f in self.findings
+            ],
+            "migrated": list(self.migrated),
+            "retired_equivalent": list(self.retired_equivalent),
+            "blocked": list(self.blocked),
+            "skipped": list(self.skipped),
+            "errors": list(self.errors),
+            "completed": self.completed,
+            "receipt_path": self.receipt_path,
+        }
+
+
+def _ensure_misplaced_journal(control_conn: sqlite3.Connection) -> None:
+    control_conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {MISPLACED_JOURNAL_TABLE} (
+            table_name TEXT NOT NULL,
+            source_domain TEXT NOT NULL,
+            target_domain TEXT NOT NULL,
+            phase TEXT NOT NULL,
+            source_count INTEGER,
+            target_count INTEGER,
+            checksum TEXT,
+            detail TEXT,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (table_name, source_domain, target_domain)
+        )
+        """
+    )
+
+
+def _journal_misplaced(
+    control_path: Path,
+    *,
+    table: str,
+    source_domain: DatabaseDomain,
+    target_domain: DatabaseDomain,
+    phase: str,
+    source_count: int | None = None,
+    target_count: int | None = None,
+    checksum: str | None = None,
+    detail: str = "",
+) -> None:
+    conn = _connect(control_path)
+    try:
+        _ensure_misplaced_journal(conn)
+        conn.execute(
+            f"""
+            INSERT INTO {MISPLACED_JOURNAL_TABLE}(
+                table_name, source_domain, target_domain, phase,
+                source_count, target_count, checksum, detail, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(table_name, source_domain, target_domain) DO UPDATE SET
+                phase=excluded.phase,
+                source_count=excluded.source_count,
+                target_count=excluded.target_count,
+                checksum=excluded.checksum,
+                detail=excluded.detail,
+                updated_at=excluded.updated_at
+            """,
+            (
+                table,
+                source_domain.value,
+                target_domain.value,
+                phase,
+                source_count,
+                target_count,
+                checksum,
+                detail,
+                utc_now(),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _pragma_columns(conn: sqlite3.Connection, table: str) -> list[str]:
+    return [str(r[1]) for r in conn.execute(f'PRAGMA table_info("{table}")').fetchall()]
+
+
+def detect_misplaced_product_tables(paths: DatabasePaths) -> list[MisplacedTableFinding]:
+    """Detect canonical product tables materialised in the wrong domain DB.
+
+    Invariant: UNKNOWN / ERROR / CONFLICT => BLOCK. Never MIGRATE on uncertainty.
+    """
+    from Data.backend.table_ownership import is_fts_shadow_table
+
+    findings: list[MisplacedTableFinding] = []
+    for found_domain, found_path in paths.all_canonical():
+        if not found_path.is_file():
+            continue
+        conn = _connect(found_path)
+        try:
+            for name in sorted(_table_names(conn)):
+                if is_fts_shadow_table(name):
+                    continue
+                owned = ownership_for(name)
+                if owned is None or owned is found_domain:
+                    continue
+                try:
+                    row_count = _row_count(conn, name)
+                except sqlite3.Error as exc:
+                    findings.append(
+                        MisplacedTableFinding(
+                            table=name,
+                            found_in=found_domain,
+                            owned_by=owned,
+                            row_count=-1,
+                            target_row_count=None,
+                            action=MISPLACED_BLOCK_UNKNOWN,
+                            detail=f"source_unreadable:{type(exc).__name__}",
+                        )
+                    )
+                    continue
+
+                target_path = paths.path_for(owned)
+                if not target_path.is_file():
+                    findings.append(
+                        MisplacedTableFinding(
+                            table=name,
+                            found_in=found_domain,
+                            owned_by=owned,
+                            row_count=row_count,
+                            target_row_count=None,
+                            action=MISPLACED_BLOCK_MISSING_TARGET,
+                            detail="canonical_target_db_missing",
+                        )
+                    )
+                    continue
+
+                target_count: int | None
+                tconn = _connect(target_path)
+                try:
+                    if name in _table_names(tconn):
+                        try:
+                            target_count = _row_count(tconn, name)
+                        except sqlite3.Error as exc:
+                            findings.append(
+                                MisplacedTableFinding(
+                                    table=name,
+                                    found_in=found_domain,
+                                    owned_by=owned,
+                                    row_count=row_count,
+                                    target_row_count=-1,
+                                    action=MISPLACED_BLOCK_UNREADABLE,
+                                    detail=f"target_unreadable:{type(exc).__name__}",
+                                )
+                            )
+                            continue
+                    else:
+                        target_count = 0
+                finally:
+                    tconn.close()
+
+                if row_count < 0:
+                    action, detail = MISPLACED_BLOCK_UNKNOWN, "source_count_unknown"
+                elif row_count == 0:
+                    action, detail = MISPLACED_SKIP_EMPTY, "source_empty"
+                elif target_count is None:
+                    action, detail = MISPLACED_BLOCK_MISSING_TARGET, "target_count_unavailable"
+                elif target_count < 0:
+                    action, detail = MISPLACED_BLOCK_UNREADABLE, "target_count_unknown"
+                elif target_count > 0:
+                    # Defer equivalence vs conflict classification to reconcile
+                    # (needs open connections + checksums).
+                    action, detail = MISPLACED_BLOCK_OPERATOR_REVIEW, "target_nonempty_pending_classify"
+                else:
+                    action, detail = MISPLACED_MIGRATE, "target_empty_or_absent_table"
+
+                findings.append(
+                    MisplacedTableFinding(
+                        table=name,
+                        found_in=found_domain,
+                        owned_by=owned,
+                        row_count=row_count,
+                        target_row_count=target_count,
+                        action=action,
+                        detail=detail,
+                    )
+                )
+        finally:
+            conn.close()
+    return findings
+
+
+def _ensure_canonical_destination_table(dst_conn: sqlite3.Connection, table: str) -> bool:
+    """Ensure destination table exists from canonical DDL — never promote source stub DDL.
+
+    Returns True when the destination table exists and is usable.
+    """
+    if table in _table_names(dst_conn):
+        if table in _WAVE3_CANONICAL_DDL and _wave3_table_is_stub(dst_conn, table):
+            _retire_stub_table(dst_conn, table)
+            dst_conn.executescript(_WAVE3_CANONICAL_DDL[table])
+        return table in _table_names(dst_conn)
+    ddl = _WAVE3_CANONICAL_DDL.get(table)
+    if ddl:
+        dst_conn.executescript(ddl)
+        return table in _table_names(dst_conn)
+    return False
+
+
+def _compatible_columns(src_conn: sqlite3.Connection, dst_conn: sqlite3.Connection, table: str) -> list[str]:
+    src_cols = _pragma_columns(src_conn, table)
+    dst_cols = _pragma_columns(dst_conn, table)
+    if not src_cols or not dst_cols:
+        return []
+    dst_set = set(dst_cols)
+    return [c for c in src_cols if c in dst_set]
+
+
+def _classify_nonempty_overlap(
+    src_conn: sqlite3.Connection,
+    dst_conn: sqlite3.Connection,
+    table: str,
+) -> tuple[str, str]:
+    """Return (action, detail) when both source and target have rows."""
+    try:
+        src_count = _row_count(src_conn, table)
+        dst_count = _row_count(dst_conn, table)
+        src_hash = _content_checksum(src_conn, table)
+        dst_hash = _content_checksum(dst_conn, table)
+    except sqlite3.Error as exc:
+        return MISPLACED_BLOCK_UNREADABLE, f"overlap_unreadable:{type(exc).__name__}"
+    if src_hash == "unavailable" or dst_hash == "unavailable":
+        return MISPLACED_BLOCK_UNKNOWN, "checksum_unavailable"
+    if src_count == dst_count and src_hash == dst_hash:
+        return MISPLACED_EQUIVALENT_RETIRE, "verified_equivalent"
+    return (
+        MISPLACED_BLOCK_OPERATOR_REVIEW,
+        f"conflict_src={src_count}:{src_hash[:12]} dst={dst_count}:{dst_hash[:12]}",
+    )
+
+
+def _copy_misplaced_verified(
+    src_conn: sqlite3.Connection,
+    dst_conn: sqlite3.Connection,
+    table: str,
+) -> dict[str, Any]:
+    """Copy source -> destination with explicit columns; verify before return.
+
+    Does NOT drop the source. Uses plain INSERT (not OR IGNORE) so conflicts surface.
+    """
+    if not _ensure_canonical_destination_table(dst_conn, table):
+        raise DatabaseUpgradeError(
+            f"no canonical schema authority for misplaced table {table}; refusing source DDL promotion"
+        )
+    cols = _compatible_columns(src_conn, dst_conn, table)
+    if not cols:
+        raise DatabaseUpgradeError(f"schema mismatch for {table}: no compatible columns")
+    src_only = set(_pragma_columns(src_conn, table)) - set(cols)
+    if src_only:
+        # Required columns missing on destination → block rather than silent drop.
+        dst_required = {
+            str(r[1])
+            for r in dst_conn.execute(f'PRAGMA table_info("{table}")').fetchall()
+            if int(r[3] or 0) == 1 and r[4] is None and int(r[5] or 0) == 0
+        }
+        missing_required = dst_required - set(cols)
+        if missing_required:
+            raise DatabaseUpgradeError(
+                f"schema mismatch for {table}: destination NOT NULL cols missing from source: "
+                f"{sorted(missing_required)}"
+            )
+    col_list = ", ".join(f'"{c}"' for c in cols)
+    placeholders = ", ".join("?" for _ in cols)
+    rows = src_conn.execute(f'SELECT {col_list} FROM "{table}"').fetchall()
+    before = _row_count(dst_conn, table)
+    try:
+        dst_conn.executemany(
+            f'INSERT INTO "{table}" ({col_list}) VALUES ({placeholders})',
+            [tuple(row) for row in rows],
+        )
+    except sqlite3.IntegrityError as exc:
+        raise DatabaseUpgradeError(
+            f"PK/unique conflict copying {table}: {exc}; operator review required"
+        ) from exc
+    after = _row_count(dst_conn, table)
+    if after - before != len(rows):
+        raise DatabaseUpgradeError(
+            f"row copy incomplete for {table}: attempted={len(rows)} applied={after - before}"
+        )
+    # Source still present — verify destination gained exact payload vs source projection.
+    src_count = _row_count(src_conn, table)
+    if after < src_count and before == 0:
+        raise DatabaseUpgradeError(
+            f"count mismatch for {table}: source={src_count} target={after}"
+        )
+    return {
+        "table": table,
+        "columns": cols,
+        "sourceCount": src_count,
+        "targetCount": after,
+        "copied": len(rows),
+        "checksum": _content_checksum(dst_conn, table),
+    }
+
+
+def reconcile_misplaced_product_tables(
+    paths: DatabasePaths,
+    *,
+    apply: bool = True,
+    receipt_dir: Path | None = None,
+) -> MisplacedReconcileReport:
+    """No-loss misplaced-table reconciliation.
+
+    - UNKNOWN / unreadable / schema mismatch / conflict => BLOCK (never DROP)
+    - MIGRATE only after verified copy into canonical destination schema
+    - Source DROP only after verification + durable journal phase COPIED_VERIFIED
+    """
+    report = MisplacedReconcileReport()
+    findings = detect_misplaced_product_tables(paths)
+    report.findings = findings
+
+    for finding in findings:
+        if finding.action == MISPLACED_SKIP_EMPTY:
+            report.skipped.append(finding.table)
+            # Empty wrong-domain tables may be dropped safely when applying.
+            if apply:
+                src = paths.path_for(finding.found_in)
+                try:
+                    sconn = _connect(src)
+                    try:
+                        sconn.execute(f'DROP TABLE IF EXISTS "{finding.table}"')
+                        sconn.commit()
+                    finally:
+                        sconn.close()
+                except sqlite3.Error as exc:
+                    report.errors.append(f"{finding.table}: empty_drop_failed:{exc}")
+                    report.blocked.append(finding.table)
+            continue
+
+        if finding.action in _MISPLACED_BLOCK_ACTIONS and finding.action != MISPLACED_BLOCK_OPERATOR_REVIEW:
+            report.blocked.append(finding.table)
+            report.errors.append(f"{finding.table}:{finding.action}:{finding.detail}")
+            continue
+
+        src = paths.path_for(finding.found_in)
+        dst = paths.path_for(finding.owned_by)
+        if not apply:
+            if finding.action == MISPLACED_MIGRATE:
+                continue
+            if finding.action == MISPLACED_BLOCK_OPERATOR_REVIEW:
+                report.blocked.append(finding.table)
+            continue
+
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        src_conn = _connect(src)
+        dst_conn = _connect(dst)
+        try:
+            # Reclassify overlap now that both DBs are open.
+            action = finding.action
+            detail = finding.detail
+            if action == MISPLACED_BLOCK_OPERATOR_REVIEW and finding.table in _table_names(dst_conn):
+                action, detail = _classify_nonempty_overlap(src_conn, dst_conn, finding.table)
+                finding.action = action
+                finding.detail = detail
+
+            if action == MISPLACED_EQUIVALENT_RETIRE:
+                _journal_misplaced(
+                    paths.control,
+                    table=finding.table,
+                    source_domain=finding.found_in,
+                    target_domain=finding.owned_by,
+                    phase="EQUIVALENT_VERIFIED",
+                    source_count=finding.row_count,
+                    target_count=finding.target_row_count,
+                    checksum=_content_checksum(dst_conn, finding.table),
+                    detail=detail,
+                )
+                src_conn.execute(f'DROP TABLE IF EXISTS "{finding.table}"')
+                src_conn.commit()
+                _journal_misplaced(
+                    paths.control,
+                    table=finding.table,
+                    source_domain=finding.found_in,
+                    target_domain=finding.owned_by,
+                    phase="SOURCE_RETIRED",
+                    source_count=0,
+                    target_count=finding.target_row_count,
+                    detail="equivalent_source_retired",
+                )
+                report.retired_equivalent.append(finding.table)
+                continue
+
+            if action != MISPLACED_MIGRATE:
+                report.blocked.append(finding.table)
+                report.errors.append(f"{finding.table}:{action}:{detail}")
+                continue
+
+            _journal_misplaced(
+                paths.control,
+                table=finding.table,
+                source_domain=finding.found_in,
+                target_domain=finding.owned_by,
+                phase="COPY_STARTED",
+                source_count=finding.row_count,
+                target_count=finding.target_row_count or 0,
+            )
+            try:
+                meta = _copy_misplaced_verified(src_conn, dst_conn, finding.table)
+                dst_conn.commit()
+            except (sqlite3.Error, DatabaseUpgradeError) as exc:
+                try:
+                    dst_conn.rollback()
+                except sqlite3.Error:
+                    pass
+                _journal_misplaced(
+                    paths.control,
+                    table=finding.table,
+                    source_domain=finding.found_in,
+                    target_domain=finding.owned_by,
+                    phase="COPY_FAILED",
+                    source_count=finding.row_count,
+                    detail=str(exc)[:500],
+                )
+                report.blocked.append(finding.table)
+                report.errors.append(f"{finding.table}:copy_failed:{exc}")
+                continue
+
+            _journal_misplaced(
+                paths.control,
+                table=finding.table,
+                source_domain=finding.found_in,
+                target_domain=finding.owned_by,
+                phase="COPIED_VERIFIED",
+                source_count=int(meta["sourceCount"]),
+                target_count=int(meta["targetCount"]),
+                checksum=str(meta.get("checksum") or ""),
+            )
+            # Retire source only after verified destination.
+            src_conn.execute(f'DROP TABLE IF EXISTS "{finding.table}"')
+            src_conn.commit()
+            _journal_misplaced(
+                paths.control,
+                table=finding.table,
+                source_domain=finding.found_in,
+                target_domain=finding.owned_by,
+                phase="SOURCE_RETIRED",
+                source_count=0,
+                target_count=int(meta["targetCount"]),
+                checksum=str(meta.get("checksum") or ""),
+            )
+            report.migrated.append(finding.table)
+        finally:
+            src_conn.close()
+            dst_conn.close()
+
+    report.completed = not report.blocked and not report.errors
+    receipt_dir = receipt_dir or paths.control.parent
+    receipt_dir.mkdir(parents=True, exist_ok=True)
+    receipt = receipt_dir / "misplaced_table_reconcile_receipt.json"
+    receipt.write_text(json.dumps(report.public_dict(), indent=2), encoding="utf-8")
+    report.receipt_path = str(receipt)
+    return report
 
 
 def _content_checksum(conn: sqlite3.Connection, table: str, *, limit: int = 50_000) -> str:
@@ -406,54 +1102,10 @@ def _ensure_runtime_bootstrap_schema(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_quality_acceptances_contract
             ON quality_acceptances(contract_id, contract_version);
-
-        CREATE TABLE IF NOT EXISTS provider_stream_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            stream_id TEXT NOT NULL,
-            seq INTEGER NOT NULL DEFAULT 0,
-            event_type TEXT NOT NULL DEFAULT '',
-            payload_json TEXT NOT NULL DEFAULT '{}',
-            created_at TEXT NOT NULL DEFAULT ''
-        );
-
-        CREATE TABLE IF NOT EXISTS intelligence_assimilation_receipts (
-            receipt_id TEXT PRIMARY KEY,
-            subject_id TEXT NOT NULL DEFAULT '',
-            status TEXT NOT NULL DEFAULT '',
-            detail_json TEXT NOT NULL DEFAULT '{}',
-            created_at TEXT NOT NULL DEFAULT ''
-        );
-
-        CREATE TABLE IF NOT EXISTS knowledge_commit_receipts (
-            receipt_id TEXT PRIMARY KEY,
-            commit_id TEXT NOT NULL DEFAULT '',
-            status TEXT NOT NULL DEFAULT '',
-            detail_json TEXT NOT NULL DEFAULT '{}',
-            created_at TEXT NOT NULL DEFAULT ''
-        );
-
-        CREATE TABLE IF NOT EXISTS source_ingestion_commit_records (
-            record_id TEXT PRIMARY KEY,
-            container_id TEXT NOT NULL DEFAULT '',
-            payload_json TEXT NOT NULL DEFAULT '{}',
-            created_at TEXT NOT NULL DEFAULT ''
-        );
-
-        CREATE TABLE IF NOT EXISTS dataset_commit_index_rows (
-            row_id TEXT PRIMARY KEY,
-            dataset_id TEXT NOT NULL DEFAULT '',
-            payload_json TEXT NOT NULL DEFAULT '{}',
-            created_at TEXT NOT NULL DEFAULT ''
-        );
-
-        CREATE TABLE IF NOT EXISTS market_sim_commit_batches (
-            batch_id TEXT PRIMARY KEY,
-            run_id TEXT NOT NULL DEFAULT '',
-            payload_json TEXT NOT NULL DEFAULT '{}',
-            created_at TEXT NOT NULL DEFAULT ''
-        );
         """
     )
+    # WAVE 24: single schema authority — reuse _WAVE3_CANONICAL_DDL (no duplicated strings).
+    apply_wave3_canonical_ddl(conn)
     try:
         conn.execute(
             """
@@ -872,6 +1524,15 @@ def classify_unmapped_legacy_tables(legacy: Path) -> list[str]:
         conn.close()
 
 
+def _finalize_upgrade_report(report: UpgradeReport) -> UpgradeReport:
+    """COMPLETE is forbidden while errors/blockers remain."""
+    if report.errors:
+        report.completed = False
+        if report.phase is CutoverPhase.COMPLETE:
+            report.phase = CutoverPhase.FAILED
+    return report
+
+
 def upgrade_all_databases(paths: DatabasePaths) -> UpgradeReport:
     """Canonical entrypoint: fresh install, legacy cutover, or 3-DB migrate."""
     mode = detect_install_mode(paths)
@@ -907,6 +1568,22 @@ def upgrade_all_databases(paths: DatabasePaths) -> UpgradeReport:
                 control.commit()
             finally:
                 control.close()
+            report.verification["wave3_schema_repairs"] = repair_domain_wave3_schemas(paths)
+            # Reconcile product tables that landed in the wrong domain DB.
+            reconcile_report = reconcile_misplaced_product_tables(paths, apply=True)
+            report.verification["misplaced_reconcile"] = reconcile_report.public_dict()
+            if reconcile_report.blocked or reconcile_report.errors or not reconcile_report.completed:
+                for err in reconcile_report.errors:
+                    if err not in report.errors:
+                        report.errors.append(err)
+                if reconcile_report.blocked:
+                    report.errors.append(
+                        "Misplaced tables blocked (UNKNOWN/CONFLICT/SCHEMA) — operator review required: "
+                        + ", ".join(reconcile_report.blocked)
+                    )
+                report.phase = CutoverPhase.FAILED
+                report.completed = False
+                return _finalize_upgrade_report(report)
             # If cutover already complete, done.
             control = _connect(paths.control)
             try:
@@ -915,7 +1592,7 @@ def upgrade_all_databases(paths: DatabasePaths) -> UpgradeReport:
                 if status == CutoverPhase.COMPLETE.value:
                     report.phase = CutoverPhase.COMPLETE
                     report.completed = True
-                    return report
+                    return _finalize_upgrade_report(report)
                 # Three DBs exist without complete cutover marker: treat as fresh-complete
                 # if no legacy, else resume cutover.
                 if paths.legacy and paths.legacy.is_file():
@@ -928,7 +1605,7 @@ def upgrade_all_databases(paths: DatabasePaths) -> UpgradeReport:
                     control.commit()
                     report.phase = CutoverPhase.COMPLETE
                     report.completed = True
-                    return report
+                    return _finalize_upgrade_report(report)
             finally:
                 control.close()
 
@@ -949,9 +1626,10 @@ def upgrade_all_databases(paths: DatabasePaths) -> UpgradeReport:
                 control.commit()
             finally:
                 control.close()
+            report.verification["wave3_schema_repairs"] = repair_domain_wave3_schemas(paths)
             report.phase = CutoverPhase.COMPLETE
             report.completed = True
-            return report
+            return _finalize_upgrade_report(report)
 
         # LEGACY_SINGLE (or resumed)
         assert paths.legacy is not None
@@ -968,6 +1646,7 @@ def upgrade_all_databases(paths: DatabasePaths) -> UpgradeReport:
             # Legacy may already have cutover stubs from a prior partial run.
             repair_incompatible_runs_schema(legacy_conn)
             repair_incompatible_quality_schema(legacy_conn)
+            repair_incompatible_wave3_product_schemas(legacy_conn)
             legacy_conn.commit()
             report.legacy_schema_version = MigrationRunner(legacy).current_version(legacy_conn)
         finally:
@@ -991,6 +1670,7 @@ def upgrade_all_databases(paths: DatabasePaths) -> UpgradeReport:
             apply_domain_baseline(path, domain, template=template)
             report.domain_versions[domain.value] = domain_schema_version(path)
         report.phase = CutoverPhase.TARGETS_CREATED
+        report.verification["wave3_schema_repairs"] = repair_domain_wave3_schemas(paths)
 
         control = _connect(paths.control)
         try:
@@ -1051,7 +1731,7 @@ def upgrade_all_databases(paths: DatabasePaths) -> UpgradeReport:
             control.commit()
             report.phase = CutoverPhase.COMPLETE
             report.completed = True
-            return report
+            return _finalize_upgrade_report(report)
         except Exception as exc:
             report.phase = CutoverPhase.FAILED
             report.errors.append(str(exc))
