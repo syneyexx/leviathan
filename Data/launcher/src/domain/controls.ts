@@ -63,7 +63,7 @@ export function controlGates(
           ? "Open the configured loopback frontend in the system browser."
           : frontendReachable === false
             ? "The configured frontend URL is not reachable."
-            : "Frontend reachability is UNMEASURED until /api/health responds.",
+            : "Frontend reachability is UNMEASURED until /api/host/liveness responds.",
     },
     emergency: {
       enabled: linked && owned && host.pid != null && state !== "STOPPED",
@@ -79,21 +79,31 @@ export function controlGates(
 }
 
 export function hostStatusLabel(host: HostSnapshot): { title: string; detail: string } {
+  const readiness = host.systemReadiness ?? "UNMEASURED";
+  const withReadiness = (message: string) =>
+    readiness && readiness !== "UNMEASURED" && !message.toUpperCase().includes(readiness)
+      ? `${message} · ${readiness}`
+      : message;
   switch (host.state) {
     case "RUNNING":
       return {
         title: "Backend Host Active",
-        detail: host.safeModeActive ? "SAFE MODE" : host.message || "Owned runtime is healthy",
+        detail: host.safeModeActive
+          ? withReadiness("SAFE MODE")
+          : withReadiness(host.message || "Owned runtime is healthy"),
       };
     case "DEGRADED":
-      return { title: "Backend Host Degraded", detail: host.message };
+      return { title: "Backend Host Degraded", detail: withReadiness(host.message) };
     case "STARTING":
     case "PREFLIGHT":
-      return { title: "Backend Host Starting", detail: host.message };
+      return {
+        title: "Backend Host Starting",
+        detail: withReadiness(host.message || "Waiting for /api/host/liveness."),
+      };
     case "STOPPING":
-      return { title: "Backend Host Stopping", detail: host.message };
+      return { title: "Backend Host Stopping", detail: withReadiness(host.message) };
     case "FAILED":
-      return { title: "Backend Host Failed", detail: host.message };
+      return { title: "Backend Host Failed", detail: withReadiness(host.message) };
     case "ATTACHED_EXTERNAL":
       return { title: "External Instance", detail: "Monitoring only. Destructive controls are guarded." };
     default:

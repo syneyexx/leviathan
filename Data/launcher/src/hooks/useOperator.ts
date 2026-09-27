@@ -5,6 +5,12 @@ import { isHostSnapshot, optimisticCommand, stoppedSnapshot } from "../domain/ho
 import { ingestionActive, mapIngestion } from "../domain/ingestion";
 import { mapEvent } from "../domain/logs";
 import { mapNative } from "../domain/native";
+import {
+  loadingProjection,
+  liveProjection,
+  markTransportError,
+  type ReadProjection,
+} from "../domain/projection";
 import { emptyHistories, metricCards, readPerformance, type MetricHistories } from "../domain/telemetry";
 import { mapWorkers } from "../domain/workers";
 import { getJson, invokeHost, tauriAvailable } from "../lib/api";
@@ -24,6 +30,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
+type JsonMap = Record<string, unknown>;
+
 export function useOperator() {
   const [host, setHost] = useState<HostSnapshot>(stoppedSnapshot());
   const [bridge, setBridge] = useState<BridgeState>(tauriAvailable() ? "CONNECTING" : "FAILED");
@@ -35,17 +43,21 @@ export function useOperator() {
   const [lines, setLines] = useState<ConsoleLine[]>([]);
   const [paused, setPaused] = useState(false);
   const [logsPaused, setLogsPaused] = useState(false);
-  const [health, setHealth] = useState<Record<string, unknown> | null>(null);
-  const [databases, setDatabases] = useState<Array<Record<string, unknown>> | null>(null);
-  const [dashboard, setDashboard] = useState<Record<string, unknown> | null>(null);
-  const [nativePayload, setNativePayload] = useState<Record<string, unknown> | null>(null);
-  const [ingestionPayload, setIngestionPayload] = useState<Record<string, unknown> | null>(null);
-  const [ingestionUnavailable, setIngestionUnavailable] = useState(false);
-  const [performance, setPerformance] = useState<Record<string, unknown> | null>(null);
+
+  const [liveness, setLiveness] = useState<ReadProjection<JsonMap>>(loadingProjection);
+  const [health, setHealth] = useState<ReadProjection<JsonMap>>(loadingProjection);
+  const [databases, setDatabases] = useState<ReadProjection<Array<JsonMap>>>(loadingProjection);
+  const [dashboard, setDashboard] = useState<ReadProjection<JsonMap>>(loadingProjection);
+  const [nativePayload, setNativePayload] = useState<ReadProjection<JsonMap>>(loadingProjection);
+  const [ingestionPayload, setIngestionPayload] = useState<ReadProjection<JsonMap>>(loadingProjection);
+  const [performance, setPerformance] = useState<ReadProjection<JsonMap>>(loadingProjection);
+  const [modelsStatus, setModelsStatus] = useState<ReadProjection<JsonMap>>(loadingProjection);
   const [queueDepth, setQueueDepth] = useState<number | null>(null);
   const [histories, setHistories] = useState<MetricHistories>(emptyHistories());
   const [logs, setLogs] = useState<LogRowModel[]>([]);
   const [frontendReachable, setFrontendReachable] = useState<boolean | null>(null);
+  const [sseTransportError, setSseTransportError] = useState(false);
+
   const pausedRef = useRef(false);
   pausedRef.current = paused;
   const clearFloor = useRef(0);
@@ -71,6 +83,20 @@ export function useOperator() {
       stream: "system",
       text: `${action}: ${message}`,
     }], 20_000));
+  }, []);
+
+  const resetBackendProjections = useCallback(() => {
+    setLiveness(loadingProjection());
+    setHealth(loadingProjection());
+    setDatabases(loadingProjection());
+    setDashboard(loadingProjection());
+    setNativePayload(loadingProjection());
+    setIngestionPayload(loadingProjection());
+    setPerformance(loadingProjection());
+    setModelsStatus(loadingProjection());
+    setQueueDepth(null);
+    setFrontendReachable(null);
+    setSseTransportError(false);
   }, []);
 
   useEffect(() => {
@@ -131,21 +157,30 @@ export function useOperator() {
   const live = host.state === "RUNNING" || host.state === "DEGRADED" || host.state === "STARTING" || host.state === "ATTACHED_EXTERNAL";
 
   useEffect(() => {
+    if (!apiBase || !live) {
+      resetBackendProjections();
+      return;
+    }
+  }, [apiBase, live, resetBackendProjections]);
+
+  // Fast liveness poll — drives API card + frontendReachable.
+  useEffect(() => {
     if (!apiBase || !live) return;
     const controller = new AbortController();
     let timer = 0;
     const tick = async () => {
       const hidden = document.hidden;
       try {
-        const body = await getJson<Record<string, unknown>>(apiBase, "/api/health", controller.signal);
-        setHealth(body);
+        const body = await getJson<JsonMap>(apiBase, "/api/host/liveness", controller.signal);
+        setLiveness(liveProjection(body));
         setFrontendReachable(body.ok === true);
-        const jobs = body.jobs as Record<string, unknown> | undefined;
-        if (typeof jobs?.queued === "number") setQueueDepth(jobs.queued);
-      } catch {
-        if (!controller.signal.aborted) setFrontendReachable(false);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setLiveness((prev) => markTransportError(prev, error));
+          setFrontendReachable(false);
+        }
       }
-      const delay = hidden ? 15_000 : host.state === "STARTING" ? 1_500 : 5_000;
+      const delay = hidden ? 15_000 : host.state === "STARTING" ? 1_500 : 3_000;
       timer = window.setTimeout(() => void tick(), delay);
     };
     void tick();
@@ -155,18 +190,68 @@ export function useOperator() {
     };
   }, [apiBase, live, host.state]);
 
+  // Slower /api/health — optional enrichment (jobs queue, llm fallback).
   useEffect(() => {
     if (!apiBase || !live) return;
     const controller = new AbortController();
     let timer = 0;
     const tick = async () => {
       try {
-        const body = await getJson<Record<string, unknown>>(apiBase, "/api/workers/dashboard", controller.signal);
-        setDashboard(body);
+        const body = await getJson<JsonMap>(apiBase, "/api/health", controller.signal);
+        setHealth(liveProjection(body));
+        const jobs = body.jobs as Record<string, unknown> | undefined;
+        if (typeof jobs?.queued === "number") setQueueDepth(jobs.queued);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setHealth((prev) => markTransportError(prev, error));
+        }
+      }
+      timer = window.setTimeout(() => void tick(), document.hidden ? 20_000 : 10_000);
+    };
+    void tick();
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [apiBase, live]);
+
+  // Model runtime card — /api/models/status.
+  useEffect(() => {
+    if (!apiBase || !live) return;
+    const controller = new AbortController();
+    let timer = 0;
+    const tick = async () => {
+      try {
+        const body = await getJson<JsonMap>(apiBase, "/api/models/status", controller.signal);
+        setModelsStatus(liveProjection(body));
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setModelsStatus((prev) => markTransportError(prev, error));
+        }
+      }
+      timer = window.setTimeout(() => void tick(), document.hidden ? 20_000 : 5_000);
+    };
+    void tick();
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [apiBase, live]);
+
+  useEffect(() => {
+    if (!apiBase || !live) return;
+    const controller = new AbortController();
+    let timer = 0;
+    const tick = async () => {
+      try {
+        const body = await getJson<JsonMap>(apiBase, "/api/workers/dashboard", controller.signal);
+        setDashboard(liveProjection(body));
         const summary = body.summary as Record<string, unknown> | undefined;
         if (typeof summary?.queue_depth === "number") setQueueDepth(summary.queue_depth);
-      } catch {
-        setDashboard(null);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setDashboard((prev) => markTransportError(prev, error));
+        }
       }
       timer = window.setTimeout(() => void tick(), document.hidden ? 12_000 : 2_000);
     };
@@ -183,8 +268,8 @@ export function useOperator() {
     let timer = 0;
     const tick = async () => {
       try {
-        const body = await getJson<Record<string, unknown>>(apiBase, "/api/performance/snapshot", controller.signal);
-        setPerformance(body);
+        const body = await getJson<JsonMap>(apiBase, "/api/performance/snapshot", controller.signal);
+        setPerformance(liveProjection(body));
         const latest = readPerformance(body);
         setHistories((current) => ({
           queue: pushSample(current.queue, queueDepth),
@@ -197,8 +282,10 @@ export function useOperator() {
           docs: pushSample(current.docs, latest.docs),
           network: pushSample(current.network, latest.network),
         }));
-      } catch {
-        setPerformance(null);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setPerformance((prev) => markTransportError(prev, error));
+        }
       }
       timer = window.setTimeout(() => void tick(), document.hidden ? 12_000 : 2_000);
     };
@@ -216,18 +303,21 @@ export function useOperator() {
     let timer = 0;
     const tick = async () => {
       try {
-        const body = await getJson<Record<string, unknown>>(apiBase, "/api/host/source-ingestion", controller.signal);
-        setIngestionPayload(body);
+        const body = await getJson<JsonMap>(apiBase, "/api/host/source-ingestion", controller.signal);
+        setIngestionPayload(liveProjection(body));
         ingestionActiveRef.current = ingestionActive(mapIngestion(body));
-        setIngestionUnavailable(false);
-      } catch {
-        if (!controller.signal.aborted) setIngestionUnavailable(true);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setIngestionPayload((prev) => markTransportError(prev, error));
+        }
       }
       try {
-        const native = await getJson<Record<string, unknown>>(apiBase, "/api/host/native-operations", controller.signal);
-        setNativePayload(native);
-      } catch {
-        if (!controller.signal.aborted) setNativePayload(null);
+        const native = await getJson<JsonMap>(apiBase, "/api/host/native-operations", controller.signal);
+        setNativePayload(liveProjection(native));
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setNativePayload((prev) => markTransportError(prev, error));
+        }
       }
       timer = window.setTimeout(() => void tick(), document.hidden ? 20_000 : ingestionActiveRef.current ? 2_000 : 5_000);
     };
@@ -241,14 +331,18 @@ export function useOperator() {
   useEffect(() => {
     if (!apiBase || !live) return;
     const controller = new AbortController();
-    const timer = window.setInterval(() => {
-      void getJson<{ databases?: Array<Record<string, unknown>> }>(apiBase, "/api/host/overview", controller.signal)
-        .then((body) => setDatabases(body.databases || null))
-        .catch(() => undefined);
-    }, 20_000);
-    void getJson<{ databases?: Array<Record<string, unknown>> }>(apiBase, "/api/host/overview", controller.signal)
-      .then((body) => setDatabases(body.databases || null))
-      .catch(() => undefined);
+    const readOverview = async () => {
+      try {
+        const body = await getJson<{ databases?: Array<JsonMap> }>(apiBase, "/api/host/overview", controller.signal);
+        setDatabases(liveProjection(body.databases || []));
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setDatabases((prev) => markTransportError(prev, error));
+        }
+      }
+    };
+    const timer = window.setInterval(() => void readOverview(), 20_000);
+    void readOverview();
     return () => {
       controller.abort();
       window.clearInterval(timer);
@@ -267,6 +361,7 @@ export function useOperator() {
       source = new EventSource(`${apiBase}/api/events/stream?last_event_id=${cursor}`);
       source.addEventListener("event", (event) => {
         attempt = 0;
+        setSseTransportError(false);
         const id = parseSseId((event as MessageEvent).lastEventId || null);
         if (id != null) cursor = id;
         try {
@@ -279,6 +374,7 @@ export function useOperator() {
       source.onerror = () => {
         source?.close();
         attempt += 1;
+        if (attempt >= 3) setSseTransportError(true);
         timer = window.setTimeout(connect, nextSseDelay(attempt));
       };
     };
@@ -291,23 +387,35 @@ export function useOperator() {
   }, [apiBase, live, logsPaused]);
 
   const workers = useMemo(() => mapWorkers(dashboard), [dashboard]);
-  const native = useMemo(() => mapNative(nativePayload), [nativePayload]);
-  const ingestion = useMemo(() => mapIngestion(ingestionPayload, ingestionUnavailable), [ingestionPayload, ingestionUnavailable]);
+  const native = useMemo(() => mapNative(nativePayload.data), [nativePayload]);
+  const ingestionUnavailable = ingestionPayload.state === "TRANSPORT_ERROR" || ingestionPayload.state === "UNAVAILABLE";
+  const ingestion = useMemo(
+    () => mapIngestion(ingestionPayload.data, ingestionUnavailable && ingestionPayload.data == null),
+    [ingestionPayload, ingestionUnavailable],
+  );
+  const supervisor =
+    (dashboard.data?.supervisor as Record<string, unknown> | undefined)?.health as string | undefined
+    || host.supervisorHealth;
   const services = useMemo(
     () => mapServices({
       host,
+      liveness,
       health,
+      modelsStatus,
       databases,
-      nativeStatus: native.status,
+      dashboard,
+      nativeStatus: native.status === "UNMEASURED" && transportNative(nativePayload) ? null : native.status,
       nativeDetail: native.detail,
-      supervisor: (dashboard?.supervisor as Record<string, unknown> | undefined)?.health as string | undefined || host.supervisorHealth,
+      nativeProjection: nativePayload,
+      supervisor: supervisor ?? null,
       queueDepth,
+      queueProjection: health.state !== "LOADING" ? health : dashboard,
       pythonVersion: host.pythonVersion || host.preflight.pythonVersion,
     }),
-    [host, health, databases, native, dashboard, queueDepth],
+    [host, liveness, health, modelsStatus, databases, dashboard, native, nativePayload, supervisor, queueDepth],
   );
   const metrics = useMemo(
-    () => metricCards(histories, readPerformance(performance), queueDepth),
+    () => metricCards(histories, readPerformance(performance.data), queueDepth),
     [histories, performance, queueDepth],
   );
 
@@ -322,7 +430,11 @@ export function useOperator() {
     native,
     uptime: formatUptime(host.startedAt),
     servicesOnline: countHealthy(services),
-    queue: queueDepth == null ? "UNMEASURED" : String(queueDepth),
+    queue: queueDepth == null
+      ? (health.state === "TRANSPORT_ERROR" || dashboard.state === "TRANSPORT_ERROR" ? "TRANSPORT ERROR" : "UNMEASURED")
+      : String(queueDepth),
+    systemReadiness: host.systemReadiness ?? "UNMEASURED",
+    sseTransportError,
   };
 
   const run = useCallback(async (command: string, args?: Record<string, unknown>) => {
@@ -405,4 +517,8 @@ export function useOperator() {
       toggleLogPause: () => setLogsPaused((value) => !value),
     },
   };
+}
+
+function transportNative(projection: ReadProjection<JsonMap>): boolean {
+  return projection.state === "TRANSPORT_ERROR" || projection.state === "STALE" || projection.state === "UNAVAILABLE";
 }

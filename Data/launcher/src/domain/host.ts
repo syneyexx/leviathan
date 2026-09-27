@@ -29,6 +29,7 @@ export function stoppedSnapshot(): HostSnapshot {
     supervisorHealth: null,
     workersExpected: true,
     exitWhenStopped: false,
+    systemReadiness: "UNMEASURED",
   };
 }
 
