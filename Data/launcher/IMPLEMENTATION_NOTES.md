@@ -19,7 +19,7 @@ Branch: `cursor/run-leviathan-native-host-5fc9`
 | Source-ingestion ownership | Existing JobStore and source-ingestion containers. The host adds a read-only projection. It does not start `scripts/source_ingestion_worker.py`. |
 | Job read model | `GET /api/jobs` plus the bounded host ingestion projection. |
 | Observability | `GET /api/events/stream` (`event: event`, `Last-Event-ID`). |
-| Performance | `GET /api/performance/snapshot`. Missing disk and network stay unmeasured. |
+| Performance | `GET /api/performance/snapshot`. CPU/RAM/(optional) GPU from SystemTelemetrySampler; disk capacity and network bytes/sec when measured. Missing metrics stay null/UNMEASURED. |
 | Databases | CONTROL, KNOWLEDGE, MARKET via SQLite Manager and `/api/host/overview`. No PostgreSQL, Redis, or Qdrant cards. |
 | Native compute | `leviathan-data-plane` is an accelerator. Probe status is authoritative. A binary path is not availability. There is no native daemon. |
 | Frontend address | Settings host/port, default `127.0.0.1:8765`, opened in the system browser. |
