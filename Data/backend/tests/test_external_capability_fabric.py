@@ -3420,6 +3420,86 @@ class ExternalFabricRegressionGuardTests(unittest.TestCase):
 class ExternalFabricClosableGapTests(unittest.TestCase):
     """In-repo DoD gaps closable without LLM / UE5 / Instagram credentials."""
 
+    def test_cli_files_and_large_stdout_materialize_into_artifact_store(self) -> None:
+        from Data.modules.artifacts import ArtifactStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp) / "work"
+            work.mkdir(parents=True)
+            tool = work / "big_tool.py"
+            tool.write_text(
+                "import pathlib\n"
+                "pathlib.Path('report.md').write_text('# big\\n', encoding='utf-8')\n"
+                "print('X' * 80_000)\n",
+                encoding="utf-8",
+            )
+            root = Path(tmp) / "mods" / "big-cli"
+            root.mkdir(parents=True)
+            manifest = {
+                "module_id": "big-cli",
+                "name": "Big CLI",
+                "version": "0.0.1",
+                "entrypoint": FACTORY,
+                "external": {
+                    "adapter": "CLI",
+                    "source_type": "path",
+                    "path": str(work),
+                    "install": {"strategy": "NONE"},
+                    "runtime": {
+                        "cwd": str(work),
+                        "operations": [
+                            {
+                                "name": "run",
+                                "command": [sys.executable, str(tool)],
+                                "result_format": "text",
+                            }
+                        ],
+                    },
+                    "result": {
+                        "format": "text",
+                        "artifact_globs": ["*.md"],
+                        "max_inline_bytes": 1000,
+                    },
+                },
+                "capabilities": [
+                    {
+                        "capability_id": "external.big_cli.run",
+                        "name": "Run",
+                        "external_name": "run",
+                        "side_effects": ["READ"],
+                    }
+                ],
+            }
+            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+            store = ArtifactStore(Path(tmp) / "artifacts.db", Path(tmp) / "artifacts")
+            store.initialize()
+            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+            manager.discover()
+            manager.initialize(
+                "big-cli",
+                ModuleContext(
+                    database_path=str(Path(tmp) / "c.db"),
+                    data_root=tmp,
+                    metadata={"artifact_store": store},
+                ),
+            )
+            result = manager.execute("big-cli", "run", {})
+            self.assertEqual(result.status, "COMPLETED", msg=result.error)
+            output = result.output or {}
+            refs = list(output.get("artifact_refs") or [])
+            self.assertGreaterEqual(len(refs), 1, msg=output)
+            # Store ids are UUIDs — not raw filesystem paths.
+            for ref in refs:
+                self.assertFalse(str(ref).startswith("/"), msg=refs)
+                self.assertIsNotNone(store.get(str(ref)), msg=f"missing artifact {ref}")
+            self.assertTrue(
+                output.get("stdout_artifact") or (output.get("metadata") or {}).get("stdout_spilled"),
+                msg=output.get("metadata"),
+            )
+            # Inline payload must stay bounded — no 80k dump in parts/summary.
+            blob = json.dumps(output)
+            self.assertLess(len(blob.encode("utf-8")), 40_000, msg=f"inline too large: {len(blob)}")
+
     def test_declared_status_operation_beats_lifecycle_health(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "mods" / "status-cli"

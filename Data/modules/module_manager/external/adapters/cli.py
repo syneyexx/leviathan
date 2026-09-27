@@ -296,6 +296,29 @@ class CliAdapter:
                 if effective_exit != exit_code:
                     meta["accepted_nonzero_exit"] = True
                 output = {**output, "metadata": meta}
+                # Prefer ArtifactStore ids over raw paths / giant stdout in Chat.
+                try:
+                    from ..artifacts_materialize import (
+                        materialize_external_files,
+                        materialize_large_stdout,
+                    )
+
+                    output = materialize_external_files(
+                        output,
+                        artifact_store=self.ctx.artifact_store,
+                        module_id=self.ctx.module_id,
+                        operation=operation,
+                    )
+                    output = materialize_large_stdout(
+                        output,
+                        stdout=stdout,
+                        artifact_store=self.ctx.artifact_store,
+                        module_id=self.ctx.module_id,
+                        operation=operation,
+                        max_inline_bytes=int(self.config.result.max_inline_bytes or 64_000),
+                    )
+                except Exception:  # noqa: BLE001 — materialization must not fail the tool
+                    pass
             self._state = ExternalRuntimeState.READY
             if self.ctx.store is not None:
                 self.ctx.store.touch_used(self.ctx.module_id)
