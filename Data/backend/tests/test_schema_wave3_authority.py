@@ -21,7 +21,7 @@ from Data.modules.db_commit.handlers.dataset import _commit_index_batch
 from Data.modules.db_commit.handlers.market_sim import _commit_events
 from Data.modules.db_commit.handlers.source_ingestion import _commit_batch
 from Data.modules.db_commit.types import CommitIntent, CommitReceiptStatus
-from Data.modules.intelligence.assimilation import AssimilationService
+from Data.modules.intelligence.assimilation import KnowledgeAssimilationService
 from Data.modules.knowledge.pipeline.committer import KnowledgeCommitter
 from Data.modules.provider_io.stream_store import ProviderStreamStore
 from Data.modules.provider_io.types import StreamEventType
@@ -175,7 +175,7 @@ class FreshInstallSchemaAuthorityTests(unittest.TestCase):
 
             # Stores / handlers can initialize against upgrade output.
             ProviderStreamStore(paths.control).initialize()
-            AssimilationService(database_path=paths.control)._ensure_sqlite()
+            KnowledgeAssimilationService(database_path=paths.control)
             KnowledgeCommitter(paths.knowledge).initialize()
 
             intent = CommitIntent(
