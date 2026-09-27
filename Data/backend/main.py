@@ -2255,6 +2255,38 @@ async def lifespan(_: FastAPI):
                     )
 
         serving_reconcile_task = asyncio.create_task(_serving_reconcile_loop())
+    # Periodic idle sweep for optional external process services (idle_timeout_seconds).
+    # Does not require health() polling or manual ModulesPage "Sweep Idle".
+    module_idle_sweep_task = None
+    if module_manager.enabled:
+
+        async def _module_idle_sweep_loop() -> None:
+            import os
+
+            interval = float(os.environ.get("LEVIATHAN_MODULE_IDLE_SWEEP_SECONDS") or 60.0)
+            interval = max(5.0, min(interval, 600.0))
+            while True:
+                try:
+                    await asyncio.sleep(interval)
+                    if hasattr(module_manager, "sweep_idle_modules"):
+                        stopped = module_manager.sweep_idle_modules()
+                        if stopped:
+                            observability.emit(
+                                "module_manager",
+                                "idle_sweep",
+                                payload={"stopped": len(stopped), "module_ids": list(stopped)[:32]},
+                            )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    observability.emit(
+                        "module_manager",
+                        "idle_sweep.failed",
+                        payload={"error": str(exc)},
+                        level="warning",
+                    )
+
+        module_idle_sweep_task = asyncio.create_task(_module_idle_sweep_loop())
     metrics.incr("lifespan_starts")
     observability.emit(
         "backend",
@@ -2267,6 +2299,14 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
+        if module_idle_sweep_task is not None:
+            module_idle_sweep_task.cancel()
+            try:
+                await module_idle_sweep_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # noqa: BLE001
+                pass
         if serving_reconcile_task is not None:
             serving_reconcile_task.cancel()
             try:

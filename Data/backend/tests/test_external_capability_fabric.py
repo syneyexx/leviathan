@@ -3500,6 +3500,108 @@ class ExternalFabricClosableGapTests(unittest.TestCase):
             blob = json.dumps(output)
             self.assertLess(len(blob.encode("utf-8")), 40_000, msg=f"inline too large: {len(blob)}")
 
+    def test_http_large_json_materialize_into_artifact_store(self) -> None:
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        from Data.modules.artifacts import ArtifactStore
+
+        class _Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_args: Any) -> None:  # noqa: ANN401
+                return
+
+            def do_GET(self) -> None:  # noqa: N802
+                if self.path.startswith("/health"):
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(b"ok")
+                    return
+                if self.path.startswith("/big"):
+                    payload = json.dumps({"ok": True, "items": ["x" * 200] * 400}).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                    return
+                self.send_response(404)
+                self.end_headers()
+
+        port = _free_port()
+        server = HTTPServer(("127.0.0.1", port), _Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            deadline = time.time() + 3
+            while time.time() < deadline:
+                try:
+                    with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.05)
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "mods" / "big-http"
+                root.mkdir(parents=True)
+                manifest = {
+                    "module_id": "big-http",
+                    "name": "Big HTTP",
+                    "version": "0.0.1",
+                    "entrypoint": FACTORY,
+                    "external": {
+                        "adapter": "HTTP_OPENAPI",
+                        "source_type": "none",
+                        "install": {"strategy": "NONE"},
+                        "runtime": {
+                            "base_url": f"http://127.0.0.1:{port}",
+                            "health_probe": {
+                                "kind": "http",
+                                "url": f"http://127.0.0.1:{port}/health",
+                                "expect_status": 200,
+                            },
+                            "operations": [
+                                {"name": "dump", "method": "GET", "path": "/big"}
+                            ],
+                        },
+                        "result": {"format": "json", "max_inline_bytes": 2000},
+                    },
+                    "capabilities": [
+                        {
+                            "capability_id": "external.big_http.dump",
+                            "name": "Dump",
+                            "external_name": "dump",
+                            "side_effects": ["NETWORK"],
+                        }
+                    ],
+                }
+                (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+                store = ArtifactStore(Path(tmp) / "artifacts.db", Path(tmp) / "artifacts")
+                store.initialize()
+                manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+                manager.discover()
+                manager.initialize(
+                    "big-http",
+                    ModuleContext(
+                        database_path=str(Path(tmp) / "c.db"),
+                        data_root=tmp,
+                        metadata={"artifact_store": store},
+                    ),
+                )
+                result = manager.execute("big-http", "dump", {})
+                self.assertEqual(result.status, "COMPLETED", msg=result.error)
+                output = result.output or {}
+                self.assertTrue(output.get("artifact_refs"), msg=output)
+                self.assertTrue(
+                    (output.get("metadata") or {}).get("http_body_spilled"),
+                    msg=output.get("metadata"),
+                )
+                structured = output.get("structured_data") or {}
+                self.assertTrue(structured.get("truncated"), msg=structured)
+                blob = json.dumps(output)
+                self.assertLess(len(blob.encode("utf-8")), 20_000, msg=f"inline too large: {len(blob)}")
+                for ref in output.get("artifact_refs") or []:
+                    self.assertIsNotNone(store.get(str(ref)))
+        finally:
+            server.shutdown()
+
     def test_declared_status_operation_beats_lifecycle_health(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "mods" / "status-cli"
@@ -3911,6 +4013,14 @@ class ExternalFabricClosableGapTests(unittest.TestCase):
             names = [n for _, n, _ in hub.events]
             self.assertIn("external.failures", names, msg=hub.events)
             self.assertIn("external.invocations", names, msg=hub.events)
+
+    def test_main_registers_periodic_module_idle_sweep_loop(self) -> None:
+        main_py = Path(__file__).resolve().parents[1] / "main.py"
+        text = main_py.read_text(encoding="utf-8")
+        self.assertIn("_module_idle_sweep_loop", text)
+        self.assertIn("LEVIATHAN_MODULE_IDLE_SWEEP_SECONDS", text)
+        self.assertIn("sweep_idle_modules", text)
+        self.assertIn("module_idle_sweep_task", text)
 
     def test_matrix_worktree_head_is_recent_git_ancestor(self) -> None:
         """Ledger tip must be a real commit at/behind HEAD (avoids chicken-egg on sync commits)."""

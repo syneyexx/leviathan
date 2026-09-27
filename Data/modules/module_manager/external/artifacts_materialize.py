@@ -5,6 +5,7 @@ Keeps CapabilityResult.output bounded: Chat gets artifact_ids, not giant blobs.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -157,6 +158,123 @@ def materialize_large_stdout(
     meta["stdout_bytes"] = len(raw)
     out["metadata"] = meta
     out["stdout_excerpt"] = stdout[:4000]
+    return out
+
+
+def materialize_large_http_body(
+    output: Mapping[str, Any] | None,
+    *,
+    raw_text: str,
+    artifact_store: Any,
+    module_id: str,
+    operation: str,
+    max_inline_bytes: int = 64_000,
+) -> dict[str, Any]:
+    """Spill oversized HTTP JSON/text bodies into ArtifactStore; keep a bounded excerpt inline."""
+    out = dict(output or {})
+    if artifact_store is None or not hasattr(artifact_store, "create_from_bytes"):
+        return out
+    raw = raw_text.encode("utf-8", errors="replace")
+    structured = out.get("structured_data")
+    try:
+        structured_bytes = len(json.dumps(structured, default=str).encode("utf-8")) if structured is not None else 0
+    except (TypeError, ValueError):
+        structured_bytes = max_inline_bytes + 1
+    if len(raw) <= max_inline_bytes and structured_bytes <= max_inline_bytes:
+        return out
+    filename = "response.json" if structured is not None else "response.txt"
+    try:
+        record = artifact_store.create_from_bytes(
+            data=raw if raw else json.dumps(structured, default=str).encode("utf-8"),
+            artifact_type="text",
+            producer=f"external:{module_id}:{operation}",
+            filename=filename,
+            metadata={"module_id": module_id, "operation": operation, "kind": "http_body"},
+        )
+    except Exception:  # noqa: BLE001
+        return out
+
+    refs = list(out.get("artifact_refs") or [])
+    if record.artifact_id not in refs:
+        refs.append(record.artifact_id)
+    out["artifact_refs"] = refs
+    out["raw_result_artifact"] = record.artifact_id
+
+    # Bound STRUCTURED parts — keep small index/excerpt only.
+    if structured is not None and structured_bytes > max_inline_bytes:
+        if isinstance(structured, dict):
+            excerpt: dict[str, Any] = {
+                "truncated": True,
+                "raw_result_artifact": record.artifact_id,
+                "keys": list(structured.keys())[:64],
+            }
+            for key in ("summary", "jobId", "status", "done", "error", "count", "total"):
+                if key in structured:
+                    excerpt[key] = structured.get(key)
+            # Preserve a tiny sample of list-ish payloads without dragging MB into Chat.
+            for key in ("results", "items", "sources", "data"):
+                val = structured.get(key)
+                if isinstance(val, list):
+                    excerpt[key] = val[:5]
+                    excerpt[f"{key}_count"] = len(val)
+                    break
+            out["structured_data"] = excerpt
+        elif isinstance(structured, list):
+            out["structured_data"] = {
+                "truncated": True,
+                "raw_result_artifact": record.artifact_id,
+                "count": len(structured),
+                "sample": structured[:5],
+            }
+        else:
+            out["structured_data"] = {"truncated": True, "raw_result_artifact": record.artifact_id}
+
+    parts: list[dict[str, Any]] = []
+    for part in list(out.get("parts") or []):
+        if not isinstance(part, Mapping):
+            continue
+        kind = str(part.get("kind") or "").upper()
+        if kind == "STRUCTURED" and structured_bytes > max_inline_bytes:
+            parts.append({"kind": "STRUCTURED", "data": out.get("structured_data")})
+            continue
+        if kind == "SOURCE":
+            srcs = list(part.get("sources") or [])
+            if len(json.dumps(srcs, default=str).encode("utf-8")) > max_inline_bytes:
+                parts.append(
+                    {
+                        "kind": "SOURCE",
+                        "sources": srcs[:8],
+                        "count": int(part.get("count") or len(srcs)),
+                        "truncated": True,
+                        "raw_result_artifact": record.artifact_id,
+                    }
+                )
+                continue
+        if kind == "TEXT" and len(str(part.get("text") or "").encode()) > max_inline_bytes:
+            parts.append(
+                {
+                    "kind": "TEXT",
+                    "text": str(part.get("text") or "")[:2000] + "\n…[truncated — see raw_result_artifact]",
+                    "truncated": True,
+                    "raw_result_artifact": record.artifact_id,
+                }
+            )
+            continue
+        parts.append(dict(part))
+    # Ensure ARTIFACT part lists the spilled body.
+    parts = [p for p in parts if not (isinstance(p, Mapping) and str(p.get("kind")).upper() == "ARTIFACT")]
+    arts = [{"artifact_id": record.artifact_id, "ref": record.artifact_id, "name": filename}]
+    parts.append({"kind": "ARTIFACT", "artifacts": arts, "count": len(arts)})
+    out["parts"] = parts
+    # Bound top-level source_refs similarly.
+    src_refs = list(out.get("source_refs") or [])
+    if len(json.dumps(src_refs, default=str).encode("utf-8")) > max_inline_bytes:
+        out["source_refs"] = src_refs[:16]
+
+    meta = dict(out.get("metadata") or {})
+    meta["http_body_spilled"] = True
+    meta["http_body_bytes"] = max(len(raw), structured_bytes)
+    out["metadata"] = meta
     return out
 
 

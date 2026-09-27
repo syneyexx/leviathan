@@ -207,17 +207,31 @@ class HttpOpenApiAdapter:
                     from ..results import normalize_osint_items
 
                     sources = normalize_osint_items(maybe, provider=self.ctx.module_id)
+            output = normalize_capability_parts(
+                summary=f"{operation} ok",
+                structured_data=structured if isinstance(structured, (dict, list)) else None,
+                sources=sources or None,
+                raw_text=None if structured is not None else text[:4000],
+                metadata={"http_status": status_code, "url": url},
+            )
+            try:
+                from ..artifacts_materialize import materialize_large_http_body
+
+                output = materialize_large_http_body(
+                    output,
+                    raw_text=text,
+                    artifact_store=self.ctx.artifact_store,
+                    module_id=self.ctx.module_id,
+                    operation=operation,
+                    max_inline_bytes=int(self.config.result.max_inline_bytes or 64_000),
+                )
+            except Exception:  # noqa: BLE001
+                pass
             return ModuleResult(
                 module_id=self.ctx.module_id,
                 operation=operation,
                 status="COMPLETED",
-                output=normalize_capability_parts(
-                    summary=f"{operation} ok",
-                    structured_data=structured if isinstance(structured, (dict, list)) else None,
-                    sources=sources or None,
-                    raw_text=None if structured is not None else text[:4000],
-                    metadata={"http_status": status_code, "url": url},
-                ),
+                output=output,
             )
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
