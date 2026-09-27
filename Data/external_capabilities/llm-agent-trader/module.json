@@ -1,7 +1,7 @@
 {
   "module_id": "llm-agent-trader",
   "name": "LLM Agent Trader (research)",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
   "side_effects": [
     "READ",
@@ -9,68 +9,124 @@
   ],
   "hot_reload": false,
   "external": {
-    "adapter": "CLI",
+    "adapter": "COMPOSITE",
+    "children": [
+      "PROCESS_SERVICE",
+      "HTTP_OPENAPI"
+    ],
     "source_type": "git",
     "source": "https://github.com/jason8745/llm-agent-trader",
-    "ref": "main",
+    "ref": "master",
     "install": {
       "strategy": [
         "GIT_CHECKOUT",
-        "PYTHON_VENV"
+        "PYTHON_VENV",
+        "PIP_PACKAGE"
+      ],
+      "python_packages": [
+        "-e",
+        "."
       ]
     },
     "runtime": {
-      "mode": "EPHEMERAL",
+      "mode": "LAZY",
       "command": [
         "python",
         "-m",
-        "pytest",
-        "-q"
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000"
       ],
-      "cwd": "$INSTALL_ROOT",
-      "timeout_seconds": 600,
+      "cwd": "$INSTALL_ROOT/backend",
+      "startup_timeout_seconds": 90,
+      "idle_timeout_seconds": 1800,
+      "base_url": "http://127.0.0.1:8000",
+      "ready_probe": {
+        "kind": "http",
+        "url": "http://127.0.0.1:8000/docs",
+        "expect_status": 200
+      },
       "operations": [
         {
           "name": "analyze",
-          "command": [
-            "python",
-            "main.py",
-            "{query}"
+          "method": "POST",
+          "path": "/api/v1/backtest/analyze",
+          "body_from": [
+            "query",
+            "symbol",
+            "mode"
+          ]
+        },
+        {
+          "name": "backtest",
+          "method": "POST",
+          "path": "/api/v1/llm-stream/backtest",
+          "body_from": [
+            "query",
+            "symbol",
+            "prompt"
           ]
         },
         {
           "name": "run",
-          "command": [
-            "python",
-            "main.py",
-            "{query}"
-          ]
+          "method": "GET",
+          "path": "/docs"
         }
-      ]
+      ],
+      "eager_start": false
     },
     "result": {
-      "format": "MIXED"
+      "format": "MIXED",
+      "artifact_globs": [
+        "output/**",
+        "*.json",
+        "*.csv"
+      ]
     },
     "assimilation_mode": "EVIDENCE",
     "tags": [
       "finance",
-      "backtest-reference"
+      "backtest-reference",
+      "research"
     ],
     "domain": "finance",
     "metadata": {
       "not_leviathan_qualification": true,
-      "marketsim_bypass_forbidden": true
+      "marketsim_bypass_forbidden": true,
+      "real_money_blocked": true,
+      "preferred_machine_contract": "FastAPI backend on :8000 (/api/v1/backtest, /api/v1/llm-stream); not MarketSim authority"
     }
   },
   "capabilities": [
     {
       "capability_id": "external.llm_agent_trader.analyze",
       "name": "LLM Agent Trader Analyze",
-      "description": "External trading research/backtest reference \u2014 not MarketSim qualification.",
+      "description": "External trading research/backtest via FastAPI — not MarketSim qualification.",
       "external_name": "analyze",
       "side_effects": [
         "READ",
         "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.llm_agent_trader.start",
+      "name": "Start LLM Agent Trader API",
+      "description": "Lazy-start the FastAPI research backend.",
+      "external_name": "start",
+      "side_effects": [
+        "EXECUTE"
+      ]
+    },
+    {
+      "capability_id": "external.llm_agent_trader.stop",
+      "name": "Stop LLM Agent Trader API",
+      "description": "Stop the FastAPI research backend.",
+      "external_name": "stop",
+      "side_effects": [
+        "EXECUTE"
       ]
     }
   ]

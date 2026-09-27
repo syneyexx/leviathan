@@ -20,7 +20,9 @@
       "mode": "NONE"
     },
     "catalog_globs": [
-      "**/SKILL.md"
+      "**/SKILL.md",
+      "categories/*.md",
+      "README.md"
     ],
     "assimilation_mode": "NONE",
     "tags": [
@@ -29,7 +31,8 @@
     ],
     "domain": "skills",
     "metadata": {
-      "do_not_load_all_into_prompt": true
+      "do_not_load_all_into_prompt": true,
+      "preferred_machine_contract": "CATALOG_SOURCE indexes README + categories/*.md metadata only; materialize selected skills on demand"
     }
   },
   "capabilities": [

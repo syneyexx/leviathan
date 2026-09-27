@@ -65,7 +65,11 @@ class ExternalFabricUnitTests(unittest.TestCase):
             "scrollcraft": AdapterType.COMPOSITE,
             "fincept-terminal": AdapterType.COMPOSITE,
             "agent-reach": AdapterType.COMPOSITE,
+            "osintgram": AdapterType.COMPOSITE,
+            "llm-agent-trader": AdapterType.COMPOSITE,
+            "financial-services": AdapterType.SKILL_PACK,
             "desktop-commander-mcp": AdapterType.MCP,
+            "awesome-openclaw-skills": AdapterType.CATALOG_SOURCE,
         }
         for module_id, adapter in required.items():
             manifest = json.loads((root / module_id / "module.json").read_text(encoding="utf-8"))

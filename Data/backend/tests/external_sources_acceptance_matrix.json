@@ -9,7 +9,7 @@
     "NOT_APPLICABLE",
     "FAILED"
   ],
-  "notes": "Live third-party installs/network invocations are BLOCKED_EXTERNAL in CI unless dependencies and network are available. Fixture adapters prove all adapter kinds. Source manifests refreshed from live GitHub surfaces 2026-09-27 (Feynman Node CLI, OpenMAIC pnpm:3000, Selfstarter UE harness, ScrollCraft skill scripts, Fincept Analytics CLIs). Source chat/artifact remain PARTIAL without per-source invoke proof. No per-repository wrappers.",
+  "notes": "Live third-party installs/network invocations are BLOCKED_EXTERNAL in CI unless dependencies and network are available. Fixture adapters prove all adapter kinds. Source manifests refreshed from live GitHub surfaces 2026-09-27 across OSINT/research/finance/skills/catalogs. Source chat/artifact remain PARTIAL without per-source invoke proof. No per-repository wrappers.",
   "sources": [
     {
       "source": "wonderwhy-er/DesktopCommanderMCP",
@@ -37,12 +37,12 @@
     {
       "source": "Datalux/Osintgram",
       "category": "OSINT",
-      "adapter": "CLI",
+      "adapter": "COMPOSITE",
       "module_id": "osintgram",
       "install_verified": "BLOCKED_EXTERNAL",
       "discovery_verified": "PASS",
-      "start_verified": "NOT_APPLICABLE",
-      "stop_verified": "NOT_APPLICABLE",
+      "start_verified": "BLOCKED_EXTERNAL",
+      "stop_verified": "PARTIAL",
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
@@ -51,11 +51,12 @@
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
         "git",
-        "python",
-        "instagram credentials/session"
+        "python>=3.10",
+        "uvicorn",
+        "HikerAPI or Instagram session"
       ],
       "status": "PARTIAL",
-      "limitations": "CLI adapter proven via fixtures; live Osintgram requires checkout + Instagram session."
+      "limitations": "Audited: uvicorn src.web.app:app on 127.0.0.1:8000 (local-first web). HikerAPI/instagrapi backend required. Not the old main.py interactive shell."
     },
     {
       "source": "elementalsouls/Claude-OSINT",
@@ -76,7 +77,7 @@
         "git"
       ],
       "status": "PARTIAL",
-      "limitations": "Skill importer proven with fixtures; live repo materialization needs network."
+      "limitations": "Audited: skills/ SKILL.md packs. Importer proven via fixtures; live materialization needs network."
     },
     {
       "source": "Panniantong/Agent-Reach",
@@ -122,7 +123,8 @@
         "python",
         "network"
       ],
-      "status": "PARTIAL"
+      "status": "PARTIAL",
+      "limitations": "Audited: GhostTR.py + requirements.txt CLI. Interactive/legacy; live invoke BLOCKED_EXTERNAL."
     },
     {
       "source": "HKUDS/Vibe-Trading",
@@ -151,7 +153,7 @@
     {
       "source": "anthropics/financial-services",
       "category": "FINANCE_SKILLS",
-      "adapter": "COMPOSITE",
+      "adapter": "SKILL_PACK",
       "module_id": "financial-services",
       "install_verified": "BLOCKED_EXTERNAL",
       "discovery_verified": "PASS",
@@ -167,17 +169,17 @@
         "git"
       ],
       "status": "PARTIAL",
-      "limitations": "No second Claude agent runtime; skills via PluginRegistry; MCP configs via McpBridge."
+      "limitations": "Audited: SKILL.md under plugins/agent-plugins (DCF, earnings, comps). Not a second Claude agent runtime. MCP connectors map via McpBridge when present."
     },
     {
       "source": "jason8745/llm-agent-trader",
-      "category": "FINANCE_RESEARCH",
-      "adapter": "CLI",
+      "category": "TRADING_RESEARCH",
+      "adapter": "COMPOSITE",
       "module_id": "llm-agent-trader",
       "install_verified": "BLOCKED_EXTERNAL",
       "discovery_verified": "PASS",
-      "start_verified": "NOT_APPLICABLE",
-      "stop_verified": "NOT_APPLICABLE",
+      "start_verified": "BLOCKED_EXTERNAL",
+      "stop_verified": "PARTIAL",
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
@@ -186,10 +188,12 @@
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
         "git",
-        "python"
+        "python>=3.12",
+        "uv/pip",
+        "LLM API keys"
       ],
       "status": "PARTIAL",
-      "limitations": "External backtest \u2260 LEVIATHAN qualification."
+      "limitations": "Audited: FastAPI backend :8000 (/api/v1/backtest, llm-stream). ref=master. Not MarketSim qualification. Live LLM keys BLOCKED_EXTERNAL."
     },
     {
       "source": "Fincept-Corporation/FinceptTerminal",
@@ -470,7 +474,7 @@
         "git"
       ],
       "status": "PARTIAL",
-      "limitations": "Catalog indexes metadata only; skills materialize on demand; never prompt-inject thousands."
+      "limitations": "Audited: categories/*.md + README catalog indexes (5400+). Metadata-only; materialize on demand; never prompt-inject."
     }
   ],
   "fixture_adapters": {

@@ -193,26 +193,41 @@ class SkillImporter:
     ) -> list[SkillRecord]:
         """Index catalog entries as metadata-only skills (no instruction bodies in prompts)."""
         # Prefer README bullet lists / markdown links naming skills.
+        # Also scan categories/*.md (awesome-openclaw-skills style indexes).
         records: list[SkillRecord] = []
+        markdown_sources: list[Path] = []
         readme = root / "README.md"
         if readme.exists():
-            text = readme.read_text(encoding="utf-8", errors="replace")
-            for name, desc, link in _parse_catalog_readme(text):
-                content_hash = hashlib.sha256(f"{name}|{link}|{desc}".encode("utf-8")).hexdigest()
+            markdown_sources.append(readme)
+        categories = root / "categories"
+        if categories.is_dir():
+            markdown_sources.extend(sorted(categories.glob("*.md"))[:200])
+        for md_path in markdown_sources:
+            if len(records) >= limit:
+                break
+            text = md_path.read_text(encoding="utf-8", errors="replace")
+            # Cap per-file parse work for giant READMEs.
+            for name, desc, link in _parse_catalog_readme(text[:2_000_000]):
+                content_hash = hashlib.sha256(f"{name}|{link}|{desc}|{md_path.name}".encode("utf-8")).hexdigest()
                 records.append(
                     SkillRecord(
-                        skill_id=_stable_skill_id(name=name, source_repo=source_repo, content_hash=content_hash, path=readme),
+                        skill_id=_stable_skill_id(
+                            name=name,
+                            source_repo=source_repo,
+                            content_hash=content_hash,
+                            path=md_path,
+                        ),
                         name=name,
                         description=desc,
                         source_repo=source_repo or link,
-                        source_path=str(readme),
+                        source_path=str(md_path),
                         content_hash=content_hash,
                         instructions="",
                         trigger_description=desc,
                         enabled=False,
                         catalog_only=True,
                         module_id=module_id,
-                        metadata={"catalog_link": link},
+                        metadata={"catalog_link": link, "catalog_file": md_path.name},
                     )
                 )
                 if len(records) >= limit:
