@@ -329,8 +329,14 @@ class ModelControlPlane:
         PID-reuse safety (Windows-safe fingerprint), and READY-only-after-health.
         """
         # Ensure durable registry orphans are reconciled (idempotent).
-        self.serving.reconcile_persisted_orphans()
-        by_id = {w.worker_id: w for w in self.serving.list_workers()}
+        serving = getattr(self, "serving", None)
+        if serving is None:
+            from Data.modules.model_runtime.serving import get_serving_supervisor
+
+            serving = get_serving_supervisor()
+            self.serving = serving
+        serving.reconcile_persisted_orphans()
+        by_id = {w.worker_id: w for w in serving.list_workers()}
         changed: list[dict[str, Any]] = []
         for row in self.store.list_serving_workers():
             state = str(row.get("state") or "")
@@ -378,7 +384,8 @@ class ModelControlPlane:
                     "backend_kind": row.get("backend_kind") or "unknown",
                     "endpoint": row.get("endpoint"),
                     "state": "DEAD",
-                    "pid": int(pid) if isinstance(pid, int) else None,
+                    # DEAD without ownership proof: clear live PID; keep orphan_pid in metadata.
+                    "pid": int(pid) if (isinstance(pid, int) and alive and same) else None,
                     "health_score": 0.0,
                     "revision_id": row.get("revision_id"),
                     "last_error": (

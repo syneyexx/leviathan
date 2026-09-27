@@ -237,11 +237,35 @@ def fenced_transition(
         TERMINAL_JOB_STATES,
     )
 
+    owner = str(worker_id or "").strip()
+    if not owner:
+        try:
+            current = store.get(job_id)
+            owner = str(getattr(current, "lease_owner", None) or "").strip()
+        except Exception:  # noqa: BLE001
+            owner = ""
+    if not owner:
+        # Job never acquired a lease (legacy/test harness paths that transition to
+        # RUNNING without claim). Do not pass expected_lease_owner="" — SQLite NULL
+        # never equals ''. Production claim paths always set a non-empty owner.
+        try:
+            return store.transition(job_id, new_state, **kwargs)
+        except InvalidJobTransition:
+            current = None
+            try:
+                current = store.get(job_id)
+            except Exception:  # noqa: BLE001
+                current = None
+            if current is not None and current.state in TERMINAL_JOB_STATES:
+                record_stale_lease_fence(ctx, telemetry=telemetry)
+                return None
+            raise
+
     try:
         return store.transition(
             job_id,
             new_state,
-            expected_lease_owner=worker_id,
+            expected_lease_owner=owner,
             **kwargs,
         )
     except StaleLeaseError:
@@ -256,8 +280,8 @@ def fenced_transition(
         if current is not None and current.state in TERMINAL_JOB_STATES:
             record_stale_lease_fence(ctx, telemetry=telemetry)
             return None
-        owner = getattr(current, "lease_owner", None) if current is not None else None
-        if worker_id and owner and owner != worker_id:
+        lease_owner = getattr(current, "lease_owner", None) if current is not None else None
+        if owner and lease_owner and lease_owner != owner:
             record_stale_lease_fence(ctx, telemetry=telemetry)
             return None
         raise
