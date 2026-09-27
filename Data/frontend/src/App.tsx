@@ -34,6 +34,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { TasksPage } from "./pages/TasksPage";
 import { ToolsPage } from "./pages/ToolsPage";
 import { ModulesPage } from "./pages/ModulesPage";
+import { SkillsPage } from "./pages/plugin-runtime/SkillsPage";
 import { McpPage } from "./pages/McpPage";
 import { ConsolePage } from "./pages/ConsolePage";
 import { WorkflowsPage } from "./pages/WorkflowsPage";
@@ -136,6 +137,7 @@ export default function App() {
       <Route path="/performance" element={<PerformancePage />} />
       <Route path="/tools" element={<ToolsPage />} />
       <Route path="/modules" element={<ModulesPage />} />
+      <Route path="/skills" element={<SkillsPage />} />
       <Route path="/mcp" element={<McpPage />} />
       <Route path="/workflows" element={<WorkflowsPage />} />
       <Route path="/console" element={<ConsolePage />} />

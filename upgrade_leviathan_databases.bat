@@ -7,6 +7,10 @@ REM Canonical upgrade entrypoint for Control / Knowledge / Market SQLite DBs.
 REM Does NOT contain schema SQL — calls Data.backend.db_upgrade.
 REM Safe to rerun. Never deletes product databases.
 REM Prefer a BackupService snapshot before destructive reconciliation on production hosts.
+REM Domain migration DM3 (external_capability_fabric) owns CONTROL tables:
+REM   external_modules, external_module_versions, external_process_records,
+REM   external_skills, external_skill_catalogs, external_plugin_bindings,
+REM   external_log_windows — never a fourth product database.
 
 set "PYTHONPATH=%~dp0"
 set "PY=.venv\Scripts\python.exe"

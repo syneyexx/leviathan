@@ -127,7 +127,7 @@ Current top-level groups:
 3. **Media Control** — overview/platform/queue/radar/calendar/analytics/library/personas;
 4. **TradingCenter** — simulation, strategies, market data, portfolio, paper, broker, research;
 5. **Onderzoek & Kennis** — Research, Brain, Geheugen, Knowledge Library, Evidence Vault, Datasets;
-6. **Plugin & Runtime** — Performance, Tools, Modules, MCP, Workflows, Console;
+6. **Plugin & Runtime** — Performance, Tools, Modules, Skills, MCP, Workflows, Console;
 7. **Instellingen** — general, LLM behavior/studio, rights/security, benchmarks, media, storage (three canonical SQLite DBs + SQLite Manager API `/api/sqlite/*`), Python/runtime, console/logs, Knowledge & RAG, Cognition & Neuro, Agents & Coding, Tools & MCP, Market Simulation, Data & Research.
 
 The historical display label `Hades AI` is a UI navigation label; backend ownership and runtime documented here are LEVIATHAN.
@@ -474,6 +474,8 @@ Routes cover:
 - `pages/McpPage.tsx` — MCP servers/sessions/tools;
 - `pages/WorkflowsPage.tsx` — workflow controls;
 - `pages/ModulesPage.tsx` / `pages/plugin-runtime/ModulesPage.tsx` — ModuleManager surface (discover, install, start/stop/restart, health, logs, execute). Shows adapter kind, runtime state, capability counts for external modules. Does **not** invent RUNNING/READY — derives from backend snapshot;
+- `pages/plugin-runtime/SkillsPage.tsx` — `/skills` installed + catalog skill search (paginated metadata only). Enable/disable and on-demand instruction load via `/api/skills`. Never dumps thousands of skills into prompts;
+- Chat capability result cards (`pages/chat/CapabilityResultCards.tsx`) render backend-backed tool telemetry (status, duration, result/source/artifact counts) under the latest assistant message and in the Tools tab — never invent counts;
 - `pages/PerformancePage.tsx` — thin wrapper/performance page;
 - `pages/ConsolePage.tsx` — thin wrapper/console page.
 

@@ -141,6 +141,9 @@ class ModuleExecutor(Protocol):
         *,
         request_id: str,
         run_id: str | None = None,
+        job_id: str | None = None,
+        cancel_check: Any = None,
+        progress: Any = None,
     ) -> dict[str, Any] | CapabilityResult: ...
 
 
@@ -704,13 +707,30 @@ class ExecutionGateway:
     ) -> Any:
         if self.module_executor is None:
             raise RuntimeError("Module executor not configured on ExecutionGateway")
-        return self.module_executor.execute_module_capability(
-            definition.id,
-            definition.provider_ref,
-            dict(request.arguments),
-            request_id=request.request_id or "",
-            run_id=request.run_id,
-        )
+        cancel_check = None
+        job_id = request.job_id
+        # Cooperative cancel when JobRuntime owns this request.
+        if job_id and hasattr(self, "_job_cancel_check") and callable(getattr(self, "_job_cancel_check")):
+            cancel_check = lambda jid=job_id: bool(self._job_cancel_check(jid))  # noqa: E731
+        try:
+            return self.module_executor.execute_module_capability(
+                definition.id,
+                definition.provider_ref,
+                dict(request.arguments),
+                request_id=request.request_id or "",
+                run_id=request.run_id,
+                job_id=job_id,
+                cancel_check=cancel_check,
+            )
+        except TypeError:
+            # Backward-compatible executors without job_id/cancel_check kwargs.
+            return self.module_executor.execute_module_capability(
+                definition.id,
+                definition.provider_ref,
+                dict(request.arguments),
+                request_id=request.request_id or "",
+                run_id=request.run_id,
+            )
 
     def _dispatch_mcp(
         self, definition: CapabilityDefinition, request: CapabilityRequest

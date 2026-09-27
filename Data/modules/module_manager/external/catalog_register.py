@@ -26,6 +26,12 @@ def register_external_control_capabilities(catalog: CapabilityCatalog) -> None:
             "external.invoke",
         ),
         (
+            "external.knowledge.assimilate",
+            "Assimilate External Result",
+            "Background knowledge assimilation of an external capability result (provenance retained).",
+            "external.assimilate",
+        ),
+        (
             "external.skills.search",
             "Search Skills",
             "Bounded search across installed and catalog skills (metadata only).",
@@ -41,12 +47,13 @@ def register_external_control_capabilities(catalog: CapabilityCatalog) -> None:
     for cap_id, name, description, ref in specs:
         if cap_id in catalog:
             continue
+        heavy = cap_id.startswith("external.module.") or cap_id == "external.knowledge.assimilate"
         catalog.register(
             CapabilityDefinition(
                 id=cap_id,
                 name=name,
                 description=description,
-                side_effects=(SideEffect.READ, SideEffect.EXECUTE) if "invoke" in cap_id or "install" in cap_id else (SideEffect.READ,),
+                side_effects=(SideEffect.READ, SideEffect.EXECUTE) if heavy else (SideEffect.READ,),
                 provider_kind=CapabilityProviderKind.MODULE,
                 provider_ref=ref,
                 input_schema={
@@ -58,11 +65,19 @@ def register_external_control_capabilities(catalog: CapabilityCatalog) -> None:
                         "query": {"type": "string"},
                         "skill_id": {"type": "string"},
                         "arguments": {"type": "object"},
+                        "mode": {"type": "string"},
+                        "capability_id": {"type": "string"},
+                        "output": {"type": "object"},
+                        "request_id": {"type": "string"},
+                        "run_id": {"type": "string"},
+                        "observation_id": {"type": "string"},
+                        "evidence_id": {"type": "string"},
+                        "retrieved_at": {"type": "string"},
                     },
                 },
                 output_schema={"type": "object", "additionalProperties": True},
                 metadata={
-                    "execution_class": "EXTERNAL_PREFERRED" if cap_id.startswith("external.module.") else "INLINE_SAFE",
+                    "execution_class": "EXTERNAL_PREFERRED" if heavy else "INLINE_SAFE",
                     "domain": "external_capability",
                 },
             )

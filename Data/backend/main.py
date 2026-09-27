@@ -182,6 +182,7 @@ from Data.backend.routes.artifacts import build_artifacts_router
 from Data.backend.routes.flywheel import build_flywheel_router
 from Data.backend.routes.plugins import build_plugins_router
 from Data.backend.routes.modules import build_modules_router
+from Data.backend.routes.skills import build_skills_router
 from Data.backend.routes.conversations import build_conversations_router
 from Data.backend.routes.browser import build_browser_router
 from Data.backend.routes.platform import build_platform_router
@@ -468,7 +469,19 @@ external_capability_store = ExternalCapabilityStore(settings.database_path)
 external_capability_store.initialize()
 plugin_registry.attach_store(external_capability_store)
 plugin_registry.hydrate_from_store()
-execution_gateway.module_executor = ExternalModuleExecutor(module_manager)
+execution_gateway.module_executor = ExternalModuleExecutor(
+    module_manager,
+    job_runtime=job_runtime,
+    assimilation_service=assimilation_service,
+    evidence_service=evidence_service,
+    observability=observability,
+    catalog=capability_catalog,
+)
+# Cooperative cancel probe for MODULE jobs running via gateway.
+execution_gateway._job_cancel_check = lambda job_id: bool(  # type: ignore[attr-defined]
+    getattr(job_runtime, "_cancel_flags", {}).get(job_id)
+    and getattr(job_runtime, "_cancel_flags", {}).get(job_id).is_set()
+)
 register_external_control_capabilities(capability_catalog)
 
 evaluation_harness = EvaluationHarness(
@@ -2123,8 +2136,9 @@ async def lifespan(_: FastAPI):
                 },
                 metadata={
                     "mcp_bridge": mcp_bridge,
-                    "artifact_store": artifact_store,
+                    "artifact_store": artifacts,
                     "database_path": str(settings.database_path),
+                    "external_capability_store": external_capability_store,
                 },
             )
         )
@@ -2143,6 +2157,15 @@ async def lifespan(_: FastAPI):
                     payload={"module_id": managed.manifest.module_id, "error": str(exc)},
                     level="warning",
                 )
+            else:
+                observability.emit(
+                    "external_capability",
+                    "external.modules.discovered",
+                    payload={"module_id": managed.manifest.module_id},
+                )
+        # Wire skill store into capability broker for on-demand skill shortlists.
+        if hasattr(cognition_runtime, "broker") and cognition_runtime.broker is not None:
+            cognition_runtime.broker._skill_store = external_capability_store  # type: ignore[attr-defined]
         if live_settings().features.mcp_enabled:
             for managed in ready:
                 try:
@@ -2434,6 +2457,12 @@ app.include_router(
         module_manager=module_manager,
         observability=observability,
         job_runtime=job_runtime,
+    )
+)
+app.include_router(
+    build_skills_router(
+        external_store=external_capability_store,
+        observability=observability,
     )
 )
 app.include_router(build_conversations_router(db=db))
@@ -4012,6 +4041,29 @@ async def chat(payload: ChatRequest, request: Request):
                         "truth": result["truth"],
                     },
                 )
+                # Operational capability status from cognition events (no private CoT).
+                cog_events = []
+                if isinstance(cognition_meta, dict):
+                    cog_events = list(cognition_meta.get("events") or [])[:40]
+                for ev in cog_events:
+                    et = str((ev or {}).get("event_type") or "")
+                    if et in {
+                        "tool.started",
+                        "tool.progress",
+                        "tool.completed",
+                        "tool.failed",
+                        "module.starting",
+                        "module.ready",
+                        "artifact.created",
+                        "source.observed",
+                        "knowledge.assimilation_queued",
+                        "knowledge.assimilated",
+                        "job.started",
+                        "job.progress",
+                        "job.completed",
+                        "capability.discovered",
+                    }:
+                        yield sse_encode(et, (ev or {}).get("payload") or {})
                 yield sse_encode("token", {"text": answer, "model": model_name})
                 yield sse_encode("done", result)
 

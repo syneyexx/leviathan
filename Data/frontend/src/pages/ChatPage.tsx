@@ -16,6 +16,7 @@ import type {
   ReasoningSummary,
 } from "../types/api";
 import { buildDiagnosticStrip, deriveAssistantTelemetry } from "./chatTelemetry";
+import { CapabilityResultCards } from "./chat/CapabilityResultCards";
 
 type LocationState = {
   draft?: string;
@@ -899,6 +900,12 @@ export function ChatPage() {
                   >
                     {message.content}
                   </div>
+                  {message.role === "assistant" &&
+                  !message.pending &&
+                  index === messages.length - 1 &&
+                  (lastTurn.telemetry?.tool_calls?.length ?? 0) > 0 ? (
+                    <CapabilityResultCards toolCalls={lastTurn.telemetry?.tool_calls} />
+                  ) : null}
                   <div className="lv-msg-meta">
                     {formatTime(message.created_at) || (message.pending ? "thinking" : "")}
                   </div>
@@ -1324,8 +1331,15 @@ export function ChatPage() {
                       <strong>{call.capability_id}</strong>
                       <small>
                         {call.status}
+                        {call.module_id ? ` · ${call.module_id}` : ""}
+                        {call.provider ? ` · ${call.provider}` : ""}
                         {call.duration_ms != null ? ` · ${Math.round(call.duration_ms)} ms` : ""}
                         {call.receipt_id ? ` · receipt ${String(call.receipt_id).slice(0, 10)}` : ""}
+                        {call.result_count != null ? ` · ${call.result_count} results` : ""}
+                        {call.source_count != null ? ` · ${call.source_count} sources` : ""}
+                        {call.artifact_refs?.length
+                          ? ` · ${call.artifact_refs.length} artifacts`
+                          : ""}
                         {call.success === false ? " · failed" : ""}
                         {call.summary ? ` · ${call.summary}` : ""}
                       </small>
@@ -1337,6 +1351,11 @@ export function ChatPage() {
                 ))
               )}
             </div>
+            {(lastTurn.telemetry?.tool_calls?.length ?? 0) > 0 ? (
+              <div style={{ marginTop: "0.85rem" }}>
+                <CapabilityResultCards toolCalls={lastTurn.telemetry?.tool_calls} />
+              </div>
+            ) : null}
             <div className="lv-side-card-head" style={{ marginTop: "1rem" }}>
               <h3>Catalog (read-only)</h3>
             </div>

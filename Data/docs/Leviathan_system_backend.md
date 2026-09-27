@@ -918,7 +918,9 @@ Adapter kinds: `DECLARATIVE`, `MCP`, `PROTOCOL`, `SKILL`.
 - **Factory:** `create_external_capability_module(manifest=...)` — ModuleManager calls factories with `manifest=` when the signature accepts it; legacy `factory()` still works.
 - **Lifecycle API:** `ensure_installed`, `start`, `stop`, `restart`, `ensure_ready`, `health`, `logs`, `active_jobs` on ModuleManager. HTTP: `/api/modules/{id}/install|start|stop|restart|health|logs|capabilities|jobs`.
 - **Execution:** `ExternalModuleExecutor` is wired as `ExecutionGateway.module_executor`. Catalogued MODULE capabilities execute through the gateway; MCP tools remain McpBridge-owned.
-- **Skills:** SKILL.md importer indexes metadata; instructions load on demand. Large catalogs (`CATALOG_SOURCE`) never enter system prompts.
+- **Skills:** SKILL.md importer indexes metadata; instructions load on demand. Large catalogs (`CATALOG_SOURCE`) never enter system prompts. HTTP: `/api/skills` (search/paginate), `/api/skills/{id}`, `/api/skills/{id}/enable`.
+- **Assimilation:** `KnowledgeAssimilationService.assimilate_external_capability` + `external.knowledge.assimilate` capability. Modes NONE / EVIDENCE / KNOWLEDGE_CANDIDATE / AUTO_KNOWLEDGE. Background via JobRuntime when available; Chat may show "Knowledge ingestion queued".
+- **Chat SSE:** Cognition emits operational events only (`tool.started` / `tool.completed` / `tool.failed` / `knowledge.assimilation_queued`, …) — no private CoT. Rich tool telemetry includes optional `module_id`, `parts`, artifact/source counts.
 - **CONTROL persistence:** `external_modules`, `external_module_versions`, `external_process_records`, `external_skills`, `external_skill_catalogs`, `external_plugin_bindings`, `external_log_windows` (domain migration v3). No fourth database.
 - **Process ownership:** PID + fingerprint reconciliation — persisted RUNNING is never trusted after restart; PID-reuse kills are refused.
 - **Optional modules:** missing/failed third-party installs do not prevent LEVIATHAN boot.

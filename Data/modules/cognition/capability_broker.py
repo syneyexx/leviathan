@@ -114,10 +114,11 @@ class CapabilityBroker:
         inspected = self.inspect(short.capability_ids[:3])
         notes = list(inspected.notes)
         inspected_map = dict(inspected.inspected)
+        store = skill_store if skill_store is not None else getattr(self, "_skill_store", None)
         # Bounded skill metadata — never inject instruction bodies into prompts.
-        if skill_store is not None and goal.strip():
+        if store is not None and goal.strip():
             try:
-                skills = skill_store.search_skills(
+                skills = store.search_skills(
                     query=goal.strip(),
                     enabled_only=True,
                     include_catalog=False,

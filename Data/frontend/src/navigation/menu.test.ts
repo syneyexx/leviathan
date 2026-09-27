@@ -78,10 +78,14 @@ describe("navigation menu", () => {
       "Performance",
       "Tools",
       "Modules",
+      "Skills",
       "MCP",
       "Workflows",
       "Console",
     ]);
+    const skills = section.submenu.find((item) => item.id === "skills");
+    expect(skills?.to).toBe("/skills");
+    expect(findMainMenuByPath("/skills").id).toBe("runtime");
   });
 
   it("marks hoofdmenu active only for the owning section", () => {

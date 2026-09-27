@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from Data.modules.execution.types import CapabilityResult, CapabilityStatus
 from Data.modules.function_runtime.types import SideEffect
 
 from ..manager import ModuleManager, ModuleManagerError
+from .post_result import queue_or_run_assimilation, resolve_assimilation_mode, run_assimilation_job
 from .types import normalize_capability_parts
+
+
+CancelCheck = Callable[[], bool]
+ProgressCb = Callable[[float, str, str], None]
 
 
 class ExternalModuleExecutor:
@@ -19,8 +24,22 @@ class ExternalModuleExecutor:
       - ``module_id:operation``
     """
 
-    def __init__(self, module_manager: ModuleManager) -> None:
+    def __init__(
+        self,
+        module_manager: ModuleManager,
+        *,
+        job_runtime: Any | None = None,
+        assimilation_service: Any | None = None,
+        evidence_service: Any | None = None,
+        observability: Any | None = None,
+        catalog: Any | None = None,
+    ) -> None:
         self.module_manager = module_manager
+        self.job_runtime = job_runtime
+        self.assimilation_service = assimilation_service
+        self.evidence_service = evidence_service
+        self.observability = observability
+        self.catalog = catalog
 
     def execute_module_capability(
         self,
@@ -30,8 +49,49 @@ class ExternalModuleExecutor:
         *,
         request_id: str = "",
         run_id: str | None = None,
+        job_id: str | None = None,
+        cancel_check: CancelCheck | None = None,
+        progress: ProgressCb | None = None,
     ) -> CapabilityResult | dict[str, Any]:
-        # Control-plane external fabric capabilities.
+        if capability_id == "external.knowledge.assimilate":
+            if self.assimilation_service is None:
+                return CapabilityResult(
+                    request_id=request_id or "",
+                    capability_id=capability_id,
+                    status=CapabilityStatus.FAILED,
+                    error="assimilation_service unavailable",
+                    provider_kind="module",
+                    provider_ref=provider_ref,
+                )
+            try:
+                out = run_assimilation_job(arguments, assimilation_service=self.assimilation_service)
+                if self.observability is not None:
+                    try:
+                        self.observability.emit(
+                            "external_capability",
+                            "knowledge.assimilated",
+                            payload={"capability_id": arguments.get("capability_id"), "ok": out.get("ok")},
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+                return CapabilityResult(
+                    request_id=request_id or "",
+                    capability_id=capability_id,
+                    status=CapabilityStatus.COMPLETED if out.get("ok") else CapabilityStatus.FAILED,
+                    output=normalize_capability_parts(summary="assimilation", structured_data=out),
+                    provider_kind="module",
+                    provider_ref=provider_ref,
+                )
+            except Exception as exc:  # noqa: BLE001
+                return CapabilityResult(
+                    request_id=request_id or "",
+                    capability_id=capability_id,
+                    status=CapabilityStatus.FAILED,
+                    error=str(exc),
+                    provider_kind="module",
+                    provider_ref=provider_ref,
+                )
+
         if capability_id == "external.module.install":
             module_id = str(arguments.get("module_id") or "")
             if not module_id:
@@ -44,7 +104,15 @@ class ExternalModuleExecutor:
                     provider_ref=provider_ref,
                 )
             try:
-                result = self.module_manager.ensure_installed(module_id)
+                if job_id:
+                    self.module_manager.register_job(module_id, job_id)
+                managed = self.module_manager.get(module_id)
+                inst = managed.instance if managed else None
+                if inst is not None and hasattr(inst, "ensure_installed"):
+                    result = inst.ensure_installed(progress=progress, cancel_check=cancel_check)
+                else:
+                    result = self.module_manager.ensure_installed(module_id)
+                self._metric("external.modules.installed", {"module_id": module_id})
                 return CapabilityResult(
                     request_id=request_id or "",
                     capability_id=capability_id,
@@ -62,6 +130,13 @@ class ExternalModuleExecutor:
                     provider_kind="module",
                     provider_ref=provider_ref,
                 )
+            finally:
+                if job_id:
+                    try:
+                        self.module_manager.unregister_job(module_id, job_id)
+                    except Exception:  # noqa: BLE001
+                        pass
+
         if capability_id == "external.module.invoke":
             module_id = str(arguments.get("module_id") or "")
             operation = str(arguments.get("operation") or "run")
@@ -72,7 +147,11 @@ class ExternalModuleExecutor:
                 inner,
                 request_id=request_id,
                 run_id=run_id,
+                job_id=job_id,
+                cancel_check=cancel_check,
+                progress=progress,
             )
+
         if capability_id in {"external.skills.search", "external.skills.load"}:
             return self._skills_capability(capability_id, arguments, request_id=request_id)
 
@@ -80,15 +159,28 @@ class ExternalModuleExecutor:
         args = dict(arguments)
         args.pop("operation", None)
         try:
-            # Lazy start when needed.
             try:
                 self.module_manager.ensure_ready(module_id)
             except ModuleManagerError:
-                # ensure_ready may not exist on older managers — fall through to execute.
                 if hasattr(self.module_manager, "ensure_ready"):
                     raise
-            result = self.module_manager.execute(module_id, operation, args)
+            if job_id:
+                self.module_manager.register_job(module_id, job_id)
+
+            # Prefer adapter invoke with cancel/progress when available.
+            managed = self.module_manager.get(module_id)
+            inst = managed.instance if managed else None
+            adapter = getattr(inst, "_adapter", None) if inst is not None else None
+            if adapter is not None and hasattr(adapter, "invoke") and (cancel_check or progress):
+                try:
+                    adapter.ensure_ready()
+                except Exception:  # noqa: BLE001
+                    pass
+                result = adapter.invoke(operation, args, progress=progress, cancel_check=cancel_check)
+            else:
+                result = self.module_manager.execute(module_id, operation, args)
         except ModuleManagerError as exc:
+            self._metric("external.failures", {"module_id": module_id, "capability_id": capability_id})
             return CapabilityResult(
                 request_id=request_id or "",
                 capability_id=capability_id,
@@ -102,6 +194,12 @@ class ExternalModuleExecutor:
                 provider_kind="module",
                 provider_ref=provider_ref,
             )
+        finally:
+            if job_id:
+                try:
+                    self.module_manager.unregister_job(module_id, job_id)
+                except Exception:  # noqa: BLE001
+                    pass
 
         status_map = {
             "COMPLETED": CapabilityStatus.COMPLETED,
@@ -130,7 +228,8 @@ class ExternalModuleExecutor:
                     "run_id": run_id,
                 },
             }
-        return CapabilityResult(
+
+        cap_result = CapabilityResult(
             request_id=request_id or "",
             capability_id=capability_id,
             status=status,
@@ -145,6 +244,43 @@ class ExternalModuleExecutor:
                 "operation": operation,
             },
         )
+        self._metric("external.invocations", {"module_id": module_id, "status": status.value})
+        if status != CapabilityStatus.COMPLETED:
+            self._metric("external.failures", {"module_id": module_id, "status": status.value})
+
+        # Background assimilation — never blocks the capability result path beyond enqueue.
+        try:
+            meta = {}
+            if self.catalog is not None and hasattr(self.catalog, "get"):
+                defn = self.catalog.get(capability_id)
+                if defn is not None:
+                    meta = dict(getattr(defn, "metadata", None) or {})
+            mode = resolve_assimilation_mode(meta, output)
+            assim = queue_or_run_assimilation(
+                mode=mode,
+                capability_id=capability_id,
+                module_id=module_id,
+                request_id=request_id or "",
+                run_id=run_id,
+                job_id=job_id,
+                output=output,
+                status=status.value,
+                job_runtime=self.job_runtime,
+                assimilation_service=self.assimilation_service,
+                evidence_service=self.evidence_service,
+                observability=self.observability,
+            )
+            if isinstance(cap_result.output, dict):
+                cap_result.output.setdefault("metadata", {})
+                cap_result.output["metadata"]["assimilation"] = assim
+                if assim.get("queued"):
+                    parts = list(cap_result.output.get("parts") or [])
+                    parts.append({"kind": "PROGRESS", "phase": "assimilation", "message": "Knowledge ingestion queued"})
+                    cap_result.output["parts"] = parts
+        except Exception:  # noqa: BLE001 — assimilation must not fail the tool result
+            pass
+
+        return cap_result
 
     def _skills_capability(
         self,
@@ -154,7 +290,6 @@ class ExternalModuleExecutor:
         request_id: str,
     ) -> CapabilityResult:
         store = None
-        # Prefer CONTROL store via any external module instance metadata.
         for managed in self.module_manager.list():
             inst = managed.instance
             if inst is not None and getattr(inst, "_store", None) is not None:
@@ -177,6 +312,7 @@ class ExternalModuleExecutor:
                 limit=int(arguments.get("limit") or 25),
                 offset=int(arguments.get("offset") or 0),
             )
+            self._metric("skills.indexed", {"count": store.count_skills()})
             return CapabilityResult(
                 request_id=request_id or "",
                 capability_id=capability_id,
@@ -206,6 +342,7 @@ class ExternalModuleExecutor:
         from .skills import load_skill_instructions
 
         instructions = load_skill_instructions(skill)
+        self._metric("skills.loaded", {"skill_id": skill.get("skill_id")})
         return CapabilityResult(
             request_id=request_id or "",
             capability_id=capability_id,
@@ -219,6 +356,14 @@ class ExternalModuleExecutor:
             provider_ref="external.skills",
         )
 
+    def _metric(self, name: str, payload: dict[str, Any]) -> None:
+        if self.observability is None:
+            return
+        try:
+            self.observability.emit("external_capability", name, payload=payload)
+        except Exception:  # noqa: BLE001
+            pass
+
 
 def _split_ref(provider_ref: str, capability_id: str, arguments: Mapping[str, Any]) -> tuple[str, str]:
     ref = (provider_ref or "").strip()
@@ -227,7 +372,6 @@ def _split_ref(provider_ref: str, capability_id: str, arguments: Mapping[str, An
         if module_id and operation:
             return module_id, operation
     module_id = ref or capability_id.split(".", 1)[0]
-    # Prefer explicit module_id in external.* provider refs like "external.invoke"
     if module_id.startswith("external."):
         module_id = str(arguments.get("module_id") or capability_id.split(".")[0])
     operation = str(arguments.get("operation") or "")

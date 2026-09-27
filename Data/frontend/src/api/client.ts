@@ -872,6 +872,48 @@ export const api = {
     });
   },
 
+  listSkills(params: {
+    query?: string;
+    include_catalog?: boolean;
+    enabled_only?: boolean;
+    limit?: number;
+    offset?: number;
+  } = {}): Promise<{
+    skills: Array<Record<string, unknown>>;
+    count: number;
+    offset: number;
+    limit: number;
+    totals: { installed: number; catalog: number };
+    truth?: Record<string, boolean>;
+  }> {
+    const q = new URLSearchParams();
+    if (params.query) q.set("query", params.query);
+    if (params.include_catalog) q.set("include_catalog", "true");
+    if (params.enabled_only) q.set("enabled_only", "true");
+    if (params.limit != null) q.set("limit", String(params.limit));
+    if (params.offset != null) q.set("offset", String(params.offset));
+    const qs = q.toString();
+    return request(`/api/skills${qs ? `?${qs}` : ""}`);
+  },
+
+  getSkill(
+    skillId: string,
+    includeInstructions = false,
+  ): Promise<{ skill: Record<string, unknown> }> {
+    const q = includeInstructions ? "?include_instructions=true" : "";
+    return request(`/api/skills/${encodeURIComponent(skillId)}${q}`);
+  },
+
+  setSkillEnabled(
+    skillId: string,
+    enabled: boolean,
+  ): Promise<{ skill: Record<string, unknown> }> {
+    return request(`/api/skills/${encodeURIComponent(skillId)}/enable`, {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    });
+  },
+
   listWorkflows(limit = 100): Promise<{ workflows: WorkflowRecord[] }> {
     return request(`/api/workflows?limit=${encodeURIComponent(String(limit))}`);
   },

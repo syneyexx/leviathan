@@ -406,5 +406,195 @@ class ExternalAcceptanceMatrixTests(unittest.TestCase):
             self.assertIn(row["status"], {"PASS", "PARTIAL", "BLOCKED_EXTERNAL", "NOT_APPLICABLE", "FAILED"})
 
 
+class ExternalAssimilationAndScaleTests(unittest.TestCase):
+    def test_assimilate_external_capability_writes_knowledge_with_provenance(self) -> None:
+        from Data.modules.intelligence.assimilation import KnowledgeAssimilationService
+        from Data.modules.knowledge.store import KnowledgeStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            kdb = Path(tmp) / "knowledge.db"
+            cdb = Path(tmp) / "control.db"
+            knowledge = KnowledgeStore(kdb)
+            knowledge.initialize()
+            service = KnowledgeAssimilationService(
+                database_path=cdb,
+                knowledge_store=knowledge,
+            )
+            receipt = service.assimilate_external_capability(
+                mode="KNOWLEDGE_CANDIDATE",
+                capability_id="external.fake.search",
+                module_id="fake-cli",
+                request_id="req-1",
+                run_id="run-1",
+                output={
+                    "summary": "Found 3 discussions about widgets",
+                    "source_refs": ["https://example.com/a", "https://example.com/b"],
+                    "artifact_refs": ["artifact:report-1"],
+                    "structured_data": {"items": [{"title": "A"}, {"title": "B"}, {"title": "C"}]},
+                },
+                retrieved_at="2026-09-27T12:00:00+00:00",
+            )
+            self.assertTrue(receipt.ok)
+            self.assertEqual(receipt.success_count, 1)
+            self.assertEqual(receipt.metadata.get("retrieved_at"), "2026-09-27T12:00:00+00:00")
+            hits = knowledge.search_lexical("widgets", limit=5)
+            self.assertGreaterEqual(len(hits), 1)
+
+            # Idempotent document id — second assimilate same request replaces, not duplicates forever.
+            receipt2 = service.assimilate_external_capability(
+                mode="KNOWLEDGE_CANDIDATE",
+                capability_id="external.fake.search",
+                module_id="fake-cli",
+                request_id="req-1",
+                output={"summary": "Found 3 discussions about widgets"},
+            )
+            self.assertTrue(receipt2.ok)
+            self.assertEqual(receipt.document_ids, receipt2.document_ids)
+
+    def test_post_result_none_mode_skips(self) -> None:
+        from Data.modules.module_manager.external.post_result import (
+            queue_or_run_assimilation,
+            resolve_assimilation_mode,
+        )
+        from Data.modules.module_manager.external.types import AssimilationMode
+
+        mode = resolve_assimilation_mode({"assimilation_mode": "NONE"}, {})
+        self.assertEqual(mode, AssimilationMode.NONE)
+        out = queue_or_run_assimilation(
+            mode=mode,
+            capability_id="x",
+            module_id="m",
+            request_id="r",
+            run_id=None,
+            job_id=None,
+            output={"summary": "hi"},
+            status="COMPLETED",
+        )
+        self.assertFalse(out["queued"])
+        self.assertEqual(out["reason"], "skipped")
+
+    def test_catalog_scale_bounded_search_does_not_load_instructions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ExternalCapabilityStore(Path(tmp) / "c.db")
+            store.initialize()
+            # Simulate hundreds of catalog entries without reading bodies.
+            for i in range(250):
+                store.upsert_skill(
+                    {
+                        "skill_id": f"cat-{i}",
+                        "name": f"skill-{i}",
+                        "description": f"catalog entry {i} for widgets",
+                        "source_repo": "VoltAgent/awesome-openclaw-skills",
+                        "catalog_only": True,
+                        "enabled": True,
+                        "content_hash": f"hash-{i}",
+                    }
+                )
+            t0 = time.perf_counter()
+            rows = store.search_skills(
+                query="widgets",
+                include_catalog=True,
+                enabled_only=True,
+                limit=25,
+                offset=0,
+            )
+            elapsed = time.perf_counter() - t0
+            self.assertEqual(len(rows), 25)
+            self.assertTrue(all(r.get("catalog_only") for r in rows))
+            # Catalog search returns metadata only — no instruction bodies in rows.
+            self.assertTrue(all("instruction_artifact" in r for r in rows))
+            self.assertLess(elapsed, 2.0)
+            self.assertEqual(store.count_skills(catalog_only=True), 250)
+
+    def test_plugin_registry_hydrate_enabled_not_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ExternalCapabilityStore(Path(tmp) / "c.db")
+            store.initialize()
+            store.upsert_plugin_binding(
+                {
+                    "plugin_id": "ext.demo",
+                    "name": "Demo",
+                    "kind": "DECLARATIVE",
+                    "status": "ENABLED",
+                    "bindings": [{"capability_id": "external.demo.op", "external_name": "op"}],
+                }
+            )
+            catalog = CapabilityCatalog()
+            catalog.register(
+                CapabilityDefinition(
+                    id="external.demo.op",
+                    name="Demo Op",
+                    description="demo",
+                    provider_kind=CapabilityProviderKind.EXTERNAL,
+                    provider_ref="demo",
+                    side_effects=(SideEffect.READ,),
+                    input_schema={"type": "object"},
+                    output_schema={"type": "object"},
+                )
+            )
+            registry = PluginRegistry(catalog)
+            registry.attach_store(store)
+            n = registry.hydrate_from_store()
+            self.assertGreaterEqual(n, 1)
+            bindings = store.list_plugin_bindings()
+            self.assertEqual(len(bindings), 1)
+            self.assertEqual(bindings[0]["status"], "ENABLED")
+            self.assertTrue(bindings[0]["truth"]["persisted_enabled_is_not_runtime_ready"])
+            hydrated = next(p for p in registry.list() if p.plugin_id == "ext.demo")
+            self.assertTrue(hydrated.metadata.get("persisted_enabled_is_not_runtime_ready"))
+            # ENABLED config != runtime READY.
+            self.assertNotEqual(str(hydrated.status), "READY")
+
+    def test_restart_reconciles_fake_running(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "mods" / "fake-cli"
+            root.mkdir(parents=True)
+            tool = FIXTURES / "fake_cli" / "tool.py"
+            manifest = {
+                "module_id": "fake-cli",
+                "name": "Fake CLI",
+                "version": "0.0.1",
+                "entrypoint": FACTORY,
+                "external": {
+                    "adapter": "CLI",
+                    "source_type": "path",
+                    "path": str(tool.parent),
+                    "install": {"strategy": "NONE"},
+                    "runtime": {
+                        "command": [sys.executable, str(tool), "{query}"],
+                        "operations": [
+                            {"name": "search", "command": [sys.executable, str(tool), "{query}"]}
+                        ],
+                    },
+                    "result": {"format": "json"},
+                },
+            }
+            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+            db = Path(tmp) / "control.db"
+            store = ExternalCapabilityStore(db)
+            store.initialize()
+            store.upsert_module(
+                module_id="fake-cli",
+                name="Fake CLI",
+                adapter="CLI",
+                runtime_state="RUNNING",
+                desired_state="READY",
+            )
+            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+            manager.discover()
+            manager.initialize(
+                "fake-cli",
+                ModuleContext(
+                    database_path=str(db),
+                    data_root=tmp,
+                    metadata={"external_capability_store": store},
+                ),
+            )
+            # After init/reconcile, persisted RUNNING without a live process must not stay RUNNING.
+            row = store.get_module("fake-cli")
+            assert row is not None
+            self.assertNotEqual(row["runtime_state"], "RUNNING")
+
+
 if __name__ == "__main__":
     unittest.main()

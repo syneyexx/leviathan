@@ -207,6 +207,7 @@ class CognitiveRunState:
             ],
             "agent_delegations": self._agent_delegation_records(),
             "web_sources": self._web_source_records(),
+            "events": self._public_operational_events(),
             "latency_ms": self._latency_ms(),
             "truth": {
                 "no_private_cot": True,
@@ -225,6 +226,40 @@ class CognitiveRunState:
             "memory": len(self.perception.by_type(EpistemicType.EXACT_FACT)),
             "evidence": len(self.perception.by_type(EpistemicType.EVIDENCE)),
         }
+
+    def _public_operational_events(self) -> list[dict[str, Any]]:
+        """Operational status for Chat SSE — never private CoT / planner internals."""
+        allowed = {
+            "tool.started",
+            "tool.progress",
+            "tool.completed",
+            "tool.failed",
+            "module.starting",
+            "module.ready",
+            "artifact.created",
+            "source.observed",
+            "knowledge.assimilation_queued",
+            "knowledge.assimilated",
+            "job.started",
+            "job.progress",
+            "job.completed",
+            "capability.discovered",
+            "capability_invoked",
+            "capability_searched",
+        }
+        out: list[dict[str, Any]] = []
+        for ev in self.events[-48:]:
+            et = str(ev.get("event_type") or "")
+            if et not in allowed:
+                continue
+            out.append(
+                {
+                    "event_type": et,
+                    "payload": dict(ev.get("payload") or {}),
+                    "created_at": ev.get("created_at"),
+                }
+            )
+        return out
 
     def _tool_call_records(self) -> list[dict[str, Any]]:
         """Public tool-call telemetry — status/duration/receipts only (no payloads/CoT)."""
@@ -249,6 +284,18 @@ class CognitiveRunState:
             if duration is None:
                 duration = result.get("duration_ms")
             status = str(result.get("status") or ("OK" if o.success else "FAILED"))
+            output = result.get("output") if isinstance(result.get("output"), dict) else {}
+            meta = output.get("metadata") if isinstance(output.get("metadata"), dict) else {}
+            parts = output.get("parts") if isinstance(output.get("parts"), list) else []
+            artifact_refs = list(output.get("artifact_refs") or o.artifact_refs or ())[:16]
+            source_refs = list(output.get("source_refs") or ())[:50]
+            result_count = None
+            structured = output.get("structured_data") if isinstance(output.get("structured_data"), dict) else {}
+            for key in ("items", "results", "sources", "skills"):
+                val = structured.get(key)
+                if isinstance(val, list):
+                    result_count = len(val)
+                    break
             records.append(
                 {
                     "capability_id": capability_id,
@@ -258,7 +305,13 @@ class CognitiveRunState:
                     "duration_ms": float(duration) if duration is not None else None,
                     "receipt_id": str(receipt_id) if receipt_id else None,
                     "error": o.error or result.get("error"),
-                    "summary": (o.summary or "")[:200],
+                    "summary": (o.summary or str(output.get("summary") or ""))[:200],
+                    "module_id": meta.get("module_id") or telemetry.get("module_id"),
+                    "provider": result.get("provider_kind") or meta.get("adapter"),
+                    "result_count": result_count,
+                    "artifact_refs": artifact_refs,
+                    "source_count": len(source_refs) if source_refs else None,
+                    "parts": parts[:24] if parts else None,
                 }
             )
         return records
@@ -1616,6 +1669,16 @@ class CognitiveRuntime:
                     idempotency_key=f"cog:{state.run_id}:{action.action_id}",
                     approval_id=action.arguments.get("approval_id"),
                 )
+                # Operational status only — no private chain-of-thought.
+                self._emit(
+                    state,
+                    "tool.started",
+                    {
+                        "capability_id": capability_id,
+                        "request_id": action.action_id,
+                        "trace_id": state.trace_id,
+                    },
+                )
                 self._emit(
                     state,
                     "capability_invoked",
@@ -1629,6 +1692,34 @@ class CognitiveRuntime:
                 result_dict = result.public_dict() if hasattr(result, "public_dict") else dict(result)
                 status_value = str(result_dict.get("status") or "")
                 success = status_value in {"COMPLETED", "OK", "SUCCESS"}
+                output = result_dict.get("output") if isinstance(result_dict.get("output"), dict) else {}
+                self._emit(
+                    state,
+                    "tool.completed" if success else "tool.failed",
+                    {
+                        "capability_id": capability_id,
+                        "request_id": action.action_id,
+                        "status": status_value,
+                        "success": success,
+                        "artifact_count": len(list(output.get("artifact_refs") or [])),
+                        "source_count": len(list(output.get("source_refs") or [])),
+                        "assimilation": (output.get("metadata") or {}).get("assimilation")
+                        if isinstance(output.get("metadata"), dict)
+                        else None,
+                    },
+                )
+                if isinstance(output.get("metadata"), dict):
+                    assim = output["metadata"].get("assimilation") or {}
+                    if assim.get("queued"):
+                        self._emit(
+                            state,
+                            "knowledge.assimilation_queued",
+                            {
+                                "capability_id": capability_id,
+                                "job_id": assim.get("job_id"),
+                                "mode": assim.get("mode"),
+                            },
+                        )
                 self._transition(state, CognitiveRunStatus.OBSERVING)
                 self._ingest_tool_result(state, capability_id, result_dict, success=success)
                 return CognitiveObservation(
@@ -1642,6 +1733,7 @@ class CognitiveRuntime:
                     source_type=EpistemicType.TOOL_OBSERVATION,
                     success=success,
                     error=result_dict.get("error"),
+                    artifact_refs=tuple(list(output.get("artifact_refs") or [])[:16]),
                     payload={
                         "action_id": action.action_id,
                         "capability_id": capability_id,
@@ -1651,6 +1743,11 @@ class CognitiveRuntime:
                 )
             except Exception as exc:  # noqa: BLE001
                 self._transition(state, CognitiveRunStatus.OBSERVING)
+                self._emit(
+                    state,
+                    "tool.failed",
+                    {"capability_id": capability_id, "error": str(exc)[:240]},
+                )
                 return CognitiveObservation(
                     kind=CognitiveObservationKind.ERROR,
                     observation_id=str(uuid.uuid4()),
