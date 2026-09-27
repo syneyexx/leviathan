@@ -384,6 +384,80 @@ class SqliteManagerThreeDbTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             classify_write_sql("UPDATE t SET a=1; DROP TABLE t")
 
+    def test_authorizer_blocks_write_on_read_connection(self) -> None:
+        from Data.modules.common.sqlite_policy import open_sqlite_connection
+        from Data.modules.sqlite_manager.sql_safety import open_readonly_connection
+
+        conn = open_readonly_connection(
+            str(self.paths.control), open_fn=open_sqlite_connection
+        )
+        try:
+            with self.assertRaises(sqlite3.DatabaseError):
+                conn.execute(
+                    "INSERT INTO conversations(id,title,created_at,updated_at,pinned) "
+                    "VALUES ('authz','t','2020-01-01','2020-01-01',0)"
+                )
+            with self.assertRaises(sqlite3.DatabaseError):
+                conn.execute("ATTACH DATABASE ':memory:' AS evil")
+        finally:
+            conn.close()
+
+    def test_query_limit_clamped(self) -> None:
+        q = self.manager.query("CONTROL", "SELECT 1 AS n", limit=50_000)
+        self.assertEqual(q["limit"], 1000)
+
+    def test_page_size_clamped(self) -> None:
+        page = self.manager.query_rows(
+            "CONTROL",
+            "conversations",
+            limit=10_000,
+        )
+        self.assertLessEqual(page["limit"], 200)
+
+    def test_market_and_knowledge_row_browse_parity(self) -> None:
+        for domain, table, insert_sql, identity_col in (
+            (
+                "KNOWLEDGE",
+                "knowledge_documents",
+                "INSERT INTO knowledge_documents(id,title,content,source,created_at,updated_at) "
+                "VALUES ('br1','t','b','manual','2020-01-01','2020-01-01')",
+                "id",
+            ),
+            (
+                "MARKET",
+                "market_strategies",
+                "INSERT INTO market_strategies("
+                "strategy_id, name, description, status, tags_json, current_version, "
+                "content_hash, created_at, updated_at, metadata_json) "
+                "VALUES ('br1','n','','ACTIVE','[]',1,'h','2020-01-01','2020-01-01','{}')",
+                "strategy_id",
+            ),
+        ):
+            self.manager.mutate(domain, insert_sql, confirm_domain=domain)
+            page = self.manager.query_rows(domain, table, limit=10)
+            self.assertEqual(page["domain"], domain)
+            self.assertGreaterEqual(page["rowCount"], 1)
+            detail = self.manager.table_detail(domain, table)
+            self.assertEqual(detail["ownershipState"], "EXPECTED")
+            self.assertIn(identity_col, detail["primaryKey"])
+
+    def test_huge_cell_truncation(self) -> None:
+        big = "X" * 10_000
+        self.manager.mutate(
+            "KNOWLEDGE",
+            "INSERT INTO knowledge_documents(id,title,content,source,created_at,updated_at) "
+            f"VALUES ('huge','t','{big}','manual','2020-01-01','2020-01-01')",
+            confirm_domain="KNOWLEDGE",
+        )
+        page = self.manager.query_rows(
+            "KNOWLEDGE",
+            "knowledge_documents",
+            filters=[{"column": "id", "op": "=", "value": "huge"}],
+        )
+        cell = page["rows"][0]["values"]["content"]
+        self.assertTrue(cell["truncated"])
+        self.assertLess(len(str(cell["value"])), 10_000)
+
 
 class SqliteManagerBusyTests(unittest.TestCase):
     def test_busy_surfaces_honestly(self) -> None:
