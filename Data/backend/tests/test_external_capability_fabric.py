@@ -1976,8 +1976,8 @@ class ExternalFabricDoDProofTests(unittest.TestCase):
             job_id = "job-assim-1"
 
         class _JR:
-            def enqueue(self, request):  # noqa: ANN001
-                enqueued.append(request)
+            def enqueue(self, **kwargs):  # noqa: ANN003
+                enqueued.append(kwargs)
                 return _Job()
 
         out = queue_or_run_assimilation(
@@ -1999,7 +1999,7 @@ class ExternalFabricDoDProofTests(unittest.TestCase):
         self.assertTrue(out.get("queued"))
         self.assertEqual(out.get("job_id"), "job-assim-1")
         self.assertEqual(len(enqueued), 1)
-        self.assertEqual(enqueued[0].capability_id, "external.knowledge.assimilate")
+        self.assertEqual(enqueued[0]["capability_id"], "external.knowledge.assimilate")
 
     def test_process_service_reconciles_dead_pid(self) -> None:
         port = _free_port()
@@ -2209,6 +2209,128 @@ class ExternalFabricDoDProofTests(unittest.TestCase):
                 event_types = [e.get("event_type") for e in state.events]
                 self.assertIn("job.started", event_types)
                 self.assertIn("job.completed", event_types)
+                jobs.stop_background_worker()
+        finally:
+            if prev is None:
+                os.environ.pop("LEVIATHAN_WORKERS_EXTERNALIZE_API", None)
+            else:
+                os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = prev
+
+    def test_cognition_iterative_multi_tool_external_required(self) -> None:
+        """Plan → tool A → observe → tool B via JobRuntime offload (no API-thread block)."""
+        import os
+
+        from Data.modules.cognition.runtime import CognitiveRunState, CognitiveRuntime
+        from Data.modules.cognition.task_model import TaskModel
+        from Data.modules.cognition.types import (
+            CognitiveAction,
+            CognitiveActionKind,
+            CognitiveRunStatus,
+        )
+        from Data.modules.jobs import JobRuntime, JobStore, ResourceManager
+
+        prev = os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API")
+        os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                mods = Path(tmp) / "mods"
+                tool = FIXTURES / "fake_cli" / "tool.py"
+                for mid, cap in (("tool-a", "external.tool_a.search"), ("tool-b", "external.tool_b.search")):
+                    root = mods / mid
+                    root.mkdir(parents=True)
+                    manifest = {
+                        "module_id": mid,
+                        "name": mid,
+                        "version": "0.0.1",
+                        "entrypoint": FACTORY,
+                        "external": {
+                            "adapter": "CLI",
+                            "source_type": "path",
+                            "path": str(tool.parent),
+                            "install": {"strategy": "NONE"},
+                            "resource_class": "NETWORK_HEAVY",
+                            "assimilation_mode": "NONE",
+                            "runtime": {
+                                "operations": [
+                                    {
+                                        "name": "search",
+                                        "command": [sys.executable, str(tool), "{query}"],
+                                    }
+                                ],
+                                "timeout_seconds": 30,
+                            },
+                            "result": {"format": "json"},
+                        },
+                        "capabilities": [
+                            {
+                                "capability_id": cap,
+                                "name": "Search",
+                                "external_name": "search",
+                                "side_effects": ["READ"],
+                            }
+                        ],
+                    }
+                    (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+                manager = ModuleManager(discovery_roots=(mods,), enabled=True)
+                manager.discover()
+                catalog = CapabilityCatalog()
+                plugins = PluginRegistry(catalog)
+                for mid in ("tool-a", "tool-b"):
+                    manager.initialize(
+                        mid,
+                        ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp),
+                    )
+                    managed = manager.get(mid)
+                    assert managed is not None
+                    register_external_module_capabilities(
+                        catalog=catalog, plugin_registry=plugins, managed=managed
+                    )
+                gateway = ExecutionGateway(catalog=catalog)
+                gateway.module_executor = ExternalModuleExecutor(manager, catalog=catalog)
+                job_store = JobStore(Path(tmp) / "jobs.db")
+                job_store.initialize()
+                jobs = JobRuntime(job_store, gateway, ResourceManager(2))
+                runtime = CognitiveRuntime(
+                    enabled=True,
+                    execution_gateway=gateway,
+                    job_runtime=jobs,
+                    factuality_mode="NONE",
+                )
+                task = TaskModel(
+                    task_id="t-multi",
+                    run_id="r-multi",
+                    raw_request="use both tools",
+                    goal="use both tools",
+                    domain="test",
+                    task_type="tool",
+                )
+                state = CognitiveRunState(
+                    run_id="r-multi",
+                    task=task,
+                    status=CognitiveRunStatus.REASONING,
+                    trace_id="tr-multi",
+                )
+                for i, cap in enumerate(("external.tool_a.search", "external.tool_b.search")):
+                    # Iterative loop returns to REASONING between tool observations.
+                    state.status = CognitiveRunStatus.REASONING
+                    action = CognitiveAction(
+                        kind=CognitiveActionKind.INVOKE_CAPABILITY,
+                        action_id=f"a-multi-{i}",
+                        capability_id=cap,
+                        arguments={"query": f"q{i}"},
+                    )
+                    obs = runtime._execute_action(state, action, history=[])  # noqa: SLF001
+                    assert obs is not None
+                    result = (obs.payload or {}).get("result") or {}
+                    self.assertEqual(str(result.get("status")), "COMPLETED", msg=result)
+                    tele = result.get("telemetry") if isinstance(result.get("telemetry"), dict) else {}
+                    self.assertEqual(tele.get("executed_via"), "job_runtime")
+                    self.assertEqual(state.status, CognitiveRunStatus.OBSERVING)
+                event_types = [e.get("event_type") for e in state.events]
+                self.assertGreaterEqual(event_types.count("job.started"), 2)
+                self.assertGreaterEqual(event_types.count("job.completed"), 2)
+                self.assertGreaterEqual(event_types.count("tool.completed"), 2)
                 jobs.stop_background_worker()
         finally:
             if prev is None:

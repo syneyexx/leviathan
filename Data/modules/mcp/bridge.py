@@ -60,6 +60,7 @@ class McpBridge:
         allow_outbound: bool = False,
         limits: McpLimits | None = None,
         secret_overrides: dict[str, str] | None = None,
+        observability: Any | None = None,
     ) -> None:
         self.store = store
         self.catalog = catalog
@@ -71,6 +72,7 @@ class McpBridge:
         self.allow_outbound = allow_outbound
         self.limits = limits or DEFAULT_MCP_LIMITS
         self.secret_overrides = secret_overrides or {}
+        self.observability = observability
         self.sync = McpCatalogSync(
             catalog=catalog,
             store=store,
@@ -86,6 +88,7 @@ class McpBridge:
             "tool_calls": 0,
             "tool_call_failures": 0,
             "schema_changes": 0,
+            "sessions_active": 0,
         }
 
     def initialize(self) -> None:
@@ -317,6 +320,7 @@ class McpBridge:
             seen=True,
         )
         self.telemetry["connects"] += 1
+        self._record_sessions_metric()
         if config.expand_tools:
             try:
                 self.refresh_tools(server_id)
@@ -348,7 +352,24 @@ class McpBridge:
             self.sync.mark_unavailable(config)
         self.store.update_runtime_state(server_id, state=runtime.state)
         self.telemetry["disconnects"] += 1
+        self._record_sessions_metric()
         return runtime
+
+    def _record_sessions_metric(self) -> None:
+        """Low-cardinality active session count for ObservabilityHub."""
+        with self._lock:
+            count = len(self._sessions)
+        self.telemetry["sessions_active"] = count
+        if self.observability is None:
+            return
+        try:
+            self.observability.emit(
+                "external_capability",
+                "mcp.sessions",
+                payload={"count": count},
+            )
+        except Exception:  # noqa: BLE001 — observability must not break MCP lifecycle
+            pass
 
     def refresh_tools(self, server_id: str) -> list[McpToolRecord]:
         session = self._require_session(server_id)

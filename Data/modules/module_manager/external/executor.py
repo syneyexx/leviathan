@@ -286,6 +286,43 @@ class ExternalModuleExecutor:
                 "external.failures",
                 {"module_id": module_id, "capability_id": capability_id, "status": status.value},
             )
+        # Bounded output size metric — never high-cardinality payload content.
+        try:
+            summary_len = len(str(output.get("summary") or ""))
+            refs = list(output.get("artifact_refs") or [])[:16]
+            bytes_out = min(summary_len + sum(len(str(r)) for r in refs), 10_000_000)
+            self._metric(
+                "external.bytes_output",
+                {"bytes": bytes_out, "module_id": module_id, "status": status.value},
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            active = len(self.module_manager.active_jobs(module_id)) if job_id else 0
+            if job_id:
+                self._metric(
+                    "external.jobs.active",
+                    {"count": active, "module_id": module_id},
+                )
+            running = sum(
+                1
+                for m in self.module_manager.list()
+                if str(getattr(m.status, "value", m.status)).upper() == "RUNNING"
+            )
+            self._metric("external.modules.running", {"count": running})
+            discovered = sum(
+                1
+                for m in self.module_manager.list()
+                if isinstance(getattr(m, "manifest", None), object)
+                and (
+                    (getattr(m.manifest, "metadata", None) or {}).get("external")
+                    or "external" in str(getattr(m.manifest, "entrypoint", "") or "")
+                )
+            )
+            if discovered:
+                self._metric("external.modules.discovered", {"count": discovered})
+        except Exception:  # noqa: BLE001
+            pass
 
         observation_id = None
         try:

@@ -101,26 +101,32 @@ def queue_or_run_assimilation(
 
     if mode == AssimilationMode.EVIDENCE:
         _emit(observability, "knowledge.assimilation_queued", {"mode": mode.value, "capability_id": capability_id, "evidence_only": True})
+        _emit(observability, "assimilation.queued", {"mode": mode.value, "capability_id": capability_id, "evidence_only": True})
         _emit(observability, "knowledge.assimilated", {"mode": mode.value, "capability_id": capability_id, "evidence_id": evidence_id})
+        _emit(observability, "assimilation.completed", {"mode": mode.value, "capability_id": capability_id, "evidence_id": evidence_id})
         return {"queued": False, "mode": mode.value, "evidence_id": evidence_id, "completed": True}
 
     # Knowledge candidate / auto — prefer background job.
     if job_runtime is not None:
         try:
-            from Data.modules.execution import CapabilityRequest
-
             job = job_runtime.enqueue(
-                CapabilityRequest(
-                    capability_id="external.knowledge.assimilate",
-                    arguments=payload,
-                    requested_by="external.fabric",
-                    run_id=run_id,
-                    idempotency_key=f"assim:{capability_id}:{request_id}",
-                )
+                capability_id="external.knowledge.assimilate",
+                arguments=dict(payload),
+                requested_by="external.fabric",
+                run_id=run_id,
+                idempotency_key=f"assim:{capability_id}:{request_id}",
+                latency_class="background",
+                domain="knowledge",
+                consumer="external.fabric",
             )
             _emit(
                 observability,
                 "knowledge.assimilation_queued",
+                {"mode": mode.value, "capability_id": capability_id, "job_id": getattr(job, "job_id", None)},
+            )
+            _emit(
+                observability,
+                "assimilation.queued",
                 {"mode": mode.value, "capability_id": capability_id, "job_id": getattr(job, "job_id", None)},
             )
             return {"queued": True, "mode": mode.value, "job_id": getattr(job, "job_id", None), "evidence_id": evidence_id}
@@ -134,6 +140,16 @@ def queue_or_run_assimilation(
             _emit(
                 observability,
                 "knowledge.assimilated",
+                {
+                    "mode": mode.value,
+                    "capability_id": capability_id,
+                    "receipt_id": getattr(receipt, "receipt_id", None),
+                    "ok": getattr(receipt, "ok", False),
+                },
+            )
+            _emit(
+                observability,
+                "assimilation.completed",
                 {
                     "mode": mode.value,
                     "capability_id": capability_id,

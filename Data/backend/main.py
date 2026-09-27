@@ -455,6 +455,7 @@ mcp_bridge = McpBridge(
     http_enabled=settings.features.mcp_http,
     auto_expand_modules=settings.features.mcp_auto_expand_modules,
     allow_outbound=settings.network.allow_outbound,
+    observability=observability,
 )
 mcp_provider = McpProvider(mcp_bridge, job_runtime=job_runtime)
 execution_gateway.mcp_executor = mcp_provider
