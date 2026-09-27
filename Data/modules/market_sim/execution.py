@@ -317,8 +317,11 @@ class NextBarFillModel:
             if intent.side == OrderSide.BUY.value:
                 notional = money(qty * fill_price)
                 fee = money(notional * D(self.fee_bps) / D(10_000))
-                total = money(notional + fee)
+                futures_vm = getattr(wallet, "valuation_mode", "spot") == "futures_vm"
+                total = fee if futures_vm else money(notional + fee)
                 if total > wallet.cash + money("0.00000001"):
+                    if futures_vm:
+                        return self._reject(intent, fill_price, "insufficient cash for futures fee", order_type, price_source)
                     affordable = money(
                         wallet.available_cash
                         / (fill_price * (D(1) + D(self.fee_bps) / D(10_000)))
@@ -780,3 +783,236 @@ def schedule_vwap_weights(
             )
         )
     return out
+
+
+class QuoteL1FillModel:
+    """L1 quote executor — trades against real bid/ask when present.
+
+    Never synthesizes a spread from OHLCV. Missing quotes → fail closed
+    (REJECTED with explicit reason).
+    """
+
+    ASSUMPTIONS = (
+        "Requires measured bid/ask quotes — never invented from OHLCV",
+        "BUY market fills at ask; SELL market fills at bid",
+        "Limit BUY requires ask <= limit; Limit SELL requires bid >= limit",
+        "observed_execution=False unless caller marks quote as observed",
+    )
+
+    def __init__(self, *, fee_bps: float = 5.0) -> None:
+        self.fee_bps = fee_bps
+
+    def execute_intent(
+        self,
+        *,
+        wallet: WalletLedger,
+        intent: OrderIntent,
+        bid: float | None,
+        ask: float | None,
+        fill_bar_index: int = 0,
+        bid_size: float | None = None,
+        ask_size: float | None = None,
+    ) -> FillResult:
+        if bid is None or ask is None:
+            intent.status = "rejected"
+            return FillResult(
+                False,
+                money(0),
+                money(0),
+                money(0),
+                money(0),
+                "L1_QUOTES_REQUIRED — bid/ask missing; refuse OHLCV synthesis",
+                status=FillStatus.REJECTED.value,
+                intent_id=intent.intent_id,
+                order_type=intent.order_type,
+                triggered=False,
+            )
+        bid_f = float(bid)
+        ask_f = float(ask)
+        if bid_f <= 0 or ask_f <= 0 or ask_f < bid_f:
+            intent.status = "rejected"
+            return FillResult(
+                False,
+                money(0),
+                money(0),
+                money(0),
+                money(0),
+                "L1_QUOTE_INVALID — nonpositive or crossed book",
+                status=FillStatus.REJECTED.value,
+                intent_id=intent.intent_id,
+                order_type=intent.order_type,
+                triggered=False,
+            )
+        if fill_bar_index < intent.eligible_bar_index:
+            return FillResult(
+                False,
+                money(0),
+                money(ask_f),
+                money(0),
+                money(0),
+                "not yet eligible — causality guard",
+                status=FillStatus.REJECTED.value,
+                intent_id=intent.intent_id,
+                order_type=intent.order_type,
+                triggered=False,
+            )
+        if intent.side == OrderSide.HOLD.value or intent.qty is None or D(intent.qty) <= 0:
+            intent.status = "cancelled"
+            return FillResult(
+                False,
+                money(0),
+                money(ask_f),
+                money(0),
+                money(0),
+                "hold/no qty",
+                intent_id=intent.intent_id,
+                order_type=intent.order_type,
+                triggered=False,
+            )
+
+        side = str(intent.side).upper()
+        order_type = (intent.order_type or OrderType.MARKET.value).upper()
+        is_buy = side in {OrderSide.BUY.value, "LONG"}
+        reference = money(ask_f if is_buy else bid_f)
+        size_cap = ask_size if is_buy else bid_size
+
+        if order_type == OrderType.LIMIT.value:
+            limit_px = intent.limit_price
+            if limit_px is None:
+                intent.status = "rejected"
+                return FillResult(
+                    False,
+                    money(0),
+                    reference,
+                    money(0),
+                    money(0),
+                    "LIMIT requires limit_price",
+                    status=FillStatus.REJECTED.value,
+                    intent_id=intent.intent_id,
+                    order_type=order_type,
+                    triggered=False,
+                )
+            if is_buy and ask_f > float(limit_px):
+                return FillResult(
+                    False,
+                    money(0),
+                    reference,
+                    money(0),
+                    money(0),
+                    "limit buy not marketable vs ask",
+                    status=FillStatus.WORKING.value,
+                    intent_id=intent.intent_id,
+                    order_type=order_type,
+                    triggered=False,
+                )
+            if (not is_buy) and bid_f < float(limit_px):
+                return FillResult(
+                    False,
+                    money(0),
+                    reference,
+                    money(0),
+                    money(0),
+                    "limit sell not marketable vs bid",
+                    status=FillStatus.WORKING.value,
+                    intent_id=intent.intent_id,
+                    order_type=order_type,
+                    triggered=False,
+                )
+        elif order_type not in {OrderType.MARKET.value, "MKT"}:
+            intent.status = "rejected"
+            return FillResult(
+                False,
+                money(0),
+                reference,
+                money(0),
+                money(0),
+                f"L1_UNSUPPORTED_ORDER_TYPE:{order_type}",
+                status=FillStatus.REJECTED.value,
+                intent_id=intent.intent_id,
+                order_type=order_type,
+                triggered=False,
+            )
+
+        qty = money(intent.qty)
+        if size_cap is not None and float(size_cap) >= 0:
+            qty = money(min(float(qty), float(size_cap)))
+            if qty <= 0:
+                intent.status = "rejected"
+                return FillResult(
+                    False,
+                    money(0),
+                    reference,
+                    money(0),
+                    money(0),
+                    "quote size exhausted",
+                    status=FillStatus.REJECTED.value,
+                    intent_id=intent.intent_id,
+                    order_type=order_type,
+                    triggered=False,
+                )
+
+        notional = money(qty * reference)
+        fee = money(float(notional) * float(self.fee_bps) / 10_000.0)
+        slippage = money(0)
+
+        try:
+            if is_buy:
+                if not wallet.reserve(notional + fee):
+                    intent.status = "rejected"
+                    return FillResult(
+                        False,
+                        money(0),
+                        reference,
+                        money(0),
+                        money(0),
+                        "insufficient cash",
+                        status=FillStatus.REJECTED.value,
+                        intent_id=intent.intent_id,
+                        order_type=order_type,
+                        triggered=True,
+                    )
+                wallet.apply_buy(
+                    qty=qty,
+                    price=reference,
+                    fee=fee,
+                    tx_id=f"l1-{intent.intent_id}",
+                    symbol=getattr(intent, "symbol", None),
+                )
+            else:
+                wallet.apply_sell(
+                    qty=qty,
+                    price=reference,
+                    fee=fee,
+                    tx_id=f"l1-{intent.intent_id}",
+                    symbol=getattr(intent, "symbol", None),
+                )
+        except ValueError as exc:
+            intent.status = "rejected"
+            return FillResult(
+                False,
+                money(0),
+                reference,
+                money(0),
+                money(0),
+                str(exc),
+                status=FillStatus.REJECTED.value,
+                intent_id=intent.intent_id,
+                order_type=order_type,
+                triggered=True,
+            )
+
+        intent.status = "filled"
+        return FillResult(
+            True,
+            qty,
+            reference,
+            fee,
+            slippage,
+            "l1_quote_fill",
+            status=FillStatus.FILLED.value,
+            intent_id=intent.intent_id,
+            order_type=order_type,
+            triggered=True,
+            fill_price_source="ask" if is_buy else "bid",
+            remaining_qty=money(0),
+        )

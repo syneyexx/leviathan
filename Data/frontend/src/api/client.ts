@@ -124,6 +124,7 @@ import type {
   MarketStrategyVersion,
   MarketSimRun,
   MarketSimLiveState,
+  MarketSimCapabilities,
   TradeOrchestra,
   TradeOrchestraSummary,
   TradingDecision,
@@ -2246,7 +2247,7 @@ export const api = {
     });
   },
 
-  marketSimCapabilities(): Promise<Record<string, unknown>> {
+  marketSimCapabilities(): Promise<MarketSimCapabilities> {
     return request("/api/market-sim/capabilities");
   },
 

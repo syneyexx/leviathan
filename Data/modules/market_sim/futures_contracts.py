@@ -30,6 +30,18 @@ class FuturesContractSpec:
     def notional(self, qty: Any, price: Any) -> Decimal:
         return Decimal(str(qty)) * Decimal(str(price)) * Decimal(str(self.multiplier))
 
+    def variation_margin(self, qty: Any, price_from: Any, price_to: Any) -> Decimal:
+        """Cash variation margin for mark-to-market between two prices.
+
+        Positive = credit to long; short gets the opposite sign from caller.
+        Missing multiplier is refused (no silent 1.0 when unset).
+        """
+        mult = Decimal(str(self.multiplier))
+        if mult <= 0:
+            raise ValueError("futures_multiplier_invalid")
+        delta = Decimal(str(price_to)) - Decimal(str(price_from))
+        return Decimal(str(qty)) * delta * mult
+
     def public_dict(self) -> dict[str, Any]:
         return {
             "symbol": self.symbol,

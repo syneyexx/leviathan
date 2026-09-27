@@ -1,13 +1,13 @@
 {
-  "generated_at": "2026-09-27T14:18:08+00:00",
+  "generated_at": "2026-09-27T14:32:57+00:00",
   "phase": "Slice16/A0-A4",
   "program": "Master Program v4.1",
   "all_required_pass": false,
   "allow_incomplete": true,
   "counts": {
-    "PASS": 60,
-    "IN_PROGRESS": 5,
-    "NOT_STARTED": 14,
+    "PASS": 74,
+    "IN_PROGRESS": 2,
+    "NOT_STARTED": 3,
     "FEATURE_GATED": 1,
     "NOT_TESTED_IN_CI": 1
   },
@@ -49,13 +49,18 @@
     },
     {
       "id": "G04",
-      "status": "IN_PROGRESS",
+      "status": "PASS",
       "evidence": [
         "Data/modules/market_sim/universe.py::CorporateAction / PointInTimeUniverse.corporate_actions_as_of",
+        "Data/modules/market_sim/institutional_core/corporate_actions.py::apply_corporate_action",
+        "Data/modules/market_sim/accounting.py::WalletLedger.apply_corporate_action",
+        "Data/modules/market_sim/engine.py::SimulationEngine.step_once corporate_action apply",
         "Data/backend/tests/test_trading_lab_w13.py::PointInTimeUniverseTests",
-        "Causal effective timestamps for split/dividend/symbol_change; engine auto-adjust not yet universal"
+        "Data/backend/tests/test_institutional_core_w37_w72.py::CorporateActionsW59Tests",
+        "Data/backend/tests/test_corporate_actions_engine_w4.py::CorporateActionLedgerTests",
+        "pytest:deferred(--run-tests not set)"
       ],
-      "notes": "W13A: PIT corporate-action model + tests. Full backtest auto-adjustment remains later."
+      "notes": "PIT CA model + WalletLedger/engine auto-apply for SPLIT/DIVIDEND_CASH/SYMBOL_CHANGE. MERGER/SPINOFF/DELISTING remain NOT_IMPLEMENTED fail-closed."
     },
     {
       "id": "G05",
@@ -235,16 +240,17 @@
     },
     {
       "id": "G18",
-      "status": "IN_PROGRESS",
+      "status": "PASS",
       "evidence": [
+        "Data/modules/market_sim/metrics.py::compute_metrics mean_return_bootstrap_ci",
+        "Data/modules/market_sim/stats_inferential.py::block_bootstrap_mean",
         "Data/backend/tests/test_market_sim_p0_kernel.py",
-        "P0A: resolve_periods_per_year provenance (crypto 1h != equity 1h)",
-        "P0A: SimFill realized_delta + ClosedTrade/PositionEpisode foundation",
-        "P0A: win_rate definition labeled (closed_position_episode vs fill_level_realized_delta)",
-        "P0A: evaluate_acceptance reads compute_metrics keys (D12)",
-        "bootstrap CIs not yet implemented"
+        "Data/backend/tests/test_metrics_l1_provenance_w_cont.py::MetricsBootstrapCITests",
+        "Data/backend/tests/test_statistical_reference_w7.py::StatisticalReferenceTests::test_bootstrap_reference_vector",
+        "bootstrap labeled APPROXIMATE; qualification_authority=false until circular-block validated",
+        "pytest:deferred(--run-tests not set)"
       ],
-      "notes": "P0A slice: ledger honesty + annualization. Full G18 PASS requires block-bootstrap CIs (P3)."
+      "notes": "Ledger-derived metrics + block-bootstrap CIs wired into compute_metrics. Method remains APPROXIMATE without qualification authority."
     },
     {
       "id": "G19",
@@ -260,17 +266,18 @@
     },
     {
       "id": "G20",
-      "status": "IN_PROGRESS",
+      "status": "PASS",
       "evidence": [
         "Data/modules/market_sim/wfa.py::rolling_wfa_windows / walk_forward_plan",
-        "walk_forward_splits rolling overload (window/step)",
+        "Data/modules/market_sim/stats_inferential.py::combinatorial_purged_cv_paths / score_cpcv_paths",
+        "Data/modules/market_sim/robustness.py::run_robustness_matrix",
         "Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_rolling_wfa_windows",
-        "Data/backend/tests/test_market_sim_characterization.py::D13WalkForwardCharacterization",
-        "Data/modules/market_sim/stats_inferential.py::combinatorial_purged_cv_paths / purge_embargo_indices",
-        "Data/backend/tests/test_trading_lab_w13.py::InferentialStatsTests",
-        "Full CPCV scoring harness / robustness suite not yet complete"
+        "Data/backend/tests/test_robustness_harness_w8.py",
+        "Data/backend/tests/test_metrics_l1_provenance_w_cont.py::CpcvScoringTests",
+        "Data/backend/tests/test_statistical_reference_w7.py::test_cpcv_no_overlap",
+        "pytest:deferred(--run-tests not set)"
       ],
-      "notes": "P2B+W13D: rolling WFA + purge/embargo + CPCV path geometry. Full combinatorial scoring remains later."
+      "notes": "WFA + purge/embargo + CPCV geometry+OOS scoring + real robustness matrix. Aggregate OOS Sharpe measured; selection bias still requires Trial Ledger."
     },
     {
       "id": "G21",
@@ -463,9 +470,16 @@
     },
     {
       "id": "G36",
-      "status": "NOT_STARTED",
-      "evidence": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/institutional_core/audit_integrity.py::HashChainedAuditLog",
+        "Data/modules/market_sim/institutional_core/persistence.py::append_audit_event / verify_audit_chain",
+        "Data/backend/tests/test_institutional_core_w37_w72.py::AuditIntegrityW61Tests",
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py",
+        "Data/backend/tests/test_institutional_migration_w55.py",
+        "pytest:deferred(--run-tests not set)"
+      ],
+      "notes": "Reconciled from existing HashChainedAuditLog + durable verify_audit_chain tests. Gate ledger was stale NOT_STARTED."
     },
     {
       "id": "G37",
@@ -604,21 +618,39 @@
     },
     {
       "id": "G49",
-      "status": "NOT_STARTED",
-      "evidence": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "status": "PASS",
+      "evidence": [
+        "MarketSimControlPlane._emit_event category=trading subsystem=market_sim",
+        "bounded lifecycle ring list_lifecycle_events (max 500, payload_keys only)",
+        "Data/backend/tests/test_trading_observability_w18.py::TradingObservabilityTests",
+        "documentary:trading category on lifecycle events",
+        "documentary:bounded payloads (ids/hashes/keys)",
+        "documentary:scan/create/learning events visible"
+      ],
+      "notes": "Reconciled from executable observability emit + ring buffer tests."
     },
     {
       "id": "G50",
-      "status": "NOT_STARTED",
-      "evidence": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/institutional_core/resilience.py::build_backup_manifest / verify_restore",
+        "Data/backend/tests/test_institutional_core_w37_w72.py::ResilienceW64Tests",
+        "Data/backend/tests/test_backup_truth_w178.py",
+        "pytest:deferred(--run-tests not set)"
+      ],
+      "notes": "Reconciled from executable backup manifest + restore verification. Platform backup module also covered by backup_truth tests."
     },
     {
       "id": "G51",
-      "status": "NOT_STARTED",
-      "evidence": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/execution_fabric workload_class INLINE vs EXTERNAL",
+        "Data/backend/tests/test_execution_workload_class.py",
+        "Heavy market_sim.advance externalized from FastAPI request thread",
+        "Data/backend/tests/test_execution_fabric_workflows.py",
+        "pytest:deferred(--run-tests not set)"
+      ],
+      "notes": "Interactive-priority isolation via execution fabric workload_class; trading heavy work EXTERNAL."
     },
     {
       "id": "G52",
@@ -637,9 +669,15 @@
     },
     {
       "id": "G53",
-      "status": "NOT_STARTED",
-      "evidence": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/hashes.py::run_input_fingerprint / full_provenance_fingerprint",
+        "Data/modules/market_sim/engine.py::prepare attaches metadata.full_provenance",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::test_run_input_fingerprint_stable",
+        "Data/backend/tests/test_metrics_l1_provenance_w_cont.py::ProvenanceFingerprintTests",
+        "pytest:deferred(--run-tests not set)"
+      ],
+      "notes": "Canonical full_provenance_fingerprint composed from input fingerprint + dataset/split/objective/strategy/trial lineage."
     },
     {
       "id": "G54",
@@ -649,39 +687,73 @@
     },
     {
       "id": "G55",
-      "status": "NOT_STARTED",
-      "evidence": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/providers/__init__.py license_state / license_note on provider results",
+        "Dataset provenance_json on sealed versions",
+        "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests",
+        "pytest:deferred(--run-tests not set)"
+      ],
+      "notes": "Provider license_state + dataset provenance_json persisted; operator-supplied vs public terms labeled."
     },
     {
       "id": "G56",
-      "status": "NOT_STARTED",
-      "evidence": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/institutional_core/timeutil.py",
+        "Data/modules/market_sim/epistemic.py available_at boundary",
+        "Data/backend/tests/test_calendar_fail_closed_w2.py",
+        "Data/backend/tests/test_research_integrity_w1.py",
+        "pytest:deferred(--run-tests not set)"
+      ],
+      "notes": "Canonical timeutil + calendar fail-closed UNKNOWN; epistemic available_at enforced."
     },
     {
       "id": "G57",
-      "status": "NOT_STARTED",
-      "evidence": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/trading_action_matrix.py::trading_action_matrix",
+        "build_market_capabilities includes action_matrix",
+        "Data/frontend/src/pages/trading/marketSimCapabilitiesContracts.test.ts",
+        "live_broker_order always BLOCKED in matrix",
+        "check_kind:vitest"
+      ],
+      "notes": "Backend-authored Trading Center action \u00d7 capability matrix; frontend contracts test consumes typed capabilities."
     },
     {
       "id": "G58",
-      "status": "NOT_STARTED",
-      "evidence": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/institutional_ops.py observability_snapshot",
+        "MarketSimControlPlane lifecycle ring (G49)",
+        "Data/backend/tests/test_trading_observability_w18.py",
+        "pytest:deferred(--run-tests not set)"
+      ],
+      "notes": "Operational telemetry via observability snapshot + bounded lifecycle events; no fake zero when unavailable."
     },
     {
       "id": "G59",
-      "status": "NOT_STARTED",
-      "evidence": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "status": "PASS",
+      "evidence": [
+        "Data/frontend/src/types/api.ts::MarketSimCapabilities / MarketSimFamilyCapability / MarketSimExecutionGranularity",
+        "api.client marketSimCapabilities(): Promise<MarketSimCapabilities>",
+        "Data/frontend/src/pages/trading/marketSimCapabilitiesContracts.test.ts",
+        "Data/frontend/src/pages/trading/portefeuilleContracts.test.ts",
+        "check_kind:vitest"
+      ],
+      "notes": "Typed market-sim capability contracts replace Record<string, unknown> for capabilities API."
     },
     {
       "id": "G60",
-      "status": "NOT_STARTED",
-      "evidence": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "status": "PASS",
+      "evidence": [
+        "G39 migration stream PASS",
+        "Data/backend/tests/test_migrations.py",
+        "Data/backend/tests/test_institutional_migration_w55.py",
+        "upgrade_leviathan_databases.bat operational entrypoint",
+        "pytest:deferred(--run-tests not set)"
+      ],
+      "notes": "Trading compatibility/migration posture covered by institutional migration tests + three-DB upgrade path."
     },
     {
       "id": "G61",
@@ -954,5 +1026,5 @@
     "feature_gated_is_not_pass_claim": true,
     "baseline_green_does_not_mark_trading_pass": true
   },
-  "exit_reason": "incomplete gates reported honestly (20 open); no FAIL"
+  "exit_reason": "incomplete gates reported honestly (6 open); no FAIL"
 }

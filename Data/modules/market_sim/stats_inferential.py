@@ -413,3 +413,96 @@ def combinatorial_purged_cv_paths(
             "selection_bias_still_requires_trial_ledger": True,
         },
     }
+
+
+def score_cpcv_paths(
+    returns: Sequence[float],
+    *,
+    n_groups: int = 5,
+    n_test_groups: int = 1,
+    purge_bars: int = 0,
+    embargo_bars: int = 0,
+) -> dict[str, Any]:
+    """Score CPCV paths with OOS mean return / Sharpe — geometry + evaluation.
+
+    Each path runs metrics on test-range returns only (no train leakage into score).
+    Aggregate mean OOS Sharpe is reported; empty/degenerate paths stay UNMEASURED.
+    """
+    n = len(returns)
+    geom = combinatorial_purged_cv_paths(
+        n,
+        n_groups=n_groups,
+        n_test_groups=n_test_groups,
+        purge_bars=purge_bars,
+        embargo_bars=embargo_bars,
+    )
+    if geom.get("measurement") != "MEASURED" or not geom.get("paths"):
+        return {
+            "paths": [],
+            "aggregate": None,
+            "measurement": "UNMEASURED",
+            "reason": geom.get("reason") or "no_cpcv_paths",
+            "geometry": geom,
+        }
+
+    scored: list[dict[str, Any]] = []
+    oos_sharpes: list[float] = []
+    for path in geom["paths"]:
+        test_rets: list[float] = []
+        for lo, hi in path.get("test_ranges") or []:
+            test_rets.extend(float(returns[i]) for i in range(int(lo), min(int(hi), n)))
+        # Verify train/test index sets do not overlap.
+        train_idx: set[int] = set()
+        for lo, hi in path.get("train_ranges") or []:
+            train_idx.update(range(int(lo), min(int(hi), n)))
+        test_idx: set[int] = set()
+        for lo, hi in path.get("test_ranges") or []:
+            test_idx.update(range(int(lo), min(int(hi), n)))
+        overlap = sorted(train_idx & test_idx)
+        sharpe = sharpe_ratio(test_rets)
+        mean_r = (sum(test_rets) / len(test_rets)) if test_rets else None
+        entry = {
+            "test_groups": path.get("test_groups"),
+            "train_ranges": path.get("train_ranges"),
+            "test_ranges": path.get("test_ranges"),
+            "n_oos": len(test_rets),
+            "oos_mean_return": mean_r,
+            "oos_sharpe": sharpe,
+            "train_test_overlap": overlap,
+            "measurement": "MEASURED" if test_rets else "UNMEASURED",
+        }
+        scored.append(entry)
+        if sharpe is not None:
+            oos_sharpes.append(float(sharpe))
+
+    if not oos_sharpes:
+        aggregate = {
+            "mean_oos_sharpe": None,
+            "n_scored_paths": 0,
+            "measurement": "UNMEASURED",
+            "reason": "no_scored_oos_sharpes",
+        }
+    else:
+        aggregate = {
+            "mean_oos_sharpe": sum(oos_sharpes) / len(oos_sharpes),
+            "n_scored_paths": len(oos_sharpes),
+            "n_paths": len(scored),
+            "measurement": "MEASURED",
+        }
+
+    any_overlap = any(p.get("train_test_overlap") for p in scored)
+    return {
+        "paths": scored,
+        "aggregate": aggregate,
+        "n": n,
+        "n_paths": len(scored),
+        "measurement": "MEASURED" if scored else "UNMEASURED",
+        "truth": {
+            "no_time_shuffle": True,
+            "cpcv_geometry_only": False,
+            "cpcv_scored": True,
+            "oos_only_scoring": True,
+            "train_test_overlap_forbidden": not any_overlap,
+            "selection_bias_still_requires_trial_ledger": True,
+        },
+    }

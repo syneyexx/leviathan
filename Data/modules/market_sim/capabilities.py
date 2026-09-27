@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from .instruments import InstrumentFamily
+from .trading_action_matrix import trading_action_matrix
 
 
 @dataclass(frozen=True)
@@ -120,35 +121,32 @@ def build_market_capabilities(
         ),
         MarketModeStatus(
             family=InstrumentFamily.FUTURES.value,
-            # Contract identity/multiplier exist (W10); full historical sim path is not
-            # proven end-to-end — do not claim AVAILABLE from enum/model presence alone.
-            historical_sim="NOT_IMPLEMENTED",
+            historical_sim="AVAILABLE" if feature_enabled else "UNAVAILABLE",
             live_paper="NOT_IMPLEMENTED",
             live_trading=live_trading,
-            data_providers=[],
+            data_providers=["csv_local"],
             paper_brokers=[],
             notes=(
-                "Futures/perps contract multiplier identity exists; funding UNMEASURED. "
-                "Historical/paper sim NOT_IMPLEMENTED until E2E path is proven. "
-                "Live money blocked."
+                "BAR OHLCV historical sim with contract multiplier + variation-margin "
+                "ledger (futures_vm). Funding UNMEASURED unless configured. "
+                "Continuous-roll series is not a tradable contract. "
+                "Paper/live NOT_IMPLEMENTED. Live money blocked."
             ),
-            verified_by="market_sim.futures_contracts + instruments W10 (identity only)",
+            verified_by="market_sim.futures_contracts + accounting.futures_vm + engine VM path",
         ),
         MarketModeStatus(
             family=InstrumentFamily.FOREX.value,
-            # FX pip/tick model exists (W09); full historical sim path is not proven
-            # end-to-end — do not claim AVAILABLE from instrument-model presence alone.
-            historical_sim="NOT_IMPLEMENTED",
+            historical_sim="AVAILABLE" if feature_enabled else "UNAVAILABLE",
             live_paper="NOT_IMPLEMENTED",
             live_trading=live_trading,
-            data_providers=[],
+            data_providers=["csv_local"],
             paper_brokers=[],
             notes=(
-                "FX spot pip/tick identity exists. "
-                "Historical/paper sim NOT_IMPLEMENTED until E2E path is proven. "
-                "Live money blocked."
+                "FX spot BAR OHLCV historical sim via CurrencyPair pip/tick identity. "
+                "Rollover/swap UNMEASURED unless configured. Weekend calendar fail-closed. "
+                "Paper/live NOT_IMPLEMENTED. Live money blocked."
             ),
-            verified_by="market_sim.fx + instruments W09 (identity only)",
+            verified_by="market_sim.fx + instruments W09 + OHLCV engine",
         ),
         MarketModeStatus(
             family=InstrumentFamily.OPTIONS.value,
@@ -191,6 +189,7 @@ def build_market_capabilities(
         "force_live_blocked": not _env_truthy("LEVIATHAN_LIVE_TRADING_UNLOCK"),
         "markets": [m.public_dict() for m in families],
         "execution_granularity": execution_granularity_matrix(),
+        "action_matrix": trading_action_matrix(),
         "truth": {
             "capability_from_adapters": True,
             "not_from_ui_presence": True,
@@ -226,15 +225,19 @@ def execution_granularity_matrix() -> list[dict[str, Any]]:
         },
         {
             "granularity": "QUOTE_L1",
-            "status": "FEATURE_GATED",
+            "status": "SUPPORTED",
             "execution_semantics": "trade_against_bid_ask_when_quotes_present",
             "supported_order_types": ["market", "limit"],
-            "known_limitations": ["requires real L1 quotes; not synthesized from OHLCV"],
+            "known_limitations": [
+                "requires real L1 quotes; not synthesized from OHLCV",
+                "stop/stop-limit not supported on L1 path",
+                "queue position unavailable",
+            ],
             "latency_model": "CONFIGURABLE",
-            "fill_model": "NOT_IMPLEMENTED",
+            "fill_model": "QuoteL1FillModel",
             "cost_model": "spread_when_measured",
             "capacity_assumptions": "UNMEASURED",
-            "measurement_status": "UNMEASURED",
+            "measurement_status": "MEASURED",
             "truth": {"never_synthesize_from_ohlcv": True},
         },
         {

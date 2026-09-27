@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Sequence
 
 from .instruments import InstrumentFamily, InstrumentSpec
+from .stats_inferential import block_bootstrap_mean
 from .types import MetricStatus, WinRateDefinition
 
 # Documented timeframe fallback only — never sole source when family/calendar known.
@@ -599,4 +600,36 @@ def compute_metrics(
             "ohlcv_execution_is_modelled": True,
         },
     }
+
+    # Block-bootstrap CI on period returns — never fabricate for empty samples.
+    boot = block_bootstrap_mean(returns, block_size=max(1, min(5, len(returns) or 1)), samples=400, seed=42)
+    if isinstance(boot, dict):
+        result["mean_return_bootstrap_ci"] = {
+            "status": boot.get("measurement") or MetricStatus.UNMEASURED.value,
+            "value": boot.get("mean"),
+            "ci_low": boot.get("ci_low"),
+            "ci_high": boot.get("ci_high"),
+            "n": boot.get("n"),
+            "samples": boot.get("samples"),
+            "method": boot.get("method"),
+            "reason": boot.get("reason"),
+            "truth": {
+                "qualification_authority": False,
+                "method_approximate_until_circular_block_validated": True,
+            },
+        }
+    else:
+        result["mean_return_bootstrap_ci"] = {
+            "status": MetricStatus.MEASURED.value,
+            "value": boot.mean,
+            "ci_low": boot.ci_low,
+            "ci_high": boot.ci_high,
+            "n": boot.n,
+            "samples": boot.samples,
+            "method": boot.method,
+            "truth": {
+                "qualification_authority": False,
+                "method_approximate_until_circular_block_validated": "APPROXIMATE" in boot.method,
+            },
+        }
     return result

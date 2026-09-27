@@ -61,6 +61,8 @@ class WalletLedger:
     primary_symbol: str | None = None
     positions: dict[str, PositionLot] = field(default_factory=dict)
     transactions: list[dict[str, Any]] = field(default_factory=list)
+    valuation_mode: str = "spot"  # spot | futures_vm
+    contract_multiplier: Decimal = field(default_factory=lambda: Decimal("1"))
 
     def __post_init__(self) -> None:
         self.cash = money(self.cash)
@@ -69,6 +71,7 @@ class WalletLedger:
         self.avg_entry = money(self.avg_entry)
         self.realized_pnl = money(self.realized_pnl)
         self.fees_paid = money(self.fees_paid)
+        self.contract_multiplier = D(self.contract_multiplier)
         if self.peak_equity <= 0:
             self.peak_equity = self.cash
         # Sync scalar position into positions map when primary known.
@@ -93,6 +96,10 @@ class WalletLedger:
         return money(self.cash - self.reserved_cash)
 
     def equity(self, price: Any) -> Decimal:
+        if self.valuation_mode == "futures_vm":
+            # Cash includes posted variation margin; residual only on unposted mark move.
+            residual = self.position_qty * (D(price) - self.avg_entry) * self.contract_multiplier
+            return money(self.cash + residual)
         return money(self.cash + self.position_qty * D(price))
 
     def _sync_primary_from_positions(self) -> None:
@@ -166,8 +173,14 @@ class WalletLedger:
     def assert_invariants(self, price: Any) -> None:
         """Raise if accounting invariants are violated."""
         eq = self.equity(price)
-        mv = money(self.position_qty * D(price))
-        expected = money(self.cash + mv)
+        if self.valuation_mode == "futures_vm":
+            residual = money(
+                self.position_qty * (D(price) - self.avg_entry) * self.contract_multiplier
+            )
+            expected = money(self.cash + residual)
+        else:
+            mv = money(self.position_qty * D(price))
+            expected = money(self.cash + mv)
         if eq != expected:
             raise ValueError(f"equity invariant broken: {eq} != {expected}")
         if self.cash != self.cash or self.position_qty != self.position_qty:
@@ -191,6 +204,8 @@ class WalletLedger:
     def unrealized_pnl(self, price: Any) -> Decimal:
         if self.position_qty == 0:
             return ZERO
+        if self.valuation_mode == "futures_vm":
+            return money(self.position_qty * (D(price) - self.avg_entry) * self.contract_multiplier)
         return money(self.position_qty * (D(price) - self.avg_entry))
 
     def mark(self, price: Any) -> Decimal:
@@ -219,6 +234,204 @@ class WalletLedger:
         amt = money(amount)
         self.reserved_cash = money(max(ZERO, self.reserved_cash - amt))
 
+    def apply_corporate_action(
+        self,
+        *,
+        symbol: str,
+        kind: str,
+        effective_at: str,
+        as_of: str,
+        factor: float | None = None,
+        cash_amount: float | None = None,
+        new_symbol: str | None = None,
+        ca_id: str | None = None,
+        tx_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Apply a point-in-time corporate action to this ledger.
+
+        Bridges universe CA labels (split/dividend/symbol_change) onto economic
+        adjustments via institutional_core.apply_corporate_action. Fail-closed
+        for unsupported kinds. Idempotent on tx_id.
+        """
+        from .institutional_core.corporate_actions import (
+            CorporateAction as CoreCA,
+            apply_corporate_action as core_apply,
+        )
+
+        kind_u = str(kind or "").strip().lower()
+        type_map = {
+            "split": "SPLIT",
+            "dividend": "DIVIDEND_CASH",
+            "dividend_cash": "DIVIDEND_CASH",
+            "dividend_stock": "DIVIDEND_STOCK",
+            "symbol_change": "SYMBOL_CHANGE",
+            "merger": "MERGER",
+            "spinoff": "SPINOFF",
+            "delisting": "DELISTING",
+        }
+        ca_type = type_map.get(kind_u) or str(kind or "").strip().upper()
+        cid = str(ca_id or f"ca-{symbol}-{ca_type}-{effective_at}")
+        tid = str(tx_id or f"tx-ca-{cid}")
+        if any(t.get("tx_id") == tid for t in self.transactions):
+            return {"applied": False, "reason": "duplicate_tx_id", "tx_id": tid}
+
+        if as_of < effective_at:
+            return {
+                "applied": False,
+                "reason": "before_effective_time",
+                "truth": {"point_in_time_respected": True},
+            }
+
+        # Resolve held qty / cost for symbol (multi-lot or scalar primary).
+        lot = self.positions.get(symbol)
+        if lot is not None:
+            qty = float(lot.qty)
+            cost = float(lot.avg_entry)
+        elif self.primary_symbol == symbol or (
+            self.primary_symbol is None and self.position_qty != ZERO and not self.positions
+        ):
+            qty = float(self.position_qty)
+            cost = float(self.avg_entry)
+        else:
+            return {"applied": False, "reason": "no_position", "symbol": symbol}
+
+        if qty == 0.0 and ca_type != "SYMBOL_CHANGE":
+            return {"applied": False, "reason": "flat_position", "symbol": symbol}
+
+        core = CoreCA(
+            ca_id=cid,
+            instrument_id=symbol,
+            ca_type=ca_type,
+            effective_time=effective_at,
+            observed_at=as_of,
+            ratio=factor,
+            cash_amount=cash_amount,
+            new_instrument_id=new_symbol,
+        )
+        result = core_apply(core, qty=qty, cost_basis=cost, as_of=as_of)
+        if not result.get("applied"):
+            return result
+
+        adj = result.get("adjustment") or {}
+        qty_after = money(adj.get("qtyAfter") or qty)
+        cost_after = money(adj.get("costBasisAfter") or cost)
+        cash_delta = money(adj.get("cashDelta") or 0)
+        target_symbol = str(adj.get("instrumentId") or new_symbol or symbol)
+
+        if ca_type == "SYMBOL_CHANGE" and new_symbol and new_symbol != symbol:
+            # Move lot / primary under new symbol identity.
+            if symbol in self.positions:
+                old = self.positions.pop(symbol)
+                self.positions[new_symbol] = PositionLot(
+                    symbol=new_symbol, qty=old.qty, avg_entry=old.avg_entry
+                )
+            if self.primary_symbol == symbol or self.primary_symbol is None:
+                self.primary_symbol = new_symbol
+            self._sync_primary_from_positions()
+        else:
+            if symbol in self.positions or self.positions or self.primary_symbol == symbol:
+                if self.primary_symbol is None:
+                    self.primary_symbol = symbol
+                if symbol not in self.positions and self.position_qty != ZERO:
+                    self.positions[symbol] = PositionLot(
+                        symbol=symbol, qty=self.position_qty, avg_entry=self.avg_entry
+                    )
+                if symbol in self.positions:
+                    if qty_after == ZERO:
+                        del self.positions[symbol]
+                    else:
+                        self.positions[symbol].qty = qty_after
+                        self.positions[symbol].avg_entry = cost_after
+                if target_symbol != symbol and symbol not in self.positions and qty_after != ZERO:
+                    self.positions[target_symbol] = PositionLot(
+                        symbol=target_symbol, qty=qty_after, avg_entry=cost_after
+                    )
+                self._sync_primary_from_positions()
+            else:
+                self.position_qty = qty_after
+                self.avg_entry = cost_after if qty_after != ZERO else ZERO
+
+        if cash_delta != ZERO:
+            self.cash = money(self.cash + cash_delta)
+            # Cash dividends are realized economic events (not trading PnL fills).
+            self.realized_pnl = money(self.realized_pnl + cash_delta)
+
+        self.transactions.append(
+            {
+                "tx_id": tid,
+                "side": "CORPORATE_ACTION",
+                "symbol": target_symbol,
+                "qty": str(qty_after),
+                "price": str(cost_after),
+                "fee": "0",
+                "cash_after": str(self.cash),
+                "position_after": str(self.position_qty),
+                "ca_id": cid,
+                "ca_type": ca_type,
+                "cash_delta": str(cash_delta),
+                "effective_at": effective_at,
+                "as_of": as_of,
+            }
+        )
+        out = dict(result)
+        out["tx_id"] = tid
+        out["symbol"] = target_symbol
+        return out
+
+    def apply_variation_margin(
+        self,
+        *,
+        qty: Any,
+        price_from: Any,
+        price_to: Any,
+        multiplier: Any,
+        tx_id: str,
+        symbol: str | None = None,
+    ) -> dict[str, Any]:
+        """Post futures/derivative variation margin to cash (fail-closed on bad multiplier)."""
+        if any(t.get("tx_id") == tx_id for t in self.transactions):
+            return {"applied": False, "reason": "duplicate_tx_id", "tx_id": tx_id}
+        mult = D(multiplier)
+        if mult <= 0:
+            raise ValueError("futures_multiplier_invalid")
+        q = D(qty)
+        delta = D(price_to) - D(price_from)
+        cash_delta = money(q * delta * mult)
+        if cash_delta == ZERO:
+            return {"applied": False, "reason": "zero_variation", "tx_id": tx_id}
+        self.cash = money(self.cash + cash_delta)
+        self.realized_pnl = money(self.realized_pnl + cash_delta)
+        # Reset cost basis to mark after daily settlement-style VM.
+        mark = money(price_to)
+        sym = symbol or self.primary_symbol
+        if sym and sym in self.positions:
+            self.positions[sym].avg_entry = mark
+        if self.primary_symbol == sym or (sym is None and not self.positions):
+            self.avg_entry = mark
+        self._sync_primary_from_positions()
+        self.transactions.append(
+            {
+                "tx_id": tx_id,
+                "side": "VARIATION_MARGIN",
+                "symbol": sym,
+                "qty": str(money(q)),
+                "price": str(mark),
+                "fee": "0",
+                "cash_after": str(self.cash),
+                "position_after": str(self.position_qty),
+                "cash_delta": str(cash_delta),
+                "multiplier": str(mult),
+                "price_from": str(money(price_from)),
+                "price_to": str(mark),
+            }
+        )
+        return {
+            "applied": True,
+            "cash_delta": str(cash_delta),
+            "tx_id": tx_id,
+            "multiplier": str(mult),
+        }
+
     def apply_buy(
         self,
         *,
@@ -236,8 +449,12 @@ class WalletLedger:
         f = money(fee)
         if any(t.get("tx_id") == tx_id for t in self.transactions):
             raise ValueError(f"duplicate tx_id rejected: {tx_id}")
-        cost = money(q * p + f)
-        self.release_reserve(cost)
+        # Futures: opening does not debit full notional — only fees (margin via RiskGuard).
+        if self.valuation_mode == "futures_vm":
+            cost = f
+        else:
+            cost = money(q * p + f)
+        self.release_reserve(cost if self.valuation_mode != "futures_vm" else f)
         if cost > self.cash + MONEY_QUANT:
             raise ValueError("insufficient cash for buy")
         sym = symbol or self.primary_symbol
@@ -277,6 +494,7 @@ class WalletLedger:
                 "fee": str(f),
                 "cash_after": str(self.cash),
                 "position_after": str(self.position_qty),
+                "valuation_mode": self.valuation_mode,
                 **(meta or {}),
             }
         )
@@ -313,8 +531,14 @@ class WalletLedger:
         q = money(min(D(qty), available))
         if q <= 0:
             raise ValueError("no position to sell")
-        proceeds = money(q * p - f)
-        self.realized_pnl = money(self.realized_pnl + (p - entry) * q - f)
+        if self.valuation_mode == "futures_vm":
+            # Close futures: settle residual MTM * multiplier, pay fee from cash.
+            residual = money(q * (p - entry) * self.contract_multiplier)
+            proceeds = money(residual - f)
+            self.realized_pnl = money(self.realized_pnl + residual - f)
+        else:
+            proceeds = money(q * p - f)
+            self.realized_pnl = money(self.realized_pnl + (p - entry) * q - f)
         if sym and (sym in self.positions or self.primary_symbol == sym or self.positions):
             if self.primary_symbol is None:
                 self.primary_symbol = sym
@@ -341,6 +565,7 @@ class WalletLedger:
                 "fee": str(f),
                 "cash_after": str(self.cash),
                 "position_after": str(self.position_qty),
+                "valuation_mode": self.valuation_mode,
                 **(meta or {}),
             }
         )
@@ -353,6 +578,8 @@ class WalletLedger:
             "owner_kind": self.owner_kind,
             "currency": self.currency,
             "currency_mode": self.currency_mode,
+            "valuation_mode": self.valuation_mode,
+            "contract_multiplier": str(self.contract_multiplier),
             "primary_symbol": self.primary_symbol,
             "cash": str(self.cash),
             "reserved_cash": str(self.reserved_cash),
@@ -372,6 +599,7 @@ class WalletLedger:
                 "agent_wallets_isolated": True,
                 "multi_symbol_positions": True,
                 "no_silent_currency_mix": self.currency_mode == "single",
+                "futures_vm_uses_multiplier": self.valuation_mode == "futures_vm",
             },
         }
         if marks is not None:
@@ -412,6 +640,8 @@ class WalletLedger:
             primary_symbol=data.get("primary_symbol"),
             positions=positions,
             transactions=[dict(t) for t in txs if isinstance(t, dict)],
+            valuation_mode=str(data.get("valuation_mode") or "spot"),
+            contract_multiplier=money(data.get("contract_multiplier") or 1),
         )
         return wallet
 
