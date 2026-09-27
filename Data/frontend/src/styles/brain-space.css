@@ -1,0 +1,237 @@
+/* Celestial Nexus — Graph CONTENT AREA only.
+   All selectors are prefixed lv-brain-space- to avoid leaking into other views. */
+
+.lv-brain-space-shell {
+  --lv-bs-panel: rgba(7, 11, 19, 0.82);
+  --lv-bs-border: rgba(255, 255, 255, 0.085);
+  --lv-bs-text: #eff5fd;
+  --lv-bs-muted: #7d899a;
+  --lv-bs-accent: rgba(139, 236, 255, 0.28);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 492px;
+  overflow: hidden;
+  border-radius: 0;
+  background: #02040a;
+  color: var(--lv-bs-text);
+}
+
+.lv-brain-space-shell button,
+.lv-brain-space-shell input {
+  font: inherit;
+}
+
+.lv-brain-space-toolbar {
+  position: absolute;
+  z-index: 4;
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.lv-brain-space-toolbar > * {
+  pointer-events: auto;
+}
+
+.lv-brain-space-pres,
+.lv-brain-space-modes,
+.lv-brain-space-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--lv-bs-border);
+  border-radius: 10px;
+  background: var(--lv-bs-panel);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+}
+
+.lv-brain-space-pres button,
+.lv-brain-space-modes button,
+.lv-brain-space-actions button {
+  border: 1px solid transparent;
+  background: transparent;
+  color: #c1cad6;
+  border-radius: 7px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.lv-brain-space-pres button.is-active,
+.lv-brain-space-modes button.is-active,
+.lv-brain-space-actions button.is-active {
+  color: #fff;
+  border-color: var(--lv-bs-accent);
+  background: linear-gradient(135deg, rgba(139, 236, 255, 0.14), rgba(196, 147, 255, 0.1));
+}
+
+.lv-brain-space-pres button:hover,
+.lv-brain-space-modes button:hover,
+.lv-brain-space-actions button:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.lv-brain-space-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.lv-brain-space-canvas {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.lv-brain-space-canvas canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+}
+
+.lv-brain-space-canvas canvas.is-dragging {
+  cursor: grabbing;
+}
+
+.lv-brain-space-tooltip {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  max-width: 250px;
+  padding: 8px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 9px;
+  background: rgba(4, 7, 12, 0.95);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.42);
+  font-size: 9px;
+}
+
+.lv-brain-space-tooltip strong {
+  display: block;
+}
+
+.lv-brain-space-tooltip span {
+  display: block;
+  margin-top: 3px;
+  color: #758295;
+}
+
+.lv-brain-space-truth {
+  position: absolute;
+  left: 50%;
+  top: 54px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  pointer-events: none;
+  max-width: calc(100% - 24px);
+}
+
+.lv-brain-space-truth span {
+  padding: 5px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 999px;
+  background: rgba(7, 11, 19, 0.72);
+  color: #8795a7;
+  font-size: 7px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  backdrop-filter: blur(12px);
+}
+
+.lv-brain-space-empty-state {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  color: #8a97a8;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  background: radial-gradient(circle at 50% 45%, rgba(12, 18, 32, 0.35), transparent 55%);
+}
+
+.lv-brain-space-age {
+  position: absolute;
+  z-index: 4;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  height: 54px;
+  border-radius: 12px;
+  padding: 8px 12px;
+  display: grid;
+  grid-template-columns: minmax(110px, 150px) 1fr 44px;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--lv-bs-border);
+  background: var(--lv-bs-panel);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.3);
+}
+
+.lv-brain-space-age strong {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+}
+
+.lv-brain-space-age span {
+  display: block;
+  margin-top: 3px;
+  color: var(--lv-bs-muted);
+  font-size: 7px;
+  line-height: 1.35;
+}
+
+.lv-brain-space-age input[type="range"] {
+  width: 100%;
+  accent-color: #8deeff;
+}
+
+.lv-brain-space-age b {
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.lv-brain-space-technical {
+  width: 100%;
+  height: 100%;
+  min-height: 492px;
+}
+
+@media (max-width: 960px) {
+  .lv-brain-space-truth {
+    display: none;
+  }
+
+  .lv-brain-space-age {
+    grid-template-columns: 1fr 40px;
+    height: auto;
+    row-gap: 6px;
+  }
+
+  .lv-brain-space-age > div:first-child {
+    grid-column: 1 / -1;
+  }
+}
