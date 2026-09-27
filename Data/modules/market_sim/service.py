@@ -1523,8 +1523,14 @@ class MarketSimControlPlane:
         ver = self.store.get_strategy_version(run.strategy_id, run.strategy_version)
         if ver is None:
             raise MarketSimError("STRATEGY_VERSION_MISSING", run.strategy_id or "")
+        params = dict(ver.parameters or {})
+        meta = dict(run.metadata or {})
+        # Robustness may apply a local parameter override without mutating lineage.
+        override = meta.get("robustness_parameters") or meta.get("parameter_override")
+        if isinstance(override, dict) and override:
+            params.update(dict(override))
         return {
-            "parameters": ver.parameters,
+            "parameters": params,
             "entry_rules": ver.entry_rules,
             "exit_rules": ver.exit_rules,
             "brain_dependencies": ver.brain_dependencies,
