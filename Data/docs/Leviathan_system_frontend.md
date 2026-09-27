@@ -196,12 +196,22 @@ Settings aliases route to `/settings?section=...` for the appropriate operator c
 
 Do not introduce page-local duplicate fetch wrappers when a canonical client method exists. API types and backend truth should stay aligned.
 
-Typed SQLite Manager client methods (three canonical DBs):
+Typed SQLite Manager client methods (three canonical DBs; Settings → Opslag):
 
 - `listSqliteDatabases()` → `GET /api/sqlite/databases`
+- `sqliteDatabaseStatus(domain)` → `GET /api/sqlite/databases/{domain}`
 - `sqliteDatabaseTables(domain)` → `GET /api/sqlite/databases/{domain}/tables`
-- `sqliteQuery(domain, sql)` → `POST /api/sqlite/query`
+- `sqliteTableDetail(domain, table)` → `GET /api/sqlite/databases/{domain}/tables/{table}`
+- `sqliteQueryRows(domain, table, body)` → `POST /api/sqlite/databases/{domain}/tables/{table}/rows/query`
+- `sqliteQuery(domain, sql, limit?)` → `POST /api/sqlite/query` (read console)
 - `sqliteMutate(domain, confirmDomain, sql)` → `POST /api/sqlite/mutate` (explicit domain confirm required)
+- `sqliteInsertRow` / `sqliteUpdateRow` / `sqliteDeleteRow` → `/api/sqlite/rows/*` (parameterized; PK-required for update/delete)
+- `sqliteIntegrity(domain, kind)` → `POST /api/sqlite/integrity`
+- `sqliteWalCheckpoint(domain, confirmDomain, mode?)` → `POST /api/sqlite/wal-checkpoint`
+- `sqliteOwnershipAudit()` → `GET /api/sqlite/ownership-audit`
+- `sqliteRuntime()` → `GET /api/sqlite/runtime`
+
+`SqliteManagerPanel` clears table/row/query mutation state on domain switch so the previous domain cannot remain a hidden write target.
 
 ## Hooks
 

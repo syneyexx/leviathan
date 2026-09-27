@@ -179,7 +179,14 @@ LEVIATHAN uses three canonical SQLite databases with two explicit write classes:
 - Writer unavailable ⇒ durable spool / `DB_COMMIT_BACKPRESSURE` / `DB_COMMIT_SPOOL_UNAVAILABLE` — **never** fall back to direct heavy SQLite writes from producers.
 - Legacy `knowledge_commit` pool defaults to `0`; `knowledge.commit` jobs are owned by `db_commit`.
 
-**SQLite Manager** (`Data/modules/sqlite_manager/`, routes `/api/sqlite/*`): operator selector for Control / Knowledge / Market — status, tables, read query, allowlisted mutate with explicit `confirmDomain`.
+**SQLite Manager** (`Data/modules/sqlite_manager/`, routes `/api/sqlite/*`): operator control plane over Control / Knowledge / Market — not a second persistence layer, migration engine, or DB writer.
+
+- **Overview** — live domain path, existence, size, WAL/SHM, schema version, table count, journal mode, health/readiness, ownership description.
+- **Explorer** — table/schema/index/FK introspection with ownership states (`EXPECTED` / `INFRASTRUCTURE` / `EPHEMERAL` / `UNKNOWN` / `WRONG_DATABASE` / `AMBIGUOUS` / `MISSING`), bounded row browse (pagination, filters, search), parameterized row insert/update/delete when a deterministic primary key exists (`ROW_IDENTITY_UNAVAILABLE` otherwise).
+- **SQL console** — separated READ (SELECT / WITH…SELECT / allowlisted PRAGMA) vs controlled WRITE (INSERT/UPDATE/DELETE only). Read connections use URI `mode=ro` when available, `PRAGMA query_only`, disabled extension loading, and a SQLite authorizer. Comment-prefixed / multi-statement / schema / ATTACH bypasses fail closed.
+- **Mutations** — require `confirmDomain` matching the selected domain; classified as `CONTROL_WRITE` via `sqlite_policy.control_write` (never a silent COMMIT_WRITE fallback, never arbitrary coordinator SQL). Schema DDL remains owned by MigrationRunner / `db_upgrade`.
+- **Integrity / ownership** — `PRAGMA quick_check` / `integrity_check(N)` / `foreign_key_check`; system ownership audit across all three DBs (`GET /api/sqlite/ownership-audit`).
+- **Runtime** — WAL checkpoint (explicit, confirmed), process-local SQLite contention metrics, DB Commit settings + per-domain spool stats when present, BackupService latest metadata (restore remains BackupService-owned).
 
 Canonical connection policy: `Data/modules/common/sqlite_policy.py` (busy_timeout on hot paths; `PRAGMA journal_mode=WAL` only during initialize/migration).
 

@@ -375,13 +375,87 @@ export type SqliteDatabaseStatus = {
   walSizeBytes: number;
   shmExists: boolean;
   schemaVersion: number;
+  tableCount?: number | "UNMEASURED";
+  journalMode?: string;
+  pageCount?: number | "UNMEASURED";
+  pageSize?: number | "UNMEASURED";
+  health?: string;
+  readiness?: string;
+  ownershipDescription?: string;
 };
+
+export type SqliteOwnershipState =
+  | "EXPECTED"
+  | "INFRASTRUCTURE"
+  | "EPHEMERAL"
+  | "UNKNOWN"
+  | "WRONG_DATABASE"
+  | "AMBIGUOUS"
+  | "MISSING";
 
 export type SqliteTableInfo = {
   name: string;
   type: string;
-  columns: Array<{ name: string; type: string; notnull: boolean; pk: boolean }>;
+  columns: Array<{ name: string; type: string; notnull: boolean; pk: boolean | number }>;
   indexes: Array<{ name: string; unique: boolean }>;
+  owningDomain?: string | null;
+  ownershipState?: SqliteOwnershipState;
+  presentDomain?: string;
+  isVirtual?: boolean;
+  columnCount?: number | null;
+  indexCount?: number | null;
+};
+
+export type SqliteTableDetail = {
+  domain: string;
+  name: string;
+  type: string;
+  createSql?: string | null;
+  columns: Array<{
+    name: string;
+    type: string;
+    notnull: boolean;
+    defaultValue?: unknown;
+    pk: number;
+  }>;
+  indexes: Array<{
+    name: string;
+    unique: boolean;
+    origin?: string;
+    columns?: Array<{ seq: number; name: string | null }>;
+  }>;
+  uniqueIndexes?: Array<{ name: string; unique: boolean }>;
+  foreignKeys: Array<Record<string, unknown>>;
+  primaryKey: string[];
+  owningDomain?: string | null;
+  ownershipState?: SqliteOwnershipState;
+  presentDomain?: string;
+  isVirtual?: boolean;
+  rowCount?: number | null;
+  rowCountState?: string;
+  rowEditAvailable?: boolean;
+};
+
+export type SqliteCellValue = {
+  kind: "null" | "number" | "text" | "blob";
+  value: unknown;
+  truncated?: boolean;
+  fullLength?: number;
+  byteLength?: number;
+};
+
+export type SqliteRowsPage = {
+  domain: string;
+  table: string;
+  columns: string[];
+  primaryKey: string[];
+  rows: Array<{ values: Record<string, SqliteCellValue>; identity: Record<string, unknown> | null }>;
+  rowCount: number;
+  offset: number;
+  limit: number;
+  truncated: boolean;
+  rowEditAvailable: boolean;
+  elapsedMs?: number;
 };
 
 export type SqliteQueryResult = {
@@ -391,6 +465,47 @@ export type SqliteQueryResult = {
   rowCount: number;
   truncated: boolean;
   limit: number;
+  elapsedMs?: number;
+  mode?: string;
+};
+
+export type SqliteMutationResult = {
+  domain: string;
+  rowcount: number;
+  ok: boolean;
+  elapsedMs?: number;
+  writeClass?: string;
+  mode?: string;
+  operation?: string;
+};
+
+export type SqliteIntegrityResult = {
+  domain: string;
+  kind: string;
+  ok: boolean;
+  result: unknown;
+  issues: unknown[];
+  truncated: boolean;
+  elapsedMs?: number;
+};
+
+export type SqliteOwnershipAudit = {
+  schemaVersion: number;
+  counts: Record<string, number>;
+  findings: Array<Record<string, unknown>>;
+  missingDatabases: string[];
+  ok: boolean;
+  databases?: Array<Record<string, unknown>>;
+  schemaVersions?: Record<string, number>;
+};
+
+export type SqliteRuntimeStatus = {
+  sqliteMetrics: Record<string, number>;
+  contention: Record<string, unknown>;
+  dbCommit: Record<string, unknown>;
+  backup: Record<string, unknown>;
+  writePolicy: Record<string, unknown>;
+  databases: SqliteDatabaseStatus[];
 };
 
 export type NeuroResidualStatus = {
