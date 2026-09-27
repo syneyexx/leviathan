@@ -123,6 +123,10 @@ def evaluate_promotion(
         qualification_ok = False
         if "QUALIFICATION_REQUIRED" not in qblockers:
             qblockers = list(qblockers) + ["QUALIFICATION_REQUIRED"]
+    elif institutional and qqualified is False:
+        qualification_ok = False
+        if "QUALIFICATION_REQUIRED" not in qblockers:
+            qblockers = ["QUALIFICATION_REQUIRED"] + list(qblockers)
 
     evidence: dict[str, Any] = {
         "accepted": bool(qualification_ok) if institutional else accepted,
@@ -166,6 +170,16 @@ def evaluate_promotion(
             "qualification_blockers": qblockers,
         }
 
+    reason = None
+    if institutional and not qualification_ok:
+        reason = qblockers[0] if qblockers else "QUALIFICATION_REQUIRED"
+    elif not promotable:
+        reason = str(gate.get("reason") or "PROMOTION_DENIED")
+    # Institutional path only when target requires qualification AND it passed.
+    path = "institutional" if (institutional and qualification_ok) else "legacy_non_institutional"
+    if legacy_demo:
+        path = "legacy_non_institutional"
+
     return {
         "promotable": promotable,
         "from": current,
@@ -176,14 +190,18 @@ def evaluate_promotion(
         "qualification_id": qid,
         "qualification_state": qstate,
         "qualification_blockers": qblockers,
+        "reason": reason,
+        "path": path,
         "live_trading": "BLOCKED",
         "truth": {
             "kernel_owned_metrics": True,
             "a5_impossible": True,
             "no_frontend_authority": True,
             "caller_boolean_not_proof": True,
-            "qualification_required_for_institutional": institutional,
+            "qualification_required_for_institutional": target in _INSTITUTIONAL_TARGETS,
+            "caller_acceptance_cannot_override_qualification": True,
             "legacy_demo": bool(legacy_demo),
-            "non_institutional_path": bool(legacy_demo),
+            "non_institutional_path": path != "institutional",
+            "institutional_lifecycle_write": path == "institutional" and promotable,
         },
     }
