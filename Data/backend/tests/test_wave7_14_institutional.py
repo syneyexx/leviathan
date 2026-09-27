@@ -215,7 +215,9 @@ class BackupAtomicityTruthTests(unittest.TestCase):
             truth = manifest.public_dict()["truth"]
             self.assertTrue(truth["crossFileRestoreIsNotAtomic"])
             restored = svc.restore(
-                manifest.backup_id, confirm=True, maintenance_boundary=True
+                manifest.backup_id,
+                confirm=True,
+                maintenance_proof=svc.maintenance.enter_for_restore(reason="w7-14"),
             )
             self.assertEqual(
                 restored.metadata.get("restoreTerminalState"), RESTORE_NEW_SET_ACTIVE

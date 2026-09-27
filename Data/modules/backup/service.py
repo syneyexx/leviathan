@@ -121,6 +121,10 @@ class BackupService:
 
     Three-DB: when ``database_paths`` is provided, backups include Control,
     Knowledge, and Market as one coherent backup set.
+
+    WAVE 21: live DB replacement requires a trusted ``maintenance_proof`` from
+    ``MaintenanceCoordinator`` — a caller ``maintenance_boundary`` boolean is
+    not quiescence proof and is rejected.
     """
 
     def __init__(
@@ -131,6 +135,7 @@ class BackupService:
         backup_root: Path,
         corpus_root: Path | None = None,
         database_paths: Any | None = None,
+        maintenance: Any | None = None,
     ) -> None:
         self.database_path = database_path
         self.artifacts_root = artifacts_root
@@ -138,6 +143,13 @@ class BackupService:
         self.corpus_root = Path(corpus_root) if corpus_root else None
         self.database_paths = database_paths
         self.backup_root.mkdir(parents=True, exist_ok=True)
+        if maintenance is not None:
+            self.maintenance = maintenance
+        else:
+            # Lazy import keeps service importable without circular init.
+            from .maintenance import MaintenanceCoordinator
+
+            self.maintenance = MaintenanceCoordinator(backup_root=self.backup_root)
 
     def list(self, *, limit: int = 50) -> list[BackupManifest]:
         manifests: list[BackupManifest] = []
@@ -329,24 +341,41 @@ class BackupService:
         backup_id: str,
         *,
         confirm: bool = False,
-        maintenance_boundary: bool = False,
+        maintenance_proof: Any | None = None,
+        maintenance_boundary: bool | None = None,
         inject_crash_after: str | None = None,
     ) -> BackupManifest:
         """Restore a backup set with durable journaling for three-DB cutover.
 
         BACKUP-002: cross-file replace is not atomic — phases/journal expose
         OLD_SET_ACTIVE / NEW_SET_ACTIVE / RECOVERY_REQUIRED.
-        BACKUP-003: live DB files are only replaced when
-        ``maintenance_boundary=True``.
+        WAVE 21 / BACKUP-003: live DB files are only replaced when a trusted
+        ``maintenance_proof`` from ``MaintenanceCoordinator`` is presented.
+        A raw ``maintenance_boundary`` boolean is *not* quiescence proof.
         ``inject_crash_after`` is test-only (``before_cutover``, ``after_CONTROL``, …).
         """
         if not confirm:
             raise BackupError("Restore refused: confirm=true is required")
-        if not maintenance_boundary:
+        # Explicitly reject legacy caller boolean as sole authorization.
+        if maintenance_boundary is not None and maintenance_proof is None:
             raise BackupError(
-                "Restore refused: maintenance_boundary=true is required — "
-                "refusing to replace DB files under live connections"
+                "Restore refused: maintenance_boundary boolean is not proof of "
+                "quiescence — require coordinator maintenance_proof token"
             )
+        if maintenance_proof is None:
+            raise BackupError(
+                "Restore refused: trusted maintenance_proof from coordinator is required — "
+                "refusing to replace DB files without proven maintenance"
+            )
+        try:
+            self.maintenance.verify_proof(maintenance_proof)
+        except Exception as exc:  # noqa: BLE001 — map to BackupError
+            from .maintenance import MaintenanceError
+
+            if isinstance(exc, MaintenanceError):
+                raise BackupError(str(exc)) from exc
+            raise BackupError(f"Invalid maintenance_proof: {exc}") from exc
+
         dest = self.backup_root / backup_id
         manifest_path = dest / "manifest.json"
         if not manifest_path.is_file():
@@ -366,11 +395,23 @@ class BackupService:
         prior = self._read_restore_journal(journal_path)
         if prior and prior.get("state") == RESTORE_RECOVERY_REQUIRED:
             if prior.get("backup_id") == backup_id:
-                return self._resume_restore_journal(journal_path, prior, data)
+                return self._resume_restore_journal(
+                    journal_path, prior, data, maintenance_proof=maintenance_proof
+                )
             raise BackupError(
                 f"Restore recovery required for backup {prior.get('backup_id')} — "
                 "refusing to start a different restore while mixed revisions may exist"
             )
+
+        # Advance coordinator into RESTORING once proof is accepted.
+        try:
+            self.maintenance.begin_restore(maintenance_proof)
+        except Exception as exc:  # noqa: BLE001
+            from .maintenance import MaintenanceError
+
+            if isinstance(exc, MaintenanceError):
+                raise BackupError(str(exc)) from exc
+            raise
 
         restore_terminal = RESTORE_OLD_SET_ACTIVE
         if databases:
@@ -446,6 +487,15 @@ class BackupService:
                         cur["error"] = str(exc)[:500]
                         cur["failed_at"] = utc_now()
                         self._write_restore_journal(journal_path, cur)
+                        try:
+                            self.maintenance.mark_recovery_required(error=str(exc))
+                        except Exception:  # noqa: BLE001
+                            pass
+                    else:
+                        try:
+                            self.maintenance.mark_old_set_active()
+                        except Exception:  # noqa: BLE001
+                            pass
                     raise
                 raise
             except Exception as exc:
@@ -453,6 +503,10 @@ class BackupService:
                 journal["error"] = str(exc)[:500]
                 journal["failed_at"] = utc_now()
                 self._write_restore_journal(journal_path, journal)
+                try:
+                    self.maintenance.mark_recovery_required(error=str(exc))
+                except Exception:  # noqa: BLE001
+                    pass
                 raise BackupError(
                     f"Restore interrupted — state={RESTORE_RECOVERY_REQUIRED}: {exc}"
                 ) from exc
@@ -466,6 +520,11 @@ class BackupService:
             total_size = sum(int(v.get("sizeBytes") or 0) for v in databases.values())
             backup_set_complete = True
             restore_terminal = RESTORE_NEW_SET_ACTIVE
+            try:
+                self.maintenance.mark_verifying()
+                self.maintenance.mark_new_set_active()
+            except Exception:  # noqa: BLE001
+                pass
         else:
             # Legacy single-DB backup compatibility.
             db_copy = dest / "leviathan.db"
@@ -533,6 +592,7 @@ class BackupService:
         meta["restoreTerminalState"] = restore_terminal
         meta["crossFileRestoreIsNotAtomic"] = True
         meta["maintenanceBoundaryHonored"] = True
+        meta["maintenanceProofVerified"] = True
         meta["corpusInventorySourceDomain"] = (data.get("metadata") or {}).get(
             "corpusInventorySourceDomain", "KNOWLEDGE"
         )
@@ -544,6 +604,16 @@ class BackupService:
                 done["cleared_for_runtime"] = True
                 self._write_restore_journal(journal_path, done)
             except OSError:
+                pass
+
+        if restore_terminal == RESTORE_NEW_SET_ACTIVE:
+            try:
+                # Legacy single-DB path may not have entered VERIFYING yet.
+                if self.maintenance.state == "RESTORING":
+                    self.maintenance.mark_verifying()
+                    self.maintenance.mark_new_set_active()
+                self.maintenance.exit_to_normal()
+            except Exception:  # noqa: BLE001
                 pass
 
         return BackupManifest(
@@ -611,8 +681,20 @@ class BackupService:
         journal_path: Path,
         journal: dict[str, Any],
         data: dict[str, Any],
+        *,
+        maintenance_proof: Any | None = None,
     ) -> BackupManifest:
         """Finish pending domain replacements after crash; refuse mixed silent resume."""
+        if maintenance_proof is not None:
+            try:
+                self.maintenance.verify_proof(maintenance_proof)
+                self.maintenance.begin_restore(maintenance_proof)
+            except Exception as exc:  # noqa: BLE001
+                from .maintenance import MaintenanceError
+
+                if isinstance(exc, MaintenanceError):
+                    raise BackupError(str(exc)) from exc
+                raise BackupError(f"Invalid maintenance_proof: {exc}") from exc
         backup_id = str(journal.get("backup_id") or "")
         dest = self.backup_root / backup_id
         databases = dict(data.get("databases") or {})
@@ -663,6 +745,13 @@ class BackupService:
         meta["restoreResumed"] = True
         meta["crossFileRestoreIsNotAtomic"] = True
         meta["maintenanceBoundaryHonored"] = True
+        meta["maintenanceProofVerified"] = True
+        try:
+            self.maintenance.mark_verifying()
+            self.maintenance.mark_new_set_active()
+            self.maintenance.exit_to_normal()
+        except Exception:  # noqa: BLE001
+            pass
         return BackupManifest(
             backup_id=str(data["backup_id"]),
             created_at=str(data["created_at"]),

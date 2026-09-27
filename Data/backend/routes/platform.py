@@ -46,7 +46,11 @@ class BackupCreateRequest(BaseModel):
 class BackupRestoreRequest(BaseModel):
     backup_id: str = Field(min_length=1, max_length=120)
     confirm: bool = False
-    # Operator acknowledges maintenance window — DB files will be replaced.
+    # Client may *request* a maintenance window; server coordinator must *prove*
+    # quiescence. A true value is NOT accepted as proof by BackupService.
+    request_maintenance: bool = False
+    # Legacy field — ignored as proof (WAVE 21). Kept so old clients fail closed
+    # with an explicit coordinator-proof error rather than silent accept.
     maintenance_boundary: bool = False
 
 
@@ -328,16 +332,31 @@ def build_platform_router(
     def restore_backup(payload: BackupRestoreRequest, request: Request) -> dict:
         # BACKUP-004: restore is operator-privileged (loopback / mutation guard).
         assert_loopback_fn(request)
+        from Data.modules.backup import MaintenanceError
+
+        coordinator = getattr(backup_service, "maintenance", None)
+        if coordinator is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Maintenance coordinator unavailable — refuse restore",
+            )
+        # API requests restore; server proves maintenance (bounded quiesce).
+        try:
+            proof = coordinator.enter_for_restore(
+                reason="api_restore",
+            )
+        except MaintenanceError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         try:
             manifest = backup_service.restore(
                 payload.backup_id,
                 confirm=payload.confirm,
-                maintenance_boundary=bool(payload.maintenance_boundary),
+                maintenance_proof=proof,
             )
         except BackupError as exc:
             detail = str(exc)
             status = 400
-            if "confirm" in detail.lower() or "maintenance_boundary" in detail.lower():
+            if "confirm" in detail.lower() or "maintenance" in detail.lower():
                 status = 400
             elif "not found" in detail.lower():
                 status = 404
@@ -351,6 +370,7 @@ def build_platform_router(
             "backup": manifest.public_dict(),
             "warning": "process should be restarted after restore",
             "restoreTerminalState": (manifest.metadata or {}).get("restoreTerminalState"),
+            "maintenance": coordinator.public_status(),
         }
 
     @router.get("/api/chaos")

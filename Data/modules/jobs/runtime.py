@@ -111,6 +111,28 @@ class JobRuntime:
             "retries_scheduled": 0,
             "leases_recovered": 0,
         }
+        self._maintenance_fenced = False
+
+    def enter_maintenance_fence(self) -> None:
+        """WAVE 21 — reject new enqueues while restore maintenance is active."""
+        self._maintenance_fenced = True
+
+    def clear_maintenance_fence(self) -> None:
+        self._maintenance_fenced = False
+
+    def maintenance_busy(self) -> bool:
+        """True when non-terminal work may still hold writers (drain probe)."""
+        if self._maintenance_fenced:
+            try:
+                from .states import JobState
+
+                for state in (JobState.QUEUED, JobState.RUNNING, JobState.RETRY_WAIT):
+                    if self.list(state=state, limit=1):
+                        return True
+            except Exception:  # noqa: BLE001 — unproven → busy
+                return True
+            return False
+        return False
 
     def enqueue(
         self,
@@ -142,6 +164,22 @@ class JobRuntime:
     ) -> JobRecord:
         if self.gateway.get_capability(capability_id) is None:
             raise KeyError(f"Unknown capability: {capability_id}")
+        if self._maintenance_fenced:
+            raise RuntimeError(
+                f"writes rejected during maintenance: enqueue({capability_id}) fenced"
+            )
+        try:
+            from Data.modules.backup.maintenance import assert_writes_allowed
+
+            assert_writes_allowed(op=f"job_enqueue:{capability_id}")
+        except Exception as exc:  # noqa: BLE001 — map coordinator fence
+            from Data.modules.backup.maintenance import MaintenanceError
+
+            if isinstance(exc, MaintenanceError):
+                raise RuntimeError(str(exc)) from exc
+            # Import/init failures must not block enqueue outside maintenance.
+            if "writes rejected during maintenance" in str(exc):
+                raise
         if idempotency_key:
             existing = self.store.get_by_idempotency_key(idempotency_key)
             if existing is not None:

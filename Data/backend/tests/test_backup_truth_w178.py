@@ -109,7 +109,9 @@ class BackupTruthTests(unittest.TestCase):
         self.assertFalse(self.dataset_file.exists())
 
         restored = self.service.restore(
-            manifest.backup_id, confirm=True, maintenance_boundary=True
+            manifest.backup_id,
+            confirm=True,
+            maintenance_proof=self.service.maintenance.enter_for_restore(reason="w178"),
         )
         pub = restored.public_dict()
         self.assertEqual(pub["backupKind"], BACKUP_KIND_METADATA_ONLY)

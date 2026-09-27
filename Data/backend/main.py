@@ -889,6 +889,11 @@ backup_service = BackupService(
     corpus_root=_backup_corpus_root(),
     database_paths=settings.database_paths,
 )
+# WAVE 21 — single maintenance authority; JobRuntime / db_commit consult this fence.
+from Data.modules.backup import register_process_coordinator
+
+backup_service.maintenance.bind_job_runtime(job_runtime)
+register_process_coordinator(backup_service.maintenance)
 
 
 def _sqlite_manager_backup_list() -> list[dict]:
@@ -1859,6 +1864,28 @@ def live_settings():
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # WAVE 21 — BEFORE any normal store/worker operation against canonical DBs:
+    # refuse boot when restore journal says RECOVERY_REQUIRED or mixed cutover.
+    from Data.modules.backup import (
+        RestoreStartupBlocked,
+        assert_startup_allows_canonical_db_use,
+    )
+
+    try:
+        assert_startup_allows_canonical_db_use(settings.backup.root)
+    except RestoreStartupBlocked as exc:
+        observability.emit(
+            "backup",
+            "startup.recovery_required",
+            payload={"error": str(exc), "journal": getattr(exc, "journal", {})},
+            level="error",
+            message="Refusing normal startup — restore recovery required",
+        )
+        raise RuntimeError(
+            f"RECOVERY_REQUIRED: {exc} — recovery-only mode; "
+            "complete/resume restore before normal operation"
+        ) from exc
+
     from Data.backend.db_upgrade import upgrade_all_databases
     _upgrade_report = upgrade_all_databases(settings.database_paths)
     if not _upgrade_report.completed:
