@@ -613,7 +613,8 @@
     "modules_page": {
       "install_start_stop_restart_ensure_ready": "PASS_UI",
       "versions_check_update_install_activate_rollback": "PASS_UI",
-      "sweep_idle": "PASS_UI"
+      "sweep_idle": "PASS_UI + vitest contract",
+      "frontend_contracts": "PASS"
     },
     "selfstarter": {
       "install": "PASS",
@@ -672,7 +673,9 @@
       "modules_page_sweep_idle": "PASS",
       "llm_agent_trader_port_isolation": "PASS :8010",
       "skills_page_search_pagination": "PASS_UI limit=40 offset",
-      "process_service_port_in_use": "PASS fails closed PORT_IN_USE"
+      "process_service_port_in_use": "PASS fails closed PORT_IN_USE",
+      "modules_skills_frontend_contracts": "PASS vitest modulesSkillsContracts",
+      "modules_page": "see live_proofs.modules_page"
     },
     "skill_pack_invoke": {
       "claude-osint": {
@@ -765,6 +768,9 @@
       "fetch_url_jina": "PASS",
       "v2ex_hot": "PASS",
       "skill_routed_zero_config_cli": "PASS"
+    },
+    "skills_page": {
+      "search_pagination_contracts": "PASS vitest"
     }
   }
 }
