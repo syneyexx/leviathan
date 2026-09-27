@@ -2,8 +2,14 @@
   "program": "LEVIATHAN Universal External Capability Fabric",
   "generated_at": "2026-09-27",
   "baseline_head": "1836d60ebecb52c44c116c70b8630ba6f49a6c38",
-  "vocabulary": ["PASS", "PARTIAL", "BLOCKED_EXTERNAL", "NOT_APPLICABLE", "FAILED"],
-  "notes": "Live third-party installs/network invocations are BLOCKED_EXTERNAL in CI unless dependencies and network are available. Fixture adapters prove the generic fabric. No per-repository wrappers.",
+  "vocabulary": [
+    "PASS",
+    "PARTIAL",
+    "BLOCKED_EXTERNAL",
+    "NOT_APPLICABLE",
+    "FAILED"
+  ],
+  "notes": "Live third-party installs/network invocations are BLOCKED_EXTERNAL in CI unless dependencies and network are available. Fixture adapters prove the generic fabric. Chat rich result cards + skills UI + assimilation path landed. No per-repository wrappers.",
   "sources": [
     {
       "source": "wonderwhy-er/DesktopCommanderMCP",
@@ -17,10 +23,14 @@
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
-      "known_external_requirements": ["npx", "node", "network"],
+      "known_external_requirements": [
+        "npx",
+        "node",
+        "network"
+      ],
       "status": "PARTIAL",
       "limitations": "Manifest + McpBridge registration present; live npx connect requires network/node."
     },
@@ -36,10 +46,14 @@
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
-      "knowledge_assimilation": "PARTIAL",
-      "known_external_requirements": ["git", "python", "instagram credentials/session"],
+      "knowledge_assimilation": "PASS",
+      "known_external_requirements": [
+        "git",
+        "python",
+        "instagram credentials/session"
+      ],
       "status": "PARTIAL",
       "limitations": "CLI adapter proven via fixtures; live Osintgram requires checkout + Instagram session."
     },
@@ -55,10 +69,12 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
-      "known_external_requirements": ["git"],
+      "known_external_requirements": [
+        "git"
+      ],
       "status": "PARTIAL",
       "limitations": "Skill importer proven with fixtures; live repo materialization needs network."
     },
@@ -74,10 +90,14 @@
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
-      "knowledge_assimilation": "PARTIAL",
-      "known_external_requirements": ["git", "python", "network"],
+      "knowledge_assimilation": "PASS",
+      "known_external_requirements": [
+        "git",
+        "python",
+        "network"
+      ],
       "status": "PARTIAL",
       "limitations": "Prefer MCP/API if upstream adds it; current manifest uses CLI."
     },
@@ -93,10 +113,14 @@
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
-      "knowledge_assimilation": "PARTIAL",
-      "known_external_requirements": ["git", "python", "network"],
+      "knowledge_assimilation": "PASS",
+      "known_external_requirements": [
+        "git",
+        "python",
+        "network"
+      ],
       "status": "PARTIAL"
     },
     {
@@ -111,10 +135,14 @@
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
       "knowledge_assimilation": "PARTIAL",
-      "known_external_requirements": ["git", "python", "mcp entrypoint"],
+      "known_external_requirements": [
+        "git",
+        "python",
+        "mcp entrypoint"
+      ],
       "status": "PARTIAL",
       "limitations": "MarketSim remains trading authority; real-money BLOCKED; results are research only."
     },
@@ -130,10 +158,12 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
-      "knowledge_assimilation": "PARTIAL",
-      "known_external_requirements": ["git"],
+      "knowledge_assimilation": "PASS",
+      "known_external_requirements": [
+        "git"
+      ],
       "status": "PARTIAL",
       "limitations": "No second Claude agent runtime; skills via PluginRegistry; MCP configs via McpBridge."
     },
@@ -149,12 +179,15 @@
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
-      "knowledge_assimilation": "PARTIAL",
-      "known_external_requirements": ["git", "python"],
+      "knowledge_assimilation": "PASS",
+      "known_external_requirements": [
+        "git",
+        "python"
+      ],
       "status": "PARTIAL",
-      "limitations": "External backtest ≠ LEVIATHAN qualification."
+      "limitations": "External backtest \u2260 LEVIATHAN qualification."
     },
     {
       "source": "Fincept-Corporation/FinceptTerminal",
@@ -168,10 +201,14 @@
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
-      "knowledge_assimilation": "PARTIAL",
-      "known_external_requirements": ["git", "python", "local API if available"],
+      "knowledge_assimilation": "PASS",
+      "known_external_requirements": [
+        "git",
+        "python",
+        "local API if available"
+      ],
       "status": "PARTIAL",
       "limitations": "Prefer SDK/API over GUI automation; MarketSim owns trading mutation."
     },
@@ -187,10 +224,15 @@
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
-      "known_external_requirements": ["git", "node", "npm", "optional ffmpeg"],
+      "known_external_requirements": [
+        "git",
+        "node",
+        "npm",
+        "optional ffmpeg"
+      ],
       "status": "PARTIAL"
     },
     {
@@ -205,10 +247,13 @@
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
-      "known_external_requirements": ["git", "python"],
+      "known_external_requirements": [
+        "git",
+        "python"
+      ],
       "status": "PARTIAL",
       "limitations": "Does not replace CognitiveRuntime/CodingControlPlane."
     },
@@ -224,10 +269,15 @@
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
-      "known_external_requirements": ["git", "node", "npm", "python"],
+      "known_external_requirements": [
+        "git",
+        "node",
+        "npm",
+        "python"
+      ],
       "status": "PARTIAL"
     },
     {
@@ -242,10 +292,14 @@
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
-      "knowledge_assimilation": "PARTIAL",
-      "known_external_requirements": ["git", "python", "network"],
+      "knowledge_assimilation": "PASS",
+      "known_external_requirements": [
+        "git",
+        "python",
+        "network"
+      ],
       "status": "PARTIAL",
       "limitations": "Does not replace ResearchService; external specialist only."
     },
@@ -261,10 +315,12 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
-      "known_external_requirements": ["git"],
+      "known_external_requirements": [
+        "git"
+      ],
       "status": "PARTIAL"
     },
     {
@@ -279,10 +335,12 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
-      "known_external_requirements": ["git"],
+      "known_external_requirements": [
+        "git"
+      ],
       "status": "PARTIAL"
     },
     {
@@ -297,10 +355,12 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
-      "known_external_requirements": ["git"],
+      "known_external_requirements": [
+        "git"
+      ],
       "status": "PARTIAL"
     },
     {
@@ -315,10 +375,12 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
-      "known_external_requirements": ["git"],
+      "known_external_requirements": [
+        "git"
+      ],
       "status": "PARTIAL"
     },
     {
@@ -333,10 +395,12 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
-      "known_external_requirements": ["git"],
+      "known_external_requirements": [
+        "git"
+      ],
       "status": "PARTIAL"
     },
     {
@@ -351,10 +415,12 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
-      "known_external_requirements": ["git"],
+      "known_external_requirements": [
+        "git"
+      ],
       "status": "PARTIAL"
     },
     {
@@ -369,10 +435,12 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
-      "known_external_requirements": ["git"],
+      "known_external_requirements": [
+        "git"
+      ],
       "status": "PARTIAL"
     },
     {
@@ -387,10 +455,12 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
-      "known_external_requirements": ["git"],
+      "known_external_requirements": [
+        "git"
+      ],
       "status": "PARTIAL",
       "limitations": "Catalog indexes metadata only; skills materialize on demand; never prompt-inject thousands."
     }
@@ -404,5 +474,6 @@
     "SCRIPT_PACKAGE": "PASS",
     "COMPOSITE": "PASS",
     "MCP": "PARTIAL"
-  }
+  },
+  "worktree_head": "3f48d399e3b5a3b006ce7852d24772a139ec4b1f"
 }

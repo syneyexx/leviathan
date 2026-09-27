@@ -474,6 +474,7 @@ execution_gateway.module_executor = ExternalModuleExecutor(
     job_runtime=job_runtime,
     assimilation_service=assimilation_service,
     evidence_service=evidence_service,
+    observation_store=observation_store,
     observability=observability,
     catalog=capability_catalog,
 )

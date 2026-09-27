@@ -545,6 +545,74 @@ class ExternalAssimilationAndScaleTests(unittest.TestCase):
             # ENABLED config != runtime READY.
             self.assertNotEqual(str(hydrated.status), "READY")
 
+    def test_executor_records_observation(self) -> None:
+        from Data.modules.observations import ObservationStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "mods" / "fake-cli"
+            root.mkdir(parents=True)
+            tool = FIXTURES / "fake_cli" / "tool.py"
+            manifest = {
+                "module_id": "fake-cli",
+                "name": "Fake CLI",
+                "version": "0.0.1",
+                "entrypoint": FACTORY,
+                "external": {
+                    "adapter": "CLI",
+                    "source_type": "path",
+                    "path": str(tool.parent),
+                    "install": {"strategy": "NONE"},
+                    "runtime": {
+                        "command": [sys.executable, str(tool), "{query}"],
+                        "operations": [
+                            {"name": "search", "command": [sys.executable, str(tool), "{query}"]}
+                        ],
+                    },
+                    "result": {"format": "json"},
+                    "assimilation_mode": "NONE",
+                },
+                "capabilities": [
+                    {
+                        "capability_id": "external.fake_cli.search",
+                        "name": "Search",
+                        "external_name": "search",
+                        "side_effects": ["READ"],
+                    }
+                ],
+            }
+            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+            db = Path(tmp) / "control.db"
+            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+            manager.discover()
+            manager.initialize("fake-cli", ModuleContext(database_path=str(db), data_root=tmp))
+            catalog = CapabilityCatalog()
+            plugins = PluginRegistry(catalog)
+            managed = manager.get("fake-cli")
+            assert managed is not None
+            register_external_module_capabilities(
+                catalog=catalog, plugin_registry=plugins, managed=managed
+            )
+            obs = ObservationStore(db)
+            obs.initialize()
+            gateway = ExecutionGateway(catalog=catalog)
+            gateway.module_executor = ExternalModuleExecutor(
+                manager,
+                observation_store=obs,
+                catalog=catalog,
+            )
+            result = gateway.execute(
+                CapabilityRequest(
+                    capability_id="external.fake_cli.search",
+                    arguments={"query": "hello"},
+                    request_id="obs-req-1",
+                )
+            )
+            self.assertEqual(result.status.value, "COMPLETED")
+            obs_id = (result.telemetry or {}).get("observation_id") or (
+                (result.output or {}).get("metadata") or {}
+            ).get("observation_id")
+            self.assertTrue(obs_id)
+
     def test_restart_reconciles_fake_running(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "mods" / "fake-cli"

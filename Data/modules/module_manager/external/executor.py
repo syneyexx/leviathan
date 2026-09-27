@@ -31,6 +31,7 @@ class ExternalModuleExecutor:
         job_runtime: Any | None = None,
         assimilation_service: Any | None = None,
         evidence_service: Any | None = None,
+        observation_store: Any | None = None,
         observability: Any | None = None,
         catalog: Any | None = None,
     ) -> None:
@@ -38,6 +39,7 @@ class ExternalModuleExecutor:
         self.job_runtime = job_runtime
         self.assimilation_service = assimilation_service
         self.evidence_service = evidence_service
+        self.observation_store = observation_store
         self.observability = observability
         self.catalog = catalog
 
@@ -244,9 +246,58 @@ class ExternalModuleExecutor:
                 "operation": operation,
             },
         )
-        self._metric("external.invocations", {"module_id": module_id, "status": status.value})
+        self._metric(
+            "external.invocations",
+            {"module_id": module_id, "capability_id": capability_id, "status": status.value},
+        )
         if status != CapabilityStatus.COMPLETED:
-            self._metric("external.failures", {"module_id": module_id, "status": status.value})
+            self._metric(
+                "external.failures",
+                {"module_id": module_id, "capability_id": capability_id, "status": status.value},
+            )
+
+        observation_id = None
+        try:
+            if self.observation_store is not None and hasattr(self.observation_store, "record_execution"):
+                obs, _effect = self.observation_store.record_execution(
+                    request_id=request_id or capability_id,
+                    capability_id=capability_id,
+                    status=status.value,
+                    side_effects=("READ",),
+                    provider_kind="module",
+                    provider_ref=provider_ref,
+                    run_id=run_id,
+                    job_id=job_id,
+                    output={
+                        "summary": output.get("summary"),
+                        "artifact_refs": list(output.get("artifact_refs") or [])[:20],
+                        "source_refs": list(output.get("source_refs") or [])[:20],
+                        "metadata": {
+                            "module_id": module_id,
+                            "operation": operation,
+                            "source_package": (output.get("metadata") or {}).get("source"),
+                            "source_version": (output.get("metadata") or {}).get("version"),
+                        },
+                    },
+                    error=result.error,
+                    duration_ms=result.duration_ms,
+                    metadata={"module_id": module_id, "external_fabric": True},
+                    idempotency_key=(
+                        f"ext:{module_id}:{capability_id}:{request_id}" if request_id else None
+                    ),
+                )
+                observation_id = getattr(obs, "observation_id", None)
+                if isinstance(cap_result.output, dict) and observation_id:
+                    cap_result.output.setdefault("metadata", {})
+                    cap_result.output["metadata"]["observation_id"] = observation_id
+                if observation_id:
+                    cap_result.telemetry = {
+                        **dict(cap_result.telemetry or {}),
+                        "observation_id": observation_id,
+                        "receipt_id": observation_id,
+                    }
+        except Exception:  # noqa: BLE001 — observations must not fail tool result
+            pass
 
         # Background assimilation — never blocks the capability result path beyond enqueue.
         try:
@@ -268,6 +319,7 @@ class ExternalModuleExecutor:
                 job_runtime=self.job_runtime,
                 assimilation_service=self.assimilation_service,
                 evidence_service=self.evidence_service,
+                observation_id=observation_id,
                 observability=self.observability,
             )
             if isinstance(cap_result.output, dict):
@@ -275,7 +327,13 @@ class ExternalModuleExecutor:
                 cap_result.output["metadata"]["assimilation"] = assim
                 if assim.get("queued"):
                     parts = list(cap_result.output.get("parts") or [])
-                    parts.append({"kind": "PROGRESS", "phase": "assimilation", "message": "Knowledge ingestion queued"})
+                    parts.append(
+                        {
+                            "kind": "PROGRESS",
+                            "phase": "assimilation",
+                            "message": "Knowledge ingestion queued",
+                        }
+                    )
                     cap_result.output["parts"] = parts
         except Exception:  # noqa: BLE001 — assimilation must not fail the tool result
             pass
