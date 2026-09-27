@@ -473,7 +473,7 @@ Routes cover:
 - `pages/ToolsPage.tsx` — canonical capability/tool surface;
 - `pages/McpPage.tsx` — MCP servers/sessions/tools;
 - `pages/WorkflowsPage.tsx` — workflow controls;
-- `pages/ModulesPage.tsx` / `pages/plugin-runtime/ModulesPage.tsx` — ModuleManager surface (discover, install, start/stop/restart, ensure-ready, health, logs, jobs, capabilities, versions/check-update/rollback, execute). Shows adapter kind, runtime state, capability counts for external modules. Does **not** invent RUNNING/READY — derives from backend snapshot;
+- `pages/ModulesPage.tsx` / `pages/plugin-runtime/ModulesPage.tsx` — ModuleManager surface (discover, install, start/stop/restart, ensure-ready, health, logs, jobs, capabilities, versions/check-update/install-version/activate-version/rollback, execute). Shows adapter kind, runtime state, capability counts for external modules. Does **not** invent RUNNING/READY — derives from backend snapshot;
 - `pages/plugin-runtime/SkillsPage.tsx` — `/skills` installed + catalog skill search (paginated metadata only). Enable/disable and on-demand instruction load via `/api/skills`. Never dumps thousands of skills into prompts;
 - Chat capability result cards (`pages/chat/CapabilityResultCards.tsx`) render backend-backed tool telemetry (status, duration, result/source/artifact counts) under the latest assistant message and in the Tools tab — never invent counts;
 - `pages/PerformancePage.tsx` — thin wrapper/performance page;
