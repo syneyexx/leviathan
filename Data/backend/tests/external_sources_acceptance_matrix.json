@@ -494,7 +494,7 @@
     "COMPOSITE": "PASS",
     "MCP": "PASS"
   },
-  "worktree_head": "c30bda1fea31f749cedcefe6cecf3998d4ab0af8",
+  "worktree_head": "01bbbd1ceeeaa706e249a1e9fe8129ebbc0f3dac",
   "live_proofs": {
     "install_pass_module_ids": [
       "agent-reach",
