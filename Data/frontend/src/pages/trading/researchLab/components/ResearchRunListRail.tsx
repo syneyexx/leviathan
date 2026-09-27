@@ -5,6 +5,14 @@ function Pill({ tone, label }: { tone: RunStatusTone; label: string }) {
   return <span className={`lv-rl-pill is-${tone}`}>{label}</span>;
 }
 
+function runIcon(tone: RunStatusTone): string {
+  if (tone === "running") return "◉";
+  if (tone === "completed") return "✓";
+  if (tone === "paused") return "❚❚";
+  if (tone === "failed") return "!";
+  return "○";
+}
+
 export function ResearchRunListRail({
   labs,
   selectedLabId,
@@ -22,7 +30,7 @@ export function ResearchRunListRail({
     <aside className="lv-rl-rail" aria-label="Research runs">
       <div className="lv-rl-rail-head">
         <h2>Research Runs</h2>
-        <button type="button" className="lv-rl-btn is-primary" onClick={onCreate}>
+        <button type="button" className="lv-rl-btn" onClick={onCreate}>
           + Create Run
         </button>
       </div>
@@ -50,24 +58,25 @@ export function ResearchRunListRail({
                   onClick={() => onSelect(item.labId)}
                   aria-pressed={selected}
                 >
-                  <div className="lv-rl-run-top">
+                  <span className="lv-rl-run-icon" aria-hidden="true">
+                    {runIcon(item.tone)}
+                  </span>
+                  <div className="lv-rl-run-body">
                     <div className="lv-rl-run-name">{item.name}</div>
+                    <div className="lv-rl-run-meta">
+                      {item.generationLabel ? `${item.generationLabel} · ` : ""}
+                      {item.meta}
+                    </div>
+                  </div>
+                  <div className="lv-rl-run-side">
                     <Pill tone={item.tone} label={item.label} />
                   </div>
-                  <div className="lv-rl-run-meta">{item.meta}</div>
                   {item.progress != null ? (
-                    <>
-                      <div className="lv-rl-progress" aria-hidden="true">
+                    <div className="lv-rl-run-progress-row">
+                      <div className={`lv-rl-progress is-${item.tone}`} aria-hidden="true">
                         <span style={{ width: `${item.progress}%` }} />
                       </div>
-                      <div className="lv-rl-progress-label">
-                        <span>{item.generationLabel || "Trial budget"}</span>
-                        <span>{Math.round(item.progress)}%</span>
-                      </div>
-                    </>
-                  ) : item.generationLabel ? (
-                    <div className="lv-rl-progress-label">
-                      <span>{item.generationLabel}</span>
+                      <span className="lv-rl-progress-pct">{Math.round(item.progress)}%</span>
                     </div>
                   ) : null}
                 </button>

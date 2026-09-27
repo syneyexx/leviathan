@@ -129,8 +129,10 @@ export function useResearchLab() {
           api.marketSimLabRunTrials(labId, 40).catch(() => ({ trials: [] as LabRunRecord[] })),
         ]);
         if (!mountedRef.current || selectedLabIdRef.current !== labId) return;
-        patch({
-          learning: learn.learning || null,
+        const learning = learn.learning || null;
+        setState((s) => ({
+          ...s,
+          learning,
           generations: gens.generation_summaries || [],
           familyProbs: gens.family_probabilities || {},
           candidates: cands.candidates || [],
@@ -138,7 +140,25 @@ export function useResearchLab() {
           runTrials: runTrials.trials || [],
           learningLoading: false,
           learningError: null,
-        });
+          // Mirror learning onto the selected rail card for truthful progress/status
+          labs: s.labs.map((lab) =>
+            String(lab.lab_id) === labId
+              ? {
+                  ...lab,
+                  learning,
+                  status: (learning?.status as string) || lab.status,
+                }
+              : lab,
+          ),
+          selectedLab:
+            s.selectedLab && String(s.selectedLab.lab_id) === labId
+              ? {
+                  ...s.selectedLab,
+                  learning,
+                  status: (learning?.status as string) || s.selectedLab.status,
+                }
+              : s.selectedLab,
+        }));
       } catch (err) {
         if (!mountedRef.current || selectedLabIdRef.current !== labId) return;
         const msg = err instanceof ApiError ? err.message : String(err);
@@ -173,7 +193,30 @@ export function useResearchLab() {
           api.marketSimLabListRuns(50),
         ]);
         if (!mountedRef.current) return;
-        const labs = (labList.labs || []) as LabRunRecord[];
+        let labs = (labList.labs || []) as LabRunRecord[];
+        // Enrich rail cards with learning progress (bounded fan-out; truthful get_run)
+        const enrichIds = labs.slice(0, 12).map((l) => String(l.lab_id));
+        if (enrichIds.length) {
+          const details = await Promise.all(
+            enrichIds.map((id) => api.marketSimLabGetRun(id).catch(() => null)),
+          );
+          const byId = new Map<string, LabRunRecord>();
+          for (const d of details) {
+            const lab = (d?.lab || d) as LabRunRecord | undefined;
+            if (lab?.lab_id) byId.set(String(lab.lab_id), lab);
+          }
+          labs = labs.map((l) => {
+            const full = byId.get(String(l.lab_id));
+            if (!full) return l;
+            const learning = asRecord(full.learning) || null;
+            return {
+              ...l,
+              ...full,
+              learning,
+              status: (learning?.status as string) || full.status || l.status,
+            };
+          });
+        }
         const prevId = selectedLabIdRef.current;
         let nextId = prevId;
         if (!nextId || !labs.some((l) => String(l.lab_id) === nextId)) {

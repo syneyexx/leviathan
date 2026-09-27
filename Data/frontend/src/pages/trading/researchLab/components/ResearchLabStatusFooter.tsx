@@ -1,7 +1,7 @@
 export function ResearchLabStatusFooter({
   counts,
   refreshing,
-  liveBlocked,
+  apiHealthy,
 }: {
   counts: {
     total: number;
@@ -11,29 +11,35 @@ export function ResearchLabStatusFooter({
     failed: number;
   };
   refreshing?: boolean;
-  liveBlocked: boolean;
+  apiHealthy: boolean;
 }) {
   return (
     <footer className="lv-rl-footer" aria-label="Research Lab status">
-      <span>
-        Total runs <strong>{counts.total}</strong>
-      </span>
-      <span>
-        Completed <strong>{counts.completed}</strong>
-      </span>
-      <span>
-        Running <strong>{counts.running}</strong>
-      </span>
-      <span>
-        Queued <strong>{counts.queued}</strong>
-      </span>
-      <span>
-        Failed <strong className={counts.failed ? "is-bad" : undefined}>{counts.failed}</strong>
-      </span>
-      <span className={liveBlocked ? "is-good" : "is-bad"} style={{ marginLeft: "auto" }}>
-        {liveBlocked ? "Live trading blocked · research on simulation" : "Live trading flag unexpected"}
+      <div className={`lv-rl-footer-sys${apiHealthy ? "" : " is-degraded"}`}>
+        {apiHealthy ? "All systems operational" : "Systems degraded"}
         {refreshing ? " · refreshing…" : ""}
-      </span>
+      </div>
+      <p className="lv-rl-footer-quote">
+        Better strategies are not found, they are evolved.
+        <cite>— LEVIATHAN</cite>
+      </p>
+      <div className="lv-rl-footer-counts">
+        <span>
+          Total <strong>{counts.total}</strong>
+        </span>
+        <span>
+          Completed <strong>{counts.completed}</strong>
+        </span>
+        <span>
+          Running <strong>{counts.running}</strong>
+        </span>
+        <span>
+          Queued <strong>{counts.queued}</strong>
+        </span>
+        <span>
+          Failed <strong>{counts.failed}</strong>
+        </span>
+      </div>
     </footer>
   );
 }
