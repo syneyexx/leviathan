@@ -312,18 +312,34 @@ Current `ReasoningPolicy`/`MetaController` modes control **real orchestration bu
 
 ### Collaboration strategy (TEAM) — CURRENT
 
-`CollaborationStrategy` is **orthogonal** to `ReasoningMode`. Depth describes effort within model work; TEAM describes how specialist tasks cooperate under a typed quality contract.
+`CollaborationStrategy` is **orthogonal** to `ReasoningMode`. Depth describes effort within model work; TEAM describes how specialist tasks cooperate under a typed quality contract. Explicit `collaboration_strategy=team` always remains TEAM semantics (including lightweight topologies) — it never silently becomes DIRECT.
 
 | Concern | Owner |
 |---|---|
 | Quality contracts / verdicts / acceptance | `Data/modules/verification/quality_contract.py`, `quality_store.py` |
-| TEAM policy / roles / caps | `Data/modules/cognition/team_strategy.py` |
-| Orchestrator (follow-up DAGs, no-progress, pause/resume) | `Data/modules/cognition/team_orchestrator.py` |
+| TEAM policy / roles / caps / specialist result contract | `Data/modules/cognition/team_strategy.py` (`TeamSpecialistResult`) |
+| Task-aware TEAM profile (reuses `classify_intent`) | `Data/modules/cognition/team_task_profile.py` (`TeamTaskProfile`) |
+| Orchestrator (artifact inspection, follow-up DAGs, progress, no-progress) | `Data/modules/cognition/team_orchestrator.py` |
 | HTTP surface | `Data/backend/routes/team.py` (`/api/team/*`) |
 | Chat entry | `POST /api/chat` with `collaboration_strategy=team` |
 | Research entry | `ResearchExecutionMode.TEAM` + `completion_policy=quality_contract` |
 
-TEAM defaults: no fixed cumulative round/token/deadline success gate; optional user caps yield **incomplete/blocked**, never green success with unmet mandatory criteria. `rounds=null` serializes as JSON null (not 999999). Resource bounds (timeouts, fan-out, retries) remain. Machine ledger: `Data/backend/tests/team_quality_program.json`.
+**Task-aware contracts.** `build_default_contract_for_request` selects criteria from `TeamTaskProfile`:
+
+- Conversational / self-description / general advice → `crit:deliverable_present`, `crit:request_addressed`, `crit:synthesis_rechecked` (no web/test/calc receipts).
+- Research / factual (current-data) → claim support + citation audit (strict).
+- Coding / repair → trusted test receipts (strict).
+- Quantitative → calculation receipts (strict).
+
+Irrelevant criteria may be marked `NOT_APPLICABLE` on the contract (with justification) and are excluded from mandatory satisfaction. Applicability is established from the profile/contract — not assigned after a verification miss.
+
+**Specialist result contract.** Chat TEAM and the orchestrator share `TeamSpecialistResult` (`schema=TeamSpecialistResult.v1`). LLM booleans such as `artifact_ok` / `tests_passed` / `claims_supported` are never proof alone: the aggregator inspects real provisional artifact text and receipt ids before emitting `SATISFIED`.
+
+**Lightweight TEAM.** Greeting/identity/capability requests use Analyst → Synthesizer → Verifier (still TEAM). Research/coding keep denser role graphs.
+
+**Progress / no-progress.** Meaningful progress includes criterion satisfaction increases, first artifact, new evidence, or improved verdict rank — not rewording alone. The no-progress window (default 3) remains; blockers distinguish `repeated_no_progress`, `internal_result_schema_error`, `evidence_unavailable`, and `verification_failed` rather than always saying “no progress.”
+
+TEAM defaults: no fixed cumulative round/token/deadline success gate; optional user caps yield **incomplete/blocked**, never green success with unmet mandatory criteria. `rounds=null` serializes as JSON null (not 999999). Resource bounds (timeouts, fan-out, retries) remain. Machine ledger: `Data/backend/tests/team_quality_program.json`. Routing regression: `Data/backend/tests/test_team_quality_routing_repair.py`.
 
 ### Two-axis compute (W3 CURRENT)
 

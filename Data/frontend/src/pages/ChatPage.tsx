@@ -1158,15 +1158,24 @@ export function ChatPage() {
                 <div style={{ marginTop: "0.55rem", fontSize: "0.75rem" }}>
                   <strong>TEAM quality</strong>
                   <div className="lv-muted" style={{ marginTop: 2 }}>
-                    Continues until the quality criteria are met, or shows exactly what prevents completion.
+                    {String(teamPanel.quality_label ?? teamPanel.status) === "accepted"
+                      ? "TEAM quality: accepted"
+                      : String(teamPanel.quality_label ?? teamPanel.status) === "blocked"
+                        ? "TEAM quality: blocked — see criteria and blockers"
+                        : "Continues until the quality criteria are met, or shows exactly what prevents completion."}
                   </div>
                   <div style={{ marginTop: 4 }}>
-                    Status {String(teamPanel.status ?? "—")}
+                    Status {String(teamPanel.quality_label ?? teamPanel.status ?? "—")}
                     {typeof teamPanel.iteration === "number" ? ` · iteration ${teamPanel.iteration}` : ""}
                     {(teamPanel.progress as { criteria_ratio_label?: string } | undefined)
                       ?.criteria_ratio_label
                       ? ` · ${String((teamPanel.progress as { criteria_ratio_label?: string }).criteria_ratio_label)}`
-                      : ""}
+                      : typeof (teamPanel.progress as { mandatory_satisfied?: number } | undefined)
+                            ?.mandatory_satisfied === "number" &&
+                          typeof (teamPanel.progress as { mandatory_total?: number } | undefined)
+                            ?.mandatory_total === "number"
+                        ? ` · ${(teamPanel.progress as { mandatory_satisfied: number }).mandatory_satisfied}/${(teamPanel.progress as { mandatory_total: number }).mandatory_total} mandatory criteria satisfied`
+                        : ""}
                   </div>
                   <ul style={{ margin: "0.35rem 0 0", paddingLeft: "1rem" }}>
                     {Array.isArray((teamPanel.contract as { criteria?: unknown[] } | undefined)?.criteria)

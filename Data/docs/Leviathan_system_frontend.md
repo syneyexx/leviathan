@@ -238,7 +238,7 @@ Typed SQLite Manager client methods (three canonical DBs; Settings → Opslag):
 - Optional diagnostic strip: mode / model / brain / web / tools / agents / verification / context / latency / behavior.
 - `pages/CognitionPage.tsx` exposes cognition/run state separately.
 - Chat consumes the backend chat/cognition/model systems; the frontend must not synthesize reasoning success, tool execution or citations.
-- **TEAM collaboration (CURRENT):** `ChatPage` exposes a Direct/TEAM selector separate from Auto/Fast/Deep reasoning depth. TEAM explains: “Continues until the quality criteria are met, or shows exactly what prevents completion.” Context panel shows criterion verdicts, iteration count (open-ended), and blockers from live `/api/chat` / `/api/team` payloads — never fake round fractions.
+- **TEAM collaboration (CURRENT):** `ChatPage` exposes a Direct/TEAM selector separate from Auto/Fast/Deep reasoning depth (orthogonal controls). TEAM explains: “Continues until the quality criteria are met, or shows exactly what prevents completion.” Context panel shows typed `quality_label` (`accepted` / `blocked` / `running` / `revising` / …), criterion verdicts, open-ended iteration count, and `criteria_ratio_label` from live `/api/chat` / `/api/team` payloads — never fake round fractions. Completed lightweight conversational TEAM turns render as ordinary assistant answers; genuine blockers remain visible.
 
 Current main contains the F0 baseline of the Frontier Reasoning program. The existing frontend has **not** yet earned the future F17 reasoning-control gate merely because the master program describes it.
 

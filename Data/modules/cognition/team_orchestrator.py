@@ -10,6 +10,8 @@ recursively create unbounded teams.
 
 from __future__ import annotations
 
+import hashlib
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -19,6 +21,7 @@ from typing import Any, Callable, Sequence
 from Data.modules.verification.quality_contract import (
     AcceptanceOutcome,
     AcceptanceRecord,
+    CriterionApplicability,
     CriterionVerdict,
     CriterionVerdictStatus,
     EvidenceClass,
@@ -29,6 +32,7 @@ from Data.modules.verification.quality_contract import (
 )
 
 from .team_strategy import (
+    LIGHTWEIGHT_CATEGORIES,
     NON_SUCCESS_ACTIVE,
     TERMINAL_TEAM_STATUSES,
     TeamAssignment,
@@ -36,11 +40,22 @@ from .team_strategy import (
     TeamExecutionPolicy,
     TeamRole,
     TeamRunStatus,
+    TeamSpecialistResult,
     assert_transition,
     build_default_contract_for_request,
     new_assignment_id,
     new_blocker_id,
     select_roles_for_task,
+)
+from .team_task_profile import TeamTaskProfile, build_team_task_profile
+
+# External live-price / earnings style claims — require evidence on any category.
+_MATERIAL_EXTERNAL_CLAIM = re.compile(
+    r"(?i)\b("
+    r"current price|huidige prijs|\$\s?\d|€\s?\d|"
+    r"trading live real.?money|live real-money|"
+    r"earnings (?:were|are|of)|kwartaalresultaten"
+    r")\b"
 )
 
 
@@ -100,6 +115,10 @@ class TeamRunState:
     superseded_graph_revisions: set[int] = field(default_factory=set)
     events: list[dict[str, Any]] = field(default_factory=list)
     event_seq: int = 0
+    task_profile: dict[str, Any] | None = None
+    request_text: str = ""
+    last_progress_fingerprint: str = ""
+    progress_reasons: list[str] = field(default_factory=list)
 
     def public_dict(self) -> dict[str, Any]:
         progress = criterion_progress(
@@ -107,9 +126,26 @@ class TeamRunState:
             self.verdicts,
             artifact_revision=self.artifact_revision,
         )
+        quality_label = None
+        if self.status == TeamRunStatus.COMPLETED:
+            quality_label = "accepted"
+        elif self.status == TeamRunStatus.BLOCKED:
+            quality_label = "blocked"
+        elif self.status in {
+            TeamRunStatus.WAITING_FOR_INPUT,
+            TeamRunStatus.WAITING_FOR_RESOURCE,
+        }:
+            quality_label = self.status.value
+        elif self.status == TeamRunStatus.REVISING:
+            quality_label = "revising"
+        elif self.status in {TeamRunStatus.RUNNING, TeamRunStatus.VERIFYING, TeamRunStatus.PLANNING}:
+            quality_label = "running"
+        elif self.status in {TeamRunStatus.FAILED, TeamRunStatus.CANCELLED}:
+            quality_label = self.status.value
         return {
             "run_id": self.run_id,
             "status": self.status.value,
+            "quality_label": quality_label,
             "contract": self.contract.public_dict(),
             "policy": self.policy.public_dict(),
             "artifact_revision": self.artifact_revision,
@@ -126,10 +162,13 @@ class TeamRunState:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "no_progress_streak": self.no_progress_streak,
+            "task_profile": dict(self.task_profile) if self.task_profile else None,
+            "progress_reasons": list(self.progress_reasons[-20:]),
             "truth": {
                 "completed_means_quality_accepted": True,
                 "blocked_paused_cancelled_are_not_success": True,
                 "open_ended_iteration_count": True,
+                "team_is_not_direct": True,
             },
         }
 
@@ -188,17 +227,41 @@ class TeamOrchestrator:
         contract: QualityContract | None = None,
         parent_capabilities: Sequence[str] | None = None,
         artifact_revision: str | None = None,
+        profile: TeamTaskProfile | None = None,
     ) -> TeamRunState:
         rid = run_id or f"team:{uuid.uuid4().hex[:12]}"
         now = _utc_now()
+        resolved_profile = profile
+        if resolved_profile is None and contract is None:
+            # Prefer explicit category flags from callers; otherwise profile the request.
+            if task_category == "general" and not requires_research and not requires_coding:
+                resolved_profile = build_team_task_profile(request_text)
+            elif task_category and task_category != "general":
+                resolved_profile = TeamTaskProfile(
+                    category=task_category,
+                    answer_kind="caller_specified",
+                    requires_external_research=requires_research,
+                    requires_code_execution=requires_coding,
+                    requires_tools=requires_tools,
+                    lightweight=task_category in LIGHTWEIGHT_CATEGORIES,
+                    verification_intensity=(
+                        "light" if task_category in LIGHTWEIGHT_CATEGORIES else "standard"
+                    ),
+                )
+        effective_category = (
+            resolved_profile.category if resolved_profile is not None else task_category
+        )
         qc = contract or build_default_contract_for_request(
             run_id=rid,
             request_ref=request_ref or rid,
             request_text=request_text,
-            task_category=task_category,
-            requires_research=requires_research,
-            requires_coding=requires_coding,
+            task_category=effective_category,
+            requires_research=requires_research
+            or (resolved_profile.requires_external_research if resolved_profile else False),
+            requires_coding=requires_coding
+            or (resolved_profile.requires_code_execution if resolved_profile else False),
             created_at=now,
+            profile=resolved_profile,
         )
         state = TeamRunState(
             run_id=rid,
@@ -209,24 +272,46 @@ class TeamOrchestrator:
             created_at=now,
             updated_at=now,
             started_at=self._clock(),
+            task_profile=resolved_profile.public_dict() if resolved_profile else {
+                "category": effective_category,
+                "answer_kind": "caller_specified",
+            },
+            request_text=request_text or "",
         )
         self._runs[rid] = state
         if self.quality_store is not None:
             self.quality_store.save_contract(qc)
-        state.emit("team_started", "TEAM run queued", {"request_ref": qc.request_ref})
+        state.emit(
+            "team_started",
+            "TEAM run queued",
+            {
+                "request_ref": qc.request_ref,
+                "task_profile": state.task_profile,
+                "contract_version": qc.version,
+            },
+        )
         self._set_status(state, TeamRunStatus.PLANNING)
         roles = select_roles_for_task(
-            task_category=task_category,
-            requires_research=requires_research,
-            requires_coding=requires_coding,
-            requires_tools=requires_tools,
+            task_category=effective_category,
+            requires_research=requires_research
+            or (resolved_profile.requires_external_research if resolved_profile else False),
+            requires_coding=requires_coding
+            or (resolved_profile.requires_code_execution if resolved_profile else False),
+            requires_tools=requires_tools
+            or (resolved_profile.requires_tools if resolved_profile else False),
+            profile=resolved_profile,
         )
         caps = list(parent_capabilities or [])
         state.assignments = self._plan_assignments(state, roles, allowed_capabilities=caps)
         state.emit(
             "plan_ready",
             f"Planned {len(state.assignments)} specialist assignments",
-            {"roles": [r.value for r in roles], "criteria": [c.criterion_id for c in qc.criteria]},
+            {
+                "roles": [r.value for r in roles],
+                "criteria": [c.criterion_id for c in qc.criteria],
+                "task_category": qc.task_category,
+                "lightweight": bool((state.task_profile or {}).get("lightweight")),
+            },
         )
         return state
 
@@ -280,6 +365,7 @@ class TeamOrchestrator:
                 self._set_status(state, TeamRunStatus.VERIFYING)
 
             if state.status == TeamRunStatus.VERIFYING:
+                before_fp = self._progress_fingerprint(state)
                 before = criterion_progress(
                     state.contract, state.verdicts, artifact_revision=state.artifact_revision
                 )["mandatory_satisfied"]
@@ -287,18 +373,47 @@ class TeamOrchestrator:
                 after = criterion_progress(
                     state.contract, state.verdicts, artifact_revision=state.artifact_revision
                 )["mandatory_satisfied"]
+                after_fp = self._progress_fingerprint(state)
+                progress_reason = self._explain_progress(before_fp, after_fp, before, after)
+                meaningful = bool(progress_reason)
                 delta = TeamProgressDelta(
                     iteration=state.iteration,
                     criteria_satisfied_before=before,
                     criteria_satisfied_after=after,
-                    meaningful=after > before
-                    or bool(state.activity and state.activity[-1].get("kind") == "evidence_added"),
+                    new_evidence_ids=list(
+                        self._evidence_ids_from_state(state) - set(before_fp.get("evidence", ()))
+                    ),
+                    repaired_artifacts=(
+                        [state.artifact_revision]
+                        if progress_reason == "first_artifact"
+                        else []
+                    ),
+                    meaningful=meaningful,
                 )
                 state.progress_deltas.append(delta)
-                if delta.meaningful:
+                state.last_progress_fingerprint = after_fp.get("digest", "")
+                if meaningful:
                     state.no_progress_streak = 0
+                    state.progress_reasons.append(progress_reason)
+                    state.emit(
+                        "progress",
+                        f"Meaningful progress: {progress_reason}",
+                        {
+                            "reason": progress_reason,
+                            "mandatory_satisfied": after,
+                            "no_progress_streak": state.no_progress_streak,
+                        },
+                    )
                 else:
                     state.no_progress_streak += 1
+                    state.emit(
+                        "no_progress_tick",
+                        "No meaningful criterion/artifact/evidence progress",
+                        {
+                            "no_progress_streak": state.no_progress_streak,
+                            "mandatory_satisfied": after,
+                        },
+                    )
 
                 record = aggregate_acceptance(
                     state.contract,
@@ -321,7 +436,11 @@ class TeamOrchestrator:
                     state.emit(
                         "accepted",
                         "All mandatory criteria satisfied for current revision",
-                        record.public_dict(),
+                        {
+                            **record.public_dict(),
+                            "task_profile": state.task_profile,
+                            "final_outcome": "completed",
+                        },
                     )
                     break
 
@@ -330,7 +449,11 @@ class TeamOrchestrator:
                     self._handle_no_progress(state, record)
                     break
 
-                self._schedule_followups(state, record)
+                scheduled = self._schedule_followups(state, record)
+                if not scheduled:
+                    # No legitimate remediation — block immediately with truthful kind.
+                    self._handle_no_progress(state, record, force_kind="verification_failed")
+                    break
                 self._set_status(state, TeamRunStatus.REVISING)
                 state.iteration += 1
                 state.emit(
@@ -449,7 +572,7 @@ class TeamOrchestrator:
         self,
         run_id: str,
         task_id: str,
-        result: dict[str, Any],
+        result: dict[str, Any] | TeamSpecialistResult,
         *,
         graph_revision: int,
     ) -> TeamRunState:
@@ -469,23 +592,60 @@ class TeamOrchestrator:
                 if a.status == "cancelled":
                     state.emit("stale_result_rejected", f"ignored cancelled assignment {task_id}")
                     return state
-                # Validate structured result boundary.
+                # Validate structured result boundary — coerce TeamSpecialistResult.
+                if isinstance(result, TeamSpecialistResult):
+                    result = result.to_dict()
                 if not isinstance(result, dict):
                     a.status = "failed"
                     a.error = "malformed_result_not_object"
                     state.emit("malformed_result", a.error, {"task_id": task_id})
                     return state
-                if result.get("role") and str(result["role"]) != a.role.value:
+                typed = TeamSpecialistResult.from_mapping(result)
+                if typed.role and str(typed.role) != a.role.value:
                     a.status = "failed"
                     a.error = "role_mismatch"
                     state.emit("malformed_result", a.error, {"task_id": task_id})
                     return state
-                a.result = result
+                normalized = typed.to_dict()
+                normalized["role"] = a.role.value
+                a.result = normalized
                 a.status = "completed"
-                if result.get("provisional_artifact"):
-                    art = dict(result["provisional_artifact"])
-                    art["provisional"] = True
-                    state.provisional_artifact = art
+                art = normalized.get("provisional_artifact") or normalized.get("artifact_candidate")
+                if art and isinstance(art, dict):
+                    text = str(art.get("text") or art.get("content") or "").strip()
+                    if text:
+                        payload = dict(art)
+                        payload["provisional"] = True
+                        payload["text"] = text
+                        payload["revision"] = state.artifact_revision
+                        payload["from_role"] = a.role.value
+                        # Prefer synthesizer/analyst candidate as current revision artifact.
+                        if (
+                            state.provisional_artifact is None
+                            or a.role in {TeamRole.SYNTHESIZER, TeamRole.ANALYST}
+                            or len(text) >= len(
+                                str((state.provisional_artifact or {}).get("text") or "")
+                            )
+                        ):
+                            state.provisional_artifact = payload
+                            state.emit(
+                                "artifact_updated",
+                                f"provisional artifact from {a.role.value}",
+                                {
+                                    "task_id": task_id,
+                                    "chars": len(text),
+                                    "artifact_revision": state.artifact_revision,
+                                },
+                            )
+                if typed.evidence_ids or typed.evidence_refs:
+                    state.emit(
+                        "evidence_added",
+                        "specialist attached evidence refs",
+                        {
+                            "task_id": task_id,
+                            "evidence_ids": list(typed.evidence_ids or typed.evidence_refs)[:12],
+                        },
+                    )
                 return state
         state.emit("stale_result_rejected", f"unknown task_id {task_id}")
         return state
@@ -598,17 +758,23 @@ class TeamOrchestrator:
                 completed_ids = {x.task_id for x in state.assignments if x.status == "completed"}
 
     def _collect_verdicts_from_assignments(self, state: TeamRunState) -> None:
-        """Build verdicts from specialist results. Fail closed without evidence."""
+        """Build verdicts from specialist results + deterministic artifact inspection.
+
+        Fail closed without real receipts for research/coding/calc. For conversational
+        tasks, a non-empty provisional response artifact is inspectable evidence —
+        LLM ``artifact_ok`` alone is never proof.
+        """
         evidence_pool: list[str] = []
         claims_ok = False
         citation_ok = False
         tests_ok = False
         synthesis_clean = True
         uncertainty_ok = False
-        artifact_ok = False
         calc_ok = False
         requirements_ok = False
         new_claim_introduced = False
+        material_claims: list[dict[str, Any]] = []
+        schema_error = False
 
         for a in state.assignments:
             if a.status != "completed" or not a.result:
@@ -616,30 +782,77 @@ class TeamOrchestrator:
             if a.graph_revision != state.graph_revision:
                 continue
             res = a.result
-            for eid in res.get("evidence_ids") or []:
+            if res.get("schema") != "TeamSpecialistResult.v1" and not any(
+                k in res
+                for k in (
+                    "provisional_artifact",
+                    "artifact_candidate",
+                    "evidence_ids",
+                    "tests_passed",
+                    "supported_uncertainty",
+                )
+            ):
+                # Empty/malformed producer payload — track for blocker classification.
+                if not res.get("notes") and not res.get("summary"):
+                    schema_error = True
+            for eid in res.get("evidence_ids") or res.get("evidence_refs") or []:
                 evidence_pool.append(str(eid))
-            if res.get("claims_supported") is True:
+            for claim in res.get("material_claims") or []:
+                if isinstance(claim, dict):
+                    material_claims.append(claim)
+            # Receipt-backed signals only.
+            if res.get("claims_supported") is True and (res.get("evidence_ids") or res.get("evidence_refs")):
                 claims_ok = True
-            if res.get("citation_audit_passed") is True:
+            if res.get("citation_audit_passed") is True and (res.get("evidence_ids") or res.get("evidence_refs")):
                 citation_ok = True
-            if res.get("tests_passed") is True and res.get("test_receipt_id"):
+            test_receipt = res.get("test_receipt_id") or (
+                (res.get("test_receipts") or [None])[0]
+            )
+            if res.get("tests_passed") is True and test_receipt:
                 tests_ok = True
-                evidence_pool.append(str(res["test_receipt_id"]))
+                evidence_pool.append(str(test_receipt))
             if res.get("unsupported_new_claim") is True:
                 new_claim_introduced = True
                 synthesis_clean = False
             if res.get("supported_uncertainty") is True:
                 uncertainty_ok = True
-            if res.get("artifact_ok") is True:
-                artifact_ok = True
             if res.get("calculation_receipt_id"):
                 calc_ok = True
                 evidence_pool.append(str(res["calculation_receipt_id"]))
-            if res.get("requirements_addressed") is True:
+            if res.get("requirements_addressed") is True and (
+                state.provisional_artifact or res.get("provisional_artifact")
+            ):
                 requirements_ok = True
             # Majority agreement on unsupported claim must not pass.
             if res.get("agents_agree_unsupported") is True:
                 claims_ok = False
+                synthesis_clean = False
+
+        # Deterministic artifact inspection — never trust model artifact_ok alone.
+        artifact_text = self._artifact_text(state)
+        artifact_present = bool(artifact_text)
+        if artifact_present:
+            evidence_pool.append(f"artifact:inspect:{state.artifact_revision}")
+
+        lightweight = self._is_lightweight(state)
+        request_addressed = False
+        if artifact_present:
+            if lightweight:
+                request_addressed = self._response_addresses_request(
+                    state.request_text or state.contract.scope,
+                    artifact_text,
+                )
+            else:
+                request_addressed = True  # non-light: deliverable presence is the inspection gate
+
+        # Conversational synthesis: no material external claims → system receipt.
+        artifact_has_material_external = bool(_MATERIAL_EXTERNAL_CLAIM.search(artifact_text or ""))
+        unsupported_material_in_artifact = artifact_has_material_external and not (
+            claims_ok or calc_ok or tests_ok
+        )
+        if unsupported_material_in_artifact and lightweight:
+            new_claim_introduced = True
+            synthesis_clean = False
 
         # Independent origin collapse: many URLs one origin → one evidence origin.
         origins = []
@@ -674,9 +887,34 @@ class TeamOrchestrator:
                 created_at=_utc_now(),
             )
             state.verdicts.append(verdict)
+            state.emit(
+                "criterion_verdict",
+                f"{criterion_id} → {status.value}",
+                {
+                    "criterion_id": criterion_id,
+                    "status": status.value,
+                    "evidence_count": len(ev),
+                    "applicability": "applicable",
+                },
+            )
+
+        if schema_error and not artifact_present:
+            state.emit(
+                "internal_result_schema_error",
+                "Specialist results lacked usable artifact/evidence schema",
+                {"iteration": state.iteration},
+            )
 
         for crit in state.contract.criteria:
             cid = crit.criterion_id
+            if crit.applicability == CriterionApplicability.NOT_APPLICABLE:
+                _add_verdict(
+                    cid,
+                    CriterionVerdictStatus.NOT_APPLICABLE,
+                    justification=crit.applicability_justification or "marked not applicable on contract",
+                    evidence_ids=["contract:not_applicable"],
+                )
+                continue
             if crit.evidence_class == EvidenceClass.TEST_RECEIPT:
                 _add_verdict(
                     cid,
@@ -721,28 +959,69 @@ class TeamOrchestrator:
                     justification="supported uncertainty statement" if uncertainty_ok else "uncertainty not supported",
                 )
             elif crit.evidence_class == EvidenceClass.ARTIFACT_INSPECTION:
-                ok = artifact_ok or requirements_ok
-                _add_verdict(
-                    cid,
-                    CriterionVerdictStatus.SATISFIED if ok else CriterionVerdictStatus.UNSATISFIED,
-                    evidence_ids=["artifact:inspect"] if ok else (),
-                    justification="artifact inspected" if ok else "artifact missing/uninspected",
-                )
+                if cid == "crit:request_addressed":
+                    ok = artifact_present and request_addressed
+                    _add_verdict(
+                        cid,
+                        CriterionVerdictStatus.SATISFIED if ok else CriterionVerdictStatus.UNSATISFIED,
+                        evidence_ids=[f"artifact:scope:{state.artifact_revision}"] if ok else (),
+                        justification=(
+                            "response addresses request scope"
+                            if ok
+                            else "response missing or does not address request"
+                        ),
+                    )
+                else:
+                    # Deliverable / requirements: inspect real artifact state.
+                    ok = artifact_present or requirements_ok
+                    # Ignore bare LLM artifact_ok without inspectable text.
+                    _add_verdict(
+                        cid,
+                        CriterionVerdictStatus.SATISFIED if ok else CriterionVerdictStatus.UNSATISFIED,
+                        evidence_ids=[f"artifact:inspect:{state.artifact_revision}"] if ok else (),
+                        justification=(
+                            "artifact inspected from provisional response"
+                            if ok
+                            else "artifact missing/uninspected"
+                        ),
+                    )
             elif cid == "crit:synthesis_rechecked":
-                if new_claim_introduced:
+                if new_claim_introduced or unsupported_material_in_artifact:
                     _add_verdict(
                         cid,
                         CriterionVerdictStatus.UNSATISFIED,
                         justification="synthesis introduced unsupported new claim — gate reopened",
                     )
+                elif synthesis_clean and artifact_present and lightweight and not material_claims:
+                    # Deterministic conversational synthesis receipt — no invented citations.
+                    _add_verdict(
+                        cid,
+                        CriterionVerdictStatus.SATISFIED,
+                        evidence_ids=[f"synthesis:conversational_clean:{state.artifact_revision}"],
+                        justification="conversational synthesis: no unsupported material claims detected",
+                    )
                 elif synthesis_clean and (
-                    claims_ok or tests_ok or artifact_ok or uncertainty_ok or requirements_ok or calc_ok
+                    claims_ok
+                    or tests_ok
+                    or calc_ok
+                    or uncertainty_ok
+                    or requirements_ok
+                    or (artifact_present and not lightweight and not artifact_has_material_external)
                 ):
                     _add_verdict(
                         cid,
                         CriterionVerdictStatus.SATISFIED,
-                        evidence_ids=evidence_pool[:4] or ["synthesis:clean"],
+                        evidence_ids=evidence_pool[:4] or [
+                            f"synthesis:clean:{state.artifact_revision}"
+                        ],
                         justification="post-synthesis recheck clean",
+                    )
+                elif synthesis_clean and artifact_present and not artifact_has_material_external:
+                    _add_verdict(
+                        cid,
+                        CriterionVerdictStatus.SATISFIED,
+                        evidence_ids=[f"synthesis:artifact_clean:{state.artifact_revision}"],
+                        justification="artifact present without unsupported material claims",
                     )
                 else:
                     _add_verdict(
@@ -757,16 +1036,11 @@ class TeamOrchestrator:
                     justification="no verifier result yet",
                 )
 
-    def _schedule_followups(self, state: TeamRunState, record: AcceptanceRecord) -> None:
-        """Schedule a new acyclic follow-up DAG targeting unresolved criteria."""
-        state.superseded_graph_revisions.add(state.graph_revision)
-        state.graph_revision += 1
-        unresolved = [
-            b.split(":", 1)[-1]
-            for b in record.blockers
-            if ":" in b and not b.startswith("blocking_conflict")
-        ]
-        # Extract criterion ids from blockers like unsatisfied:crit:claims_supported
+    def _schedule_followups(self, state: TeamRunState, record: AcceptanceRecord) -> bool:
+        """Schedule a new acyclic follow-up DAG targeting unresolved criteria.
+
+        Returns False when no legitimate remediation exists (caller should block).
+        """
         crit_ids: list[str] = []
         for b in record.blockers:
             parts = b.split(":")
@@ -778,50 +1052,277 @@ class TeamOrchestrator:
         if not crit_ids:
             crit_ids = [c.criterion_id for c in state.contract.mandatory_applicable()]
 
-        follow_roles = [TeamRole.RESEARCHER, TeamRole.VERIFIER]
-        if any("synthesis" in c for c in crit_ids):
-            follow_roles = [TeamRole.CRITIC, TeamRole.SYNTHESIZER, TeamRole.VERIFIER]
-        if any("test" in c or "behavior" in c or "regression" in c for c in crit_ids):
+        lightweight = self._is_lightweight(state)
+        cat = (state.contract.task_category or "").lower()
+
+        # Choose remediation roles that can actually change the failed criteria.
+        if any(c in {"crit:behavior_works", "crit:regression_preserved"} or "test" in c for c in crit_ids):
             follow_roles = [TeamRole.ANALYST, TeamRole.VERIFIER]
+        elif any(c in {"crit:claims_supported", "crit:citation_audit"} for c in crit_ids) or cat in {
+            "research",
+            "factual",
+        }:
+            follow_roles = [TeamRole.RESEARCHER, TeamRole.VERIFIER]
+        elif any("calc" in c or "reproducible" in c for c in crit_ids) or cat == "quantitative":
+            follow_roles = [TeamRole.ANALYST, TeamRole.VERIFIER]
+        elif any("synthesis" in c for c in crit_ids):
+            follow_roles = [TeamRole.CRITIC, TeamRole.SYNTHESIZER, TeamRole.VERIFIER]
+        elif lightweight or any(
+            c in {"crit:deliverable_present", "crit:request_addressed"} for c in crit_ids
+        ):
+            # Produce/refine the conversational artifact, then verify.
+            if not self._artifact_text(state):
+                follow_roles = [TeamRole.SYNTHESIZER, TeamRole.VERIFIER]
+            else:
+                follow_roles = [TeamRole.ANALYST, TeamRole.SYNTHESIZER, TeamRole.VERIFIER]
+        else:
+            follow_roles = [TeamRole.ANALYST, TeamRole.VERIFIER]
+
+        # Detect identical repeated follow-up with same unresolved set → no remediation.
+        prior_objectives = [
+            a.objective
+            for a in state.assignments
+            if a.graph_revision == state.graph_revision - 0  # current graph
+        ]
+        remedy = (
+            f"Resolve {crit_ids}: "
+            f"prior blockers={list(record.blockers)[:4]}; "
+            f"missing={'artifact' if not self._artifact_text(state) else 'evidence/receipts'}; "
+            f"produce typed TeamSpecialistResult with inspectable artifact/receipts"
+        )
+        if state.no_progress_streak >= 1 and any(remedy[:40] in (o or "") for o in prior_objectives):
+            # Still allow one structured retry with explicit remediation goal below.
+            pass
+
+        state.superseded_graph_revisions.add(state.graph_revision)
+        state.graph_revision += 1
 
         new_assignments = self._plan_assignments(
             state,
             [TeamRole.ORCHESTRATOR, *follow_roles],
             allowed_capabilities=state.assignments[0].allowed_capabilities if state.assignments else [],
         )
+        if not new_assignments:
+            return False
         for a in new_assignments:
-            a.criterion_ids = crit_ids
-            a.objective = f"Resolve unresolved criteria: {crit_ids}"
+            a.criterion_ids = list(crit_ids)
+            a.objective = remedy
+            a.revision_preconditions = list(record.blockers)[:8]
             a.graph_revision = state.graph_revision
+            a.context_refs = [
+                f"artifact_revision:{state.artifact_revision}",
+                f"failed:{','.join(crit_ids)}",
+            ]
         state.assignments.extend(new_assignments)
         state.emit(
             "followup_scheduled",
             f"Follow-up graph revision {state.graph_revision}",
-            {"criterion_ids": crit_ids, "tasks": [a.task_id for a in new_assignments]},
+            {
+                "criterion_ids": crit_ids,
+                "tasks": [a.task_id for a in new_assignments],
+                "roles": [a.role.value for a in new_assignments],
+                "remediation": remedy[:240],
+            },
         )
+        return True
 
-    def _handle_no_progress(self, state: TeamRunState, record: AcceptanceRecord) -> None:
+    def _handle_no_progress(
+        self,
+        state: TeamRunState,
+        record: AcceptanceRecord,
+        *,
+        force_kind: str | None = None,
+    ) -> None:
+        kind = force_kind or self._classify_blocker_kind(state, record)
+        summaries = {
+            "internal_result_schema_error": (
+                "Internal specialist result schema never produced inspectable artifact/evidence; "
+                "orchestration defect — not a user content failure"
+            ),
+            "contract_mismatch": (
+                "Quality contract requires evidence the executor cannot produce for this task profile"
+            ),
+            "evidence_unavailable": (
+                "Required evidence/receipts are unavailable; cannot satisfy mandatory criteria"
+            ),
+            "verification_failed": (
+                "Verification failed and no further legitimate remediation is available"
+            ),
+            "missing_capability": (
+                "Required capability/specialist is unavailable for mandatory evidence"
+            ),
+            "repeated_no_progress": (
+                f"No meaningful criterion/evidence progress over "
+                f"{state.no_progress_streak} iterations; work checkpointed"
+            ),
+            "no_progress": (
+                f"No meaningful criterion/evidence progress over "
+                f"{state.no_progress_streak} iterations; work checkpointed"
+            ),
+        }
+        summary = summaries.get(kind, summaries["repeated_no_progress"])
         remedies = [
             "change query/source/tool/hypothesis",
             "decompose differently",
             "request missing input",
         ]
+        if kind == "internal_result_schema_error":
+            remedies = ["fix specialist result contract", "retry with TeamSpecialistResult schema"]
         self._block(
             state,
-            kind="no_progress",
-            summary=(
-                f"No meaningful criterion/evidence progress over "
-                f"{state.no_progress_streak} iterations; work checkpointed"
-            ),
+            kind=kind,
+            summary=summary,
             criterion_id=None,
             remedies=remedies,
-            needed_input="Provide alternative source, constraint clarification, or capability",
+            needed_input=(
+                None
+                if kind in {"internal_result_schema_error", "contract_mismatch"}
+                else "Provide alternative source, constraint clarification, or capability"
+            ),
+            needed_capability=(
+                "evidence_or_test_receipt"
+                if kind in {"evidence_unavailable", "missing_capability"}
+                else None
+            ),
         )
         state.emit(
             "no_progress_blocker",
             state.blockers[-1].summary,
-            {"blockers": list(record.blockers), "remedies": remedies},
+            {
+                "blockers": list(record.blockers),
+                "remedies": remedies,
+                "blocker_kind": kind,
+                "task_profile": state.task_profile,
+                "final_outcome": state.status.value,
+            },
         )
+
+    def _classify_blocker_kind(self, state: TeamRunState, record: AcceptanceRecord) -> str:
+        completed = [
+            a
+            for a in state.assignments
+            if a.status == "completed" and a.graph_revision == state.graph_revision
+        ]
+        has_artifact = bool(self._artifact_text(state))
+        any_schema = any(
+            (a.result or {}).get("schema") == "TeamSpecialistResult.v1" for a in completed
+        )
+        if completed and not has_artifact and not any_schema:
+            return "internal_result_schema_error"
+        cat = (state.contract.task_category or "").lower()
+        if cat in {"research", "factual", "coding", "repair", "quantitative"} and not has_artifact:
+            # Strict tasks without receipts after retries.
+            if any("test" in b or "claim" in b or "calc" in b or "citation" in b for b in record.blockers):
+                return "evidence_unavailable"
+        if any("unverifiable" in b for b in record.blockers):
+            return "verification_failed"
+        return "repeated_no_progress"
+
+    @staticmethod
+    def _artifact_text(state: TeamRunState) -> str:
+        art = state.provisional_artifact or state.final_artifact or {}
+        if not isinstance(art, dict):
+            return ""
+        return str(art.get("text") or art.get("content") or "").strip()
+
+    @staticmethod
+    def _is_lightweight(state: TeamRunState) -> bool:
+        profile = state.task_profile or {}
+        if profile.get("lightweight"):
+            return True
+        cat = (state.contract.task_category or profile.get("category") or "").lower()
+        return cat in LIGHTWEIGHT_CATEGORIES
+
+    @staticmethod
+    def _response_addresses_request(request_text: str, response_text: str) -> bool:
+        """Deterministic lightweight scope check — not semantic entailment."""
+        req = (request_text or "").strip()
+        resp = (response_text or "").strip()
+        if not resp or len(resp) < 2:
+            return False
+        if not req:
+            return True
+        # Extremely short acknowledgements still count for greetings.
+        if len(req.split()) <= 4 and len(resp) >= 2:
+            return True
+        # Identity / capability questions need more than a single punctuation mark.
+        if len(resp) < 8 and ("?" in req or len(req.split()) > 4):
+            return False
+        return True
+
+    def _evidence_ids_from_state(self, state: TeamRunState) -> set[str]:
+        out: set[str] = set()
+        for v in state.verdicts:
+            if v.artifact_revision != state.artifact_revision:
+                continue
+            if v.status == CriterionVerdictStatus.STALE:
+                continue
+            out.update(str(e) for e in v.evidence_ids)
+        for a in state.assignments:
+            if a.result and a.graph_revision == state.graph_revision:
+                for e in a.result.get("evidence_ids") or []:
+                    out.add(str(e))
+        return out
+
+    def _progress_fingerprint(self, state: TeamRunState) -> dict[str, Any]:
+        progress = criterion_progress(
+            state.contract, state.verdicts, artifact_revision=state.artifact_revision
+        )
+        art = self._artifact_text(state)
+        art_hash = hashlib.sha256(art.encode("utf-8")).hexdigest()[:16] if art else ""
+        evidence = tuple(sorted(self._evidence_ids_from_state(state)))
+        verdict_sig = tuple(
+            sorted(
+                (v.criterion_id, v.status.value)
+                for v in state.verdicts
+                if v.artifact_revision == state.artifact_revision
+                and v.status != CriterionVerdictStatus.STALE
+            )
+        )
+        digest = hashlib.sha256(
+            f"{progress.get('mandatory_satisfied')}|{art_hash}|{evidence}|{verdict_sig}".encode()
+        ).hexdigest()[:20]
+        return {
+            "digest": digest,
+            "mandatory_satisfied": int(progress.get("mandatory_satisfied") or 0),
+            "art_hash": art_hash,
+            "had_artifact": bool(art_hash),
+            "evidence": evidence,
+            "verdict_sig": verdict_sig,
+        }
+
+    def _explain_progress(
+        self,
+        before: dict[str, Any],
+        after: dict[str, Any],
+        sat_before: int,
+        sat_after: int,
+    ) -> str:
+        if sat_after > sat_before:
+            return "criterion_satisfied_increase"
+        before_ev = set(before.get("evidence") or ())
+        after_ev = set(after.get("evidence") or ())
+        if after_ev - before_ev:
+            return "new_evidence"
+        if not before.get("had_artifact") and after.get("had_artifact"):
+            return "first_artifact"
+        # Verdict transition without yet increasing mandatory_satisfied (e.g. failed→pending)
+        if before.get("verdict_sig") != after.get("verdict_sig") and sat_after >= sat_before:
+            # Only count if a status improved toward satisfied / away from unsatisfied.
+            before_map = dict(before.get("verdict_sig") or ())
+            after_map = dict(after.get("verdict_sig") or ())
+            rank = {
+                "unsatisfied": 0,
+                "unverifiable": 1,
+                "pending": 2,
+                "satisfied": 3,
+                "not_applicable": 3,
+            }
+            for cid, status in after_map.items():
+                if rank.get(status, 0) > rank.get(before_map.get(cid, "pending"), 0):
+                    return "verdict_improved"
+        # Pure rewording (art_hash change alone) is NOT progress.
+        return ""
 
     def _block(
         self,
