@@ -56,11 +56,17 @@ mod tests {
         let first = InstanceLock::acquire(&path).expect("first lock");
         match InstanceLock::acquire(&path) {
             Err(InstanceLockError::AlreadyRunning { pid }) => {
-                assert_eq!(pid, Some(std::process::id()));
+                // The exclusive lock is the authority. PID text in that file is
+                // optional metadata and may be unreadable while the lock is held.
+                if let Some(pid) = pid {
+                    assert_eq!(pid, std::process::id());
+                }
             }
             other => panic!("expected already running, got {other:?}"),
         }
         drop(first);
+        let again = InstanceLock::acquire(&path).expect("lock can be acquired after the owner drops it");
+        drop(again);
         let _ = fs::remove_file(path);
     }
 }
