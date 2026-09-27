@@ -319,7 +319,7 @@ export function ModulesPage() {
             {ws.loadError}
           </div>
         ) : null}
-        {!ws.managerEnabled ? (
+        {!ws.managerEnabled && ws.snapshot ? (
           <div className="lv-mod-banner is-off" role="status">
             Module manager feature flag is OFF. Snapshot returns an empty modules list — no fabricated modules.
           </div>
