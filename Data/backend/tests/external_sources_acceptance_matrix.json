@@ -632,12 +632,13 @@
       "scrollcraft_verify": "PASS",
       "cognition_job_runtime_offload": "PASS",
       "capability_discovered_sse": "PASS",
-      "cli_blocks_api_thread": "NO (EXTERNAL_REQUIRED \u2192 JobRuntime)",
+      "cli_blocks_api_thread": "NO (EXTERNAL_REQUIRED|PREFERRED MODULE \u2192 JobRuntime)",
       "cognition_iterative_multi_tool": "PASS",
       "assimilation_enqueue_kwargs": "PASS",
       "observability_external_metrics": "PASS",
       "cognition_job_idempotency": "PASS",
-      "regression_guards_191_192_193": "PASS"
+      "regression_guards_191_192_193": "PASS",
+      "cognition_external_preferred_offload": "PASS"
     },
     "skill_pack_invoke": {
       "claude-osint": {

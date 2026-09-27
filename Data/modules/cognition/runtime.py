@@ -1367,6 +1367,48 @@ class CognitiveRuntime:
                 self._finalize(state)
                 return state.public_status()
 
+    def _should_offload_capability(self, capability_id: str) -> tuple[bool, str]:
+        """Return (offload?, reason) for MODULE/external work under externalize-on.
+
+        EXTERNAL_REQUIRED always offloads when JobRuntime is bound.
+        EXTERNAL_PREFERRED MODULE caps also offload so CLI/process work does not
+        block the API/control-plane thread when workers are the execution path.
+        """
+        if self.job_runtime is None or self.execution_gateway is None:
+            return False, ""
+        try:
+            from Data.modules.execution.workload import (
+                ExecutionWorkloadClass,
+                classify_capability,
+                externalize_api_enabled,
+                running_in_worker_process,
+            )
+        except Exception:  # noqa: BLE001
+            return False, ""
+        if running_in_worker_process() or not externalize_api_enabled():
+            return False, ""
+        try:
+            defn = self.execution_gateway.catalog.get(capability_id)
+        except Exception:  # noqa: BLE001
+            defn = None
+        meta = dict(getattr(defn, "metadata", None) or {}) if defn is not None else {}
+        provider_kind = getattr(getattr(defn, "provider_kind", None), "value", None) or getattr(
+            defn, "provider_kind", None
+        )
+        cls = classify_capability(
+            capability_id,
+            metadata=meta,
+            provider_kind=str(provider_kind) if provider_kind else None,
+        )
+        if cls == ExecutionWorkloadClass.EXTERNAL_REQUIRED:
+            return True, "external_required"
+        if cls == ExecutionWorkloadClass.EXTERNAL_PREFERRED and str(provider_kind or "").lower() in {
+            "module",
+            "external",
+        }:
+            return True, "external_preferred"
+        return False, ""
+
     def _execute_capability_request(
         self,
         state: CognitiveRunState,
@@ -1374,22 +1416,26 @@ class CognitiveRuntime:
         *,
         module_id_hint: str | None = None,
     ) -> Any:
-        """Execute via ExecutionGateway; offload EXTERNAL_REQUIRED to JobRuntime.
+        """Execute via ExecutionGateway; offload heavy MODULE work to JobRuntime.
 
-        When the gateway rejects with ``worker_required``, enqueue the same
-        capability through JobRuntime / Worker Fabric, stream job.* events, and
-        return the durable CapabilityResult. Does not invent success when workers
-        are unavailable.
+        Proactively offloads EXTERNAL_REQUIRED and EXTERNAL_PREFERRED MODULE
+        capabilities when API externalization is on. Also recovers when the
+        gateway rejects with ``worker_required``. Streams job.* events and
+        returns the durable CapabilityResult. Does not invent success when
+        workers are unavailable.
         """
-        result = self.execution_gateway.execute(request)
-        telemetry = getattr(result, "telemetry", None) or {}
-        status = getattr(result, "status", None)
-        status_value = getattr(status, "value", None) or str(status or "")
-        reason = str(telemetry.get("reason") or "")
-        if status_value != "REJECTED" or reason != "worker_required":
-            return result
-        if self.job_runtime is None:
-            return result
+        offload, offload_reason = self._should_offload_capability(request.capability_id)
+        if not offload:
+            result = self.execution_gateway.execute(request)
+            telemetry = getattr(result, "telemetry", None) or {}
+            status = getattr(result, "status", None)
+            status_value = getattr(status, "value", None) or str(status or "")
+            reason = str(telemetry.get("reason") or "")
+            if status_value != "REJECTED" or reason != "worker_required":
+                return result
+            if self.job_runtime is None:
+                return result
+            offload_reason = "worker_required"
 
         from Data.modules.execution.types import CapabilityResult, CapabilityStatus
         from Data.modules.jobs.states import TERMINAL_JOB_STATES, JobState
@@ -1428,7 +1474,7 @@ class CognitiveRuntime:
                 timeout_seconds=timeout_seconds,
                 metadata={
                     "module_id": module_id_hint,
-                    "offload_reason": "worker_required",
+                    "offload_reason": offload_reason or "worker_required",
                     "cognition_run_id": state.run_id,
                     "action_request_id": request.request_id,
                 },

@@ -2338,6 +2338,133 @@ class ExternalFabricDoDProofTests(unittest.TestCase):
             else:
                 os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = prev
 
+    def test_cognition_offloads_external_preferred_module_when_externalized(self) -> None:
+        """EXTERNAL_PREFERRED MODULE CLI must not run inline when externalize=on."""
+        import os
+
+        from Data.modules.cognition.runtime import CognitiveRunState, CognitiveRuntime
+        from Data.modules.cognition.task_model import TaskModel
+        from Data.modules.cognition.types import (
+            CognitiveAction,
+            CognitiveActionKind,
+            CognitiveRunStatus,
+        )
+        from Data.modules.jobs import JobRuntime, JobStore, ResourceManager
+
+        prev = os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API")
+        os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "mods" / "pref-cli"
+                root.mkdir(parents=True)
+                tool = FIXTURES / "fake_cli" / "tool.py"
+                manifest = {
+                    "module_id": "pref-cli",
+                    "name": "Pref CLI",
+                    "version": "0.0.1",
+                    "entrypoint": FACTORY,
+                    "external": {
+                        "adapter": "CLI",
+                        "source_type": "path",
+                        "path": str(tool.parent),
+                        "install": {"strategy": "NONE"},
+                        "assimilation_mode": "NONE",
+                        "runtime": {
+                            "operations": [
+                                {
+                                    "name": "search",
+                                    "command": [sys.executable, str(tool), "{query}"],
+                                }
+                            ],
+                            "timeout_seconds": 30,
+                        },
+                        "result": {"format": "json"},
+                    },
+                    "capabilities": [
+                        {
+                            "capability_id": "external.pref_cli.search",
+                            "name": "Search",
+                            "external_name": "search",
+                            "side_effects": ["READ"],
+                        }
+                    ],
+                }
+                (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+                manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+                manager.discover()
+                manager.initialize(
+                    "pref-cli",
+                    ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp),
+                )
+                catalog = CapabilityCatalog()
+                plugins = PluginRegistry(catalog)
+                managed = manager.get("pref-cli")
+                assert managed is not None
+                register_external_module_capabilities(
+                    catalog=catalog, plugin_registry=plugins, managed=managed
+                )
+                defn = catalog.get("external.pref_cli.search")
+                assert defn is not None
+                self.assertEqual(
+                    (defn.metadata or {}).get("execution_class"),
+                    "EXTERNAL_PREFERRED",
+                )
+                gateway = ExecutionGateway(catalog=catalog)
+                gateway.module_executor = ExternalModuleExecutor(manager, catalog=catalog)
+                # Gateway still allows PREFERRED inline — Cognition must choose JobRuntime.
+                inline = gateway.execute(
+                    CapabilityRequest(
+                        capability_id="external.pref_cli.search",
+                        arguments={"query": "hello"},
+                        requested_by="api",
+                    )
+                )
+                self.assertEqual(inline.status.value, "COMPLETED")
+
+                job_store = JobStore(Path(tmp) / "jobs.db")
+                job_store.initialize()
+                jobs = JobRuntime(job_store, gateway, ResourceManager(2))
+                runtime = CognitiveRuntime(
+                    enabled=True,
+                    execution_gateway=gateway,
+                    job_runtime=jobs,
+                    factuality_mode="NONE",
+                )
+                task = TaskModel(
+                    task_id="t-pref",
+                    run_id="r-pref",
+                    raw_request="search",
+                    goal="search",
+                    domain="test",
+                    task_type="tool",
+                )
+                state = CognitiveRunState(
+                    run_id="r-pref",
+                    task=task,
+                    status=CognitiveRunStatus.REASONING,
+                    trace_id="tr-pref",
+                )
+                action = CognitiveAction(
+                    kind=CognitiveActionKind.INVOKE_CAPABILITY,
+                    action_id="a-pref-1",
+                    capability_id="external.pref_cli.search",
+                    arguments={"query": "hello"},
+                )
+                obs = runtime._execute_action(state, action, history=[])  # noqa: SLF001
+                assert obs is not None
+                result = (obs.payload or {}).get("result") or {}
+                self.assertEqual(str(result.get("status")), "COMPLETED", msg=result)
+                tele = result.get("telemetry") if isinstance(result.get("telemetry"), dict) else {}
+                self.assertEqual(tele.get("executed_via"), "job_runtime")
+                self.assertEqual(len(job_store.list(limit=10)), 1)
+                self.assertIn("job.started", [e.get("event_type") for e in state.events])
+                jobs.stop_background_worker()
+        finally:
+            if prev is None:
+                os.environ.pop("LEVIATHAN_WORKERS_EXTERNALIZE_API", None)
+            else:
+                os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = prev
+
     def test_cognition_emits_capability_discovered_on_search(self) -> None:
         from Data.modules.cognition.capability_broker import CapabilityBroker, CapabilityShortlist
         from Data.modules.cognition.runtime import CognitiveRunState, CognitiveRuntime
