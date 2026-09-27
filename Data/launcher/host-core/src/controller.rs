@@ -1033,9 +1033,14 @@ mod tests {
 
     #[test]
     fn safe_mode_env_is_not_written_to_dotenv() {
-        let root = std::env::temp_dir().join(format!("leviathan-safe-{}", std::process::id()));
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!("leviathan-safe-{}-{id}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(root.join(".venv/bin")).unwrap();
+        let python = venv_python(&root);
+        fs::create_dir_all(python.parent().expect("venv python parent")).unwrap();
+        fs::write(&python, "").unwrap();
         fs::write(root.join(".env"), "LEVIATHAN_BOOTSTRAP_MODE=all\n").unwrap();
         let ctl = HostController::with_port(
             root.clone(),
@@ -1044,8 +1049,6 @@ mod tests {
             Duration::from_secs(2),
             Duration::from_secs(2),
         );
-        // venv python must exist for start_from_report
-        fs::write(root.join(".venv/bin/python"), "").unwrap();
         ctl.start_from_report(report(true), true).unwrap();
         let text = fs::read_to_string(root.join(".env")).unwrap();
         assert!(text.contains("LEVIATHAN_BOOTSTRAP_MODE=all"));

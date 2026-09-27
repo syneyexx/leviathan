@@ -341,29 +341,40 @@ fn force_stop(owned: &mut OwnedChild) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CapturedLine, PollSnapshot, ProcessPort, SpawnSpec, SystemProcessPort};
+    use super::{PollSnapshot, ProcessPort, SpawnSpec, SystemProcessPort};
     use std::collections::HashMap;
+    use std::io::Write;
     use std::thread;
     use std::time::{Duration, Instant};
 
+    const CHILD_TEST: &str = "process_port::tests::process_port_child_helper";
+
+    /// Test-only child. Ordinary `cargo test` runs leave immediately.
+    /// The ownership test spawns this same executable with the marker set.
     #[test]
-    fn spawns_owned_python_captures_output_and_stops_group() {
-        let python = which_python();
+    fn process_port_child_helper() {
+        if std::env::var_os("LEVIATHAN_PROCESS_PORT_TEST_CHILD").is_none() {
+            return;
+        }
+        println!("hello-host");
+        let _ = std::io::stdout().flush();
+        thread::sleep(Duration::from_secs(30));
+    }
+
+    #[test]
+    fn spawns_owned_process_captures_output_and_stops_group() {
         let mut port = SystemProcessPort::new();
-        let mut env = HashMap::new();
-        env.insert("PYTHONUNBUFFERED".into(), "1".into());
+        let exe = std::env::current_exe().expect("current test executable");
         let pid = port
             .spawn(SpawnSpec {
-                program: python,
-                args: vec![
-                    "-c".into(),
-                    "import sys,time; print('hello-host', flush=True); time.sleep(30)".into(),
-                ],
+                program: exe,
+                args: vec![CHILD_TEST.into(), "--exact".into(), "--nocapture".into()],
                 cwd: std::env::temp_dir(),
-                env,
+                env: child_env(),
             })
             .expect("spawn");
         assert!(pid > 0);
+
         let started = Instant::now();
         let mut saw = false;
         while started.elapsed() < Duration::from_secs(5) {
@@ -375,42 +386,75 @@ mod tests {
             thread::sleep(Duration::from_millis(50));
         }
         assert!(saw, "stdout was not captured");
-        port.request_graceful().expect("graceful");
-        let started = Instant::now();
+
         let mut exited = false;
-        while started.elapsed() < Duration::from_secs(5) {
-            let snap: PollSnapshot = port.poll();
-            if !snap.running {
-                exited = true;
-                break;
+        match port.request_graceful() {
+            Ok(()) => {
+                let started = Instant::now();
+                while started.elapsed() < Duration::from_secs(5) {
+                    let snap: PollSnapshot = port.poll();
+                    if !snap.running {
+                        exited = true;
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(50));
+                }
             }
-            thread::sleep(Duration::from_millis(50));
+            Err(err) if cfg!(windows) && graceful_console_unavailable(&err) => {
+                // CREATE_NO_WINDOW children often have no console, so CTRL_BREAK
+                // is not a process-ownership failure. The owned-job fallback is next.
+            }
+            Err(err) => panic!("graceful stop failed: {err}"),
         }
         if !exited {
-            port.terminate_owned().expect("force");
+            port.terminate_owned().expect("owned termination");
         }
         let snap = port.poll();
-        assert!(!snap.running);
-        let _: Option<CapturedLine> = None;
+        assert!(!snap.running, "owned process is still running");
+        assert_pid_dead(pid);
     }
 
-    fn which_python() -> std::path::PathBuf {
-        for candidate in ["python3", "python"] {
-            if let Ok(path) = which(candidate) {
-                return path;
-            }
-        }
-        panic!("python3 is required for the process-ownership test");
+    fn graceful_console_unavailable(err: &str) -> bool {
+        err.contains("graceful console control unavailable") || err.contains("CTRL_BREAK failed")
     }
 
-    fn which(name: &str) -> Result<std::path::PathBuf, ()> {
-        let path = std::env::var_os("PATH").ok_or(())?;
-        for dir in std::env::split_paths(&path) {
-            let candidate = dir.join(name);
-            if candidate.is_file() {
-                return Ok(candidate);
+    fn child_env() -> HashMap<String, String> {
+        let mut env = HashMap::new();
+        env.insert("LEVIATHAN_PROCESS_PORT_TEST_CHILD".into(), "1".into());
+        // A cleared environment can stop a Windows process from initializing.
+        // These are inherited only by the test child, not by production spawns.
+        for key in ["SYSTEMROOT", "SystemRoot", "WINDIR", "PATHEXT", "TMP", "TEMP"] {
+            if let Ok(value) = std::env::var(key) {
+                env.insert(key.to_string(), value);
             }
         }
-        Err(())
+        env
+    }
+
+    fn assert_pid_dead(pid: u32) {
+        #[cfg(unix)]
+        {
+            let alive = unsafe { libc::kill(pid as i32, 0) } == 0;
+            assert!(!alive, "owned pid {pid} is still alive");
+        }
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::Foundation::CloseHandle;
+            use windows_sys::Win32::System::Threading::{
+                GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+            };
+            const STILL_ACTIVE: u32 = 259;
+            unsafe {
+                let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+                if handle.is_null() {
+                    return;
+                }
+                let mut code = STILL_ACTIVE;
+                let ok = GetExitCodeProcess(handle, &mut code);
+                CloseHandle(handle);
+                assert!(ok != 0, "GetExitCodeProcess failed for owned pid {pid}");
+                assert_ne!(code, STILL_ACTIVE, "owned pid {pid} is still alive");
+            }
+        }
     }
 }
