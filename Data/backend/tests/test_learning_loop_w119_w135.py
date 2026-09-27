@@ -186,7 +186,8 @@ class LearningLoopW135Tests(unittest.TestCase):
             applicability={"regimes": ["down_high"], "trends": ["down"]},
             origin="complete_experiment",
             epistemic_state="REJECTED",
-            validation_stage="holdout",
+            # TRAIN-era negative memory remains adaptive-retrievable; holdout/sealed is not.
+            validation_stage="train",
         )
         self.ms_store.save_strategy_memory(mem)
         mid = mem["memory_id"]
@@ -219,7 +220,7 @@ class LearningLoopW135Tests(unittest.TestCase):
         self.assertTrue(hit.contradictory)
         self.assertEqual(hit.origin, "complete_experiment")
         self.assertEqual(hit.epistemic_state, "REJECTED")
-        self.assertEqual(hit.validation_stage, "holdout")
+        self.assertEqual(hit.validation_stage, "train")
         self.assertEqual(hit.strategy_id, "mom-bad-regime")
         self.assertEqual(hit.available_at, learned_at)
 

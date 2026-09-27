@@ -68,9 +68,20 @@ class PaperTradingOperatorSurfaceTests(unittest.TestCase):
             reg.register(_StubProvider())  # type: ignore[arg-type]
             plane.providers = reg
 
-            out = plane.fetch_market_bars(
-                provider_id="stub_public", symbol="BTCUSDT", timeframe="1h", limit=20
-            )
+            # Force in-process provider path so unit tests do not require JobRuntime workers.
+            import os
+
+            prev = os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API")
+            os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = "0"
+            try:
+                out = plane.fetch_market_bars(
+                    provider_id="stub_public", symbol="BTCUSDT", timeframe="1h", limit=20
+                )
+            finally:
+                if prev is None:
+                    os.environ.pop("LEVIATHAN_WORKERS_EXTERNALIZE_API", None)
+                else:
+                    os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = prev
             self.assertEqual(out["count"], 20)
             self.assertEqual(out["bars"][0]["open"], 100)
             self.assertTrue(out["truth"]["not_fabricated"])
