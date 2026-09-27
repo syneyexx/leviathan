@@ -40,7 +40,7 @@ class TableOwnershipTests(unittest.TestCase):
         self.assertEqual(ownership_for("conversations"), DatabaseDomain.CONTROL)
         self.assertEqual(ownership_for("knowledge_chunks"), DatabaseDomain.KNOWLEDGE)
         self.assertEqual(ownership_for("market_sim_fills"), DatabaseDomain.MARKET)
-        self.assertEqual(ownership_for("institutional_authority_approvals"), DatabaseDomain.CONTROL)
+        self.assertEqual(ownership_for("institutional_authority_approvals"), DatabaseDomain.MARKET)
         self.assertEqual(ownership_for("institutional_ibor_events"), DatabaseDomain.MARKET)
 
     def test_unclassified_fails_require(self) -> None:
@@ -206,7 +206,17 @@ class FreshAndLegacyCutoverTests(unittest.TestCase):
     def test_ambiguous_partial_set_fails(self) -> None:
         root = Path(tempfile.mkdtemp(prefix="lv_amb_"))
         control = root / "c.db"
-        control.write_bytes(b"")
+        # Non-empty product rows in a partial set must stay fail-closed.
+        with sqlite3.connect(control) as conn:
+            conn.execute(
+                "CREATE TABLE conversations ("
+                "id TEXT PRIMARY KEY, title TEXT, created_at TEXT, updated_at TEXT, pinned INTEGER)"
+            )
+            conn.execute(
+                "INSERT INTO conversations(id,title,created_at,updated_at,pinned) "
+                "VALUES ('c1','t','2020-01-01','2020-01-01',0)"
+            )
+            conn.commit()
         paths = DatabasePaths(
             control=control,
             knowledge=root / "k.db",
@@ -215,6 +225,81 @@ class FreshAndLegacyCutoverTests(unittest.TestCase):
         self.assertEqual(detect_install_mode(paths), InstallMode.AMBIGUOUS)
         with self.assertRaises(DatabaseUpgradeError):
             upgrade_all_databases(paths)
+
+    def test_empty_partial_control_completes_as_fresh(self) -> None:
+        """Supervisor / PreferenceStore may create CONTROL alone before siblings."""
+        root = Path(tempfile.mkdtemp(prefix="lv_empty_partial_"))
+        control = root / "c.db"
+        control.write_bytes(b"")
+        paths = DatabasePaths(
+            control=control,
+            knowledge=root / "k.db",
+            market=root / "m.db",
+        )
+        self.assertEqual(detect_install_mode(paths), InstallMode.FRESH)
+        report = upgrade_all_databases(paths)
+        self.assertTrue(report.completed)
+        for _, path in paths:
+            self.assertTrue(path.is_file())
+
+    def test_runs_schema_matches_run_store_after_upgrade(self) -> None:
+        """Regression: stub runs(id/kind/…) broke RunStore.initialize at API lifespan."""
+        from Data.modules.run.store import RunStore
+
+        root = Path(tempfile.mkdtemp(prefix="lv_runs_schema_"))
+        paths = DatabasePaths(
+            control=root / "c.db",
+            knowledge=root / "k.db",
+            market=root / "m.db",
+        )
+        report = upgrade_all_databases(paths)
+        self.assertTrue(report.completed)
+        with sqlite3.connect(paths.control) as conn:
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+        self.assertIn("run_id", cols)
+        self.assertIn("conversation_id", cols)
+        self.assertNotIn("kind", cols)
+
+        store = RunStore(paths.control)
+        store.initialize()  # must not raise "no such column: conversation_id"
+        run = store.create_run(user_request="boot-ok", conversation_id="c1")
+        self.assertEqual(run.conversation_id, "c1")
+
+    def test_repairs_legacy_stub_runs_table(self) -> None:
+        from Data.backend.db_upgrade import repair_incompatible_runs_schema
+        from Data.modules.run.store import RunStore
+
+        root = Path(tempfile.mkdtemp(prefix="lv_stub_runs_"))
+        db = root / "c.db"
+        with sqlite3.connect(db) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE runs (
+                    id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'created',
+                    title TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL DEFAULT '{}'
+                );
+                CREATE TABLE run_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL
+                );
+                """
+            )
+            conn.commit()
+        with sqlite3.connect(db) as conn:
+            self.assertTrue(repair_incompatible_runs_schema(conn))
+            conn.commit()
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+        self.assertIn("run_id", cols)
+        RunStore(db).initialize()
+        RunStore(db).create_run(user_request="after-repair")
 
 
 class WorkerDomainPathRoutingTests(unittest.TestCase):

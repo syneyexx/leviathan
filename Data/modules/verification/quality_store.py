@@ -49,6 +49,12 @@ class QualityContractStore:
             self._ensure_schema(conn)
 
     def _ensure_schema(self, conn: sqlite3.Connection) -> None:
+        try:
+            from Data.backend.db_upgrade import repair_incompatible_quality_schema
+
+            repair_incompatible_quality_schema(conn)
+        except Exception:  # noqa: BLE001
+            pass
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS quality_contracts (

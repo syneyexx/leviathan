@@ -50,6 +50,14 @@ class RunStore:
 
         with self.connect() as conn:
             ensure_wal(conn)
+            # Three-DB cutover briefly seeded an incompatible stub ``runs`` schema
+            # (id/kind/status…). Repair before CREATE INDEX on conversation_id.
+            try:
+                from Data.backend.db_upgrade import repair_incompatible_runs_schema
+
+                repair_incompatible_runs_schema(conn)
+            except Exception:  # noqa: BLE001 — store still attempts local ensure
+                self._repair_stub_runs_locally(conn)
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS runs (
@@ -85,6 +93,31 @@ class RunStore:
                 """
             )
             self._ensure_wave0_columns(conn)
+
+    @staticmethod
+    def _repair_stub_runs_locally(conn: sqlite3.Connection) -> None:
+        """Fallback when db_upgrade helpers are unavailable."""
+        tables = {
+            str(r[0])
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        }
+        if "runs" not in tables:
+            return
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+        if "run_id" in cols:
+            return
+        for table in ("run_events", "runs"):
+            if table not in tables:
+                continue
+            count = int(conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
+            if count > 0:
+                backup = f"{table}_upgrade_stub_backup"
+                conn.execute(f'DROP TABLE IF EXISTS "{backup}"')
+                conn.execute(f'ALTER TABLE "{table}" RENAME TO "{backup}"')
+            else:
+                conn.execute(f'DROP TABLE IF EXISTS "{table}"')
 
     def _ensure_wave0_columns(self, conn: sqlite3.Connection) -> None:
         run_cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}

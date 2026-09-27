@@ -114,12 +114,175 @@ def detect_install_mode(paths: DatabasePaths) -> InstallMode:
         return InstallMode.LEGACY_SINGLE
     if canonical_count == 0 and not legacy_exists:
         return InstallMode.FRESH
-    # Partial three-DB set with or without legacy is ambiguous — fail closed.
+    # Partial three-DB set: import-time / supervisor may create CONTROL alone
+    # before siblings exist. Empty partials are safe to complete; non-empty
+    # conflicting layouts stay fail-closed.
     if 0 < canonical_count < 3:
+        existing = [p for p in (paths.control, paths.knowledge, paths.market) if p.is_file()]
+        if all(_is_empty_or_infrastructure_only(p) for p in existing):
+            if legacy_exists:
+                return InstallMode.LEGACY_SINGLE
+            return InstallMode.FRESH
         return InstallMode.AMBIGUOUS
     if legacy_exists and canonical_count == 3:
         return InstallMode.THREE_DB
     return InstallMode.AMBIGUOUS
+
+
+def _is_empty_or_infrastructure_only(path: Path) -> bool:
+    """True when a DB file has no durable product rows (safe to re-baseline)."""
+    if not path.is_file():
+        return True
+    try:
+        if path.stat().st_size == 0:
+            return True
+    except OSError:
+        return True
+    conn = _connect(path)
+    try:
+        ignore = set(PER_DATABASE_INFRASTRUCTURE) | {
+            CUTOVER_STATE_TABLE,
+            CUTOVER_RECEIPT_TABLE,
+            "sqlite_sequence",
+        }
+        for name in sorted(_table_names(conn)):
+            if name in ignore or name.startswith("sqlite_"):
+                continue
+            try:
+                if _row_count(conn, name) > 0:
+                    return False
+            except sqlite3.Error:
+                return False
+        return True
+    finally:
+        conn.close()
+
+
+def repair_incompatible_runs_schema(conn: sqlite3.Connection) -> bool:
+    """Replace cutover stub ``runs``/``run_events`` with the canonical RunStore schema.
+
+    Returns True when a repair was applied. Empty stub tables are dropped; any
+    stub rows are preserved under ``*_upgrade_stub_backup`` names.
+    """
+    tables = _table_names(conn)
+    if "runs" not in tables:
+        return False
+    run_cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+    if "run_id" in run_cols:
+        return False
+
+    def _retire(table: str) -> None:
+        if table not in _table_names(conn):
+            return
+        count = _row_count(conn, table)
+        if count > 0:
+            backup = f"{table}_upgrade_stub_backup"
+            # Avoid colliding with a prior backup from a previous repair attempt.
+            if backup in _table_names(conn):
+                conn.execute(f'DROP TABLE IF EXISTS "{backup}"')
+            conn.execute(f'ALTER TABLE "{table}" RENAME TO "{backup}"')
+        else:
+            conn.execute(f'DROP TABLE IF EXISTS "{table}"')
+
+    _retire("run_events")
+    _retire("runs")
+    # Recreate canonical schema (also defined in _ensure_runtime_bootstrap_schema).
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS runs (
+            run_id TEXT PRIMARY KEY,
+            conversation_id TEXT,
+            parent_run_id TEXT,
+            user_request TEXT NOT NULL,
+            state TEXT NOT NULL,
+            intent TEXT,
+            complexity TEXT,
+            selected_model TEXT,
+            output TEXT,
+            error TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_runs_conversation
+            ON runs(conversation_id, created_at);
+        CREATE TABLE IF NOT EXISTS run_events (
+            event_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(run_id) REFERENCES runs(run_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_run_events_run
+            ON run_events(run_id, created_at);
+        """
+    )
+    return True
+
+
+def repair_incompatible_quality_schema(conn: sqlite3.Connection) -> bool:
+    """Replace cutover stub quality_* tables with QualityContractStore schema."""
+    tables = _table_names(conn)
+    if "quality_contracts" not in tables:
+        return False
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(quality_contracts)").fetchall()}
+    if "run_id" in cols and "version" in cols:
+        return False
+
+    def _retire(table: str) -> None:
+        if table not in _table_names(conn):
+            return
+        count = _row_count(conn, table)
+        if count > 0:
+            backup = f"{table}_upgrade_stub_backup"
+            if backup in _table_names(conn):
+                conn.execute(f'DROP TABLE IF EXISTS "{backup}"')
+            conn.execute(f'ALTER TABLE "{table}" RENAME TO "{backup}"')
+        else:
+            conn.execute(f'DROP TABLE IF EXISTS "{table}"')
+
+    for name in ("quality_acceptances", "quality_verdicts", "quality_contracts"):
+        _retire(name)
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS quality_contracts (
+            contract_id TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            run_id TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (contract_id, version)
+        );
+        CREATE INDEX IF NOT EXISTS idx_quality_contracts_run
+            ON quality_contracts(run_id);
+        CREATE TABLE IF NOT EXISTS quality_verdicts (
+            verdict_id TEXT PRIMARY KEY,
+            contract_id TEXT NOT NULL,
+            contract_version INTEGER NOT NULL,
+            criterion_id TEXT NOT NULL,
+            artifact_revision TEXT NOT NULL,
+            status TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_quality_verdicts_contract
+            ON quality_verdicts(contract_id, contract_version, artifact_revision);
+        CREATE TABLE IF NOT EXISTS quality_acceptances (
+            acceptance_id TEXT PRIMARY KEY,
+            contract_id TEXT NOT NULL,
+            contract_version INTEGER NOT NULL,
+            artifact_revision TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_quality_acceptances_contract
+            ON quality_acceptances(contract_id, contract_version);
+        """
+    )
+    return True
 
 
 def _connect(path: Path, *, set_wal: bool = False) -> sqlite3.Connection:
@@ -172,52 +335,77 @@ def _ensure_runtime_bootstrap_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_messages_conversation
             ON messages(conversation_id, id);
 
+        -- Canonical RunStore schema (must match Data.modules.run.store.RunStore).
         CREATE TABLE IF NOT EXISTS runs (
-            id TEXT PRIMARY KEY,
-            kind TEXT NOT NULL DEFAULT '',
-            status TEXT NOT NULL DEFAULT 'created',
-            title TEXT NOT NULL DEFAULT '',
+            run_id TEXT PRIMARY KEY,
+            conversation_id TEXT,
+            parent_run_id TEXT,
+            user_request TEXT NOT NULL,
+            state TEXT NOT NULL,
+            intent TEXT,
+            complexity TEXT,
+            selected_model TEXT,
+            output TEXT,
+            error TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
             created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            metadata_json TEXT NOT NULL DEFAULT '{}'
+            updated_at TEXT NOT NULL
         );
+        CREATE INDEX IF NOT EXISTS idx_runs_conversation
+            ON runs(conversation_id, created_at);
         CREATE TABLE IF NOT EXISTS run_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT PRIMARY KEY,
             run_id TEXT NOT NULL,
             event_type TEXT NOT NULL,
             payload_json TEXT NOT NULL DEFAULT '{}',
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(run_id) REFERENCES runs(run_id) ON DELETE CASCADE
         );
-        CREATE INDEX IF NOT EXISTS idx_run_events_run ON run_events(run_id, id);
+        CREATE INDEX IF NOT EXISTS idx_run_events_run
+            ON run_events(run_id, created_at);
 
         CREATE TABLE IF NOT EXISTS worker_pool_desired (
             pool_id TEXT PRIMARY KEY,
             desired_count INTEGER NOT NULL DEFAULT 0,
-            updated_at TEXT NOT NULL DEFAULT ''
+            updated_at TEXT NOT NULL DEFAULT '',
+            updated_by TEXT
         );
 
+        -- Canonical QualityContractStore schema.
         CREATE TABLE IF NOT EXISTS quality_contracts (
-            contract_id TEXT PRIMARY KEY,
-            name TEXT NOT NULL DEFAULT '',
-            spec_json TEXT NOT NULL DEFAULT '{}',
+            contract_id TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            run_id TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT '',
-            updated_at TEXT NOT NULL DEFAULT ''
+            PRIMARY KEY (contract_id, version)
         );
+        CREATE INDEX IF NOT EXISTS idx_quality_contracts_run
+            ON quality_contracts(run_id);
         CREATE TABLE IF NOT EXISTS quality_verdicts (
             verdict_id TEXT PRIMARY KEY,
-            contract_id TEXT NOT NULL DEFAULT '',
-            subject_id TEXT NOT NULL DEFAULT '',
-            status TEXT NOT NULL DEFAULT '',
-            detail_json TEXT NOT NULL DEFAULT '{}',
+            contract_id TEXT NOT NULL,
+            contract_version INTEGER NOT NULL,
+            criterion_id TEXT NOT NULL,
+            artifact_revision TEXT NOT NULL,
+            status TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT ''
         );
+        CREATE INDEX IF NOT EXISTS idx_quality_verdicts_contract
+            ON quality_verdicts(contract_id, contract_version, artifact_revision);
         CREATE TABLE IF NOT EXISTS quality_acceptances (
             acceptance_id TEXT PRIMARY KEY,
-            verdict_id TEXT NOT NULL DEFAULT '',
-            accepted_by TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL DEFAULT '',
-            note TEXT NOT NULL DEFAULT ''
+            contract_id TEXT NOT NULL,
+            contract_version INTEGER NOT NULL,
+            artifact_revision TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT ''
         );
+        CREATE INDEX IF NOT EXISTS idx_quality_acceptances_contract
+            ON quality_acceptances(contract_id, contract_version);
 
         CREATE TABLE IF NOT EXISTS provider_stream_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -711,6 +899,14 @@ def upgrade_all_databases(paths: DatabasePaths) -> UpgradeReport:
                 if domain_schema_version(path) < DOMAIN_BASELINE_VERSION:
                     apply_domain_baseline(path, domain, template=template)
                 report.domain_versions[domain.value] = domain_schema_version(path)
+            # Repair cutover stub schemas that conflict with runtime stores.
+            control = _connect(paths.control)
+            try:
+                repair_incompatible_runs_schema(control)
+                repair_incompatible_quality_schema(control)
+                control.commit()
+            finally:
+                control.close()
             # If cutover already complete, done.
             control = _connect(paths.control)
             try:
@@ -744,6 +940,8 @@ def upgrade_all_databases(paths: DatabasePaths) -> UpgradeReport:
                 report.domain_versions[domain.value] = domain_schema_version(path)
             control = _connect(paths.control)
             try:
+                repair_incompatible_runs_schema(control)
+                repair_incompatible_quality_schema(control)
                 _ensure_cutover_tables(control)
                 _cutover_set(control, "phase", CutoverPhase.COMPLETE.value)
                 _cutover_set(control, "mode", InstallMode.FRESH.value)
@@ -767,6 +965,9 @@ def upgrade_all_databases(paths: DatabasePaths) -> UpgradeReport:
         legacy_conn = _connect(legacy)
         try:
             _ensure_runtime_bootstrap_schema(legacy_conn)
+            # Legacy may already have cutover stubs from a prior partial run.
+            repair_incompatible_runs_schema(legacy_conn)
+            repair_incompatible_quality_schema(legacy_conn)
             legacy_conn.commit()
             report.legacy_schema_version = MigrationRunner(legacy).current_version(legacy_conn)
         finally:
@@ -793,6 +994,8 @@ def upgrade_all_databases(paths: DatabasePaths) -> UpgradeReport:
 
         control = _connect(paths.control)
         try:
+            repair_incompatible_runs_schema(control)
+            repair_incompatible_quality_schema(control)
             _ensure_cutover_tables(control)
             prior = _cutover_get(control, "phase")
             if prior and prior != CutoverPhase.COMPLETE.value:
