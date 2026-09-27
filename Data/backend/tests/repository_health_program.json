@@ -4,7 +4,7 @@
   "updated": "2026-09-27",
   "audit_baseline_sha": "95fe8658638ff016115d9a05c9a2a8d835ccfb97",
   "starting_current_main_head": "95fe8658638ff016115d9a05c9a2a8d835ccfb97",
-  "notes": "A\u2013Z institutional recovery against CURRENT main. Defect candidates revalidated; statuses are evidence-backed.",
+  "notes": "A\u2013Z institutional recovery against CURRENT main. Defect candidates revalidated; statuses are evidence-backed. Branch tip at ledger write: f970311e28bf63281769e84baf5f833b31c65d73.",
   "status_vocabulary": [
     "CONFIRMED",
     "ALREADY_FIXED_CURRENT",
@@ -776,7 +776,7 @@
     "at": "2026-09-27T11:43:53Z",
     "note": "SCHEMA/BACKUP/PROVIDER/MODEL/TRUTH/NUMERIC/MARKET/OBS/VERIFY/CLEANUP revalidated on current branch."
   },
-  "final_head": "bf81a5d8063c2861763b6015ae5f76357ebea1fb",
+  "final_head": "f970311e28bf63281769e84baf5f833b31c65d73",
   "waves": {
     "0": "COMPLETE",
     "1": "COMPLETE",
