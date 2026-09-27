@@ -1659,9 +1659,29 @@ class CognitiveRuntime:
             try:
                 from Data.modules.execution import CapabilityRequest
 
+                # Cooperative cancel + honest progress into gateway/adapters.
+                # Callables are stripped by ExecutionGateway before provider args persist.
+                invoke_args = dict(action.arguments)
+                invoke_args["_cancel_check"] = lambda: bool(state.cancel_requested)
+
+                def _progress(pct: float, phase: str, msg: str) -> None:
+                    self._emit(
+                        state,
+                        "tool.progress",
+                        {
+                            "capability_id": capability_id,
+                            "request_id": action.action_id,
+                            "phase": str(phase or ""),
+                            "message": str(msg or "")[:240],
+                            # Only forward adapter-reported percent — never invent.
+                            "percent": float(pct) if pct is not None else None,
+                        },
+                    )
+
+                invoke_args["_progress_cb"] = _progress
                 request = CapabilityRequest(
                     capability_id=capability_id,
-                    arguments=dict(action.arguments),
+                    arguments=invoke_args,
                     request_id=action.action_id,
                     run_id=state.run_id,
                     requested_by="cognition",

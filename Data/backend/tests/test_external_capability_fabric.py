@@ -11,6 +11,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from typing import Any
 
 from Data.modules.execution.catalog import CapabilityCatalog
 from Data.modules.execution.gateway import ExecutionGateway
@@ -1566,6 +1567,321 @@ class ExternalAssimilationAndScaleTests(unittest.TestCase):
             self.assertEqual(argv2[-2:], ["leviathan", "plain"])
             with self.assertRaises(FileNotFoundError):
                 adapter._render_argv(["{missing}"], {})  # noqa: SLF001
+
+
+class ExternalFabricDoDProofTests(unittest.TestCase):
+    """Closable DoD proofs: cognition cancel, SSE events, assim job, process reconcile."""
+
+    def test_cognition_cancel_propagates_to_external_cli(self) -> None:
+        from Data.modules.cognition.runtime import CognitiveRunState, CognitiveRuntime
+        from Data.modules.cognition.task_model import TaskModel
+        from Data.modules.cognition.types import (
+            CognitiveAction,
+            CognitiveActionKind,
+            CognitiveRunStatus,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "mods" / "slow"
+            root.mkdir(parents=True)
+            slow = Path(tmp) / "slow.py"
+            slow.write_text("import time\ntime.sleep(30)\nprint('late')\n", encoding="utf-8")
+            manifest = {
+                "module_id": "slow",
+                "name": "Slow",
+                "version": "0.0.1",
+                "entrypoint": FACTORY,
+                "external": {
+                    "adapter": "CLI",
+                    "source_type": "path",
+                    "path": str(tmp),
+                    "install": {"strategy": "NONE"},
+                    "runtime": {
+                        "command": [sys.executable, str(slow)],
+                        "timeout_seconds": 60,
+                        "operations": [{"name": "run", "command": [sys.executable, str(slow)]}],
+                    },
+                },
+                "capabilities": [
+                    {
+                        "capability_id": "external.slow.run",
+                        "name": "Run",
+                        "external_name": "run",
+                        "side_effects": ["READ"],
+                    }
+                ],
+            }
+            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+            manager.discover()
+            manager.initialize("slow", ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp))
+            catalog = CapabilityCatalog()
+            plugins = PluginRegistry(catalog)
+            managed = manager.get("slow")
+            assert managed is not None
+            register_external_module_capabilities(
+                catalog=catalog, plugin_registry=plugins, managed=managed
+            )
+            gateway = ExecutionGateway(catalog=catalog)
+            gateway.module_executor = ExternalModuleExecutor(manager, catalog=catalog)
+            runtime = CognitiveRuntime(enabled=True, execution_gateway=gateway, factuality_mode="NONE")
+            task = TaskModel(
+                task_id="t1",
+                run_id="r1",
+                raw_request="run slow",
+                goal="run slow",
+                domain="test",
+                task_type="tool",
+            )
+            state = CognitiveRunState(
+                run_id="r1",
+                task=task,
+                status=CognitiveRunStatus.REASONING,
+                trace_id="tr-1",
+            )
+
+            def _cancel_later() -> None:
+                time.sleep(0.25)
+                state.cancel_requested = True
+
+            threading.Thread(target=_cancel_later, daemon=True).start()
+            action = CognitiveAction(
+                kind=CognitiveActionKind.INVOKE_CAPABILITY,
+                action_id="a-slow-1",
+                capability_id="external.slow.run",
+                arguments={},
+            )
+            obs = runtime._execute_action(state, action, history=[])  # noqa: SLF001
+            self.assertEqual(obs.kind.value, "TOOL_RESULT")
+            result = (obs.payload or {}).get("result") or {}
+            self.assertEqual(str(result.get("status")), "CANCELLED")
+            event_types = [e.get("event_type") for e in state.events]
+            self.assertIn("tool.started", event_types)
+            self.assertTrue(
+                "tool.failed" in event_types or "tool.completed" in event_types,
+                msg=f"events={event_types}",
+            )
+            self.assertTrue(
+                any(e.get("event_type") == "tool.progress" for e in state.events),
+                msg=f"expected tool.progress in {event_types}",
+            )
+
+    def test_cognition_emits_rich_operational_sse_events(self) -> None:
+        from Data.modules.cognition.runtime import CognitiveRunState, CognitiveRuntime
+        from Data.modules.cognition.task_model import TaskModel
+        from Data.modules.cognition.types import (
+            CognitiveAction,
+            CognitiveActionKind,
+            CognitiveRunStatus,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "mods" / "fake-cli"
+            root.mkdir(parents=True)
+            tool = FIXTURES / "fake_cli" / "tool.py"
+            manifest = {
+                "module_id": "fake-cli",
+                "name": "Fake CLI",
+                "version": "0.0.1",
+                "entrypoint": FACTORY,
+                "external": {
+                    "adapter": "CLI",
+                    "source_type": "path",
+                    "path": str(tool.parent),
+                    "install": {"strategy": "NONE"},
+                    "assimilation_mode": "NONE",
+                    "runtime": {
+                        "command": [sys.executable, str(tool), "{query}"],
+                        "operations": [
+                            {"name": "search", "command": [sys.executable, str(tool), "{query}"]}
+                        ],
+                    },
+                    "result": {"format": "json"},
+                },
+                "capabilities": [
+                    {
+                        "capability_id": "external.fake_cli.search",
+                        "name": "Search",
+                        "external_name": "search",
+                        "side_effects": ["READ"],
+                    }
+                ],
+            }
+            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+            manager.discover()
+            manager.initialize(
+                "fake-cli", ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp)
+            )
+            catalog = CapabilityCatalog()
+            plugins = PluginRegistry(catalog)
+            managed = manager.get("fake-cli")
+            assert managed is not None
+            register_external_module_capabilities(
+                catalog=catalog, plugin_registry=plugins, managed=managed
+            )
+            gateway = ExecutionGateway(catalog=catalog)
+            gateway.module_executor = ExternalModuleExecutor(manager, catalog=catalog)
+            runtime = CognitiveRuntime(enabled=True, execution_gateway=gateway, factuality_mode="NONE")
+            task = TaskModel(
+                task_id="t2",
+                run_id="r2",
+                raw_request="search x",
+                goal="search x",
+                domain="test",
+                task_type="tool",
+            )
+            state = CognitiveRunState(
+                run_id="r2",
+                task=task,
+                status=CognitiveRunStatus.REASONING,
+                trace_id="tr-2",
+            )
+            obs = runtime._execute_action(  # noqa: SLF001
+                state,
+                CognitiveAction(
+                    kind=CognitiveActionKind.INVOKE_CAPABILITY,
+                    action_id="a-search-1",
+                    capability_id="external.fake_cli.search",
+                    arguments={"query": "leviathan"},
+                ),
+                history=[],
+            )
+            self.assertTrue(obs.success)
+            event_types = [e.get("event_type") for e in state.events]
+            for required in (
+                "module.starting",
+                "tool.started",
+                "tool.completed",
+                "module.ready",
+                "source.observed",
+            ):
+                self.assertIn(required, event_types, msg=f"missing {required} in {event_types}")
+            # Rich capability result for CapabilityResultCards (parts/sources/module_id).
+            result = (obs.payload or {}).get("result") or {}
+            output = result.get("output") if isinstance(result.get("output"), dict) else {}
+            meta = output.get("metadata") if isinstance(output.get("metadata"), dict) else {}
+            self.assertEqual(meta.get("module_id"), "fake-cli")
+            self.assertTrue(output.get("parts"), msg="expected result parts")
+            self.assertTrue(output.get("source_refs"), msg="expected source_refs")
+            self.assertIn("source.observed", event_types)
+
+    def test_assimilation_queues_job_runtime(self) -> None:
+        from Data.modules.module_manager.external.post_result import queue_or_run_assimilation
+        from Data.modules.module_manager.external.types import AssimilationMode
+
+        enqueued: list[Any] = []
+
+        class _Job:
+            job_id = "job-assim-1"
+
+        class _JR:
+            def enqueue(self, request):  # noqa: ANN001
+                enqueued.append(request)
+                return _Job()
+
+        out = queue_or_run_assimilation(
+            mode=AssimilationMode.KNOWLEDGE_CANDIDATE,
+            capability_id="external.agent_reach.search",
+            module_id="agent-reach",
+            request_id="req-assim-unique-1",
+            run_id="run-1",
+            job_id=None,
+            output={
+                "summary": "found sources",
+                "source_refs": [{"title": "A", "url": "https://example.com/a", "published_at": "2026-01-01T00:00:00Z"}],
+                "metadata": {"retrieved_at": "2026-09-27T12:00:00Z"},
+            },
+            status="COMPLETED",
+            job_runtime=_JR(),
+            assimilation_service=None,
+        )
+        self.assertTrue(out.get("queued"))
+        self.assertEqual(out.get("job_id"), "job-assim-1")
+        self.assertEqual(len(enqueued), 1)
+        self.assertEqual(enqueued[0].capability_id, "external.knowledge.assimilate")
+
+    def test_process_service_reconciles_dead_pid(self) -> None:
+        port = _free_port()
+        server = FIXTURES / "fake_http_service" / "server.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "mods" / "fake-svc"
+            root.mkdir(parents=True)
+            manifest = {
+                "module_id": "fake-svc",
+                "name": "Fake Service",
+                "version": "0.0.1",
+                "entrypoint": FACTORY,
+                "external": {
+                    "adapter": "PROCESS_SERVICE",
+                    "source_type": "path",
+                    "path": str(server.parent),
+                    "install": {"strategy": "NONE"},
+                    "runtime": {
+                        "mode": "RESIDENT",
+                        "command": [sys.executable, str(server), str(port)],
+                        "cwd": str(server.parent),
+                        "startup_timeout_seconds": 10,
+                        "ready_probe": {
+                            "kind": "http",
+                            "url": f"http://127.0.0.1:{port}/health",
+                            "expect_status": 200,
+                        },
+                        "base_url": f"http://127.0.0.1:{port}",
+                    },
+                },
+                "capabilities": [
+                    {
+                        "capability_id": "external.fake_svc.echo",
+                        "name": "Echo",
+                        "external_name": "echo",
+                        "side_effects": ["NETWORK"],
+                    }
+                ],
+            }
+            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+            db = Path(tmp) / "control.db"
+            store = ExternalCapabilityStore(db)
+            store.initialize()
+            store.upsert_module(
+                module_id="fake-svc",
+                name="Fake Service",
+                adapter="PROCESS_SERVICE",
+                runtime_state="RUNNING",
+                desired_state="RUNNING",
+            )
+            # Dead PID + non-matching fingerprint must reconcile to STOPPED.
+            store.upsert_process(
+                module_id="fake-svc",
+                pid=999999,
+                fingerprint="bogus-fingerprint",
+                command=[sys.executable, str(server), str(port)],
+                cwd=str(server.parent),
+                health="OK",
+            )
+            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+            manager.discover()
+            manager.initialize(
+                "fake-svc",
+                ModuleContext(
+                    database_path=str(db),
+                    data_root=tmp,
+                    metadata={"external_capability_store": store},
+                ),
+            )
+            # Do not ensure_ready/start — prove restart reconcile on dead PID alone.
+            inst = manager.get("fake-svc")
+            assert inst is not None and inst.instance is not None
+            adapter = inst.instance._adapter  # noqa: SLF001
+            adapter._owned = None  # noqa: SLF001
+            adapter._reconcile_persisted()  # noqa: SLF001
+            from Data.modules.module_manager.external.types import ExternalRuntimeState
+
+            self.assertEqual(adapter.runtime_state(), ExternalRuntimeState.STOPPED)
+            proc = store.get_process("fake-svc")
+            assert proc is not None
+            self.assertEqual(proc.get("health"), "RECONCILED_DEAD")
+            self.assertIsNone(proc.get("pid"))
 
 
 if __name__ == "__main__":

@@ -129,7 +129,9 @@ export function CapabilityResultCards({ toolCalls }: Props) {
             {progressParts.length ? (
               <div style={{ marginTop: 6, opacity: 0.8 }}>
                 {progressParts.map((p, idx) => (
-                  <div key={idx}>{String(p.message || p.phase || "progress")}</div>
+                  <div key={idx}>
+                    {String(p.message || p.text || p.phase || p.summary || "progress")}
+                  </div>
                 ))}
               </div>
             ) : null}
