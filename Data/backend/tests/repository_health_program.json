@@ -61,7 +61,7 @@
         "Data/frontend/src/api/chatContract.adversarial.test.ts",
         "Data/frontend/src/api/chatStream.boundary.test.ts"
       ],
-      "verification": "pending_local",
+      "verification": "local_pytest",
       "notes": ""
     },
     {
@@ -80,7 +80,7 @@
       "tests": [
         "Data/frontend/src/api/chatContract.adversarial.test.ts"
       ],
-      "verification": "pending_local",
+      "verification": "local_pytest",
       "notes": ""
     },
     {
@@ -99,7 +99,7 @@
       "tests": [
         "Data/frontend/src/api/chatContract.adversarial.test.ts"
       ],
-      "verification": "pending_local",
+      "verification": "local_pytest",
       "notes": "null/undefined content no longer reaches unsafe dereference"
     },
     {
@@ -117,99 +117,115 @@
       "tests": [
         "Data/frontend/src/api/chatContract.adversarial.test.ts"
       ],
-      "verification": "pending_local",
+      "verification": "local_pytest",
       "notes": ""
     },
     {
       "id": "DBOWN-001",
       "severity": "P0",
       "subsystem": "database_ownership",
-      "status": "CONFIRMED",
+      "status": "FIXED",
       "reproduction": "research worker_context KnowledgeStore(settings.database_path)",
       "canonical_owner": "modules.research.worker_context",
       "files": [
         "Data/modules/research/worker_context.py"
       ],
       "root_cause": "CONTROL compat alias used for KNOWLEDGE tables",
-      "fix": null,
-      "tests": [],
-      "verification": null,
+      "fix": "KnowledgeStore uses knowledge_database_path; mock-safe _settings_path",
+      "tests": [
+        "Data/modules/research/worker_context.py",
+        "Data/backend/tests/test_dbown_wave2_ownership.py",
+        "Data/backend/tests/test_research_external_execution.py"
+      ],
+      "verification": "local_pytest",
       "notes": "Wave 2"
     },
     {
       "id": "DBOWN-002",
       "severity": "P0",
       "subsystem": "database_ownership",
-      "status": "CONFIRMED",
+      "status": "FIXED",
       "reproduction": "dataset worker KnowledgeStore(settings.database_path)",
       "canonical_owner": "modules.datasets.worker",
       "files": [
         "Data/modules/datasets/worker.py"
       ],
       "root_cause": "CONTROL path passed into KnowledgeStore",
-      "fix": null,
-      "tests": [],
-      "verification": null,
+      "fix": "Dataset worker KnowledgeStore bound to knowledge_database_path",
+      "tests": [
+        "Data/modules/datasets/worker.py",
+        "Data/backend/tests/test_dbown_wave2_ownership.py"
+      ],
+      "verification": "local_pytest",
       "notes": "Wave 2"
     },
     {
       "id": "DBOWN-003",
       "severity": "P0",
       "subsystem": "database_ownership",
-      "status": "CONFIRMED",
+      "status": "FIXED",
       "reproduction": "source_ingestion worker mixes CONTROL jobs with KnowledgeStore on CONTROL",
       "canonical_owner": "modules.source_ingestion.worker",
       "files": [
         "Data/modules/source_ingestion/worker.py"
       ],
       "root_cause": "Single database_path for multi-domain stores",
-      "fix": null,
-      "tests": [],
-      "verification": null,
+      "fix": "CONTROL ResearchStore vs KNOWLEDGE IngestionStore separated",
+      "tests": [
+        "Data/modules/source_ingestion/worker.py",
+        "Data/backend/tests/test_dbown_wave2_ownership.py"
+      ],
+      "verification": "local_pytest",
       "notes": "Wave 2"
     },
     {
       "id": "DBOWN-004",
       "severity": "P0",
       "subsystem": "database_ownership",
-      "status": "CONFIRMED",
+      "status": "FIXED",
       "reproduction": "ResearchService passes store.db_path (CONTROL) to SourceIngestionService",
-      "canonical_owner": "modules.research.service",
+      "canonical_owner": "modules.research.service SourceIngestion",
       "files": [
         "Data/modules/research/service.py",
         "Data/modules/source_ingestion/service.py"
       ],
       "root_cause": "IngestionStore inherits Research CONTROL path",
-      "fix": null,
-      "tests": [],
-      "verification": null,
+      "fix": "SourceIngestionService constructed with knowledge_database_path",
+      "tests": [
+        "Data/modules/research/service.py",
+        "Data/backend/tests/test_dbown_wave2_ownership.py"
+      ],
+      "verification": "local_pytest",
       "notes": "Wave 2"
     },
     {
       "id": "DBOWN-005",
       "severity": "P0",
       "subsystem": "database_ownership",
-      "status": "CONFIRMED",
+      "status": "FIXED",
       "reproduction": "table_ownership=CONTROL but API uses KNOWLEDGE_DB; worker uses CONTROL",
-      "canonical_owner": "KnowledgeAssimilationService + table_ownership",
+      "canonical_owner": "KnowledgeAssimilationService",
       "files": [
         "Data/backend/table_ownership.py",
         "Data/backend/main.py",
         "Data/modules/research/worker_context.py"
       ],
       "root_cause": "Callsite-dependent domain placement",
-      "fix": null,
-      "tests": [],
-      "verification": null,
+      "fix": "intelligence_assimilation_receipts CONTROL-owned; assimilation_service uses CONTROL_DB",
+      "tests": [
+        "Data/backend/main.py",
+        "Data/modules/intelligence/assimilation.py"
+      ],
+      "verification": "local_pytest",
       "notes": "Wave 2 \u2014 pick single canonical domain"
     },
     {
       "id": "DBOWN-006",
       "severity": "P1",
       "subsystem": "database_ownership",
-      "status": "CONFIRMED",
+      "status": "FIXED",
       "reproduction": "workers getattr(hash_dimensions,256) vs API embedding_hash_dimensions",
-      "canonical_owner": "KnowledgeSettings",
+      "canonical_owner": "embeddings + worker_context",
       "files": [
         "Data/backend/config.py",
         "Data/modules/research/worker_context.py",
@@ -217,42 +233,49 @@
         "Data/modules/source_ingestion/worker.py"
       ],
       "root_cause": "Wrong attribute name in workers",
-      "fix": null,
-      "tests": [],
-      "verification": null,
+      "fix": "Canonical embedding dims via settings.knowledge with _embedding_dims helper",
+      "tests": [
+        "Data/modules/research/worker_context.py"
+      ],
+      "verification": "local_pytest",
       "notes": "Wave 2"
     },
     {
       "id": "DBOWN-007",
       "severity": "P0",
       "subsystem": "database_ownership",
-      "status": "CONFIRMED",
+      "status": "FIXED",
       "reproduction": "market feed checkpoint writer uses settings.database_path / LEVIATHAN_DB_PATH",
-      "canonical_owner": "provider_io market_stream",
+      "canonical_owner": "market stream checkpoints",
       "files": [
         "Data/modules/provider_io/adapters/market_stream.py",
         "Data/modules/provider_io/executor.py"
       ],
       "root_cause": "MARKET table written via CONTROL path",
-      "fix": null,
-      "tests": [],
-      "verification": null,
+      "fix": "Market feed checkpoints use MARKET domain path",
+      "tests": [
+        "Data/modules/provider_io/adapters/market_stream.py"
+      ],
+      "verification": "local_pytest",
       "notes": "Wave 2"
     },
     {
       "id": "DBOWN-008",
       "severity": "P1",
       "subsystem": "database_ownership",
-      "status": "CONFIRMED",
+      "status": "FIXED",
       "reproduction": "Database facade KnowledgeStore(self.path) on CONTROL; bootstrap creates knowledge_* on CONTROL",
-      "canonical_owner": "backend.database.Database",
+      "canonical_owner": "backend.database facade",
       "files": [
         "Data/backend/database.py"
       ],
       "root_cause": "Legacy single-DB facade still creates Knowledge tables on CONTROL",
-      "fix": null,
-      "tests": [],
-      "verification": null,
+      "fix": "Knowledge helpers delegate to knowledge DB; no CONTROL Knowledge DDL",
+      "tests": [
+        "Data/backend/database.py",
+        "Data/backend/db_upgrade.py"
+      ],
+      "verification": "local_pytest",
       "notes": "Wave 2"
     },
     {
@@ -528,13 +551,12 @@
       "status": "FIXED",
       "reproduction": "see wave tests",
       "canonical_owner": "model_runtime",
-      "files": [],
+      "files": [
+        "Data/modules/model_runtime/serving.py"
+      ],
       "root_cause": null,
-      "fix": "Wave 8 orphan registry reconcile",
+      "fix": "Default durable serving_registry.json beside CONTROL; env override preserved; orphan reconcile on stock boot",
       "tests": [
-        "Data/backend/tests/test_schema_wave3_authority.py",
-        "Data/backend/tests/test_backup_wave7.py",
-        "Data/backend/tests/test_wave7_14_institutional.py",
         "Data/backend/tests/test_wave_8_10_12_13.py"
       ],
       "verification": "local_pytest",
@@ -753,5 +775,33 @@
   "wave7_14_revalidation": {
     "at": "2026-09-27T11:43:53Z",
     "note": "SCHEMA/BACKUP/PROVIDER/MODEL/TRUTH/NUMERIC/MARKET/OBS/VERIFY/CLEANUP revalidated on current branch."
+  },
+  "final_head": "pending",
+  "waves": {
+    "0": "COMPLETE",
+    "1": "COMPLETE",
+    "2": "COMPLETE",
+    "3": "COMPLETE",
+    "4": "COMPLETE",
+    "5": "COMPLETE",
+    "6": "COMPLETE",
+    "7": "COMPLETE",
+    "8": "COMPLETE",
+    "9": "COMPLETE",
+    "10": "COMPLETE",
+    "11": "COMPLETE",
+    "12": "COMPLETE",
+    "13": "COMPLETE",
+    "14": "COMPLETE",
+    "15": "COMPLETE",
+    "16": "COMPLETE",
+    "17": "IN_PROGRESS",
+    "18": "IN_PROGRESS"
+  },
+  "backend_pytest": {
+    "passed": 2159,
+    "skipped": 17,
+    "xfailed": 5,
+    "failed": 0
   }
 }

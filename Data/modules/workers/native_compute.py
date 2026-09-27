@@ -129,12 +129,13 @@ def _repo_data_root() -> Path:
 
 def default_binary_candidates() -> list[Path]:
     root = _repo_data_root()
-    return [
-        root / "native" / "bin" / BINARY_NAME,
-        root / "native" / "bin" / f"{BINARY_NAME}.exe",
-        root / "native" / "target" / "release" / BINARY_NAME,
-        root / "native" / "target" / "debug" / BINARY_NAME,
-    ]
+    names = [BINARY_NAME, f"{BINARY_NAME}.exe"]
+    out: list[Path] = []
+    for name in names:
+        out.append(root / "native" / "bin" / name)
+        out.append(root / "native" / "target" / "release" / name)
+        out.append(root / "native" / "target" / "debug" / name)
+    return out
 
 
 def resolve_native_binary(

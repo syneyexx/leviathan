@@ -39,6 +39,33 @@ class ProviderStreamDurabilityTests(unittest.TestCase):
 
 
 class ServingStderrAndOrphanTests(unittest.TestCase):
+    def test_stock_supervisor_defaults_to_durable_registry(self) -> None:
+        import os
+
+        from Data.modules.model_runtime.serving import (
+            default_serving_registry_path,
+            get_serving_supervisor,
+            reset_serving_supervisor_for_tests,
+        )
+
+        # Clear process singleton so stock get_serving_supervisor() is exercised.
+        reset_serving_supervisor_for_tests(registry_path=None)
+        # Ensure env override is not set for this assertion.
+        old = os.environ.pop("LEVIATHAN_SERVING_REGISTRY_PATH", None)
+        try:
+            # Force re-init via get after clearing singleton with None path.
+            import Data.modules.model_runtime.serving as serving_mod
+
+            serving_mod._GLOBAL_SUPERVISOR = None
+            supervisor = get_serving_supervisor()
+            expected = default_serving_registry_path()
+            self.assertIsNotNone(supervisor.registry_path)
+            self.assertEqual(Path(supervisor.registry_path).resolve(), expected.resolve())
+        finally:
+            if old is not None:
+                os.environ["LEVIATHAN_SERVING_REGISTRY_PATH"] = old
+            reset_serving_supervisor_for_tests(registry_path=None)
+
     def test_stderr_pipe_is_drained_for_noisy_child(self) -> None:
         import sys
 

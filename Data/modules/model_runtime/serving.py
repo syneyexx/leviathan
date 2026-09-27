@@ -547,11 +547,21 @@ def _pid_alive(pid: int) -> bool:
 _GLOBAL_SUPERVISOR: ServingSupervisor | None = None
 
 
+def default_serving_registry_path() -> Path:
+    """Durable registry beside CONTROL so API restart can reconcile orphans."""
+    try:
+        from Data.modules.common.database_domains import resolve_control_database_path
+
+        return resolve_control_database_path().parent / "serving_registry.json"
+    except Exception:  # noqa: BLE001 — keep serving usable without settings bootstrap
+        return Path("Data/backend/data/serving_registry.json")
+
+
 def get_serving_supervisor() -> ServingSupervisor:
     global _GLOBAL_SUPERVISOR
     if _GLOBAL_SUPERVISOR is None:
         raw = (os.environ.get("LEVIATHAN_SERVING_REGISTRY_PATH") or "").strip()
-        registry = Path(raw) if raw else None
+        registry = Path(raw) if raw else default_serving_registry_path()
         _GLOBAL_SUPERVISOR = ServingSupervisor(registry_path=registry)
     return _GLOBAL_SUPERVISOR
 
