@@ -292,7 +292,7 @@
         "LLM API keys"
       ],
       "status": "PARTIAL",
-      "limitations": "Live GIT+pnpm install PASS; start/health /api/health PASS; server-providers + usage PASS; skill search/load 26 PASS; generate-classroom 202 PASS. Full classroom content completion needs LLM keys (BLOCKED_EXTERNAL)."
+      "limitations": "Live GIT+pnpm install PASS; start/health /api/health PASS; server-providers + usage PASS; skill search/load 26 PASS; generate-classroom 202 PASS; classroom_job_status polls to failed/done with \"No model could be resolved\" without LLM keys (honest). Full classroom content completion needs LLM keys (BLOCKED_EXTERNAL)."
     },
     {
       "source": "Companion-Inc/feynman",
@@ -530,7 +530,7 @@
       "scrollcraft": "generate+build PASS; verify may EXIT_NONZERO without ffmpeg/frames",
       "fincept-terminal": "analyze get_key_metrics JSON COMPLETED",
       "selfstarter": "status/health.sh EXIT_NONZERO PROBLEM lines (honest)",
-      "openmaic": "health/server_providers/usage_stats + generate-classroom 202 COMPLETED; full content BLOCKED_EXTERNAL LLM",
+      "openmaic": "health/server_providers/usage + generate 202 + job poll failed without LLM (honest); full content BLOCKED_EXTERNAL",
       "ghosttrack": "ip_lookup (ipwho.is JSON) + show_ip (api.ipify.org) COMPLETED via generic CLI; GhostTR.py TUI unused",
       "osintgram": "about/list_tools/token_state/balance COMPLETED; Instagram queries BLOCKED_EXTERNAL",
       "llm-agent-trader": "root+openapi(/api/v1/openapi.json) on :8010 COMPLETED; analyze/backtest BLOCKED_EXTERNAL LLM"
@@ -580,8 +580,9 @@
       "usage_stats": "PASS",
       "agent_runtime_status": "PASS enabled=false",
       "generate_course": "PASS 202 job queued via /api/generate-classroom",
-      "full_course_content": "BLOCKED_EXTERNAL LLM keys",
-      "list_skills_api": "NOT_AVAILABLE agent_runtime_disabled (structured)"
+      "full_course_content": "BLOCKED_EXTERNAL LLM keys (honest failed job)",
+      "list_skills_api": "NOT_AVAILABLE agent_runtime_disabled (structured)",
+      "classroom_job_poll_without_llm": "PASS status=failed done=true No model could be resolved"
     },
     "feynman": {
       "install": "PASS",
@@ -676,7 +677,8 @@
       "process_service_port_in_use": "PASS fails closed PORT_IN_USE",
       "modules_skills_frontend_contracts": "PASS vitest modulesSkillsContracts",
       "modules_page": "see live_proofs.modules_page",
-      "adversarial_architecture_tests": "PASS no wrappers / no V2 owners / manifest-only / CONTROL store"
+      "adversarial_architecture_tests": "PASS no wrappers / no V2 owners / manifest-only / CONTROL store",
+      "openmaic_honest_job_failure": "PASS poll failed without LLM"
     },
     "skill_pack_invoke": {
       "claude-osint": {
