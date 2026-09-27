@@ -40,7 +40,7 @@ class TableOwnershipTests(unittest.TestCase):
         self.assertEqual(ownership_for("conversations"), DatabaseDomain.CONTROL)
         self.assertEqual(ownership_for("knowledge_chunks"), DatabaseDomain.KNOWLEDGE)
         self.assertEqual(ownership_for("market_sim_fills"), DatabaseDomain.MARKET)
-        self.assertEqual(ownership_for("institutional_authority_approvals"), DatabaseDomain.CONTROL)
+        self.assertEqual(ownership_for("institutional_authority_approvals"), DatabaseDomain.MARKET)
         self.assertEqual(ownership_for("institutional_ibor_events"), DatabaseDomain.MARKET)
 
     def test_unclassified_fails_require(self) -> None:

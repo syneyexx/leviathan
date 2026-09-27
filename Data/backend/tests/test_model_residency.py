@@ -38,6 +38,11 @@ def plane(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ModelControlPlane:
     monkeypatch.setenv("LEVIATHAN_NETWORK_ALLOW_OUTBOUND", "false")
     monkeypatch.setenv("LEVIATHAN_ALLOW_INPROC_MODEL_FIXTURE", "true")
     settings = Settings.from_env()
+    # Ensure Control schema exists (domain baseline or legacy migrations).
+    from Data.backend.db_upgrade import ensure_domain_schema
+    from Data.modules.common.database_domains import DatabaseDomain
+
+    ensure_domain_schema(settings.database_path, DatabaseDomain.CONTROL)
     MigrationRunner(settings.database_path).apply_all()
     control = ModelControlPlane(settings)
     control.bootstrap()
@@ -421,9 +426,11 @@ async def test_settings_external_fallback_uses_residency_and_gateway(
 ) -> None:
     """ROUTER_EXHAUSTED soft path must still acquire EXTERNAL lease + Gateway."""
     monkeypatch.setenv("LEVIATHAN_LLM_MODEL", "local-test-model")
-    # Settings object is frozen — rebuild plane with model configured.
-    db_path = plane.settings.database_path
-    monkeypatch.setenv("LEVIATHAN_DATABASE_PATH", str(db_path))
+    # Keep the same three-DB paths — do not re-point LEVIATHAN_DATABASE_PATH at
+    # the control file (that would derive residency_control_control.db).
+    monkeypatch.setenv("LEVIATHAN_CONTROL_DATABASE_PATH", str(plane.settings.control_database_path))
+    monkeypatch.setenv("LEVIATHAN_KNOWLEDGE_DATABASE_PATH", str(plane.settings.knowledge_database_path))
+    monkeypatch.setenv("LEVIATHAN_MARKET_DATABASE_PATH", str(plane.settings.market_database_path))
     monkeypatch.setenv("LEVIATHAN_LLM_BASE_URL", "http://127.0.0.1:1234/v1")
     monkeypatch.setenv("LEVIATHAN_NETWORK_ALLOW_OUTBOUND", "false")
     settings = Settings.from_env()
@@ -479,7 +486,9 @@ def test_settings_external_fallback_fails_closed_without_settings(
 ) -> None:
     monkeypatch.delenv("LEVIATHAN_LLM_MODEL", raising=False)
     monkeypatch.setenv("LEVIATHAN_LLM_BASE_URL", "http://127.0.0.1:1234/v1")
-    monkeypatch.setenv("LEVIATHAN_DATABASE_PATH", str(plane.settings.database_path))
+    monkeypatch.setenv("LEVIATHAN_CONTROL_DATABASE_PATH", str(plane.settings.control_database_path))
+    monkeypatch.setenv("LEVIATHAN_KNOWLEDGE_DATABASE_PATH", str(plane.settings.knowledge_database_path))
+    monkeypatch.setenv("LEVIATHAN_MARKET_DATABASE_PATH", str(plane.settings.market_database_path))
     monkeypatch.setenv("LEVIATHAN_NETWORK_ALLOW_OUTBOUND", "false")
     settings = Settings.from_env()
     plane = ModelControlPlane(settings)

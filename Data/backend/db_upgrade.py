@@ -965,6 +965,9 @@ def upgrade_all_databases(paths: DatabasePaths) -> UpgradeReport:
         legacy_conn = _connect(legacy)
         try:
             _ensure_runtime_bootstrap_schema(legacy_conn)
+            # Legacy may already have cutover stubs from a prior partial run.
+            repair_incompatible_runs_schema(legacy_conn)
+            repair_incompatible_quality_schema(legacy_conn)
             legacy_conn.commit()
             report.legacy_schema_version = MigrationRunner(legacy).current_version(legacy_conn)
         finally:

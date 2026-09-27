@@ -170,8 +170,8 @@ class SettingsTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {"LEVIATHAN_DATABASE_PATH": rel}, clear=False):
                 cfg = Settings.from_env()
             self.assertTrue(cfg.database_path.is_absolute())
-            self.assertTrue(str(cfg.database_path).endswith(rel.replace("/", os.sep)) or rel in str(cfg.database_path))
-            self.assertIn("custom.db", str(cfg.database_path))
+            # Custom LEVIATHAN_DATABASE_PATH derives co-located *_control sibling as authority.
+            self.assertIn("custom_control.db", str(cfg.database_path))
             self.assertTrue(Path(tmp).exists())
 
 
