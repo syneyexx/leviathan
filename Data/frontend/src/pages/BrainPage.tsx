@@ -9,11 +9,18 @@ import { BrainHeader, BrainViewTabs } from "./brain/brain-shared";
 import { BrainAnalyticsView } from "./brain/BrainAnalyticsView";
 import { BrainClustersView } from "./brain/BrainClustersView";
 import { BrainGraphCanvas } from "./brain/BrainGraphCanvas";
+import { BrainSpaceCanvas } from "./brain/BrainSpaceCanvas";
+import {
+  prefersReducedMotion,
+  type BrainSpaceDomain,
+  type BrainSpaceMode,
+} from "./brain/brain-space";
 import { BrainTimelineView } from "./brain/BrainTimelineView";
 import { BrainTreeView } from "./brain/BrainTreeView";
 import { colorForType, type LiveBrainEdge, type LiveBrainNode } from "./brain/brain-live";
 
 type DetailTab = "Overview" | "Relations" | "Content" | "Metrics";
+type GraphPresentation = "celestial" | "technical";
 
 function deepLink(node: LiveBrainNode): string | null {
   if (node.type === "knowledge.document") return "/knowledge";
@@ -76,7 +83,13 @@ export function BrainPage() {
   const [showLabels, setShowLabels] = useState(true);
   const [showClusters, setShowClusters] = useState(true);
   const [showDepth, setShowDepth] = useState(false);
-  const [physicsLayout, setPhysicsLayout] = useState(true);
+  /** Orbit motion (Celestial) / Physics layout (Technical) — one owner. */
+  const [orbitMotion, setOrbitMotion] = useState(() => !prefersReducedMotion());
+  const [graphPresentation, setGraphPresentation] = useState<GraphPresentation>("celestial");
+  const [spaceMode, setSpaceMode] = useState<BrainSpaceMode>("galaxy");
+  const [showRelations, setShowRelations] = useState(true);
+  const [knowledgeAge, setKnowledgeAge] = useState(1);
+  const [isolatedDomain, setIsolatedDomain] = useState<BrainSpaceDomain | null>(null);
   const [activeTypes, setActiveTypes] = useState<Set<string>>(new Set());
   const [detailTab, setDetailTab] = useState<DetailTab>("Overview");
 
@@ -269,13 +282,136 @@ export function BrainPage() {
                 <ToggleRow label="Show Labels" value={showLabels} onChange={() => setShowLabels((value) => !value)} />
                 <ToggleRow label="Show Clusters" value={showClusters} onChange={() => setShowClusters((value) => !value)} />
                 <ToggleRow label="Show Depth" value={showDepth} onChange={() => setShowDepth((value) => !value)} />
-                <ToggleRow label="Physics Layout" value={physicsLayout} onChange={() => setPhysicsLayout((value) => !value)} />
+                <ToggleRow
+                  label={graphPresentation === "celestial" ? "Orbit Motion" : "Physics Layout"}
+                  value={orbitMotion}
+                  onChange={() => setOrbitMotion((value) => !value)}
+                />
               </div>
               <div className="lv-gv-filter-foot">{loading ? "Loading projection…" : `${visibleNodes.length} visible · ${visibleEdges.length} links`}</div>
             </aside>
 
             <div className="lv-brain-workspace lv-gv-workspace">
-              <BrainGraphCanvas nodes={visibleNodes} edges={visibleEdges} selectedId={selected?.id ?? null} onSelect={(id) => { setSelectedId(id); setDetailTab("Overview"); }} showLabels={showLabels} showClusters={showClusters} showDepth={showDepth} physicsLayout={physicsLayout} />
+              <div className="lv-brain-space-shell">
+                <div className="lv-brain-space-toolbar" aria-label="Graph presentation controls">
+                  <div className="lv-brain-space-pres" role="group" aria-label="Graph presentation">
+                    <button
+                      type="button"
+                      className={graphPresentation === "celestial" ? "is-active" : ""}
+                      aria-pressed={graphPresentation === "celestial"}
+                      onClick={() => setGraphPresentation("celestial")}
+                    >
+                      Celestial
+                    </button>
+                    <button
+                      type="button"
+                      className={graphPresentation === "technical" ? "is-active" : ""}
+                      aria-pressed={graphPresentation === "technical"}
+                      onClick={() => setGraphPresentation("technical")}
+                    >
+                      Technical
+                    </button>
+                  </div>
+
+                  {graphPresentation === "celestial" ? (
+                    <>
+                      <div className="lv-brain-space-modes" role="group" aria-label="Celestial arrangement">
+                        {(["galaxy", "systems", "orbits"] as const).map((value) => (
+                          <button
+                            key={value}
+                            type="button"
+                            className={spaceMode === value ? "is-active" : ""}
+                            aria-pressed={spaceMode === value}
+                            onClick={() => {
+                              setSpaceMode(value);
+                              setIsolatedDomain(null);
+                            }}
+                          >
+                            {value.charAt(0).toUpperCase() + value.slice(1)}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="lv-brain-space-actions" role="group" aria-label="Celestial controls">
+                        <button
+                          type="button"
+                          className={!orbitMotion ? "is-active" : ""}
+                          aria-pressed={!orbitMotion}
+                          onClick={() => setOrbitMotion((value) => !value)}
+                        >
+                          {orbitMotion ? "Pause" : "Resume"}
+                        </button>
+                        <button
+                          type="button"
+                          className={showRelations ? "is-active" : ""}
+                          aria-pressed={showRelations}
+                          onClick={() => setShowRelations((value) => !value)}
+                        >
+                          Relations
+                        </button>
+                        {isolatedDomain ? (
+                          <button type="button" onClick={() => setIsolatedDomain(null)}>
+                            Clear focus
+                          </button>
+                        ) : null}
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+
+                {graphPresentation === "celestial" ? (
+                  <div className="lv-brain-space-stage">
+                    <BrainSpaceCanvas
+                      nodes={visibleNodes}
+                      edges={visibleEdges}
+                      selectedId={selected?.id ?? null}
+                      onSelect={(id) => {
+                        setSelectedId(id);
+                        setDetailTab("Overview");
+                      }}
+                      mode={spaceMode}
+                      knowledgeAge={knowledgeAge}
+                      paused={!orbitMotion}
+                      showLabels={showLabels}
+                      showClusters={showClusters}
+                      showDepth={showDepth}
+                      showRelations={showRelations}
+                      isolatedDomain={isolatedDomain}
+                      onIsolatedDomainChange={setIsolatedDomain}
+                    />
+                    <div className="lv-brain-space-age">
+                      <div>
+                        <strong>KNOWLEDGE AGE</strong>
+                        <span>Uses created_at when known; UNMEASURED nodes stay visible.</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={Math.round(knowledgeAge * 100)}
+                        aria-label="Knowledge age"
+                        onChange={(event) => setKnowledgeAge(Number(event.target.value) / 100)}
+                      />
+                      <b>{Math.round(knowledgeAge * 100)}%</b>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="lv-brain-space-technical">
+                    <BrainGraphCanvas
+                      nodes={visibleNodes}
+                      edges={visibleEdges}
+                      selectedId={selected?.id ?? null}
+                      onSelect={(id) => {
+                        setSelectedId(id);
+                        setDetailTab("Overview");
+                      }}
+                      showLabels={showLabels}
+                      showClusters={showClusters}
+                      showDepth={showDepth}
+                      physicsLayout={orbitMotion}
+                    />
+                  </div>
+                )}
+              </div>
             </div>
 
             {nodeDetails}
