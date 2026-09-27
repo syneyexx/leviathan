@@ -9,6 +9,7 @@ hash/null providers are labeled as lexical / non-semantic fallbacks.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -17,7 +18,11 @@ from Data.modules.knowledge.hashing import content_sha256
 from Data.modules.knowledge.types import IngestStatus
 
 from .materialize import iter_materialized_jsonl
-from .relations import extract_and_store_relations_for_record
+from .relations import (
+    RELATION_EXTRACTOR_VERSION,
+    build_verified_relation_atoms_for_record,
+    relation_input_fingerprint,
+)
 from .types import CanonicalRecord, DatasetError
 
 ProgressCb = Callable[[dict[str, Any]], None]
@@ -78,6 +83,14 @@ def _embedding_truth(knowledge: KnowledgeStore) -> dict[str, Any]:
     }
 
 
+def _progress_rates(started: float, processed: int) -> dict[str, Any]:
+    elapsed = max(0.0, time.monotonic() - started)
+    rates: dict[str, Any] = {"elapsedSeconds": round(elapsed, 4)}
+    if elapsed > 0 and processed > 0:
+        rates["recordsPerSecond"] = round(processed / elapsed, 4)
+    return rates
+
+
 def index_records(
     knowledge: KnowledgeStore,
     records: Iterable[CanonicalRecord],
@@ -98,6 +111,11 @@ def index_records(
     Streams the iterable — never materializes the full corpus in memory.
     Skips re-chunking when an existing READY document has the same content hash
     (idempotent re-learn of unchanged rows).
+
+    Relation persistence uses KnowledgeStore bounded batch transactions
+    (``LEVIATHAN_DATASET_INDEX_BATCH_SIZE`` / ``write_batch_size``).
+    Unchanged READY documents skip relation rebuild only when the relation
+    input fingerprint matches and atoms already exist.
     """
     knowledge.initialize()
     embedding_info = _embedding_truth(knowledge)
@@ -109,10 +127,57 @@ def index_records(
     resumed_skip = 0
     relations_accepted = 0
     relations_rejected = 0
+    relations_skipped_unchanged = 0
     relation_samples: list[dict[str, Any]] = []
     last_record_id: str | None = None
     resume_gate = resume_after_record_id is not None
     batch_size = max(1, int(write_batch_size or 50))
+    started = time.monotonic()
+    pending_relation_writes: list[
+        tuple[str, list[dict[str, Any]], str]
+    ] = []  # (document_id, atoms, fingerprint)
+    relation_tx_count = 0
+
+    def _emit(phase: str, **extra: Any) -> None:
+        if not progress_cb:
+            return
+        payload = {
+            "phase": phase,
+            "processed": processed,
+            "indexed": indexed,
+            "skippedUnchanged": skipped,
+            "chunkCount": chunk_total,
+            "relationsAccepted": relations_accepted,
+            "relationsRejected": relations_rejected,
+            "relationsSkippedUnchanged": relations_skipped_unchanged,
+            "lastRecordId": last_record_id,
+            "embeddingMode": embedding_info["mode"],
+            "embeddingsSemantic": embedding_info["is_semantic"],
+            "relationTransactionCount": relation_tx_count,
+            **_progress_rates(started, processed),
+        }
+        payload.update(extra)
+        progress_cb(payload)
+
+    def _flush_relation_batch(*, force: bool = False) -> None:
+        nonlocal relation_tx_count, relations_accepted
+        if not pending_relation_writes:
+            return
+        if not force and len(pending_relation_writes) < batch_size:
+            return
+        batch = pending_relation_writes[:]
+        pending_relation_writes.clear()
+        replacements = [(doc_id, atoms) for doc_id, atoms, _fp in batch]
+        knowledge.replace_relation_atoms_batch(replacements)
+        relation_tx_count += 1
+        for doc_id, _atoms, fingerprint in batch:
+            knowledge.merge_document_trust_metadata(
+                doc_id,
+                {
+                    "relationInputFingerprint": fingerprint,
+                    "relationExtractorVersion": RELATION_EXTRACTOR_VERSION,
+                },
+            )
 
     if progress_cb:
         progress_cb(
@@ -123,11 +188,13 @@ def index_records(
                 "chunkCount": 0,
                 "embeddingMode": embedding_info["mode"],
                 "embeddingsSemantic": embedding_info["is_semantic"],
+                **_progress_rates(started, 0),
             }
         )
 
     for rec in records:
         if cancel_cb is not None and cancel_cb():
+            _flush_relation_batch(force=True)
             raise DatasetError("cancelled", code="cancelled", http_status=409)
         if resume_gate:
             if rec.id == resume_after_record_id:
@@ -144,6 +211,12 @@ def index_records(
         # Stable document id ties knowledge row to dataset record
         document_id = f"dataset:{dataset_id}:{version_id}:{rec.id}"
         digest = content_sha256(text)
+        fingerprint = relation_input_fingerprint(
+            rec,
+            content_hash=digest,
+            dataset_id=dataset_id,
+            version_id=version_id,
+        )
         existing = knowledge.get_document(document_id)
         if (
             existing is not None
@@ -155,47 +228,34 @@ def index_records(
             chunks = knowledge.list_chunks(document_id)
             chunk_total += len(chunks)
             if extract_relations:
-                rel = extract_and_store_relations_for_record(
-                    knowledge,
-                    rec,
-                    document_id=document_id,
-                    dataset_id=dataset_id,
-                    version_id=version_id,
-                    text=text,
-                    max_relations=max_relations_per_doc,
-                    replace=True,
-                )
-                relations_accepted += int(rel.get("relationsAccepted") or 0)
-                relations_rejected += int(rel.get("relationsRejected") or 0)
-                for sample in rel.get("relationSamples") or []:
-                    if len(relation_samples) < 12:
-                        relation_samples.append(sample)
+                prior_fp = (existing.trust_metadata or {}).get("relationInputFingerprint")
+                atom_count = knowledge.count_relation_atoms_for_document(document_id)
+                if prior_fp == fingerprint and atom_count > 0:
+                    relations_skipped_unchanged += 1
+                else:
+                    built = build_verified_relation_atoms_for_record(
+                        rec,
+                        document_id=document_id,
+                        dataset_id=dataset_id,
+                        version_id=version_id,
+                        text=text,
+                        max_relations=max_relations_per_doc,
+                    )
+                    relations_accepted += int(built.get("relationsAccepted") or 0)
+                    relations_rejected += int(built.get("relationsRejected") or 0)
+                    for sample in built.get("relationSamples") or []:
+                        if len(relation_samples) < 12:
+                            relation_samples.append(sample)
+                    pending_relation_writes.append(
+                        (document_id, list(built.get("atoms") or []), fingerprint)
+                    )
+                    _flush_relation_batch(force=False)
             if progress_cb and processed % batch_size == 0:
-                progress_cb(
-                    {
-                        "phase": "indexing",
-                        "processed": processed,
-                        "indexed": indexed,
-                        "skippedUnchanged": skipped,
-                        "chunkCount": chunk_total,
-                        "relationsAccepted": relations_accepted,
-                        "relationsRejected": relations_rejected,
-                        "lastRecordId": last_record_id,
-                        "embeddingMode": embedding_info["mode"],
-                        "embeddingsSemantic": embedding_info["is_semantic"],
-                    }
-                )
+                _emit("indexing")
             continue
 
         if progress_cb and indexed == 0 and processed == 1:
-            progress_cb(
-                {
-                    "phase": "indexing",
-                    "processed": processed,
-                    "indexed": 0,
-                    "embeddingMode": embedding_info["mode"],
-                }
-            )
+            _emit("indexing")
 
         title = f"dataset/{dataset_id}/{rec.id}"
         trust = {
@@ -210,6 +270,8 @@ def index_records(
             or (rec.metadata or {}).get("sourceName"),
             "embeddingMode": embedding_info["mode"],
             "embeddingsSemantic": embedding_info["is_semantic"],
+            "relationInputFingerprint": fingerprint,
+            "relationExtractorVersion": RELATION_EXTRACTOR_VERSION,
         }
         doc = knowledge.upsert_document(
             title=title,
@@ -226,64 +288,32 @@ def index_records(
 
         if extract_relations:
             if progress_cb and indexed % batch_size == 1:
-                progress_cb(
-                    {
-                        "phase": "relations",
-                        "processed": processed,
-                        "indexed": indexed,
-                        "chunkCount": chunk_total,
-                        "relationsAccepted": relations_accepted,
-                        "relationsRejected": relations_rejected,
-                        "lastRecordId": last_record_id,
-                    }
-                )
-            rel = extract_and_store_relations_for_record(
-                knowledge,
+                _emit("relations")
+            built = build_verified_relation_atoms_for_record(
                 rec,
                 document_id=doc.document_id,
                 dataset_id=dataset_id,
                 version_id=version_id,
                 text=text,
                 max_relations=max_relations_per_doc,
-                replace=True,
             )
-            relations_accepted += int(rel.get("relationsAccepted") or 0)
-            relations_rejected += int(rel.get("relationsRejected") or 0)
-            for sample in rel.get("relationSamples") or []:
+            relations_accepted += int(built.get("relationsAccepted") or 0)
+            relations_rejected += int(built.get("relationsRejected") or 0)
+            for sample in built.get("relationSamples") or []:
                 if len(relation_samples) < 12:
                     relation_samples.append(sample)
+            pending_relation_writes.append(
+                (doc.document_id, list(built.get("atoms") or []), fingerprint)
+            )
+            _flush_relation_batch(force=False)
 
         if progress_cb and (indexed % batch_size == 0 or processed % (batch_size * 2) == 0):
-            progress_cb(
-                {
-                    "phase": "indexing",
-                    "processed": processed,
-                    "indexed": indexed,
-                    "skippedUnchanged": skipped,
-                    "chunkCount": chunk_total,
-                    "relationsAccepted": relations_accepted,
-                    "relationsRejected": relations_rejected,
-                    "lastRecordId": last_record_id,
-                    "embeddingMode": embedding_info["mode"],
-                    "embeddingsSemantic": embedding_info["is_semantic"],
-                }
-            )
+            _emit("indexing")
+
+    _flush_relation_batch(force=True)
 
     if progress_cb:
-        progress_cb(
-            {
-                "phase": "verifying",
-                "processed": processed,
-                "indexed": indexed,
-                "skippedUnchanged": skipped,
-                "chunkCount": chunk_total,
-                "relationsAccepted": relations_accepted,
-                "relationsRejected": relations_rejected,
-                "lastRecordId": last_record_id,
-                "embeddingMode": embedding_info["mode"],
-                "embeddingsSemantic": embedding_info["is_semantic"],
-            }
-        )
+        _emit("verifying")
 
     return {
         "documentCount": len(doc_ids),
@@ -294,6 +324,8 @@ def index_records(
         "processedCount": processed,
         "relationsAccepted": relations_accepted,
         "relationsRejected": relations_rejected,
+        "relationsSkippedUnchanged": relations_skipped_unchanged,
+        "relationTransactionCount": relation_tx_count,
         "relationSamples": relation_samples,
         "embeddings": embedding_info,
         "embeddingMode": embedding_info["mode"],
@@ -304,6 +336,7 @@ def index_records(
         "datasetId": dataset_id,
         "versionId": version_id,
         "documentIdsSample": doc_ids[:20],
+        **_progress_rates(started, processed),
         "phasesCompleted": [
             "parsing",
             "indexing",
@@ -315,6 +348,8 @@ def index_records(
             "learned_requires_index_ready": True,
             "hash_embedding_is_not_semantic": not embedding_info["is_semantic"],
             "relations_require_evidence": True,
+            "relation_writes_are_batched_transactions": True,
+            "unchanged_relation_skip_requires_fingerprint_match": True,
         },
     }
 

@@ -14,6 +14,27 @@ def raise_model_error(exc: ModelControlError) -> None:
     raise HTTPException(status_code=exc.http_status, detail=exc.public_dict()) from exc
 
 
+# Static first-path segments under /api/models/* that must never be treated as
+# a model_id when using the {model_id:path} converter (defense in depth —
+# registration order remains the primary match rule).
+MODELS_STATIC_SEGMENTS = frozenset(
+    {
+        "status",
+        "hardware",
+        "reservations",
+        "gateway",
+        "router",
+        "serving",
+        "refresh",
+        "compatible",
+        "audit",
+        "import",
+        "download",
+        "residency",
+    }
+)
+
+
 class ProfileUpdate(BaseModel):
     temperature: float | None = None
     topP: float | None = None
@@ -172,7 +193,7 @@ def build_models_router(plane: ModelControlPlane) -> APIRouter:
             plane.resources._planner.preserve_large_gpu = bool(payload.preserveLargeGpu)
         return {"policy": plane.resources._device_policy, "hardware": plane.resources.hardware_snapshot().public_dict()}
 
-    @router.post("/api/models/{model_id}/placement-preflight")
+    @router.post("/api/models/{model_id:path}/placement-preflight")
     def placement_preflight(model_id: str, payload: PlacementPreflightRequest | None = None) -> dict:
         body = payload.model_dump() if payload else {}
         options = parse_load_options(body)
@@ -379,8 +400,164 @@ def build_models_router(plane: ModelControlPlane) -> APIRouter:
     def list_residency() -> dict:
         return {"residency": [s.public_dict() for s in plane.residency.list_snapshots()]}
 
-    @router.get("/api/models/{model_id}")
+    @router.get("/api/models/{model_id:path}/residency")
+    def get_residency(model_id: str) -> dict:
+        try:
+            plane.registry.get(model_id)
+        except ModelControlError as exc:
+            raise_model_error(exc)
+        return {
+            "residency": plane.residency.snapshot(model_id).public_dict(),
+            "policy": plane.residency.get_policy(model_id).public_dict(),
+            "runtimeBinding": plane.get_runtime_binding(model_id).public_dict(),
+        }
+
+    class ResidencyPolicyUpdate(BaseModel):
+        policy: str | None = None
+        idleUnloadSeconds: float | None = None
+        fullUnloadSeconds: float | None = None
+        pinned: bool | None = None
+        loadOptions: dict[str, Any] | None = None
+
+    @router.put("/api/models/{model_id:path}/residency-policy")
+    def put_residency_policy(model_id: str, payload: ResidencyPolicyUpdate) -> dict:
+        try:
+            plane.registry.get(model_id)
+            policy = plane.residency.set_policy(
+                model_id, payload.model_dump(exclude_none=True)
+            )
+        except ModelControlError as exc:
+            raise_model_error(exc)
+        return {"policy": policy.public_dict()}
+
+    @router.get("/api/models/{model_id:path}/profile")
+    def get_profile(model_id: str) -> dict:
+        try:
+            plane.registry.get(model_id)
+            profile = plane.profiles.get_or_default(model_id)
+        except ModelControlError as exc:
+            raise_model_error(exc)
+        return {"profile": profile.public_dict()}
+
+    @router.put("/api/models/{model_id:path}/profile")
+    def put_profile(model_id: str, payload: ProfileUpdate) -> dict:
+        try:
+            plane.registry.get(model_id)
+            data = payload.model_dump(exclude_none=True)
+            activate = bool(data.pop("activate", False))
+            # Merge with existing so partial updates work
+            current = plane.profiles.get_or_default(model_id).public_dict()
+            merged = {
+                "temperature": data.get("temperature", current["temperature"]),
+                "topP": data.get("topP", current["topP"]),
+                "topK": data.get("topK", current["topK"]),
+                "maxTokens": data.get("maxTokens", current["maxTokens"]),
+                "repeatPenalty": data.get("repeatPenalty", current["repeatPenalty"]),
+                "seed": data.get("seed", current["seed"]),
+                "systemPrompt": data.get("systemPrompt", current["systemPrompt"]),
+            }
+            profile = plane.profiles.save(model_id, merged, activate=activate)
+            if activate:
+                plane.registry.activate(model_id)
+            plane.store.append_audit(
+                "profile_updated",
+                detail={"modelId": model_id, "activate": activate},
+            )
+        except ModelControlError as exc:
+            raise_model_error(exc)
+        return {"profile": profile.public_dict(), "activeModelId": plane.store.get_active_model_id()}
+
+    @router.post("/api/models/{model_id:path}/activate")
+    def activate_model(model_id: str) -> dict:
+        try:
+            model = plane.registry.activate(model_id)
+            plane.profiles.save(
+                model_id,
+                plane.profiles.get_or_default(model_id).public_dict(),
+                activate=True,
+            )
+        except ModelControlError as exc:
+            raise_model_error(exc)
+        return {"model": model.public_dict(), "activeModelId": model.id}
+
+    @router.post("/api/models/{model_id:path}/load")
+    async def load_model(model_id: str, payload: LoadRequest | None = None) -> dict:
+        body = payload.model_dump() if payload else {}
+        options = parse_load_options(body)
+        try:
+            result = await plane.load_model(
+                model_id, options, confirm_oom=bool(body.get("confirmOom"))
+            )
+        except ModelControlError as exc:
+            raise_model_error(exc)
+        return result
+
+    @router.post("/api/models/{model_id:path}/unload")
+    async def unload_model(model_id: str) -> dict:
+        try:
+            result = await plane.unload_model(model_id)
+        except ModelControlError as exc:
+            raise_model_error(exc)
+        return result
+
+    @router.get("/api/models/{model_id:path}/capabilities")
+    def get_capabilities(model_id: str) -> dict:
+        try:
+            caps = [c.public_dict() for c in plane.probes.list_for_model(model_id)]
+            model = plane.registry.get(model_id)
+        except ModelControlError as exc:
+            raise_model_error(exc)
+        return {"modelId": model_id, "declared": model.capabilities.public_dict(), "results": caps}
+
+    @router.post("/api/models/{model_id:path}/probe")
+    async def probe_model(model_id: str, payload: ProbeRequest | None = None) -> dict:
+        try:
+            results = await plane.probes.probe(
+                model_id,
+                capabilities=payload.capabilities if payload else None,
+                timeout_seconds=payload.timeoutSeconds if payload else 15.0,
+            )
+        except ModelControlError as exc:
+            raise_model_error(exc)
+        return {"results": [r.public_dict() for r in results]}
+
+    @router.post("/api/models/{model_id:path}/benchmark")
+    async def benchmark_model(model_id: str) -> dict:
+        try:
+            result = await plane.benchmarks.quick_benchmark(model_id)
+        except ModelControlError as exc:
+            raise_model_error(exc)
+        return {"benchmark": result}
+
+    @router.post("/api/models/{model_id:path}/test")
+    async def test_model_inference(model_id: str, payload: InferenceTestRequest) -> dict:
+        """Exercise real gateway + provider inference (no fabricated output)."""
+        try:
+            result = await plane.test_inference(
+                model_id,
+                prompt=payload.prompt,
+                max_tokens=payload.maxTokens,
+                stream=payload.stream,
+            )
+        except ModelControlError as exc:
+            raise_model_error(exc)
+        return {"result": result}
+
+
+    # Bare detail/delete AFTER all `{model_id:path}/…` suffixes so
+    # /profile, /residency, /activate, etc. are never swallowed.
+
+    @router.get("/api/models/{model_id:path}")
     def get_model(model_id: str) -> dict:
+        first = model_id.split("/", 1)[0]
+        if first in MODELS_STATIC_SEGMENTS and "/" not in model_id:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "route_not_found",
+                    "message": f"/{model_id} is a reserved models path; no handler matched",
+                },
+            )
         try:
             model = plane.registry.get(model_id)
             profile = plane.profiles.get_or_default(model_id)
@@ -409,107 +586,7 @@ def build_models_router(plane: ModelControlPlane) -> APIRouter:
             "resourceEstimate": estimate,
         }
 
-    @router.get("/api/models/{model_id}/residency")
-    def get_residency(model_id: str) -> dict:
-        try:
-            plane.registry.get(model_id)
-        except ModelControlError as exc:
-            raise_model_error(exc)
-        return {
-            "residency": plane.residency.snapshot(model_id).public_dict(),
-            "policy": plane.residency.get_policy(model_id).public_dict(),
-            "runtimeBinding": plane.get_runtime_binding(model_id).public_dict(),
-        }
-
-    class ResidencyPolicyUpdate(BaseModel):
-        policy: str | None = None
-        idleUnloadSeconds: float | None = None
-        fullUnloadSeconds: float | None = None
-        pinned: bool | None = None
-        loadOptions: dict[str, Any] | None = None
-
-    @router.put("/api/models/{model_id}/residency-policy")
-    def put_residency_policy(model_id: str, payload: ResidencyPolicyUpdate) -> dict:
-        try:
-            plane.registry.get(model_id)
-            policy = plane.residency.set_policy(
-                model_id, payload.model_dump(exclude_none=True)
-            )
-        except ModelControlError as exc:
-            raise_model_error(exc)
-        return {"policy": policy.public_dict()}
-
-    @router.get("/api/models/{model_id}/profile")
-    def get_profile(model_id: str) -> dict:
-        try:
-            plane.registry.get(model_id)
-            profile = plane.profiles.get_or_default(model_id)
-        except ModelControlError as exc:
-            raise_model_error(exc)
-        return {"profile": profile.public_dict()}
-
-    @router.put("/api/models/{model_id}/profile")
-    def put_profile(model_id: str, payload: ProfileUpdate) -> dict:
-        try:
-            plane.registry.get(model_id)
-            data = payload.model_dump(exclude_none=True)
-            activate = bool(data.pop("activate", False))
-            # Merge with existing so partial updates work
-            current = plane.profiles.get_or_default(model_id).public_dict()
-            merged = {
-                "temperature": data.get("temperature", current["temperature"]),
-                "topP": data.get("topP", current["topP"]),
-                "topK": data.get("topK", current["topK"]),
-                "maxTokens": data.get("maxTokens", current["maxTokens"]),
-                "repeatPenalty": data.get("repeatPenalty", current["repeatPenalty"]),
-                "seed": data.get("seed", current["seed"]),
-                "systemPrompt": data.get("systemPrompt", current["systemPrompt"]),
-            }
-            profile = plane.profiles.save(model_id, merged, activate=activate)
-            if activate:
-                plane.registry.activate(model_id)
-            plane.store.append_audit(
-                "profile_updated",
-                detail={"modelId": model_id, "activate": activate},
-            )
-        except ModelControlError as exc:
-            raise_model_error(exc)
-        return {"profile": profile.public_dict(), "activeModelId": plane.store.get_active_model_id()}
-
-    @router.post("/api/models/{model_id}/activate")
-    def activate_model(model_id: str) -> dict:
-        try:
-            model = plane.registry.activate(model_id)
-            plane.profiles.save(
-                model_id,
-                plane.profiles.get_or_default(model_id).public_dict(),
-                activate=True,
-            )
-        except ModelControlError as exc:
-            raise_model_error(exc)
-        return {"model": model.public_dict(), "activeModelId": model.id}
-
-    @router.post("/api/models/{model_id}/load")
-    async def load_model(model_id: str, payload: LoadRequest | None = None) -> dict:
-        body = payload.model_dump() if payload else {}
-        options = parse_load_options(body)
-        try:
-            result = await plane.load_model(
-                model_id, options, confirm_oom=bool(body.get("confirmOom"))
-            )
-        except ModelControlError as exc:
-            raise_model_error(exc)
-        return result
-
-    @router.post("/api/models/{model_id}/unload")
-    async def unload_model(model_id: str) -> dict:
-        try:
-            result = await plane.unload_model(model_id)
-        except ModelControlError as exc:
-            raise_model_error(exc)
-        return result
-
-    @router.delete("/api/models/{model_id}")
+    @router.delete("/api/models/{model_id:path}")
     async def delete_model(model_id: str) -> dict:
         try:
             model = plane.registry.get(model_id)
@@ -543,49 +620,6 @@ def build_models_router(plane: ModelControlPlane) -> APIRouter:
         except ModelControlError as exc:
             raise_model_error(exc)
         return {"deleted": True, "modelId": model_id}
-
-    @router.get("/api/models/{model_id}/capabilities")
-    def get_capabilities(model_id: str) -> dict:
-        try:
-            caps = [c.public_dict() for c in plane.probes.list_for_model(model_id)]
-            model = plane.registry.get(model_id)
-        except ModelControlError as exc:
-            raise_model_error(exc)
-        return {"modelId": model_id, "declared": model.capabilities.public_dict(), "results": caps}
-
-    @router.post("/api/models/{model_id}/probe")
-    async def probe_model(model_id: str, payload: ProbeRequest | None = None) -> dict:
-        try:
-            results = await plane.probes.probe(
-                model_id,
-                capabilities=payload.capabilities if payload else None,
-                timeout_seconds=payload.timeoutSeconds if payload else 15.0,
-            )
-        except ModelControlError as exc:
-            raise_model_error(exc)
-        return {"results": [r.public_dict() for r in results]}
-
-    @router.post("/api/models/{model_id}/benchmark")
-    async def benchmark_model(model_id: str) -> dict:
-        try:
-            result = await plane.benchmarks.quick_benchmark(model_id)
-        except ModelControlError as exc:
-            raise_model_error(exc)
-        return {"benchmark": result}
-
-    @router.post("/api/models/{model_id}/test")
-    async def test_model_inference(model_id: str, payload: InferenceTestRequest) -> dict:
-        """Exercise real gateway + provider inference (no fabricated output)."""
-        try:
-            result = await plane.test_inference(
-                model_id,
-                prompt=payload.prompt,
-                max_tokens=payload.maxTokens,
-                stream=payload.stream,
-            )
-        except ModelControlError as exc:
-            raise_model_error(exc)
-        return {"result": result}
 
     @router.get("/api/model-providers")
     def list_providers() -> dict:

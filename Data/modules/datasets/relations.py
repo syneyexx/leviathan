@@ -8,6 +8,7 @@ Optional model extractors may plug in later but must not block the base path.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
@@ -24,6 +25,8 @@ _ENTITY_KEY_RE = re.compile(
 )
 _MIN_CONFIDENCE = 0.55
 _MAX_RELATIONS_PER_DOC = 24
+# Bump when extraction semantics change so unchanged docs rebuild honestly.
+RELATION_EXTRACTOR_VERSION = "v1"
 
 
 @dataclass
@@ -68,6 +71,31 @@ def stable_relation_atom_id(
         f"{dataset_id}|{version_id}|{subject_ref}|{object_ref}|{relation_class}".encode("utf-8")
     ).hexdigest()[:32]
     return f"rel:{dataset_id}:{digest}"
+
+
+def relation_input_fingerprint(
+    rec: CanonicalRecord,
+    *,
+    content_hash: str,
+    dataset_id: str,
+    version_id: str,
+) -> str:
+    """Stable fingerprint of inputs that affect relation extraction.
+
+    Used to skip rebuilds only when content + structured labels/metadata +
+    extractor version are proven unchanged — never a silent skip.
+    """
+    payload = {
+        "extractorVersion": RELATION_EXTRACTOR_VERSION,
+        "contentHash": content_hash,
+        "datasetId": dataset_id,
+        "versionId": version_id,
+        "recordId": rec.id,
+        "labels": rec.labels or {},
+        "metadata": rec.metadata or {},
+    }
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 def _norm_ref(value: Any, *, prefix: str = "entity") -> str | None:
@@ -282,11 +310,12 @@ def store_verified_relations(
     version_id: str,
     replace_document_ids: Iterable[str] | None = None,
 ) -> dict[str, Any]:
-    """Persist verified atoms idempotently; reject the rest."""
-    if replace_document_ids:
-        for doc_id in replace_document_ids:
-            knowledge.delete_relation_atoms_for_document(doc_id)
+    """Persist verified atoms idempotently; reject the rest.
 
+    Persistence goes through KnowledgeStore's bounded transaction APIs —
+    never one SQLite connect/commit per atom.
+    """
+    accepted_by_doc: dict[str, list[dict[str, Any]]] = {}
     accepted = 0
     rejected = 0
     samples: list[dict[str, Any]] = []
@@ -304,28 +333,53 @@ def store_verified_relations(
             object_ref=verified.object_ref,
             relation_class=verified.relation_class.value,
         )
-        knowledge.upsert_relation_atom(
-            subject_ref=verified.subject_ref,
-            object_ref=verified.object_ref,
-            relation_class=verified.relation_class,
-            supporting_evidence_refs=verified.evidence_refs,
-            document_id=verified.document_id,
-            chunk_id=verified.chunk_id,
-            confidence=verified.confidence,
-            notes=f"{verified.notes}|evidence={verified.evidence[:180]}",
-            atom_id=atom_id,
+        doc_id = str(verified.document_id or "").strip()
+        if not doc_id:
+            rejected += 1
+            if len(samples) < 8:
+                samples.append({**verified.public_dict(), "rejectReason": "missing_document_id"})
+            continue
+        accepted_by_doc.setdefault(doc_id, []).append(
+            {
+                "atom_id": atom_id,
+                "subject_ref": verified.subject_ref,
+                "object_ref": verified.object_ref,
+                "relation_class": verified.relation_class,
+                "supporting_evidence_refs": verified.evidence_refs,
+                "document_id": doc_id,
+                "chunk_id": verified.chunk_id,
+                "confidence": verified.confidence,
+                "notes": f"{verified.notes}|evidence={verified.evidence[:180]}",
+            }
         )
         accepted += 1
         if len(samples) < 8:
             samples.append(verified.public_dict())
 
+    replace_ids = {str(d).strip() for d in (replace_document_ids or []) if str(d).strip()}
+    # Documents marked for replace with zero accepted atoms still need a delete.
+    for doc_id in replace_ids:
+        accepted_by_doc.setdefault(doc_id, [])
+
+    persist_meta: dict[str, Any] = {"documents": 0, "deleted": 0, "upserted": 0, "transaction": "none"}
+    if accepted_by_doc:
+        if len(accepted_by_doc) == 1:
+            doc_id, atoms = next(iter(accepted_by_doc.items()))
+            persist_meta = knowledge.replace_document_relation_atoms(doc_id, atoms)
+        else:
+            persist_meta = knowledge.replace_relation_atoms_batch(
+                [(doc_id, atoms) for doc_id, atoms in accepted_by_doc.items()]
+            )
+
     return {
         "relationsAccepted": accepted,
         "relationsRejected": rejected,
         "relationSamples": samples,
+        "persist": persist_meta,
         "truth": {
             "only_evidence_backed_relations_stored": True,
             "uncertain_relations_are_not_facts": True,
+            "relation_writes_use_knowledge_store_transactions": True,
         },
     }
 
@@ -356,6 +410,68 @@ def extract_and_store_relations_for_record(
         version_id=version_id,
         replace_document_ids=[document_id] if replace else None,
     )
+
+
+def build_verified_relation_atoms_for_record(
+    rec: CanonicalRecord,
+    *,
+    document_id: str,
+    dataset_id: str,
+    version_id: str,
+    text: str,
+    max_relations: int = _MAX_RELATIONS_PER_DOC,
+) -> dict[str, Any]:
+    """Extract+verify without persisting — for bounded KnowledgeStore batch flushes."""
+    candidates = extract_relation_candidates(
+        rec,
+        document_id=document_id,
+        dataset_id=dataset_id,
+        version_id=version_id,
+        text=text,
+        max_relations=max_relations,
+    )
+    atoms: list[dict[str, Any]] = []
+    accepted = 0
+    rejected = 0
+    samples: list[dict[str, Any]] = []
+    for cand in candidates:
+        verified = verify_candidate(cand)
+        if verified.rejected:
+            rejected += 1
+            if len(samples) < 8:
+                samples.append(verified.public_dict())
+            continue
+        atom_id = stable_relation_atom_id(
+            dataset_id=dataset_id,
+            version_id=version_id,
+            subject_ref=verified.subject_ref,
+            object_ref=verified.object_ref,
+            relation_class=verified.relation_class.value,
+        )
+        atoms.append(
+            {
+                "atom_id": atom_id,
+                "subject_ref": verified.subject_ref,
+                "object_ref": verified.object_ref,
+                "relation_class": verified.relation_class,
+                "supporting_evidence_refs": verified.evidence_refs,
+                "document_id": document_id,
+                "chunk_id": verified.chunk_id,
+                "confidence": verified.confidence,
+                "notes": f"{verified.notes}|evidence={verified.evidence[:180]}",
+            }
+        )
+        accepted += 1
+        if len(samples) < 8:
+            samples.append(verified.public_dict())
+    return {
+        "documentId": document_id,
+        "atoms": atoms,
+        "relationsAccepted": accepted,
+        "relationsRejected": rejected,
+        "relationSamples": samples,
+        "relationInputFingerprint": None,  # caller fills when known
+    }
 
 
 # Extension point: optional model-backed extractor (must never be required).

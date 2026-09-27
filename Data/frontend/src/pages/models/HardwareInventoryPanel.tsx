@@ -81,7 +81,7 @@ export function HardwareInventoryPanel({
           No local accelerator detected
         </p>
       ) : (
-        <div className="lv-hardware-device-list" style={{ marginTop: "0.75rem", display: "grid", gap: "0.75rem" }}>
+        <div className="lv-hardware-device-list" style={{ marginTop: "0.75rem" }}>
           {devices.map((device: ComputeDeviceInfo) => (
             <div key={device.stableDeviceId} className="lv-hardware-device">
               <strong>
