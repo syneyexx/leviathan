@@ -27,10 +27,10 @@ export type MeasuredValue<T> =
   | { kind: "not_available" };
 
 export type ModuleKpis = {
-  featureFlag: "ON" | "OFF";
-  totalModules: number;
-  executable: number;
-  healthIssues: number;
+  featureFlag: "ON" | "OFF" | null;
+  totalModules: number | null;
+  executable: number | null;
+  healthIssues: number | null;
   updateAvailable: MeasuredValue<number>;
 };
 
@@ -228,8 +228,17 @@ export function deriveKpis(
   snapshot: ModuleSnapshot | null,
   updateEvidenceByModule: Record<string, Record<string, unknown> | null | undefined>,
 ): ModuleKpis {
-  const modules = snapshot?.modules ?? [];
-  const managerOn = snapshot == null ? true : snapshot.enabled !== false;
+  if (snapshot == null) {
+    return {
+      featureFlag: null,
+      totalModules: null,
+      executable: null,
+      healthIssues: null,
+      updateAvailable: { kind: "not_available" },
+    };
+  }
+  const modules = snapshot.modules ?? [];
+  const managerOn = snapshot.enabled !== false;
   let measuredUpdates = 0;
   let anyChecked = false;
   for (const row of modules) {

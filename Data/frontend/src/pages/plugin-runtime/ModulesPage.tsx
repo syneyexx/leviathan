@@ -240,7 +240,15 @@ export function ModulesPage() {
           value: String(ws.kpis.updateAvailable.value),
           tone: ws.kpis.updateAvailable.value > 0 ? ("cyan" as const) : ("ok" as const),
         }
-      : { value: formatMeasured(ws.kpis.updateAvailable), tone: "muted" as const };
+      : {
+          value: formatMeasured(ws.kpis.updateAvailable),
+          tone: "muted" as const,
+        };
+
+  const flagValue = ws.kpis.featureFlag ?? "—";
+  const flagTone =
+    ws.kpis.featureFlag === "ON" ? ("ok" as const) : ws.kpis.featureFlag == null ? ("muted" as const) : ("muted" as const);
+  const numOrDash = (n: number | null) => (n == null ? "—" : String(n));
 
   return (
     <AppShell
@@ -270,24 +278,21 @@ export function ModulesPage() {
             <div className="lv-mod-kpi-icon">
               <IconPuzzle />
             </div>
-            <KpiValue value={ws.kpis.featureFlag} tone={ws.kpis.featureFlag === "ON" ? "ok" : "muted"} />
+            <KpiValue value={flagValue} tone={flagTone} />
             <div className="lv-mod-kpi-label">Feature Flag</div>
           </article>
           <article className="lv-mod-kpi">
             <div className="lv-mod-kpi-icon">
               <IconStack />
             </div>
-            <KpiValue value={ws.loading && !ws.snapshot ? "—" : String(ws.kpis.totalModules)} />
+            <KpiValue value={numOrDash(ws.kpis.totalModules)} />
             <div className="lv-mod-kpi-label">Total Modules</div>
           </article>
           <article className="lv-mod-kpi">
             <div className="lv-mod-kpi-icon">
               <IconPlay />
             </div>
-            <KpiValue
-              value={ws.loading && !ws.snapshot ? "—" : String(ws.kpis.executable)}
-              tone="ok"
-            />
+            <KpiValue value={numOrDash(ws.kpis.executable)} tone={ws.kpis.executable != null ? "ok" : "muted"} />
             <div className="lv-mod-kpi-label">Executable</div>
           </article>
           <article className={`lv-mod-kpi${ws.kpis.healthIssues ? " is-warn" : ""}`}>
@@ -295,8 +300,8 @@ export function ModulesPage() {
               <IconWarn />
             </div>
             <KpiValue
-              value={ws.loading && !ws.snapshot ? "—" : String(ws.kpis.healthIssues)}
-              tone={ws.kpis.healthIssues ? "err" : undefined}
+              value={numOrDash(ws.kpis.healthIssues)}
+              tone={ws.kpis.healthIssues ? "err" : ws.kpis.healthIssues == null ? "muted" : undefined}
             />
             <div className="lv-mod-kpi-label">Health Issues</div>
           </article>

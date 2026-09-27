@@ -104,7 +104,7 @@ export function useModulesWorkspace() {
   }, [searchParams]);
 
   const modules = useMemo(() => snapshot?.modules ?? [], [snapshot]);
-  const managerEnabled = snapshot?.enabled !== false;
+  const managerEnabled = snapshot != null && snapshot.enabled !== false;
 
   const rows = useMemo(
     () => filterModules(modules, query, filter, updateEvidenceByModule),

@@ -65,6 +65,13 @@ describe("Modules view models", () => {
     expect(formatMeasured(kpis.updateAvailable)).toBe("NOT CHECKED");
   });
 
+  it("does not invent KPIs when snapshot is missing", () => {
+    const kpis = deriveKpis(null, {});
+    expect(kpis.featureFlag).toBeNull();
+    expect(kpis.totalModules).toBeNull();
+    expect(kpis.updateAvailable.kind).toBe("not_available");
+  });
+
   it("counts updates only after check-update evidence", () => {
     const modules = [row({ id: "a", status: "READY" }), row({ id: "b", status: "READY" })];
     const evidence = {
