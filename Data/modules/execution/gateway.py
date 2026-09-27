@@ -763,6 +763,27 @@ class ExecutionGateway:
     ) -> CapabilityResult:
         if self.mcp_executor is None:
             raise RuntimeError("MCP executor not configured on ExecutionGateway")
+        # Trading boundary for MCP tools expanded from external finance packages.
+        meta = dict(getattr(definition, "metadata", None) or {})
+        if meta.get("marketsim_bypass_forbidden") or meta.get("real_money_blocked"):
+            from Data.modules.module_manager.external.trading_boundary import (
+                enforce_trading_boundary,
+                module_trading_flags,
+            )
+
+            flags = module_trading_flags(definition)
+            op = definition.provider_ref or definition.id
+            rejected = enforce_trading_boundary(
+                flags=flags,
+                capability_id=definition.id,
+                operation=str(op),
+                arguments=dict(request.arguments),
+                request_id=request.request_id or "",
+                provider_kind="mcp",
+                provider_ref=definition.provider_ref,
+            )
+            if rejected is not None:
+                return rejected
         # approved_by_user may arrive as a top-level sibling in API payloads — never authorize from it.
         return self.mcp_executor.execute_capability(
             definition.id,

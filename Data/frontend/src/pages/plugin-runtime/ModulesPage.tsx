@@ -67,6 +67,7 @@ export function ModulesPage() {
   const [query, setQuery] = useState("");
   const [lifecycleBusy, setLifecycleBusy] = useState(false);
   const [logLines, setLogLines] = useState<string[] | null>(null);
+  const [versionsJson, setVersionsJson] = useState<string | null>(null);
 
   const applySnapshot = useCallback((next: ModuleSnapshot) => {
     setSnapshot(next);
@@ -135,7 +136,19 @@ export function ModulesPage() {
   }
 
   async function onLifecycle(
-    action: "install" | "start" | "stop" | "restart" | "ensure-ready" | "logs" | "health" | "jobs",
+    action:
+      | "install"
+      | "start"
+      | "stop"
+      | "restart"
+      | "ensure-ready"
+      | "logs"
+      | "health"
+      | "jobs"
+      | "versions"
+      | "check-update"
+      | "rollback"
+      | "capabilities",
   ) {
     if (!selected) return;
     const id = moduleId(selected);
@@ -162,6 +175,21 @@ export function ModulesPage() {
       } else if (action === "jobs") {
         const res = await api.moduleJobs(id);
         toast(`Active jobs: ${res.count ?? (res.jobs?.length ?? 0)}`);
+      } else if (action === "versions") {
+        const res = await api.moduleVersions(id);
+        setVersionsJson(JSON.stringify(res.versions ?? [], null, 2));
+        toast(`Versions: ${res.count ?? 0}`);
+      } else if (action === "check-update") {
+        const res = await api.moduleCheckUpdate(id);
+        setVersionsJson(JSON.stringify(res.result ?? {}, null, 2));
+        toast(`Update available: ${String(res.result?.update_available ?? "?")}`);
+      } else if (action === "rollback") {
+        const res = await api.rollbackModuleVersion(id);
+        toast(`Rollback: ${JSON.stringify(res.result ?? "ok")}`);
+      } else if (action === "capabilities") {
+        const res = await api.moduleCapabilities(id);
+        setVersionsJson(JSON.stringify(res.capabilities ?? [], null, 2));
+        toast(`Capabilities: ${res.count ?? 0}`);
       } else {
         const logs = await api.moduleLogs(id);
         setLogLines(logs.lines ?? []);
@@ -436,6 +464,18 @@ export function ModulesPage() {
                     <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("logs")}>
                       Logs
                     </button>
+                    <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("capabilities")}>
+                      Capabilities
+                    </button>
+                    <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("versions")}>
+                      Versions
+                    </button>
+                    <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("check-update")}>
+                      Check Update
+                    </button>
+                    <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("rollback")}>
+                      Rollback
+                    </button>
                   </div>
                 ) : null}
 
@@ -469,6 +509,20 @@ export function ModulesPage() {
                       style={{ whiteSpace: "pre-wrap", maxHeight: 160, overflow: "auto", fontSize: 12 }}
                     >
                       {logLines.join("\n") || "(empty)"}
+                    </pre>
+                  </>
+                ) : null}
+
+                {versionsJson ? (
+                  <>
+                    <div className="lv-pr-panel-title" style={{ marginTop: 12 }}>
+                      Versions / Update / Capabilities
+                    </div>
+                    <pre
+                      className="lv-pr-console-log"
+                      style={{ whiteSpace: "pre-wrap", maxHeight: 180, overflow: "auto", fontSize: 12 }}
+                    >
+                      {versionsJson}
                     </pre>
                   </>
                 ) : null}

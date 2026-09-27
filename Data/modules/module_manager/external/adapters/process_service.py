@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
 from ...types import ModuleHealth, ModuleResult, ModuleStatus
 from ..install import InstallationService, InstallError
 from ..process import OwnedProcess, wait_for_probe
-from ..types import ExternalFailureCode, ExternalRuntimeState, normalize_capability_parts
+from ..types import ExternalFailureCode, ExternalRuntimeState, RuntimeMode, normalize_capability_parts
 from .base import AdapterContext, CancelCheck, ProgressCb
 from .cli import CliAdapter
 
@@ -22,6 +23,7 @@ class ProcessServiceAdapter:
         self._owned: OwnedProcess | None = None
         # Optional CLI invoke path for one-shot ops against the service.
         self._cli = CliAdapter(ctx)
+        self._last_used_at: datetime | None = None
 
     def runtime_state(self) -> ExternalRuntimeState:
         if self._owned and self._owned.is_alive():
@@ -71,6 +73,7 @@ class ProcessServiceAdapter:
             raise InstallError(ExternalFailureCode.START_FAILED, f"ready probe failed: {detail}")
 
         self._state = ExternalRuntimeState.RUNNING
+        self._touch()
         if self.ctx.store is not None:
             self.ctx.store.upsert_process(
                 module_id=self.ctx.module_id,
@@ -137,6 +140,7 @@ class ProcessServiceAdapter:
 
     def ensure_ready(self) -> dict[str, Any]:
         self._reconcile_persisted()
+        # Do not idle-stop here — ensure_ready means the caller needs the process.
         if self.runtime_state() == ExternalRuntimeState.RUNNING:
             ok, detail = wait_for_probe(
                 self.config.runtime.health_probe or self.config.runtime.ready_probe,
@@ -144,6 +148,7 @@ class ProcessServiceAdapter:
                 is_alive=lambda: bool(self._owned and self._owned.is_alive()),
             )
             if ok:
+                self._touch()
                 return {"ready": True, "status": "RUNNING", "detail": detail}
             self._state = ExternalRuntimeState.DEGRADED
             return {"ready": False, "code": ExternalFailureCode.HEALTH_FAILED.value, "detail": detail}
@@ -152,6 +157,7 @@ class ProcessServiceAdapter:
         return {"ready": True, **started}
 
     def health(self) -> ModuleHealth:
+        self.maybe_idle_shutdown()
         state = self.runtime_state()
         detail = state.value
         status = ModuleStatus.READY if state in {ExternalRuntimeState.RUNNING, ExternalRuntimeState.READY} else ModuleStatus.ERROR
@@ -165,8 +171,65 @@ class ProcessServiceAdapter:
                 "runtime_state": state.value,
                 "adapter": "PROCESS_SERVICE",
                 "process": self._owned.public_dict() if self._owned else None,
+                "idle_timeout_seconds": self.config.runtime.idle_timeout_seconds,
+                "last_used_at": self._last_used_at.isoformat() if self._last_used_at else None,
             },
         )
+
+    def maybe_idle_shutdown(self) -> dict[str, Any] | None:
+        """Stop when idle_timeout elapsed, mode is LAZY/RESIDENT, and process is alive.
+
+        Never terminates while the adapter believes work is in flight via recent touch.
+        ModuleManager.sweep_idle_modules also skips modules with active_jobs.
+        """
+        timeout = self.config.runtime.idle_timeout_seconds
+        if timeout is None or timeout <= 0:
+            return None
+        if self.config.runtime.mode not in {RuntimeMode.LAZY, RuntimeMode.RESIDENT}:
+            return None
+        if self.runtime_state() != ExternalRuntimeState.RUNNING:
+            return None
+        # Desired RUNNING without idle intent — operator wants it resident forever.
+        if self.ctx.store is not None:
+            rec = self.ctx.store.get_module(self.ctx.module_id)
+            # If desired_state is RUNNING and idle_timeout is set, idle still applies for LAZY.
+            if rec and rec.get("desired_state") == "RUNNING" and self.config.runtime.mode == RuntimeMode.RESIDENT:
+                # RESIDENT + explicit desired RUNNING: still honor idle_timeout when configured.
+                pass
+        last = self._last_used_at
+        if last is None and self.ctx.store is not None:
+            mod = self.ctx.store.get_module(self.ctx.module_id)
+            raw = (mod or {}).get("last_used_at")
+            if raw:
+                try:
+                    last = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+                except ValueError:
+                    last = None
+        if last is None:
+            # No use recorded yet — use process start time.
+            if self._owned and self._owned.started_at:
+                try:
+                    last = datetime.fromisoformat(str(self._owned.started_at).replace("Z", "+00:00"))
+                except ValueError:
+                    last = None
+        if last is None:
+            return None
+        now = datetime.now(timezone.utc)
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        idle_for = (now - last).total_seconds()
+        if idle_for < float(timeout):
+            return None
+        stopped = self.stop()
+        return {"stopped": True, "idle_for_seconds": idle_for, "timeout_seconds": timeout, **stopped}
+
+    def _touch(self) -> None:
+        self._last_used_at = datetime.now(timezone.utc)
+        if self.ctx.store is not None:
+            try:
+                self.ctx.store.touch_used(self.ctx.module_id)
+            except Exception:  # noqa: BLE001
+                pass
 
     def logs(self, *, limit: int = 200) -> list[str]:
         if self._owned:
@@ -208,6 +271,7 @@ class ProcessServiceAdapter:
                 error=ExternalFailureCode.START_FAILED.value,
                 output={"error": {"code": ExternalFailureCode.START_FAILED.value, "detail": ready}},
             )
+        self._touch()
         # Prefer HTTP operations when configured; else CLI against install root.
         if self.config.runtime.base_url or any(op.get("method") for op in self.config.runtime.operations):
             from .http_openapi import HttpOpenApiAdapter

@@ -20,6 +20,19 @@ class ModuleInstallRequest(BaseModel):
     ref: str | None = None
 
 
+class ModuleInstallVersionRequest(BaseModel):
+    ref: str | None = None
+    activate: bool = False
+
+
+class ModuleActivateVersionRequest(BaseModel):
+    version_id: str = Field(min_length=1, max_length=240)
+
+
+class ModuleRollbackVersionRequest(BaseModel):
+    version_id: str | None = None
+
+
 def build_modules_router(*, module_manager: Any, observability: Any, job_runtime: Any = None) -> APIRouter:
     router = APIRouter(tags=["modules"])
 
@@ -171,6 +184,100 @@ def build_modules_router(*, module_manager: Any, observability: Any, job_runtime
         except ModuleManagerError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {"module_id": module_id, "jobs": jobs, "count": len(jobs)}
+
+    @router.get("/api/modules/{module_id}/versions")
+    def module_versions(module_id: str) -> dict:
+        _require_enabled()
+        try:
+            versions = module_manager.list_versions(module_id)
+        except ModuleManagerError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"module_id": module_id, "versions": versions, "count": len(versions)}
+
+    @router.get("/api/modules/{module_id}/check-update")
+    def module_check_update(module_id: str) -> dict:
+        _require_enabled()
+        try:
+            result = module_manager.check_update(module_id)
+        except ModuleManagerError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"result": result}
+
+    @router.post("/api/modules/{module_id}/install-version")
+    def module_install_version(module_id: str, payload: ModuleInstallVersionRequest | None = None) -> dict:
+        _require_enabled()
+        payload = payload or ModuleInstallVersionRequest()
+        if job_runtime is not None and not payload.activate:
+            try:
+                from Data.modules.execution import CapabilityRequest
+
+                job = job_runtime.enqueue(
+                    CapabilityRequest(
+                        capability_id="external.module.install",
+                        arguments={
+                            "module_id": module_id,
+                            "ref": payload.ref,
+                            "activate": False,
+                        },
+                        requested_by="api.modules.install_version",
+                        idempotency_key=f"ext-install-ver:{module_id}:{payload.ref or 'active'}",
+                    )
+                )
+                return {"job_id": job.job_id, "run_id": getattr(job, "run_id", None), "status": "QUEUED"}
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            result = module_manager.install_version(
+                module_id,
+                ref=payload.ref,
+                activate=payload.activate,
+            )
+        except ModuleManagerError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        observability.emit(
+            "module_manager",
+            "install_version",
+            payload={"module_id": module_id, "ref": payload.ref, "activate": payload.activate},
+        )
+        return {"result": result, "module": module_manager.get(module_id).public_dict()}
+
+    @router.post("/api/modules/{module_id}/activate-version")
+    def module_activate_version(module_id: str, payload: ModuleActivateVersionRequest) -> dict:
+        _require_enabled()
+        try:
+            result = module_manager.activate_version(module_id, payload.version_id)
+        except ModuleManagerError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        observability.emit(
+            "module_manager",
+            "activate_version",
+            payload={"module_id": module_id, "version_id": payload.version_id},
+        )
+        return {"result": result, "module": module_manager.get(module_id).public_dict()}
+
+    @router.post("/api/modules/{module_id}/rollback-version")
+    def module_rollback_version(module_id: str, payload: ModuleRollbackVersionRequest | None = None) -> dict:
+        _require_enabled()
+        payload = payload or ModuleRollbackVersionRequest()
+        try:
+            result = module_manager.rollback_version(module_id, version_id=payload.version_id)
+        except ModuleManagerError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        observability.emit(
+            "module_manager",
+            "rollback_version",
+            payload={"module_id": module_id, "version_id": payload.version_id},
+        )
+        return {"result": result, "module": module_manager.get(module_id).public_dict()}
+
+    @router.post("/api/modules/sweep-idle")
+    def sweep_idle_modules() -> dict:
+        _require_enabled()
+        stopped = []
+        if hasattr(module_manager, "sweep_idle_modules"):
+            stopped = module_manager.sweep_idle_modules()
+        observability.emit("module_manager", "sweep_idle", payload={"stopped": len(stopped)})
+        return {"stopped": stopped, "count": len(stopped)}
 
     @router.post("/api/modules/{module_id}/execute")
     def execute_managed_module(module_id: str, payload: ModuleExecuteRequest) -> dict:

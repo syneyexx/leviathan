@@ -9,6 +9,7 @@ from Data.modules.function_runtime.types import SideEffect
 
 from ..manager import ModuleManager, ModuleManagerError
 from .post_result import queue_or_run_assimilation, resolve_assimilation_mode, run_assimilation_job
+from .trading_boundary import annotate_research_only, enforce_trading_boundary, module_trading_flags
 from .types import normalize_capability_parts
 
 
@@ -160,6 +161,35 @@ class ExternalModuleExecutor:
         module_id, operation = _split_ref(provider_ref, capability_id, arguments)
         args = dict(arguments)
         args.pop("operation", None)
+
+        # Trading boundary — before ensure_ready / invoke (MarketSim remains authority).
+        managed_pre = self.module_manager.get(module_id)
+        flags = module_trading_flags(managed_pre)
+        if self.catalog is not None and hasattr(self.catalog, "get"):
+            defn = self.catalog.get(capability_id)
+            if defn is not None:
+                cat_flags = module_trading_flags(defn)
+                flags = {
+                    "marketsim_bypass_forbidden": flags["marketsim_bypass_forbidden"]
+                    or cat_flags["marketsim_bypass_forbidden"],
+                    "real_money_blocked": flags["real_money_blocked"] or cat_flags["real_money_blocked"],
+                }
+        rejected = enforce_trading_boundary(
+            flags=flags,
+            capability_id=capability_id,
+            operation=operation,
+            arguments=args,
+            request_id=request_id,
+            provider_kind="module",
+            provider_ref=provider_ref,
+        )
+        if rejected is not None:
+            self._metric(
+                "external.failures",
+                {"module_id": module_id, "capability_id": capability_id, "status": "TRADING_BOUNDARY"},
+            )
+            return rejected
+
         try:
             try:
                 self.module_manager.ensure_ready(module_id)
@@ -230,6 +260,7 @@ class ExternalModuleExecutor:
                     "run_id": run_id,
                 },
             }
+        output = annotate_research_only(output, flags)
 
         cap_result = CapabilityResult(
             request_id=request_id or "",

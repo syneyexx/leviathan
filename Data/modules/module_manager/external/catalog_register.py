@@ -157,6 +157,16 @@ def register_external_module_capabilities(
                 "assimilation_mode": external.get("assimilation_mode") or "NONE",
                 "execution_class": _execution_class(external),
                 "resource_class": external.get("resource_class"),
+                "marketsim_bypass_forbidden": bool(
+                    (external.get("metadata") or {}).get("marketsim_bypass_forbidden")
+                    or external.get("marketsim_bypass_forbidden")
+                ),
+                "real_money_blocked": bool(
+                    (external.get("metadata") or {}).get("real_money_blocked")
+                    or (external.get("metadata") or {}).get("marketsim_bypass_forbidden")
+                    or external.get("real_money_blocked")
+                ),
+                "external_metadata": dict(external.get("metadata") or {}),
             },
         )
         if cap_id in catalog:

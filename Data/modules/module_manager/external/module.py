@@ -43,6 +43,8 @@ class ExternalCapabilityModule:
 
     def initialize(self, ctx: ModuleContext) -> None:
         self._ctx_services = dict(ctx.metadata or {})
+        if ctx.data_root:
+            self._ctx_services["data_root"] = ctx.data_root
         db_path = ctx.database_path or self._ctx_services.get("database_path")
         if db_path:
             self._store = ExternalCapabilityStore(Path(db_path))
@@ -198,6 +200,82 @@ class ExternalCapabilityModule:
         if self._adapter is None:
             return ExternalRuntimeState.DISCOVERED.value
         return self._adapter.runtime_state().value
+
+    def check_update(self) -> dict[str, Any]:
+        from .versions import check_update
+
+        return check_update(module_id=self._manifest.module_id, config=self._config, store=self._store)
+
+    def install_version(
+        self,
+        *,
+        ref: str | None = None,
+        activate: bool = False,
+        active_jobs: list[str] | None = None,
+        progress: Any = None,
+        cancel_check: Any = None,
+    ) -> dict[str, Any]:
+        from .versions import install_version
+
+        data_root = self._ctx_services.get("data_root")
+        if not data_root and self._adapter is not None:
+            data_root = getattr(getattr(self._adapter, "ctx", None), "data_root", None)
+        if not data_root:
+            raise RuntimeError("data_root required for install_version")
+        result = install_version(
+            module_id=self._manifest.module_id,
+            config=self._config,
+            data_root=data_root,
+            store=self._store,
+            ref=ref,
+            activate=activate,
+            active_jobs=active_jobs,
+            progress=progress,
+            cancel_check=cancel_check,
+        )
+        if activate and self._adapter is not None and result.get("install_root"):
+            self._adapter._install_root = result["install_root"]
+        return result
+
+    def activate_version(self, version_id: str, *, active_jobs: list[str] | None = None) -> dict[str, Any]:
+        from .versions import activate_version
+
+        return activate_version(
+            module_id=self._manifest.module_id,
+            version_id=version_id,
+            store=self._store,
+            active_jobs=active_jobs,
+            adapter=self._adapter,
+        )
+
+    def rollback_version(
+        self,
+        *,
+        version_id: str | None = None,
+        active_jobs: list[str] | None = None,
+    ) -> dict[str, Any]:
+        from .versions import rollback_version
+
+        return rollback_version(
+            module_id=self._manifest.module_id,
+            store=self._store,
+            active_jobs=active_jobs,
+            adapter=self._adapter,
+            version_id=version_id,
+        )
+
+    def maybe_idle_shutdown(self) -> dict[str, Any] | None:
+        """Stop LAZY/RESIDENT processes that exceeded idle_timeout with no active jobs."""
+        if self._adapter is None:
+            return None
+        if hasattr(self._adapter, "maybe_idle_shutdown"):
+            return self._adapter.maybe_idle_shutdown()
+        return None
+
+    def list_versions(self) -> list[dict[str, Any]]:
+        if self._store is None:
+            return []
+        return self._store.list_versions(self._manifest.module_id)
 
 
 def create_external_capability_module(manifest: ModuleManifest | None = None) -> ExternalCapabilityModule:

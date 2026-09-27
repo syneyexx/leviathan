@@ -9,7 +9,7 @@
     "NOT_APPLICABLE",
     "FAILED"
   ],
-  "notes": "Live third-party installs/network invocations are BLOCKED_EXTERNAL in CI unless dependencies and network are available. Fixture adapters prove CLI/PROCESS_SERVICE/HTTP_OPENAPI/SKILL_PACK/CATALOG_SOURCE/SCRIPT_PACKAGE/COMPOSITE. MCP lifecycle is covered via McpAdapter unit paths; live MCP connect remains BLOCKED_EXTERNAL. Chat rich result cards + skills UI + assimilation + skill shortlist wired. No per-repository wrappers.",
+  "notes": "Live third-party installs/network invocations are BLOCKED_EXTERNAL in CI unless dependencies and network are available. Fixture adapters prove CLI/PROCESS_SERVICE/HTTP_OPENAPI/SKILL_PACK/CATALOG_SOURCE/SCRIPT_PACKAGE/COMPOSITE/MCP. Source-level chat_rendering/artifact_support are PARTIAL unless that source has a dedicated invoke proof \u2014 generic CapabilityResultCards cover the shared Chat path. Version update, idle shutdown, and trading-boundary enforcement are fixture-tested. No per-repository wrappers.",
   "sources": [
     {
       "source": "wonderwhy-er/DesktopCommanderMCP",
@@ -23,8 +23,8 @@
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PASS",
-      "artifact_support": "PASS",
+      "chat_rendering": "PARTIAL",
+      "artifact_support": "PARTIAL",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
         "npx",
@@ -46,8 +46,8 @@
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PASS",
-      "artifact_support": "PASS",
+      "chat_rendering": "PARTIAL",
+      "artifact_support": "PARTIAL",
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
         "git",
@@ -69,7 +69,7 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PASS",
+      "chat_rendering": "PARTIAL",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
@@ -90,8 +90,8 @@
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PASS",
-      "artifact_support": "PASS",
+      "chat_rendering": "PARTIAL",
+      "artifact_support": "PARTIAL",
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
         "git",
@@ -113,8 +113,8 @@
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PASS",
-      "artifact_support": "PASS",
+      "chat_rendering": "PARTIAL",
+      "artifact_support": "PARTIAL",
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
         "git",
@@ -135,8 +135,8 @@
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PASS",
-      "artifact_support": "PASS",
+      "chat_rendering": "PARTIAL",
+      "artifact_support": "PARTIAL",
       "knowledge_assimilation": "PARTIAL",
       "known_external_requirements": [
         "git",
@@ -158,7 +158,7 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PASS",
+      "chat_rendering": "PARTIAL",
       "artifact_support": "PASS",
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
@@ -179,8 +179,8 @@
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PASS",
-      "artifact_support": "PASS",
+      "chat_rendering": "PARTIAL",
+      "artifact_support": "PARTIAL",
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
         "git",
@@ -201,8 +201,8 @@
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PASS",
-      "artifact_support": "PASS",
+      "chat_rendering": "PARTIAL",
+      "artifact_support": "PARTIAL",
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
         "git",
@@ -224,8 +224,8 @@
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PASS",
-      "artifact_support": "PASS",
+      "chat_rendering": "PARTIAL",
+      "artifact_support": "PARTIAL",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
         "git",
@@ -247,8 +247,8 @@
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PASS",
-      "artifact_support": "PASS",
+      "chat_rendering": "PARTIAL",
+      "artifact_support": "PARTIAL",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
         "git",
@@ -269,8 +269,8 @@
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PASS",
-      "artifact_support": "PASS",
+      "chat_rendering": "PARTIAL",
+      "artifact_support": "PARTIAL",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
         "git",
@@ -292,8 +292,8 @@
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PASS",
-      "artifact_support": "PASS",
+      "chat_rendering": "PARTIAL",
+      "artifact_support": "PARTIAL",
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
         "git",
@@ -315,7 +315,7 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PASS",
+      "chat_rendering": "PARTIAL",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
@@ -335,7 +335,7 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PASS",
+      "chat_rendering": "PARTIAL",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
@@ -355,7 +355,7 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PASS",
+      "chat_rendering": "PARTIAL",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
@@ -375,7 +375,7 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PASS",
+      "chat_rendering": "PARTIAL",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
@@ -395,7 +395,7 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PASS",
+      "chat_rendering": "PARTIAL",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
@@ -415,7 +415,7 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PASS",
+      "chat_rendering": "PARTIAL",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
@@ -435,7 +435,7 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PASS",
+      "chat_rendering": "PARTIAL",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
@@ -455,7 +455,7 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PASS",
+      "chat_rendering": "PARTIAL",
       "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [

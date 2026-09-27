@@ -880,6 +880,42 @@ export const api = {
     return request(`/api/modules/${encodeURIComponent(moduleId)}/jobs`);
   },
 
+  moduleVersions(moduleId: string): Promise<{ versions: Array<Record<string, unknown>>; count: number }> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/versions`);
+  },
+
+  moduleCheckUpdate(moduleId: string): Promise<{ result: Record<string, unknown> }> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/check-update`);
+  },
+
+  installModuleVersion(
+    moduleId: string,
+    payload: { ref?: string; activate?: boolean } = {},
+  ): Promise<Record<string, unknown>> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/install-version`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  activateModuleVersion(moduleId: string, versionId: string): Promise<Record<string, unknown>> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/activate-version`, {
+      method: "POST",
+      body: JSON.stringify({ version_id: versionId }),
+    });
+  },
+
+  rollbackModuleVersion(moduleId: string, versionId?: string): Promise<Record<string, unknown>> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/rollback-version`, {
+      method: "POST",
+      body: JSON.stringify(versionId ? { version_id: versionId } : {}),
+    });
+  },
+
+  sweepIdleModules(): Promise<{ stopped: Array<Record<string, unknown>>; count: number }> {
+    return request("/api/modules/sweep-idle", { method: "POST" });
+  },
+
   executeModule(
     moduleId: string,
     operation: string,

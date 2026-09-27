@@ -916,7 +916,9 @@ Adapter kinds: `DECLARATIVE`, `MCP`, `PROTOCOL`, `SKILL`.
 - **Adapters:** `MCP` (via McpBridge), `CLI`, `PROCESS_SERVICE`, `HTTP_OPENAPI`, `SKILL_PACK`, `CATALOG_SOURCE`, `SCRIPT_PACKAGE`, `COMPOSITE`.
 - **Declarative manifests:** `Data/external_capabilities/*/module.json` (plus existing `Data/modules/*/module.json`). Top-level `external` folds into manifest metadata.
 - **Factory:** `create_external_capability_module(manifest=...)` — ModuleManager calls factories with `manifest=` when the signature accepts it; legacy `factory()` still works.
-- **Lifecycle API:** `ensure_installed`, `start`, `stop`, `restart`, `ensure_ready`, `health`, `logs`, `active_jobs` on ModuleManager. HTTP: `/api/modules/{id}/install|start|stop|restart|health|logs|capabilities|jobs`.
+- **Lifecycle API:** `ensure_installed`, `start`, `stop`, `restart`, `ensure_ready`, `health`, `logs`, `active_jobs` on ModuleManager. HTTP: `/api/modules/{id}/install|start|stop|restart|ensure-ready|health|logs|capabilities|jobs`.
+- **Version control:** `check_update`, `install_version`, `activate_version`, `rollback_version`, `list_versions`. HTTP: `/api/modules/{id}/check-update|versions|install-version|activate-version|rollback-version`. Activation refuses while active jobs exist (`UPDATE_BLOCKED_ACTIVE`).
+- **Idle shutdown:** LAZY/RESIDENT process services honor `runtime.idle_timeout_seconds`; `ModuleManager.sweep_idle_modules` / `POST /api/modules/sweep-idle` stop idle processes with no active jobs.
 - **Execution:** `ExternalModuleExecutor` is wired as `ExecutionGateway.module_executor`. Catalogued MODULE capabilities execute through the gateway; MCP tools remain McpBridge-owned.
 - **Skills:** SKILL.md importer indexes metadata; instructions load on demand. Large catalogs (`CATALOG_SOURCE`) never enter system prompts. HTTP: `/api/skills` (search/paginate), `/api/skills/{id}`, `/api/skills/{id}/enable`.
 - **Assimilation:** `KnowledgeAssimilationService.assimilate_external_capability` + `external.knowledge.assimilate` capability. Modes NONE / EVIDENCE / KNOWLEDGE_CANDIDATE / AUTO_KNOWLEDGE. Background via JobRuntime when available; Chat may show "Knowledge ingestion queued".
@@ -924,7 +926,7 @@ Adapter kinds: `DECLARATIVE`, `MCP`, `PROTOCOL`, `SKILL`.
 - **CONTROL persistence:** `external_modules`, `external_module_versions`, `external_process_records`, `external_skills`, `external_skill_catalogs`, `external_plugin_bindings`, `external_log_windows` (domain migration v3). No fourth database.
 - **Process ownership:** PID + fingerprint reconciliation — persisted RUNNING is never trusted after restart; PID-reuse kills are refused.
 - **Optional modules:** missing/failed third-party installs do not prevent LEVIATHAN boot.
-- **Trading boundary:** external finance packages are research/analytics only; MarketSim remains trading authority; real-money remains BLOCKED.
+- **Trading boundary:** external finance packages with `marketsim_bypass_forbidden` / `real_money_blocked` are research/analytics only. Mutation-like ops (orders/live trades) are REJECTED at `ExternalModuleExecutor` and MCP dispatch; MarketSim remains trading authority; real-money remains BLOCKED.
 
 Acceptance matrix (machine-readable): `Data/backend/tests/external_sources_acceptance_matrix.json`.
 

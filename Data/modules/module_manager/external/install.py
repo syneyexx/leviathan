@@ -91,13 +91,15 @@ class InstallationService:
             root = Path(config.source.path).expanduser().resolve()
             if not root.exists():
                 raise InstallError(ExternalFailureCode.NOT_INSTALLED, f"path missing: {root}")
-            version_id = f"{module_id}:path:{_hash_text(str(root))[:12]}"
+            # Include ref so install_version/activate can distinguish pinned path snapshots.
+            ref_key = config.source.ref or "local"
+            version_id = f"{module_id}:path:{_hash_text(f'{root}:{ref_key}')[:12]}"
             _prog(1.0, "installed", "local path ready")
             return InstallResult(
                 version_id=version_id,
                 module_id=module_id,
                 install_root=str(root),
-                source_ref=config.source.ref,
+                source_ref=config.source.ref or ref_key,
                 resolved_commit=None,
                 content_hash=_dir_fingerprint(root),
                 strategies=["NONE"],

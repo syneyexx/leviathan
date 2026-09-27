@@ -1093,6 +1093,218 @@ class ExternalAssimilationAndScaleTests(unittest.TestCase):
             assert row is not None
             self.assertNotEqual(row["runtime_state"], "RUNNING")
 
+    def test_version_update_activate_rollback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "mods" / "fake-cli"
+            root.mkdir(parents=True)
+            tool = FIXTURES / "fake_cli" / "tool.py"
+            manifest = {
+                "module_id": "fake-cli",
+                "name": "Fake CLI",
+                "version": "0.0.1",
+                "entrypoint": FACTORY,
+                "external": {
+                    "adapter": "CLI",
+                    "source_type": "path",
+                    "path": str(tool.parent),
+                    "ref": "v1",
+                    "install": {"strategy": "NONE"},
+                    "runtime": {
+                        "command": [sys.executable, str(tool), "{query}"],
+                        "operations": [
+                            {"name": "search", "command": [sys.executable, str(tool), "{query}"]}
+                        ],
+                    },
+                    "result": {"format": "json"},
+                },
+            }
+            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+            db = Path(tmp) / "control.db"
+            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+            manager.discover()
+            manager.initialize("fake-cli", ModuleContext(database_path=str(db), data_root=tmp))
+            v1 = manager.install_version("fake-cli", ref="v1", activate=True)
+            self.assertTrue(v1.get("version_id"))
+            v2 = manager.install_version("fake-cli", ref="v2", activate=False)
+            self.assertNotEqual(v1["version_id"], v2["version_id"])
+            check = manager.check_update("fake-cli")
+            self.assertIn("update_available", check)
+            # Active job blocks activation.
+            manager.register_job("fake-cli", "job-busy")
+            with self.assertRaises(Exception):
+                manager.activate_version("fake-cli", v2["version_id"])
+            manager.unregister_job("fake-cli", "job-busy")
+            activated = manager.activate_version("fake-cli", v2["version_id"])
+            self.assertEqual(activated["version_id"], v2["version_id"])
+            rolled = manager.rollback_version("fake-cli", version_id=v1["version_id"])
+            self.assertEqual(rolled["version_id"], v1["version_id"])
+            versions = manager.list_versions("fake-cli")
+            self.assertGreaterEqual(len(versions), 2)
+
+    def test_trading_boundary_rejects_mutation(self) -> None:
+        from Data.modules.module_manager.external.trading_boundary import (
+            enforce_trading_boundary,
+            looks_like_trading_mutation,
+        )
+
+        self.assertTrue(looks_like_trading_mutation("place_order", {"symbol": "AAPL", "side": "BUY", "quantity": 1}))
+        self.assertFalse(looks_like_trading_mutation("analyze_factor", {"symbol": "AAPL"}))
+        rejected = enforce_trading_boundary(
+            flags={"marketsim_bypass_forbidden": True, "real_money_blocked": True},
+            capability_id="external.vibe_trading.place_order",
+            operation="place_order",
+            arguments={"symbol": "NVDA", "side": "BUY", "quantity": 10},
+            request_id="tb-1",
+        )
+        assert rejected is not None
+        self.assertEqual(rejected.status.value, "REJECTED")
+        self.assertIn("TRADING_BOUNDARY", rejected.error or "")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "mods" / "fake-finance"
+            root.mkdir(parents=True)
+            tool = FIXTURES / "fake_cli" / "tool.py"
+            manifest = {
+                "module_id": "fake-finance",
+                "name": "Fake Finance",
+                "version": "0.0.1",
+                "entrypoint": FACTORY,
+                "external": {
+                    "adapter": "CLI",
+                    "source_type": "path",
+                    "path": str(tool.parent),
+                    "install": {"strategy": "NONE"},
+                    "runtime": {
+                        "command": [sys.executable, str(tool), "{query}"],
+                        "operations": [
+                            {
+                                "name": "place_order",
+                                "command": [sys.executable, str(tool), "{query}"],
+                            },
+                            {
+                                "name": "analyze",
+                                "command": [sys.executable, str(tool), "{query}"],
+                            },
+                        ],
+                    },
+                    "result": {"format": "json"},
+                    "domain": "finance",
+                    "metadata": {
+                        "marketsim_bypass_forbidden": True,
+                        "real_money_blocked": True,
+                    },
+                },
+                "capabilities": [
+                    {
+                        "capability_id": "external.fake_finance.place_order",
+                        "name": "Place Order",
+                        "external_name": "place_order",
+                        "side_effects": ["READ"],
+                    },
+                    {
+                        "capability_id": "external.fake_finance.analyze",
+                        "name": "Analyze",
+                        "external_name": "analyze",
+                        "side_effects": ["READ"],
+                    },
+                ],
+            }
+            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+            db = Path(tmp) / "control.db"
+            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+            manager.discover()
+            manager.initialize("fake-finance", ModuleContext(database_path=str(db), data_root=tmp))
+            manager.ensure_installed("fake-finance")
+            catalog = CapabilityCatalog()
+            plugins = PluginRegistry(catalog)
+            managed = manager.get("fake-finance")
+            assert managed is not None
+            register_external_module_capabilities(
+                catalog=catalog, plugin_registry=plugins, managed=managed
+            )
+            gateway = ExecutionGateway(catalog=catalog)
+            gateway.module_executor = ExternalModuleExecutor(manager, catalog=catalog)
+            blocked = gateway.execute(
+                CapabilityRequest(
+                    capability_id="external.fake_finance.place_order",
+                    arguments={"symbol": "AAPL", "side": "BUY", "quantity": 1},
+                    request_id="tb-gw-1",
+                )
+            )
+            self.assertEqual(blocked.status.value, "REJECTED")
+            ok = gateway.execute(
+                CapabilityRequest(
+                    capability_id="external.fake_finance.analyze",
+                    arguments={"query": "momentum"},
+                    request_id="tb-gw-2",
+                )
+            )
+            self.assertEqual(ok.status.value, "COMPLETED")
+            meta = (ok.output or {}).get("metadata") or {}
+            self.assertFalse(meta.get("marketsim_authority", True))
+
+    def test_idle_shutdown_process_service(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        port = _free_port()
+        server = FIXTURES / "fake_http_service" / "server.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "mods" / "fake-svc"
+            root.mkdir(parents=True)
+            manifest = {
+                "module_id": "fake-svc",
+                "name": "Fake Service",
+                "version": "0.0.1",
+                "entrypoint": FACTORY,
+                "external": {
+                    "adapter": "PROCESS_SERVICE",
+                    "source_type": "path",
+                    "path": str(server.parent),
+                    "install": {"strategy": "NONE"},
+                    "runtime": {
+                        "mode": "LAZY",
+                        "command": [sys.executable, str(server), str(port)],
+                        "cwd": str(server.parent),
+                        "idle_timeout_seconds": 0.2,
+                        "startup_timeout_seconds": 10,
+                        "ready_probe": {
+                            "kind": "http",
+                            "url": f"http://127.0.0.1:{port}/health",
+                            "expect_status": 200,
+                        },
+                        "base_url": f"http://127.0.0.1:{port}",
+                    },
+                },
+            }
+            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+            db = Path(tmp) / "control.db"
+            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+            manager.discover()
+            manager.initialize("fake-svc", ModuleContext(database_path=str(db), data_root=tmp))
+            started = manager.start("fake-svc")
+            self.assertEqual(started.get("status"), "RUNNING")
+            managed = manager.get("fake-svc")
+            assert managed is not None and managed.instance is not None
+            adapter = managed.instance._adapter
+            adapter._last_used_at = datetime.now(timezone.utc) - timedelta(seconds=5)
+            if managed.instance._store is not None:
+                with managed.instance._store.connect() as conn:
+                    conn.execute(
+                        "UPDATE external_modules SET last_used_at = ? WHERE module_id = ?",
+                        ((datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat(), "fake-svc"),
+                    )
+            stopped = manager.sweep_idle_modules()
+            self.assertTrue(any(s.get("module_id") == "fake-svc" for s in stopped))
+            # Active jobs must block idle shutdown.
+            manager.start("fake-svc")
+            adapter = manager.get("fake-svc").instance._adapter  # type: ignore[union-attr]
+            adapter._last_used_at = datetime.now(timezone.utc) - timedelta(seconds=5)
+            manager.register_job("fake-svc", "keep-alive")
+            blocked = manager.sweep_idle_modules()
+            self.assertFalse(any(s.get("module_id") == "fake-svc" for s in blocked))
+            manager.unregister_job("fake-svc", "keep-alive")
+            manager.stop("fake-svc")
+
 
 if __name__ == "__main__":
     unittest.main()

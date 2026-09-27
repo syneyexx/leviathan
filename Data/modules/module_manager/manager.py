@@ -490,6 +490,84 @@ class ModuleManager:
         managed = self._require(module_id)
         managed.active_jobs = [j for j in managed.active_jobs if j != job_id]
 
+    def check_update(self, module_id: str) -> dict[str, Any]:
+        managed = self._ensure_instance(module_id)
+        assert managed.instance is not None
+        if hasattr(managed.instance, "check_update"):
+            return managed.instance.check_update()
+        return {"module_id": module_id, "update_available": False, "reason": "not_external"}
+
+    def install_version(
+        self,
+        module_id: str,
+        *,
+        ref: str | None = None,
+        activate: bool = False,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        managed = self._ensure_instance(module_id)
+        assert managed.instance is not None
+        if not hasattr(managed.instance, "install_version"):
+            raise ModuleManagerError(f"module {module_id} does not support install_version")
+        try:
+            return managed.instance.install_version(
+                ref=ref,
+                activate=activate,
+                active_jobs=list(managed.active_jobs),
+                **kwargs,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise ModuleManagerError(f"install_version failed: {exc}") from exc
+
+    def activate_version(self, module_id: str, version_id: str) -> dict[str, Any]:
+        managed = self._ensure_instance(module_id)
+        assert managed.instance is not None
+        if not hasattr(managed.instance, "activate_version"):
+            raise ModuleManagerError(f"module {module_id} does not support activate_version")
+        try:
+            return managed.instance.activate_version(version_id, active_jobs=list(managed.active_jobs))
+        except Exception as exc:  # noqa: BLE001
+            raise ModuleManagerError(f"activate_version failed: {exc}") from exc
+
+    def rollback_version(self, module_id: str, *, version_id: str | None = None) -> dict[str, Any]:
+        managed = self._ensure_instance(module_id)
+        assert managed.instance is not None
+        if not hasattr(managed.instance, "rollback_version"):
+            raise ModuleManagerError(f"module {module_id} does not support rollback_version")
+        try:
+            return managed.instance.rollback_version(
+                version_id=version_id,
+                active_jobs=list(managed.active_jobs),
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise ModuleManagerError(f"rollback_version failed: {exc}") from exc
+
+    def list_versions(self, module_id: str) -> list[dict[str, Any]]:
+        managed = self._ensure_instance(module_id)
+        assert managed.instance is not None
+        if hasattr(managed.instance, "list_versions"):
+            return list(managed.instance.list_versions())
+        return []
+
+    def sweep_idle_modules(self) -> list[dict[str, Any]]:
+        """Stop idle LAZY/RESIDENT external processes with no active jobs."""
+        stopped: list[dict[str, Any]] = []
+        for managed in self.list():
+            if managed.active_jobs:
+                continue
+            inst = managed.instance
+            if inst is None or not hasattr(inst, "maybe_idle_shutdown"):
+                continue
+            try:
+                result = inst.maybe_idle_shutdown()
+            except Exception:  # noqa: BLE001
+                continue
+            if result and result.get("stopped"):
+                managed.status = ModuleStatus.STOPPED
+                managed.desired_state = "STOPPED"
+                stopped.append({"module_id": managed.manifest.module_id, **result})
+        return stopped
+
     def public_snapshot(self) -> dict[str, Any]:
         with self._lock:
             return {
