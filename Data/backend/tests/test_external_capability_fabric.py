@@ -1693,6 +1693,91 @@ class ExternalAssimilationAndScaleTests(unittest.TestCase):
             self.assertEqual(missing.status, "FAILED")
             self.assertEqual(missing.error, "CAPABILITY_NOT_FOUND")
 
+    def test_ghosttrack_style_declarative_public_api_cli_ops(self) -> None:
+        """GhostTrack machine path: declarative curl argv + placeholders — no TUI wrapper."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "mods" / "ghosttrack-style"
+            root.mkdir(parents=True)
+            fake_curl = root / "fake_curl.py"
+            fake_curl.write_text(
+                "import sys\n"
+                "url = sys.argv[-1]\n"
+                "if 'ipwho.is' in url:\n"
+                "    ip = url.rsplit('/', 1)[-1]\n"
+                "    print('{\"ip\":\"%s\",\"success\":true,\"country\":\"Testland\"}' % ip)\n"
+                "elif 'ipify' in url:\n"
+                "    print('203.0.113.9')\n"
+                "else:\n"
+                "    print('unexpected', url); raise SystemExit(2)\n",
+                encoding="utf-8",
+            )
+            manifest = {
+                "module_id": "ghosttrack-style",
+                "name": "GhostTrack Style",
+                "version": "0.0.1",
+                "entrypoint": FACTORY,
+                "external": {
+                    "adapter": "CLI",
+                    "source_type": "path",
+                    "path": str(root),
+                    "install": {"strategy": "NONE"},
+                    "runtime": {
+                        "mode": "EPHEMERAL",
+                        "operations": [
+                            {
+                                "name": "ip_lookup",
+                                "command": [
+                                    sys.executable,
+                                    str(fake_curl),
+                                    "http://ipwho.is/{ip}",
+                                ],
+                                "result_format": "json",
+                            },
+                            {
+                                "name": "show_ip",
+                                "command": [
+                                    sys.executable,
+                                    str(fake_curl),
+                                    "https://api.ipify.org/",
+                                ],
+                                "result_format": "text",
+                            },
+                        ],
+                    },
+                    "result": {"format": "MIXED"},
+                },
+                "capabilities": [
+                    {
+                        "capability_id": "external.ghosttrack-style.ip_lookup",
+                        "name": "IP Lookup",
+                        "external_name": "ip_lookup",
+                        "side_effects": ["READ", "NETWORK"],
+                    },
+                    {
+                        "capability_id": "external.ghosttrack-style.show_ip",
+                        "name": "Show IP",
+                        "external_name": "show_ip",
+                        "side_effects": ["READ", "NETWORK"],
+                    },
+                ],
+            }
+            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+            manager.discover()
+            manager.initialize(
+                "ghosttrack-style",
+                ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp),
+            )
+            manager.ensure_installed("ghosttrack-style")
+            show = manager.execute("ghosttrack-style", "show_ip", {})
+            self.assertEqual(show.status, "COMPLETED", msg=show.error)
+            self.assertIn("203.0.113.9", str((show.output or {}).get("summary") or ""))
+            lookup = manager.execute("ghosttrack-style", "ip_lookup", {"ip": "8.8.8.8"})
+            self.assertEqual(lookup.status, "COMPLETED", msg=lookup.error)
+            structured = (lookup.output or {}).get("structured_data") or {}
+            self.assertEqual(structured.get("ip"), "8.8.8.8")
+            self.assertTrue(structured.get("success"))
+
     def test_cli_operation_defaults_fill_placeholders(self) -> None:
         from Data.modules.module_manager.external.adapters.base import AdapterContext
         from Data.modules.module_manager.external.adapters.cli import CliAdapter

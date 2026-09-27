@@ -9,7 +9,7 @@
     "NOT_APPLICABLE",
     "FAILED"
   ],
-  "notes": "Fixture adapters prove all adapter kinds. Live installs 21/21. Skill packs+catalog PASS. Vibe-Trading MCP 74 tools + ExecutionGateway approval path PASS. Agent-Reach real contract: doctor JSON + SKILL router (no fake search CLI). GhostTrack interactive-only BLOCKED_EXTERNAL. COMPOSITE declared CLI ops beat skill-pack name collisions. MCP lazy ensure_ready. Cognition offloads EXTERNAL_REQUIRED MODULE caps via JobRuntime (job.* SSE). capability.discovered emitted on SEARCH. No per-repository wrappers.",
+  "notes": "Fixture adapters prove all adapter kinds. Live installs 21/21. Skill packs+catalog PASS. Vibe-Trading MCP 74 tools + ExecutionGateway approval path PASS. Agent-Reach real contract: doctor JSON + SKILL router (no fake search CLI). GhostTrack PARTIAL: declarative curl argv for audited public APIs (ipwho.is / api.ipify.org); GhostTR.py TUI phone/username remain blocked. COMPOSITE declared CLI ops beat skill-pack name collisions. MCP lazy ensure_ready. Cognition offloads EXTERNAL_REQUIRED MODULE caps via JobRuntime (job.* SSE). capability.discovered emitted on SEARCH. No per-repository wrappers.",
   "sources": [
     {
       "source": "wonderwhy-er/DesktopCommanderMCP",
@@ -114,18 +114,19 @@
       "start_verified": "NOT_APPLICABLE",
       "stop_verified": "NOT_APPLICABLE",
       "capability_discovery": "PASS",
-      "invoke_verified": "BLOCKED_EXTERNAL",
+      "invoke_verified": "PASS",
       "result_normalization": "PASS",
-      "chat_rendering": "NOT_APPLICABLE",
-      "artifact_support": "NOT_APPLICABLE",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
         "git",
         "python",
+        "curl",
         "network"
       ],
-      "status": "BLOCKED_EXTERNAL",
-      "limitations": "Audited: GhostTR.py interactive-only (input() menu). Install/ensure_ready/status PASS; invoke ops removed (CAPABILITY_NOT_FOUND). No argv machine contract until upstream adds one."
+      "status": "PARTIAL",
+      "limitations": "Audited: GhostTR.py remains interactive TUI (5x input()). Machine ops use generic CLI argv to the same public APIs GhostTR calls: ip_lookup→ipwho.is/{ip} JSON, show_ip→api.ipify.org text. Live ModuleManager invoke PASS. Phone/username trackers have no argv contract — still BLOCKED_EXTERNAL. No GhostTrackWrapper."
     },
     {
       "source": "HKUDS/Vibe-Trading",
@@ -528,7 +529,8 @@
       "scrollcraft": "generate+build PASS; verify may EXIT_NONZERO without ffmpeg/frames",
       "fincept-terminal": "analyze get_key_metrics JSON COMPLETED",
       "selfstarter": "status/health.sh EXIT_NONZERO PROBLEM lines (honest)",
-      "openmaic": "health + generate-classroom 202 PASS; full content BLOCKED_EXTERNAL LLM"
+      "openmaic": "health + generate-classroom 202 PASS; full content BLOCKED_EXTERNAL LLM",
+      "ghosttrack": "ip_lookup (ipwho.is JSON) + show_ip (api.ipify.org) COMPLETED via generic CLI; GhostTR.py TUI unused"
     },
     "desktop_commander_mcp": {
       "connect": "PASS",
@@ -704,8 +706,10 @@
     "ghosttrack": {
       "install": "PASS",
       "status": "PASS",
-      "invoke": "BLOCKED_EXTERNAL interactive TUI",
-      "capability_not_found_on_run": "PASS"
+      "ip_lookup_ipwho_is": "PASS",
+      "show_ip_ipify": "PASS",
+      "ghosttr_py_tui": "BLOCKED_EXTERNAL interactive input()",
+      "phone_username_trackers": "BLOCKED_EXTERNAL no argv contract"
     },
     "vibe-trading": {
       "install": "PASS",
