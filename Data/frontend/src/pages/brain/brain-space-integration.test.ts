@@ -52,8 +52,9 @@ describe("Brain celestial Graph integration contracts", () => {
     expect(main).toContain('import "./styles/brain-space.css"');
     expect(space).toContain('from "./brain-live"');
     expect(space).not.toContain("createMockBrainData");
+    expect(space).toContain("createBrainSpaceAnimationLoop");
+    expect(space).toContain("cancelAnimationFrame");
     expect(canvas).toContain("createBrainSpaceAnimationLoop");
-    expect(canvas).toContain("cancelAnimationFrame");
     expect(canvas).toContain("ResizeObserver");
     expect(canvas).toContain("No nodes in current Brain projection / filter");
     expect(css).toContain(".lv-brain-space-");
