@@ -227,8 +227,15 @@ def fenced_transition(
     On ``StaleLeaseError`` (lost lease / takeover): emit telemetry and do **not**
     overwrite canonical job state. Callers that already performed side effects
     must treat ``None`` as fenced — never fall back to an unfenced mutation.
+
+    Also treats ``InvalidJobTransition`` into an already-terminal job as a fence
+    (worker A late after worker B completed) — never overwrite terminal truth.
     """
-    from Data.modules.jobs.states import StaleLeaseError
+    from Data.modules.jobs.states import (
+        InvalidJobTransition,
+        StaleLeaseError,
+        TERMINAL_JOB_STATES,
+    )
 
     try:
         return store.transition(
@@ -240,6 +247,20 @@ def fenced_transition(
     except StaleLeaseError:
         record_stale_lease_fence(ctx, telemetry=telemetry)
         return None
+    except InvalidJobTransition:
+        current = None
+        try:
+            current = store.get(job_id)
+        except Exception:  # noqa: BLE001
+            current = None
+        if current is not None and current.state in TERMINAL_JOB_STATES:
+            record_stale_lease_fence(ctx, telemetry=telemetry)
+            return None
+        owner = getattr(current, "lease_owner", None) if current is not None else None
+        if worker_id and owner and owner != worker_id:
+            record_stale_lease_fence(ctx, telemetry=telemetry)
+            return None
+        raise
 
 
 @dataclass(frozen=True)
