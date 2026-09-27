@@ -196,3 +196,243 @@ def evaluate_acceptance_from_run(
         metrics=metrics,
         acceptance_criteria=crit,
     )
+
+
+# ---------------------------------------------------------------------------
+# Wave 6 — actual fold evaluation structures (OOS runs via caller)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class WfaPolicy:
+    mode: str = "rolling"  # rolling | anchored | expanding
+    train_size: int = 50
+    validation_size: int = 0
+    test_size: int = 10
+    step: int = 10
+    purge_bars: int = 0
+    embargo_bars: int = 0
+    min_folds: int = 3
+    min_pass_ratio: float = 0.6
+    max_worst_fold_drawdown_pct: float | None = None
+    max_dispersion: float | None = None
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "train_size": self.train_size,
+            "validation_size": self.validation_size,
+            "test_size": self.test_size,
+            "step": self.step,
+            "purge_bars": self.purge_bars,
+            "embargo_bars": self.embargo_bars,
+            "min_folds": self.min_folds,
+            "min_pass_ratio": self.min_pass_ratio,
+            "max_worst_fold_drawdown_pct": self.max_worst_fold_drawdown_pct,
+            "max_dispersion": self.max_dispersion,
+        }
+
+
+@dataclass
+class WfaFoldResult:
+    fold_index: int
+    train_range: tuple[str, str]
+    test_range: tuple[str, str]
+    test_run_id: str
+    frozen_strategy_version: int
+    frozen_params: dict[str, Any]
+    metrics: dict[str, Any]
+    state: str
+    passed: bool
+    blockers: list[str] = field(default_factory=list)
+    validation_range: tuple[str, str] | None = None
+    train_run_id: str | None = None
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "fold_index": self.fold_index,
+            "train_range": list(self.train_range),
+            "validation_range": list(self.validation_range) if self.validation_range else None,
+            "test_range": list(self.test_range),
+            "train_run_id": self.train_run_id,
+            "test_run_id": self.test_run_id,
+            "frozen_strategy_version": self.frozen_strategy_version,
+            "frozen_params": dict(self.frozen_params),
+            "metrics": dict(self.metrics),
+            "state": self.state,
+            "passed": self.passed,
+            "blockers": list(self.blockers),
+        }
+
+
+@dataclass
+class WfaEvaluationResult:
+    folds: list[WfaFoldResult]
+    fold_count: int
+    pass_count: int
+    pass_ratio: float
+    median_metrics: dict[str, Any]
+    worst_fold: dict[str, Any]
+    dispersion: dict[str, Any]
+    state: str
+    passed: bool
+    blockers: list[str] = field(default_factory=list)
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "folds": [f.public_dict() for f in self.folds],
+            "fold_count": self.fold_count,
+            "pass_count": self.pass_count,
+            "pass_ratio": self.pass_ratio,
+            "median_metrics": dict(self.median_metrics),
+            "worst_fold": dict(self.worst_fold),
+            "dispersion": dict(self.dispersion),
+            "state": self.state,
+            "passed": self.passed,
+            "blockers": list(self.blockers),
+            "truth": {
+                "test_metrics_never_fit": True,
+                "plan_alone_is_not_wfa_complete": True,
+            },
+        }
+
+
+def evaluate_wfa_folds(
+    windows: Sequence[WfaWindow],
+    *,
+    policy: WfaPolicy,
+    frozen_params: dict[str, Any],
+    frozen_strategy_version: int,
+    run_fold: Any,
+    store: Any | None = None,
+    qualification_id: str | None = None,
+    strategy_id: str = "",
+) -> WfaEvaluationResult:
+    """Execute real OOS fold simulations via ``run_fold``.
+
+    ``run_fold(fold_index, train_window, test_window, frozen_params)`` must return
+    a dict with at least ``test_run_id``, ``metrics``, and optional ``passed``.
+    TRAIN fitting is the caller's responsibility *before* freezing params —
+    this function never feeds TEST metrics back into fitting.
+    """
+    from .institutional_core.status import MeasurementState
+
+    folds: list[WfaFoldResult] = []
+    blockers: list[str] = []
+    if len(windows) < policy.min_folds:
+        return WfaEvaluationResult(
+            folds=[],
+            fold_count=len(windows),
+            pass_count=0,
+            pass_ratio=0.0,
+            median_metrics={},
+            worst_fold={},
+            dispersion={},
+            state=MeasurementState.INSUFFICIENT_HISTORY.value,
+            passed=False,
+            blockers=["WFA_INSUFFICIENT"],
+        )
+
+    for win in windows:
+        train_range = (win.train_start_ts, win.train_end_ts)
+        test_range = (win.test_start_ts, win.test_end_ts)
+        out = run_fold(
+            fold_index=win.index,
+            train_window=win,
+            test_window=win,
+            frozen_params=dict(frozen_params),
+        )
+        metrics = dict((out or {}).get("metrics") or {})
+        test_run_id = str((out or {}).get("test_run_id") or "")
+        train_run_id = (out or {}).get("train_run_id")
+        passed = bool((out or {}).get("passed", False))
+        fold_blockers = list((out or {}).get("blockers") or [])
+        if not test_run_id:
+            passed = False
+            fold_blockers.append("MISSING_TEST_RUN_ID")
+        state = (
+            MeasurementState.PASS.value
+            if passed
+            else str((out or {}).get("state") or MeasurementState.FAIL.value)
+        )
+        fold = WfaFoldResult(
+            fold_index=int(win.index),
+            train_range=train_range,
+            validation_range=None,
+            test_range=test_range,
+            train_run_id=str(train_run_id) if train_run_id else None,
+            test_run_id=test_run_id,
+            frozen_strategy_version=int(frozen_strategy_version),
+            frozen_params=dict(frozen_params),
+            metrics=metrics,
+            state=state,
+            passed=passed,
+            blockers=fold_blockers,
+        )
+        folds.append(fold)
+        if store is not None and qualification_id and hasattr(store, "upsert_wfa_fold"):
+            store.upsert_wfa_fold(
+                {
+                    "fold_id": f"wfa_{qualification_id}_{win.index}",
+                    "qualification_id": qualification_id,
+                    "fold_index": int(win.index),
+                    "train_start_ts": win.train_start_ts,
+                    "train_end_ts": win.train_end_ts,
+                    "test_start_ts": win.test_start_ts,
+                    "test_end_ts": win.test_end_ts,
+                    "purge_bars": int(policy.purge_bars),
+                    "embargo_bars": int(policy.embargo_bars),
+                    "train_run_id": fold.train_run_id,
+                    "test_run_id": fold.test_run_id,
+                    "strategy_id": strategy_id,
+                    "strategy_version": frozen_strategy_version,
+                    "frozen_params": frozen_params,
+                    "metrics": metrics,
+                    "state": state,
+                    "passed": int(passed),
+                    "created_at": win.test_end_ts,
+                }
+            )
+
+    pass_count = sum(1 for f in folds if f.passed)
+    fold_count = len(folds)
+    pass_ratio = (pass_count / fold_count) if fold_count else 0.0
+    # Median of numeric metric keys
+    keys = set()
+    for f in folds:
+        keys.update(k for k, v in f.metrics.items() if isinstance(v, (int, float)))
+    median_metrics: dict[str, Any] = {}
+    dispersion: dict[str, Any] = {}
+    for k in sorted(keys):
+        vals = sorted(float(f.metrics[k]) for f in folds if isinstance(f.metrics.get(k), (int, float)))
+        if not vals:
+            continue
+        mid = vals[len(vals) // 2]
+        median_metrics[k] = mid
+        dispersion[k] = (vals[-1] - vals[0]) if len(vals) > 1 else 0.0
+
+    worst = min(folds, key=lambda f: float(f.metrics.get("total_return", f.metrics.get("sharpe", 0)) or 0), default=None)
+    worst_fold = worst.public_dict() if worst else {}
+    if policy.max_worst_fold_drawdown_pct is not None and worst:
+        dd = float(worst.metrics.get("max_drawdown_pct") or 0)
+        if dd > float(policy.max_worst_fold_drawdown_pct):
+            blockers.append("WORST_FOLD_DRAWDOWN")
+    if policy.max_dispersion is not None:
+        for k, d in dispersion.items():
+            if float(d) > float(policy.max_dispersion):
+                blockers.append(f"DISPERSION:{k}")
+                break
+
+    ok = pass_ratio >= policy.min_pass_ratio and fold_count >= policy.min_folds and not blockers
+    return WfaEvaluationResult(
+        folds=folds,
+        fold_count=fold_count,
+        pass_count=pass_count,
+        pass_ratio=pass_ratio,
+        median_metrics=median_metrics,
+        worst_fold=worst_fold,
+        dispersion=dispersion,
+        state=MeasurementState.PASS.value if ok else MeasurementState.FAIL.value,
+        passed=ok,
+        blockers=blockers if ok else (blockers or ["WFA_PASS_RATIO"]),
+    )
