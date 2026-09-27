@@ -86,6 +86,7 @@ class RiskGuard:
         sizing_model: SizingModel | None = None,
         instrument_spec: InstrumentSpec | None = None,
         short_margin_policy: ShortMarginPolicy | None = None,
+        portfolio_shorting_enabled: bool | None = None,
     ) -> None:
         self.limits = limits
         self.killed = bool(limits.kill_switch_armed)
@@ -99,6 +100,7 @@ class RiskGuard:
         )
         self.instrument_spec = instrument_spec
         self.short_margin_policy = short_margin_policy
+        self.portfolio_shorting_enabled = portfolio_shorting_enabled
 
     def on_bar_timestamp(self, ts: str | datetime | None) -> None:
         """Reset orders_today when the UTC calendar day changes."""
@@ -188,8 +190,10 @@ class RiskGuard:
             return RiskDecision(False, "leverage disabled by default")
 
         reduces = (
-            intent.side == "SELL" and wallet.position_qty > 0
-        ) or intent.side == "HOLD"
+            (intent.side == "SELL" and wallet.position_qty > 0)
+            or (intent.side == "BUY" and wallet.position_qty < 0)
+            or intent.side == "HOLD"
+        )
 
         if self.killed or self.limits.kill_switch_armed:
             if reduces and self.limits.kill_switch_allows_risk_reduction:
@@ -209,32 +213,61 @@ class RiskGuard:
 
         requested = float(intent.qty) if intent.qty is not None else None
         opening_short = intent.side == "SELL" and float(wallet.position_qty) <= 0
+        increasing_short = intent.side == "SELL" and float(wallet.position_qty) < 0
 
         if intent.side == "BUY":
-            qty, reason = self.sizing_model.target_qty(
-                price=price,
-                equity=equity,
-                available_cash=float(wallet.available_cash),
-                requested_qty=requested,
-            )
-            if qty <= 0:
-                return RiskDecision(False, "insufficient cash or size")
-            pos_after = float(wallet.position_qty) + qty
-            max_sym = equity * (self.limits.max_symbol_exposure_pct / 100.0)
-            if pos_after * price > max_sym + 1e-9:
-                qty = max(0.0, max_sym / price - float(wallet.position_qty))
+            if float(wallet.position_qty) < 0:
+                short_abs = abs(float(wallet.position_qty))
+                target = requested if requested is not None else short_abs
+                allow_rev = bool(
+                    (intent.metadata or {}).get("allow_position_reversal")
+                    or getattr(wallet, "allow_position_reversal", False)
+                )
+                if target > short_abs + 1e-12 and not allow_rev:
+                    qty = short_abs
+                    reason = "sized_cover_no_reversal"
+                    if qty <= 0:
+                        return RiskDecision(False, "POSITION_REVERSAL_BLOCKED")
+                else:
+                    qty = max(0.0, target)
+                    reason = "sized_short_cover"
                 if qty <= 0:
-                    return RiskDecision(False, "max symbol exposure")
-                reason = "sized_symbol_cap"
+                    return RiskDecision(False, "zero cover size")
+            else:
+                qty, reason = self.sizing_model.target_qty(
+                    price=price,
+                    equity=equity,
+                    available_cash=float(wallet.available_cash),
+                    requested_qty=requested,
+                )
+                if qty <= 0:
+                    return RiskDecision(False, "insufficient cash or size")
+                pos_after = float(wallet.position_qty) + qty
+                max_sym = equity * (self.limits.max_symbol_exposure_pct / 100.0)
+                if pos_after * price > max_sym + 1e-9:
+                    qty = max(0.0, max_sym / price - float(wallet.position_qty))
+                    if qty <= 0:
+                        return RiskDecision(False, "max symbol exposure")
+                    reason = "sized_symbol_cap"
         elif intent.side == "SELL":
-            if float(wallet.position_qty) > 0:
+            long_exit_only = float(wallet.position_qty) > 0 and not (
+                requested is not None
+                and requested > float(wallet.position_qty) + 1e-12
+                and (
+                    getattr(wallet, "shorting_enabled", False)
+                    or self.portfolio_shorting_enabled is True
+                    or self.short_margin_policy is not None
+                )
+            )
+            if long_exit_only:
                 target = requested if requested is not None else float(wallet.position_qty)
                 qty = max(0.0, min(target, float(wallet.position_qty)))
                 reason = "sized_long_exit"
                 if qty <= 0:
                     return RiskDecision(False, "zero sell size")
             else:
-                # Opening / increasing short
+                if self.portfolio_shorting_enabled is False:
+                    return RiskDecision(False, "PORTFOLIO_SHORTING_DISABLED")
                 ok_short = True
                 short_reason = "short_allowed"
                 if self.instrument_spec is not None:
@@ -250,12 +283,21 @@ class RiskGuard:
                     from .short_margin import short_open_allowed
 
                     ok_short, short_reason = short_open_allowed(
-                        supports_short=False,
+                        supports_short=bool(
+                            getattr(wallet, "shorting_enabled", False)
+                            or self.short_margin_policy is not None
+                        ),
                         margin_policy=self.short_margin_policy,
                     )
                 if not ok_short:
                     return RiskDecision(False, short_reason)
-                # Short sizing uses same model against buying power approximation
+                if (
+                    getattr(wallet, "short_margin_policy", None) is None
+                    and self.short_margin_policy is not None
+                ):
+                    wallet.short_margin_policy = self.short_margin_policy
+                if not getattr(wallet, "shorting_enabled", False):
+                    wallet.shorting_enabled = True
                 qty, reason = self.sizing_model.target_qty(
                     price=price,
                     equity=equity,
@@ -264,18 +306,33 @@ class RiskGuard:
                 )
                 if qty <= 0:
                     return RiskDecision(False, "insufficient margin/size for short")
+                policy = self.short_margin_policy or getattr(
+                    wallet, "short_margin_policy", None
+                )
+                if policy is not None:
+                    from .short_margin import ShortMarginPolicy
+
+                    if isinstance(policy, dict):
+                        policy = ShortMarginPolicy.from_dict(policy)
+                    if policy is not None:
+                        margin_need = (
+                            qty * price * float(policy.initial_margin_pct) / 100.0
+                        )
+                        # Pre-proceeds available cash only — do not let short proceeds fund margin.
+                        if float(wallet.available_cash) < margin_need - 1e-6:
+                            return RiskDecision(False, "MARGIN_BLOCK: insufficient for initial margin")
                 reason = f"short_{reason}"
         else:
             return RiskDecision(False, f"unknown side {intent.side}")
 
-        # Instrument lot / tick / min_notional
         if self.instrument_spec is not None and qty > 0:
             ok, rule_reason, rounded = validate_intent_rules(
                 spec=self.instrument_spec,
                 side=intent.side,
                 qty=qty,
                 price=price,
-                opening_short=opening_short and float(wallet.position_qty) <= 0,
+                opening_short=(opening_short or increasing_short)
+                and float(wallet.position_qty) <= 0,
                 short_margin_policy=self.short_margin_policy,
             )
             if not ok:

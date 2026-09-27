@@ -165,6 +165,14 @@ class SimulationEngine:
         short_policy = ShortMarginPolicy.from_dict(
             meta.get("short_margin_policy") or meta.get("shortMarginPolicy")
         )
+        if short_policy is not None and bool(
+            meta.get("shorting_enabled", meta.get("shortingEnabled", instrument.supports_short))
+        ):
+            wallet.shorting_enabled = True
+            wallet.short_margin_policy = short_policy
+            wallet.allow_position_reversal = bool(
+                meta.get("allow_position_reversal") or meta.get("allowPositionReversal")
+            )
         risk = RiskGuard(
             RiskLimits(
                 max_position_pct=run.max_position_pct,
@@ -174,6 +182,11 @@ class SimulationEngine:
             sizing_model=sizing,
             instrument_spec=instrument,
             short_margin_policy=short_policy,
+            portfolio_shorting_enabled=(
+                None
+                if meta.get("portfolio_shorting_enabled", meta.get("portfolioShortingEnabled")) is None
+                else bool(meta.get("portfolio_shorting_enabled", meta.get("portfolioShortingEnabled")))
+            ),
         )
         policy = str(
             meta.get("intrabar_path_policy")

@@ -307,6 +307,7 @@ def proposal_from_spec(
     learner_state_hash: str = "",
     objective_hash: str = "",
     hypothesis: str = "",
+    hypothesis_id: str | None = None,
 ) -> CandidateProposal:
     entry = dict(spec.get("entry_rules") or {})
     exit_rules = dict(spec.get("exit_rules") or {})
@@ -322,6 +323,10 @@ def proposal_from_spec(
     )
     family = str(spec.get("family") or entry.get("kind") or "ma_cross")
     complexity = measure_strategy_complexity(entry, exit_rules, parameters)
+    meta: dict[str, Any] = {}
+    hid = str(hypothesis_id or spec.get("hypothesis_id") or "").strip()
+    if hid:
+        meta["hypothesis_id"] = hid
     return CandidateProposal(
         candidate_id=str(uuid.uuid4()),
         generation=generation,
@@ -342,6 +347,7 @@ def proposal_from_spec(
         status="PROPOSED",
         learner_state_hash=learner_state_hash,
         objective_hash=objective_hash,
+        metadata=meta,
     )
 
 

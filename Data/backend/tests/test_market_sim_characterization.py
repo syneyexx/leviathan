@@ -924,12 +924,12 @@ class D20ProductSurfaceCharacterization(unittest.TestCase):
             feature_enabled=True, binance_reachable=True, local_paper=True
         )
         statuses = {m["family"]: m for m in caps["markets"]}
-        # Futures/forex historical sim are AVAILABLE; options remain NOT_IMPLEMENTED.
-        # Paper/live trading for these families stays NOT_IMPLEMENTED / BLOCKED.
-        for family, hist in (
+        # Futures/forex BAR historical sim is AVAILABLE (#187); options remain NOT_IMPLEMENTED.
+        for family, expected in (
             ("futures", "AVAILABLE"),
             ("forex", "AVAILABLE"),
             ("options", "NOT_IMPLEMENTED"),
+            ("fixed_income", "NOT_IMPLEMENTED"),
         ):
             match = next(
                 (v for k, v in statuses.items() if family in str(k).lower()),
@@ -937,7 +937,7 @@ class D20ProductSurfaceCharacterization(unittest.TestCase):
             )
             self.assertIsNotNone(match, family)
             assert match is not None
-            self.assertEqual(match["HISTORICAL_SIM_AVAILABLE"], hist, family)
+            self.assertEqual(match["HISTORICAL_SIM_AVAILABLE"], expected, family)
             self.assertEqual(match["LIVE_TRADING_AVAILABLE"], "BLOCKED", family)
 
     def test_d20_trading_stub_always_refuses(self) -> None:

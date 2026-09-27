@@ -3073,21 +3073,27 @@ class MarketSimControlPlane:
         from .experiments import build_strategy_memory_record
 
         learned_at = utc_now()
+        # Basic experiment acceptance is VALIDATION evidence — not SEALED.
+        # Rejected validation lessons remain retrievable for critic/postmortem
+        # (prefer_negative); they must never be tagged as sealed holdout.
         self.store.save_strategy_memory(
             build_strategy_memory_record(
                 strategy_id=trial["strategy_id"],
                 strategy_version=strategy_version or 0,
                 features=(metrics.get("features") or {}),
                 applicability=(trial.get("config") or {}).get("applicability") or {},
-                outcome_summary=reason if not passed else "accepted on holdout",
+                outcome_summary=reason if not passed else "accepted on validation",
                 trial_id=trial_id,
                 available_at=learned_at,
                 created_at=learned_at,
                 rejected=not passed,
                 origin="complete_experiment",
                 epistemic_state="REJECTED" if not passed else "MEASURED",
-                validation_stage="holdout",
-                extra_metadata={"acceptance_reason": reason},
+                validation_stage="validation",
+                extra_metadata={
+                    "acceptance_reason": reason,
+                    "evidence_class": "VALIDATION_EVIDENCE",
+                },
             )
         )
         return trial
@@ -3095,6 +3101,714 @@ class MarketSimControlPlane:
     def list_experiments(self, *, strategy_id: str | None = None) -> list[dict[str, Any]]:
         self._require_enabled()
         return self.store.list_experiments(strategy_id=strategy_id)
+
+    def get_experiment(self, experiment_id: str) -> dict[str, Any]:
+        """Load a research experiment/trial by id (trial_id)."""
+        self._require_enabled()
+        if hasattr(self.store, "get_experiment"):
+            row = self.store.get_experiment(experiment_id)
+            if row is not None:
+                return row
+        for trial in self.store.list_experiments(limit=5000):
+            if str(trial.get("trial_id") or "") == str(experiment_id):
+                return trial
+        raise MarketSimError("EXPERIMENT_NOT_FOUND", experiment_id, http_status=404)
+
+    def reproduce_experiment(self, experiment_id: str) -> dict[str, Any]:
+        """Reconstruct immutable inputs and re-run deterministically when provenance allows.
+
+        Partial path: load original run + metadata hashes, re-execute via create_run+start,
+        compare metrics/equity with explicit float tolerances. Never silently claims match
+        when provenance is incomplete (blockers include REPRODUCIBILITY_INCOMPLETE).
+        """
+        self._require_enabled()
+        trial = self.get_experiment(experiment_id)
+        meta = dict(trial.get("metadata") or {})
+        config = dict(trial.get("config") or {})
+        results = dict(trial.get("results") or {})
+        cost = dict(config.get("cost_model") or trial.get("cost_model") or {})
+
+        tolerances = {
+            "metric_abs": 1e-9,
+            "equity_abs": 1e-6,
+            "fill_price_abs": 1e-9,
+            "fill_qty_abs": 1e-12,
+        }
+
+        original_run_id = (
+            meta.get("run_id")
+            or meta.get("original_run_id")
+            or results.get("run_id")
+            or config.get("run_id")
+        )
+        original_run: dict[str, Any] | None = None
+        if original_run_id:
+            try:
+                original_run = self.get_run(str(original_run_id))
+            except MarketSimError:
+                original_run = None
+
+        orig_meta = dict((original_run or {}).get("metadata") or {})
+        source_id = (
+            meta.get("source_id")
+            or config.get("source_id")
+            or (original_run or {}).get("source_id")
+        )
+        strategy_id = trial.get("strategy_id") or (original_run or {}).get("strategy_id")
+        strategy_version = trial.get("strategy_version")
+        if strategy_version is None and original_run is not None:
+            strategy_version = original_run.get("strategy_version")
+        seed = int(
+            trial.get("seed")
+            if trial.get("seed") is not None
+            else (original_run or {}).get("seed")
+            if original_run is not None
+            else 42
+        )
+        data_hash = (
+            trial.get("data_hash")
+            or (original_run or {}).get("data_hash")
+            or orig_meta.get("data_hash")
+        )
+        strategy_hash = (
+            meta.get("strategy_hash")
+            or config.get("strategy_hash")
+            or orig_meta.get("strategy_hash")
+            or results.get("strategy_hash")
+        )
+        orig_metrics_map = (original_run or {}).get("metrics")
+        orig_metric_fp = None
+        if isinstance(orig_metrics_map, dict):
+            orig_metric_fp = orig_metrics_map.get("input_fingerprint")
+        input_fingerprint = (
+            meta.get("input_fingerprint")
+            or orig_meta.get("input_fingerprint")
+            or results.get("input_fingerprint")
+            or orig_metric_fp
+        )
+        start_ts = (
+            meta.get("start_ts")
+            or config.get("start_ts")
+            or (original_run or {}).get("start_ts")
+            or (trial.get("split") or {}).get("design_start")
+            or (trial.get("split") or {}).get("start_ts")
+        )
+        end_ts = (
+            meta.get("end_ts")
+            or config.get("end_ts")
+            or (original_run or {}).get("end_ts")
+            or (trial.get("split") or {}).get("holdout_end")
+            or (trial.get("split") or {}).get("end_ts")
+        )
+
+        provenance = {
+            "experiment_id": experiment_id,
+            "trial_id": trial.get("trial_id"),
+            "fingerprint": trial.get("fingerprint"),
+            "data_hash": data_hash,
+            "strategy_id": strategy_id,
+            "strategy_version": strategy_version,
+            "strategy_hash": strategy_hash,
+            "source_id": source_id,
+            "seed": seed,
+            "input_fingerprint": input_fingerprint,
+            "start_ts": start_ts,
+            "end_ts": end_ts,
+            "original_run_id": original_run_id,
+            "code_version": trial.get("code_version") or meta.get("code_version"),
+            "git_sha": meta.get("git_sha") or config.get("git_sha"),
+        }
+
+        missing: list[str] = []
+        if not source_id:
+            missing.append("source_id")
+        if not strategy_id:
+            missing.append("strategy_id")
+        if not data_hash:
+            missing.append("data_hash")
+        if trial.get("seed") is None and (original_run is None or original_run.get("seed") is None):
+            missing.append("seed")
+
+        # If an original run exists, verify data_hash still matches source when resolvable.
+        if source_id and data_hash:
+            try:
+                source = self.data.get_source(str(source_id))
+                if source.content_hash and data_hash and source.content_hash != data_hash:
+                    missing.append("data_hash_mismatch_vs_source")
+            except MarketSimError:
+                missing.append("source_unresolvable")
+
+        if missing:
+            return {
+                "experiment_id": experiment_id,
+                "reproduced": False,
+                "match": False,
+                "mismatches": [{"kind": "provenance", "field": m} for m in missing],
+                "original_run_id": original_run_id,
+                "replay_run_id": None,
+                "tolerances": tolerances,
+                "provenance": provenance,
+                "blockers": ["REPRODUCIBILITY_INCOMPLETE", *missing],
+                "truth": {
+                    "silent_match_forbidden": True,
+                    "partial_path": True,
+                },
+            }
+
+        fee_bps = float(
+            cost.get("fee_bps")
+            if cost.get("fee_bps") is not None
+            else (original_run or {}).get("fee_bps", 5.0)
+        )
+        slippage_bps = float(
+            cost.get("slippage_bps")
+            if cost.get("slippage_bps") is not None
+            else (original_run or {}).get("slippage_bps", 2.0)
+        )
+        initial_cash = float(
+            meta.get("initial_cash")
+            or config.get("initial_cash")
+            or (original_run or {}).get("initial_cash")
+            or 100_000.0
+        )
+        agents = list(
+            meta.get("agents")
+            or config.get("agents")
+            or (original_run or {}).get("agents")
+            or []
+        )
+        deliberation_every_n = int(
+            meta.get("deliberation_every_n")
+            or config.get("deliberation_every_n")
+            or (original_run or {}).get("deliberation_every_n")
+            or 50
+        )
+        max_position_pct = float(
+            (original_run or {}).get("max_position_pct")
+            or config.get("max_position_pct")
+            or 25.0
+        )
+        max_drawdown_pct = float(
+            (original_run or {}).get("max_drawdown_pct")
+            or config.get("max_drawdown_pct")
+            or 20.0
+        )
+        per_trade_risk_pct = float(
+            (original_run or {}).get("per_trade_risk_pct")
+            or config.get("per_trade_risk_pct")
+            or 1.0
+        )
+
+        replay = self.create_run(
+            source_id=str(source_id),
+            strategy_id=str(strategy_id),
+            strategy_version=int(strategy_version) if strategy_version is not None else None,
+            start_ts=str(start_ts) if start_ts else None,
+            end_ts=str(end_ts) if end_ts else None,
+            seed=seed,
+            initial_cash=initial_cash,
+            fee_bps=fee_bps,
+            slippage_bps=slippage_bps,
+            max_position_pct=max_position_pct,
+            max_drawdown_pct=max_drawdown_pct,
+            per_trade_risk_pct=per_trade_risk_pct,
+            agents=agents,
+            deliberation_every_n=deliberation_every_n,
+            metadata={
+                "reproduce_of": experiment_id,
+                "original_run_id": original_run_id,
+                "strategy_hash": strategy_hash,
+                "expected_input_fingerprint": input_fingerprint,
+            },
+        )
+        replay_run_id = str(replay["run_id"])
+        self.start_run(replay_run_id)
+        # Drain in-process worker (tests / local). External workers may leave QUEUED.
+        for _ in range(500):
+            current = self.get_run(replay_run_id)
+            if current["status"] in {
+                RunStatus.COMPLETED.value,
+                RunStatus.FAILED.value,
+                RunStatus.CANCELLED.value,
+                RunStatus.STOPPED.value,
+            }:
+                break
+            if hasattr(self.worker, "process_next"):
+                self.worker.process_next()
+            else:
+                break
+
+        replay_state = self.run_live_state(replay_run_id, message_limit=5000, fill_limit=5000)
+        replay_run = replay_state["run"]
+        mismatches: list[dict[str, Any]] = []
+
+        if replay_run.get("status") != RunStatus.COMPLETED.value:
+            mismatches.append(
+                {
+                    "kind": "status",
+                    "field": "status",
+                    "original": (original_run or {}).get("status") or results.get("status"),
+                    "replay": replay_run.get("status"),
+                }
+            )
+
+        # Compare terminal metrics when original available.
+        orig_metrics = dict(results.get("metrics") or (original_run or {}).get("metrics") or {})
+        replay_metrics = dict(replay_run.get("metrics") or {})
+        for key in sorted(set(orig_metrics) | set(replay_metrics)):
+            ov = orig_metrics.get(key)
+            rv = replay_metrics.get(key)
+            if isinstance(ov, dict) and "value" in ov:
+                ov = ov.get("value")
+            if isinstance(rv, dict) and "value" in rv:
+                rv = rv.get("value")
+            if ov is None or rv is None:
+                if ov != rv and key in orig_metrics:
+                    mismatches.append(
+                        {"kind": "metric", "field": key, "original": ov, "replay": rv}
+                    )
+                continue
+            try:
+                if abs(float(ov) - float(rv)) > float(tolerances["metric_abs"]):
+                    mismatches.append(
+                        {
+                            "kind": "metric",
+                            "field": key,
+                            "original": ov,
+                            "replay": rv,
+                            "tolerance": tolerances["metric_abs"],
+                        }
+                    )
+            except (TypeError, ValueError):
+                if ov != rv:
+                    mismatches.append(
+                        {"kind": "metric", "field": key, "original": ov, "replay": rv}
+                    )
+
+        # Equity trajectory comparison when original equity persisted.
+        if original_run_id:
+            try:
+                orig_equity = self.store.list_equity(str(original_run_id), limit=5000)
+            except Exception:  # noqa: BLE001
+                orig_equity = []
+            replay_equity = replay_state.get("equity") or []
+            if orig_equity and replay_equity:
+                if len(orig_equity) != len(replay_equity):
+                    mismatches.append(
+                        {
+                            "kind": "equity",
+                            "field": "length",
+                            "original": len(orig_equity),
+                            "replay": len(replay_equity),
+                        }
+                    )
+                else:
+                    for i, (a, b) in enumerate(zip(orig_equity, replay_equity)):
+                        ae = float(a.get("equity") if isinstance(a, dict) else a)
+                        be = float(b.get("equity") if isinstance(b, dict) else b)
+                        if abs(ae - be) > float(tolerances["equity_abs"]):
+                            mismatches.append(
+                                {
+                                    "kind": "equity",
+                                    "field": f"index:{i}",
+                                    "original": ae,
+                                    "replay": be,
+                                    "tolerance": tolerances["equity_abs"],
+                                }
+                            )
+                            break
+
+            # Fill sequence comparison (side/qty/price/bar_index).
+            try:
+                orig_fills = [
+                    f.public_dict() if hasattr(f, "public_dict") else dict(f)
+                    for f in self.store.list_fills(str(original_run_id), limit=5000)
+                ]
+            except Exception:  # noqa: BLE001
+                orig_fills = []
+            replay_fills = list(replay_state.get("fills") or [])
+            if orig_fills:
+
+                def _fill_key(f: dict[str, Any]) -> tuple:
+                    return (
+                        f.get("side"),
+                        round(float(f.get("qty") or 0), 12),
+                        round(float(f.get("price") or 0), 9),
+                        f.get("bar_index"),
+                    )
+
+                if [_fill_key(f) for f in orig_fills] != [_fill_key(f) for f in replay_fills]:
+                    mismatches.append(
+                        {
+                            "kind": "fills",
+                            "field": "sequence",
+                            "original_count": len(orig_fills),
+                            "replay_count": len(replay_fills),
+                        }
+                    )
+
+        # Input fingerprint check when both present.
+        replay_fp = (replay_run.get("metadata") or {}).get("input_fingerprint") or (
+            replay_metrics.get("input_fingerprint")
+        )
+        if input_fingerprint and replay_fp and str(input_fingerprint) != str(replay_fp):
+            mismatches.append(
+                {
+                    "kind": "fingerprint",
+                    "field": "input_fingerprint",
+                    "original": input_fingerprint,
+                    "replay": replay_fp,
+                }
+            )
+
+        match = len(mismatches) == 0 and replay_run.get("status") == RunStatus.COMPLETED.value
+        # Without original metrics/fills we can only claim reproduction executed, not match.
+        if not orig_metrics and not original_run_id:
+            match = False
+            mismatches.append(
+                {
+                    "kind": "comparison",
+                    "field": "original_artifacts",
+                    "detail": "no original metrics/run to compare; reproduction executed only",
+                }
+            )
+
+        return {
+            "experiment_id": experiment_id,
+            "reproduced": replay_run.get("status") == RunStatus.COMPLETED.value,
+            "match": match,
+            "mismatches": mismatches,
+            "original_run_id": original_run_id,
+            "replay_run_id": replay_run_id,
+            "tolerances": tolerances,
+            "provenance": {
+                **provenance,
+                "replay_input_fingerprint": replay_fp,
+                "replay_data_hash": replay_run.get("data_hash"),
+            },
+            "blockers": [] if match else [m.get("kind") for m in mismatches],
+            "truth": {
+                "silent_match_forbidden": True,
+                "partial_path": True,
+                "compared_metrics_equity_fills": True,
+            },
+        }
+
+    def create_qualification_run(
+        self,
+        *,
+        strategy_id: str,
+        strategy_version: int,
+        strategy_hash: str,
+        source_id: str,
+        dataset_hash: str,
+        git_sha: str,
+        code_version: str,
+        seed: int,
+        trial_family_id: str,
+        policy_id: str | None = None,
+        policy: dict[str, Any] | None = None,
+        experiment_id: str | None = None,
+        learning_run_id: str | None = None,
+        candidate_id: str | None = None,
+        dataset_id: str | None = None,
+        dataset_version_id: str | None = None,
+        sealed_attempt_id: str | None = None,
+        feature_pipeline_hash: str = "",
+        execution_model_hash: str = "",
+        cost_model_hash: str = "",
+        risk_model_hash: str = "",
+        sizing_model_hash: str = "",
+        split_manifest_hash: str = "",
+        dirty: bool = False,
+        diff_hash: str = "",
+        extra: dict[str, Any] | None = None,
+        qualification_id: str | None = None,
+        allow_inline_dev: bool = False,
+        enqueue: bool = True,
+        created_by: str = "market_sim.api",
+    ) -> dict[str, Any]:
+        """Create a QualificationAuthority run from immutable identifiers (never caller passed=true)."""
+        self._require_enabled()
+        from .qualification import (
+            QualificationAuthority,
+            QualificationContext,
+            QualificationPolicy,
+            default_institutional_policy,
+        )
+
+        # Reject caller authority booleans in extra.
+        extra_clean = dict(extra or {})
+        if extra_clean.pop("passed", None) is True or extra_clean.pop("qualified", None) is True:
+            raise MarketSimError(
+                "CALLER_BOOLEAN_NOT_AUTHORITY",
+                "passed/qualified booleans are not accepted as qualification evidence",
+                http_status=400,
+            )
+
+        if policy is not None:
+            fields = {f.name for f in QualificationPolicy.__dataclass_fields__.values()}  # type: ignore[attr-defined]
+            kwargs = {k: policy[k] for k in fields if k in policy}
+            kwargs.setdefault("policy_id", policy_id or policy.get("policy_id") or f"qp_{uuid.uuid4().hex[:12]}")
+            kwargs.setdefault("version", int(policy.get("version") or 1))
+            kwargs.setdefault("name", policy.get("name") or "custom")
+            pol = QualificationPolicy(**kwargs)  # type: ignore[arg-type]
+        elif policy_id and hasattr(self.store, "get_qualification_policy"):
+            stored = self.store.get_qualification_policy(policy_id)
+            if stored is None:
+                raise MarketSimError("POLICY_NOT_FOUND", policy_id, http_status=404)
+            body = stored.get("policy_json") if isinstance(stored.get("policy_json"), dict) else stored
+            fields = {f.name for f in QualificationPolicy.__dataclass_fields__.values()}  # type: ignore[attr-defined]
+            kwargs = {k: body[k] for k in fields if k in body}
+            kwargs.setdefault("policy_id", stored.get("policy_id") or policy_id)
+            kwargs.setdefault("version", int(stored.get("version") or body.get("version") or 1))
+            kwargs.setdefault("name", stored.get("name") or body.get("name") or "unnamed")
+            pol = QualificationPolicy(**kwargs)  # type: ignore[arg-type]
+        else:
+            pol = default_institutional_policy(policy_id=policy_id)
+
+        qid = qualification_id or f"qual_{uuid.uuid4().hex[:16]}"
+        ctx = QualificationContext(
+            qualification_id=qid,
+            strategy_id=strategy_id,
+            strategy_version=int(strategy_version),
+            strategy_hash=strategy_hash,
+            source_id=source_id,
+            dataset_hash=dataset_hash,
+            git_sha=git_sha,
+            code_version=code_version,
+            seed=int(seed),
+            trial_family_id=trial_family_id,
+            experiment_id=experiment_id,
+            learning_run_id=learning_run_id,
+            candidate_id=candidate_id,
+            dataset_id=dataset_id,
+            dataset_version_id=dataset_version_id,
+            sealed_attempt_id=sealed_attempt_id,
+            feature_pipeline_hash=feature_pipeline_hash,
+            execution_model_hash=execution_model_hash,
+            cost_model_hash=cost_model_hash,
+            risk_model_hash=risk_model_hash,
+            sizing_model_hash=sizing_model_hash,
+            split_manifest_hash=split_manifest_hash,
+            dirty=bool(dirty),
+            diff_hash=diff_hash,
+            extra=extra_clean,
+        )
+        auth = QualificationAuthority(plane=self, store=self.store)
+        decision = auth.create_run(
+            ctx,
+            pol,
+            created_by=created_by,
+            idempotency_key=f"qualification:{qid}",
+        )
+        out = decision.public_dict()
+        out["qualification_id"] = decision.qualification_id or qid
+
+        if enqueue and self.job_runtime is not None:
+            job_id = self.enqueue_qualification_run(out["qualification_id"])
+            out["job_id"] = job_id
+            out["status"] = out.get("state") or "QUEUED"
+            out["queued"] = True
+            return out
+
+        if allow_inline_dev:
+            evaluated = auth.evaluate(out["qualification_id"])
+            result = evaluated.public_dict()
+            result["evaluated_inline"] = True
+            result["allow_inline_dev"] = True
+            return result
+
+        # Default: do not silently evaluate inline in production.
+        out["queued"] = False
+        out["warning"] = (
+            "job_runtime unbound; qualification created but not evaluated. "
+            "Pass allow_inline_dev=True for synchronous dev evaluation, or bind job_runtime."
+        )
+        out["status"] = out.get("state") or "QUEUED"
+        return out
+
+    def get_qualification_run(self, qualification_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        from .qualification import QualificationAuthority
+
+        auth = QualificationAuthority(plane=self, store=self.store)
+        decision = auth.get(qualification_id)
+        if decision is None:
+            raise MarketSimError("QUALIFICATION_NOT_FOUND", qualification_id, http_status=404)
+        row = self.store.get_qualification_run(qualification_id) if hasattr(self.store, "get_qualification_run") else None
+        out = decision.public_dict()
+        if row:
+            out["row"] = row
+            out["status"] = row.get("status") or out.get("state")
+        return out
+
+    def get_qualification_gates(self, qualification_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        run = self.get_qualification_run(qualification_id)
+        gates = []
+        if hasattr(self.store, "list_qualification_gate_results"):
+            gates = self.store.list_qualification_gate_results(qualification_id)
+        else:
+            gates = (run.get("gate_results") or [])
+        return {
+            "qualification_id": qualification_id,
+            "gates": gates,
+            "decision": run.get("qualified"),
+            "state": run.get("state") or run.get("status"),
+            "blockers": run.get("blockers") or [],
+        }
+
+    def cancel_qualification_run(self, qualification_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        from .qualification import QualificationAuthority
+
+        auth = QualificationAuthority(plane=self, store=self.store)
+        try:
+            decision = auth.cancel(qualification_id)
+        except KeyError as exc:
+            raise MarketSimError("QUALIFICATION_NOT_FOUND", qualification_id, http_status=404) from exc
+        return decision.public_dict()
+
+    def enqueue_qualification_run(self, qualification_id: str) -> str:
+        """Enqueue durable QualificationAuthority evaluation; returns job id."""
+        if self.job_runtime is None:
+            raise MarketSimError(
+                "TRADING_WORKER_UNAVAILABLE",
+                "job_runtime not bound; cannot enqueue market_sim.qualification_run",
+                http_status=503,
+            )
+        # Ensure run exists
+        row = None
+        if hasattr(self.store, "get_qualification_run"):
+            row = self.store.get_qualification_run(qualification_id)
+        if row is None:
+            raise MarketSimError("QUALIFICATION_NOT_FOUND", qualification_id, http_status=404)
+        job = self.job_runtime.enqueue(
+            capability_id="market_sim.qualification_run",
+            arguments={"qualification_id": qualification_id},
+            idempotency_key=f"qualification:{qualification_id}",
+            requested_by="market_sim",
+            domain="market_sim",
+            domain_entity_type="market_sim_qualification_run",
+            domain_entity_id=qualification_id,
+            worker_pool="market_sim",
+        )
+        job_id = getattr(job, "job_id", None) or (job.get("job_id") if isinstance(job, dict) else None) or str(job)
+        return str(job_id)
+
+    def get_dataset_certification(self, dataset_id: str, *, version: str | None = None) -> dict[str, Any]:
+        self._require_enabled()
+        cert = None
+        if hasattr(self.store, "get_dataset_certification"):
+            cert = self.store.get_dataset_certification(
+                dataset_id=dataset_id,
+                dataset_version_id=version,
+            )
+        if cert is None:
+            raise MarketSimError(
+                "CERTIFICATION_NOT_FOUND",
+                f"no certification for dataset {dataset_id}",
+                http_status=404,
+            )
+        return cert
+
+    def evaluate_dataset_certification(
+        self,
+        dataset_id: str,
+        *,
+        dataset_version_id: str,
+        dataset_hash: str,
+        evidence: dict[str, Any] | None = None,
+        source_id: str = "",
+        data_type: str = "ohlcv",
+    ) -> dict[str, Any]:
+        """Server-side certification via certify_dataset_from_evidence — rejects caller certified=true."""
+        self._require_enabled()
+        from .institutional_core.data_governance import certify_dataset_from_evidence
+
+        ev = dict(evidence or {})
+        if ev.get("certified") is True and len([k for k in ev if k != "certified"]) == 0:
+            raise MarketSimError(
+                "CALLER_BOOLEAN_NOT_CERTIFICATION",
+                "certified=true is not accepted as dataset certification authority",
+                http_status=400,
+            )
+        cert = certify_dataset_from_evidence(
+            dataset_id=dataset_id,
+            dataset_version_id=dataset_version_id,
+            dataset_hash=dataset_hash,
+            evidence=ev,
+            source_id=source_id,
+            data_type=data_type,
+            certified_by="market_sim.api",
+        )
+        payload = cert.public_dict() if hasattr(cert, "public_dict") else dict(cert)
+        # Persist when store supports it.
+        if hasattr(self.store, "save_dataset_certification"):
+            row = {
+                "certification_id": payload.get("certificationId") or payload.get("certification_id"),
+                "dataset_id": dataset_id,
+                "dataset_version_id": dataset_version_id,
+                "dataset_hash": dataset_hash,
+                "data_type": data_type,
+                "certification_state": payload.get("certificationState") or payload.get("certification_state"),
+                "pit_state": payload.get("pitState") or payload.get("pit_state"),
+                "survivorship_state": payload.get("survivorshipState") or payload.get("survivorship_state"),
+                "revision_state": payload.get("revisionState") or payload.get("revision_state"),
+                "corporate_action_state": payload.get("corporateActionState")
+                or payload.get("corporate_action_state"),
+                "source_id": source_id,
+                "license_state": payload.get("licenseState") or payload.get("license_state"),
+                "evidence": ev,
+                "certification_hash": payload.get("certificationHash") or payload.get("certification_hash") or "",
+                "certified_at": payload.get("certifiedAt") or payload.get("certified_at") or utc_now(),
+                "certified_by": "market_sim.api",
+            }
+            self.store.save_dataset_certification(row)
+            payload["persisted"] = True
+        return payload
+
+    def get_portfolio_strategy_risk(self, portfolio_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        snap = None
+        if hasattr(self.store, "latest_strategy_risk_snapshot"):
+            snap = self.store.latest_strategy_risk_snapshot(portfolio_id)
+        if snap is None:
+            return {
+                "portfolio_id": portfolio_id,
+                "state": "UNMEASURED",
+                "snapshot": None,
+                "truth": {"no_fabricated_covariance": True},
+            }
+        return {"portfolio_id": portfolio_id, "snapshot": snap, "state": snap.get("state")}
+
+    def get_execution_calibration(self, deployment_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        dep = self.store.get_paper_deployment(deployment_id) if hasattr(self.store, "get_paper_deployment") else None
+        if dep is None:
+            raise MarketSimError("PAPER_DEPLOYMENT_NOT_FOUND", deployment_id, http_status=404)
+        meta = dict(dep.get("metadata") or {})
+        model_id = meta.get("execution_model_id") or dep.get("execution_model_id")
+        cals: list[dict[str, Any]] = []
+        if hasattr(self.store, "list_execution_calibrations"):
+            if model_id:
+                cals = self.store.list_execution_calibrations(execution_model_id=str(model_id), limit=50)
+            else:
+                # Filter by deployment id in source_deployment_ids
+                all_cals = self.store.list_execution_calibrations(limit=200)
+                cals = [
+                    c
+                    for c in all_cals
+                    if deployment_id in (c.get("source_deployment_ids") or [])
+                ]
+        return {
+            "deployment_id": deployment_id,
+            "execution_model_id": model_id,
+            "calibrations": cals,
+            "state": cals[0].get("state") if cals else "UNMEASURED",
+            "truth": {"no_single_sample_auto_disable": True},
+        }
 
     # --- Demo runners (equity + crypto) ---
 

@@ -1672,6 +1672,19 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         tags=["market_sim", "learning", "strategy"],
     )
     _ext(
+        cap_id="market_sim.qualification_run",
+        name="Run Institutional Qualification",
+        description=(
+            "Execute/resume QualificationAuthority evaluation on the market_sim worker "
+            "(WFA folds, statistical gates, sealed holdout). EXTERNAL_REQUIRED; idempotent."
+        ),
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="market_sim",
+        properties={"qualification_id": {"type": "string"}},
+        permissions=("process.execute",),
+        tags=["market_sim", "qualification"],
+    )
+    _ext(
         cap_id="market_sim.paper_order",
         name="Place Paper Order",
         description="Place a paper (non-live) order via MarketSimControlPlane + RiskGuard.",
@@ -1772,6 +1785,37 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
             required_permissions=("process.execute",),
             metadata={
                 "tags": ["market_sim", "mandate", "approval"],
+                "domains": ["market_sim"],
+                "execution_class": "INLINE_SAFE",
+                "approval_identity": True,
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="market_sim.portfolio_risk.loosen",
+            name="Loosen Portfolio Risk Settings",
+            description=(
+                "Approval-gated identity for loosening paper/portfolio risk settings. "
+                "Not a JobRuntime worker capability — ApprovalService only. "
+                "Must authorize before PortfolioService.patch_portfolio commits."
+            ),
+            side_effects=(SideEffect.WRITE,),
+            provider_kind=CapabilityProviderKind.INTERNAL,
+            provider_ref="market_sim.portfolio_risk.loosen",
+            input_schema={
+                "type": "object",
+                "required": ["portfolio_id"],
+                "properties": {
+                    "portfolio_id": {"type": "string"},
+                    "approval_id": {"type": "string"},
+                    "settings": {"type": "object"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("process.execute",),
+            metadata={
+                "tags": ["market_sim", "portfolio", "risk", "approval"],
                 "domains": ["market_sim"],
                 "execution_class": "INLINE_SAFE",
                 "approval_identity": True,

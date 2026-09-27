@@ -38,9 +38,11 @@ class CapabilityGapRow:
         }
 
 
-# Known reality snapshot — owners are existing market_sim / backend modules.
-# STATUS uses honest vocabulary; COMPLETE means present for prior waves, not parity.
-_KNOWN_GAPS: tuple[CapabilityGapRow, ...] = (
+# Historical baseline snapshot — frozen inventory from prior institutional waves.
+# STATUS here is NOT current release authority. Prefer build_current_capability_gap_matrix()
+# (and verifier evidence) for present-tense claims. A capability must not be treated as
+# NOT_IMPLEMENTED solely because this snapshot says so when a runtime module exists.
+_KNOWN_GAPS_HISTORICAL: tuple[CapabilityGapRow, ...] = (
     CapabilityGapRow(
         capability="instrument_identity",
         current_owner="market_sim.instruments",
@@ -437,8 +439,11 @@ def build_capability_gap_matrix(
     extra_rows: Sequence[CapabilityGapRow | Mapping[str, Any]] | None = None,
     include_known: bool = True,
 ) -> CapabilityGapMatrix:
-    """Build the W37 gap matrix from known market_sim owners + optional extras."""
-    rows: list[CapabilityGapRow] = list(_KNOWN_GAPS) if include_known else []
+    """Build the W37 gap matrix from HISTORICAL known snapshot + optional extras.
+
+    Prefer ``build_current_capability_gap_matrix`` for present-tense release claims.
+    """
+    rows: list[CapabilityGapRow] = list(_KNOWN_GAPS_HISTORICAL) if include_known else []
     for raw in extra_rows or ():
         if isinstance(raw, CapabilityGapRow):
             rows.append(raw)
@@ -456,7 +461,66 @@ def build_capability_gap_matrix(
                 notes=str(raw.get("notes") or ""),
             )
         )
-    return CapabilityGapMatrix(rows=rows)
+    return CapabilityGapMatrix(
+        rows=rows,
+        generated_from="historical_baseline_snapshot",
+    )
+
+
+def build_current_capability_gap_matrix() -> CapabilityGapMatrix:
+    """Derive a current gap matrix from live module presence + historical baseline.
+
+    Historical NOT_IMPLEMENTED rows are upgraded to OBSERVED when the declared
+    owner module is importable, so static snapshots cannot contradict runtime.
+    """
+    import importlib
+
+    rows: list[CapabilityGapRow] = []
+    for row in _KNOWN_GAPS_HISTORICAL:
+        status = row.status
+        notes = row.notes
+        owner = row.current_owner
+        module_path = None
+        if owner.startswith("market_sim."):
+            module_path = f"Data.modules.{owner}"
+        elif owner.startswith("Data.modules."):
+            module_path = owner
+        present = False
+        if module_path:
+            try:
+                importlib.import_module(module_path)
+                present = True
+            except Exception:  # noqa: BLE001
+                present = False
+        if present and status in {
+            MeasurementState.NOT_IMPLEMENTED.value,
+            MeasurementState.UNMEASURED.value,
+        }:
+            status = MeasurementState.OBSERVED.value
+            notes = (notes + " | current: owner module importable").strip(" |")
+        rows.append(
+            CapabilityGapRow(
+                capability=row.capability,
+                current_owner=row.current_owner,
+                implementation=row.implementation if not present else (
+                    "PRESENT" if row.implementation in {"ABSENT", "UNKNOWN"} else row.implementation
+                ),
+                tests=row.tests,
+                ui=row.ui,
+                status=status,
+                missing=row.missing,
+                target_wave=row.target_wave,
+                notes=notes,
+            )
+        )
+    return CapabilityGapMatrix(
+        rows=rows,
+        generated_from="current_runtime_module_presence+historical_baseline",
+    )
+
+
+# Back-compat alias — do not treat as current PASS authority.
+_KNOWN_GAPS = _KNOWN_GAPS_HISTORICAL
 
 
 def gaps_for_wave(wave: str, matrix: CapabilityGapMatrix | None = None) -> list[dict[str, Any]]:

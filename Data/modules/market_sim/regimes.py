@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 
 REGIME_DETECTOR_VERSION = "regime_lib-1"
@@ -187,6 +187,249 @@ def hmm_regime_capability() -> dict[str, Any]:
         "reason": "HMM regime detector requires explicit dependency/state wiring before MEASURED",
         "truth": {"not_silently_measured": True},
     }
+
+
+@dataclass
+class RegimeEvaluationResult:
+    regime_id: str
+    methodology: str
+    sample_count: int
+    bar_count: int
+    trade_count: int
+    return_metrics: dict[str, Any]
+    risk_metrics: dict[str, Any]
+    drawdown: float | None
+    turnover: float | None
+    cost_sensitivity: float | None
+    state: str  # MeasurementState-like
+    passed: bool
+    blockers: list[str] = field(default_factory=list)
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "regimeId": self.regime_id,
+            "methodology": self.methodology,
+            "sampleCount": self.sample_count,
+            "barCount": self.bar_count,
+            "tradeCount": self.trade_count,
+            "returnMetrics": dict(self.return_metrics),
+            "riskMetrics": dict(self.risk_metrics),
+            "drawdown": self.drawdown,
+            "turnover": self.turnover,
+            "costSensitivity": self.cost_sensitivity,
+            "state": self.state,
+            "passed": self.passed,
+            "blockers": list(self.blockers),
+            "truth": {
+                "strategy_metadata_is_not_regime_evidence": True,
+                "hmm_not_invented": True,
+            },
+        }
+
+
+def _bar_returns(closes: Sequence[float], returns: Sequence[float] | None) -> list[float | None]:
+    """Per-bar return aligned to closes indices; index 0 has no prior close."""
+    n = len(closes)
+    out: list[float | None] = [None] * n
+    if returns is not None and len(returns) == n:
+        return [float(r) for r in returns]  # type: ignore[return-value]
+    if returns is not None and len(returns) == n - 1:
+        out[0] = None
+        for i, r in enumerate(returns):
+            out[i + 1] = float(r)
+        return out
+    for i in range(1, n):
+        prev = closes[i - 1]
+        if prev == 0:
+            out[i] = None
+        else:
+            out[i] = (closes[i] / prev) - 1.0
+    return out
+
+
+def _max_drawdown(rets: Sequence[float]) -> float | None:
+    if not rets:
+        return None
+    equity = 1.0
+    peak = 1.0
+    max_dd = 0.0
+    for r in rets:
+        equity *= 1.0 + float(r)
+        if equity > peak:
+            peak = equity
+        if peak > 0:
+            dd = (peak - equity) / peak
+            if dd > max_dd:
+                max_dd = dd
+    return max_dd
+
+
+def _map_trend_label(label: str) -> str:
+    if label == "bull":
+        return "up"
+    if label == "bear":
+        return "down"
+    return label
+
+
+def evaluate_regime_matrix(
+    closes: Sequence[float],
+    *,
+    timestamps: Sequence[str] | None = None,
+    returns: Sequence[float] | None = None,
+    trade_count: int = 0,
+    min_bars_per_regime: int = 10,
+    policy: Mapping[str, Any] | None = None,
+) -> list[RegimeEvaluationResult]:
+    """Bucket bars by trend×vol labels and evaluate each non-empty cell.
+
+    Uses existing causal detectors only. HMM is FEATURE_GATED when requested —
+    never invented. Strategy metadata is never treated as regime-test evidence.
+    """
+    from .institutional_core.status import MeasurementState
+
+    policy = dict(policy or {})
+    results: list[RegimeEvaluationResult] = []
+
+    # Honest FEATURE_GATED entry when HMM is requested — do not invent HMM paths.
+    hmm_requested = bool(
+        policy.get("hmm")
+        or policy.get("include_hmm")
+        or str(policy.get("methodology") or "").lower() == "hmm"
+        or "hmm" in {str(x).lower() for x in (policy.get("detectors") or [])}
+    )
+    if hmm_requested:
+        results.append(
+            RegimeEvaluationResult(
+                regime_id="hmm",
+                methodology="hmm",
+                sample_count=0,
+                bar_count=len(closes),
+                trade_count=int(trade_count),
+                return_metrics={},
+                risk_metrics={},
+                drawdown=None,
+                turnover=None,
+                cost_sensitivity=None,
+                state=MeasurementState.FEATURE_GATED.value,
+                passed=False,
+                blockers=["HMM_FEATURE_GATED"],
+            )
+        )
+
+    n = len(closes)
+    if n == 0:
+        return results
+
+    ts_list: list[str]
+    if timestamps is not None and len(timestamps) == n:
+        ts_list = [str(t) for t in timestamps]
+    else:
+        ts_list = [f"bar:{i}" for i in range(n)]
+
+    vol_window = int(policy.get("vol_window") or 20)
+    trend_fast = int(policy.get("trend_fast") or 10)
+    trend_slow = int(policy.get("trend_slow") or 30)
+    low_thr = float(policy.get("vol_low_threshold") or 0.005)
+    high_thr = float(policy.get("vol_high_threshold") or 0.02)
+
+    bar_rets = _bar_returns(closes, returns)
+    buckets: dict[str, list[tuple[int, float | None]]] = {}
+
+    for i in range(n):
+        prefix = closes[: i + 1]
+        ts = ts_list[i]
+        vol = detect_volatility_regime(
+            prefix,
+            ts=ts,
+            window=vol_window,
+            low_threshold=low_thr,
+            high_threshold=high_thr,
+        )
+        trend = detect_trend_regime(
+            prefix,
+            ts=ts,
+            fast=trend_fast,
+            slow=trend_slow,
+        )
+        if vol.status != "MEASURED" or trend.status != "MEASURED":
+            continue
+        trend_lbl = _map_trend_label(trend.label)
+        vol_lbl = vol.label
+        regime_id = f"trend:{trend_lbl}|vol:{vol_lbl}"
+        buckets.setdefault(regime_id, []).append((i, bar_rets[i]))
+
+    for regime_id in sorted(buckets.keys()):
+        entries = buckets[regime_id]
+        sample_count = len(entries)
+        rets = [float(r) for _, r in entries if r is not None]
+        blockers: list[str] = []
+        if sample_count < min_bars_per_regime:
+            state = MeasurementState.INSUFFICIENT_HISTORY.value
+            passed = False
+            blockers.append("INSUFFICIENT_BARS")
+            return_metrics: dict[str, Any] = {
+                "sum": sum(rets) if rets else None,
+                "mean": (sum(rets) / len(rets)) if rets else None,
+                "n_returns": len(rets),
+            }
+            risk_metrics: dict[str, Any] = {}
+            if len(rets) >= 2:
+                mean = sum(rets) / len(rets)
+                var = sum((x - mean) ** 2 for x in rets) / (len(rets) - 1)
+                risk_metrics["volatility"] = math.sqrt(var)
+            dd = _max_drawdown(rets) if rets else None
+            results.append(
+                RegimeEvaluationResult(
+                    regime_id=regime_id,
+                    methodology="causal_vol_trend_bucket",
+                    sample_count=sample_count,
+                    bar_count=n,
+                    trade_count=int(trade_count),
+                    return_metrics=return_metrics,
+                    risk_metrics=risk_metrics,
+                    drawdown=dd,
+                    turnover=None,
+                    cost_sensitivity=None,
+                    state=state,
+                    passed=passed,
+                    blockers=blockers,
+                )
+            )
+            continue
+
+        mean = sum(rets) / len(rets) if rets else None
+        total = sum(rets) if rets else None
+        risk_metrics = {}
+        if len(rets) >= 2 and mean is not None:
+            var = sum((x - mean) ** 2 for x in rets) / (len(rets) - 1)
+            risk_metrics["volatility"] = math.sqrt(var)
+        dd = _max_drawdown(rets) if rets else None
+        state = MeasurementState.MEASURED.value if rets else MeasurementState.UNMEASURED.value
+        passed = state == MeasurementState.MEASURED.value
+        results.append(
+            RegimeEvaluationResult(
+                regime_id=regime_id,
+                methodology="causal_vol_trend_bucket",
+                sample_count=sample_count,
+                bar_count=n,
+                trade_count=int(trade_count),
+                return_metrics={
+                    "sum": total,
+                    "mean": mean,
+                    "n_returns": len(rets),
+                },
+                risk_metrics=risk_metrics,
+                drawdown=dd,
+                turnover=None,
+                cost_sensitivity=None,
+                state=state,
+                passed=passed,
+                blockers=blockers,
+            )
+        )
+
+    return results
 
 
 def synthetic_known_regime_fixture(*, n: int = 120, seed: int = 7) -> dict[str, Any]:

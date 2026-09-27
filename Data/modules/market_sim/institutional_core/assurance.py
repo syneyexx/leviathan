@@ -27,8 +27,15 @@ FORBIDDEN_OWNER_CLASS_NAMES: frozenset[str] = frozenset(
         "PrivateQueue",
         "ModelControlPlaneV2",
         "McpBridgeV2",
+        "QualificationAuthorityV2",
+        "QualificationEngineV2",
+        "StatsV2",
+        "SecondQualificationAuthority",
     }
 )
+
+# Canonical scientific qualification owner — exactly one class definition allowed.
+CANONICAL_QUALIFICATION_AUTHORITY_REL: str = "qualification.py"
 
 # institutional_core itself must not define these either.
 SCAN_DEFAULT_ROOTS: tuple[str, ...] = (
@@ -169,6 +176,55 @@ def verify_live_trading_blocked() -> dict[str, Any]:
     }
 
 
+def scan_qualification_authority_uniqueness(
+    roots: Sequence[str | Path] | None = None,
+) -> dict[str, Any]:
+    """Ensure exactly one ``class QualificationAuthority`` in market_sim/qualification.py."""
+    defs: list[dict[str, Any]] = []
+    scanned = 0
+    for path in _iter_python_files(roots or SCAN_DEFAULT_ROOTS):
+        scanned += 1
+        try:
+            source = path.read_text(encoding="utf-8")
+            tree = ast.parse(source, filename=str(path))
+        except Exception as exc:  # noqa: BLE001
+            defs.append(
+                {
+                    "path": str(path),
+                    "lineno": None,
+                    "detail": f"parse_error:{exc}",
+                }
+            )
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name == "QualificationAuthority":
+                defs.append(
+                    {
+                        "path": str(path),
+                        "lineno": node.lineno,
+                        "detail": "qualification_authority_class",
+                    }
+                )
+    canonical = [
+        d
+        for d in defs
+        if d.get("path")
+        and Path(str(d["path"])).name == CANONICAL_QUALIFICATION_AUTHORITY_REL
+        and "market_sim" in Path(str(d["path"])).parts
+        and "institutional_core" not in Path(str(d["path"])).parts
+    ]
+    duplicates = [d for d in defs if d not in canonical and d.get("lineno") is not None]
+    ok = len(canonical) == 1 and not duplicates
+    return {
+        "ok": ok,
+        "scannedFiles": scanned,
+        "canonical": canonical,
+        "duplicates": duplicates,
+        "definitions": defs,
+        "status": MeasurementState.PASS.value if ok else MeasurementState.FAIL.value,
+    }
+
+
 def run_assurance(
     *,
     roots: Sequence[str | Path] | None = None,
@@ -197,6 +253,42 @@ def run_assurance(
                     severity="CRITICAL",
                     detail=str(hit.get("detail")),
                     path=str(hit.get("path")),
+                )
+            )
+
+    # Uniqueness always includes the market_sim package root so callers that
+    # pass only institutional_core/ still see the canonical QualificationAuthority.
+    ms_root = Path(__file__).resolve().parents[1]
+    qa_roots: list[str | Path] = list(resolved_roots)
+    if not any(Path(r).resolve() == ms_root for r in qa_roots):
+        qa_roots = [ms_root, *qa_roots]
+    qa_scan = scan_qualification_authority_uniqueness(qa_roots)
+    if not qa_scan.get("ok"):
+        for dup in qa_scan.get("duplicates") or []:
+            findings.append(
+                AssuranceFinding(
+                    code="DUPLICATE_QUALIFICATION_AUTHORITY",
+                    severity="CRITICAL",
+                    detail="QualificationAuthority must be defined only in market_sim/qualification.py",
+                    path=str(dup.get("path")),
+                )
+            )
+        if not (qa_scan.get("canonical") or []):
+            findings.append(
+                AssuranceFinding(
+                    code="MISSING_QUALIFICATION_AUTHORITY",
+                    severity="CRITICAL",
+                    detail="canonical QualificationAuthority not found in market_sim/qualification.py",
+                    path=CANONICAL_QUALIFICATION_AUTHORITY_REL,
+                )
+            )
+        if len(qa_scan.get("canonical") or []) > 1:
+            findings.append(
+                AssuranceFinding(
+                    code="DUPLICATE_QUALIFICATION_AUTHORITY",
+                    severity="CRITICAL",
+                    detail="multiple QualificationAuthority definitions in canonical module",
+                    path=str((qa_scan["canonical"][0] or {}).get("path")),
                 )
             )
 

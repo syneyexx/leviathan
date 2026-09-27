@@ -137,8 +137,14 @@ from .construction import (
     WeightBound,
     ConstructionConstraints,
     ConstructionResult,
+    CovarianceEstimate,
+    RiskContribution,
     check_feasibility,
     optimize_scores,
+    optimize_constrained,
+    estimate_covariance,
+    risk_contributions,
+    optimize_risk_budgeted,
 )
 from .mandates import (
     OrderIntent,
@@ -259,7 +265,12 @@ from .events import (
     event_catalog_public,
     validate_event,
 )
-from .control_room import ControlRoomSnapshot, build_control_room_snapshot
+from .control_room import (
+    ControlRoomSnapshot,
+    build_control_room_snapshot,
+    build_data_plane_projections,
+    build_research_projections,
+)
 from .reporting import ReportSection, GovernanceReportPack, build_governance_report_pack
 from .illiquid import (
     ILLIQUID_FAMILIES,
@@ -402,8 +413,14 @@ __all__ = [
     "WeightBound",
     "ConstructionConstraints",
     "ConstructionResult",
+    "CovarianceEstimate",
+    "RiskContribution",
     "check_feasibility",
     "optimize_scores",
+    "optimize_constrained",
+    "estimate_covariance",
+    "risk_contributions",
+    "optimize_risk_budgeted",
     # W51
     "OrderIntent",
     "PolicyViolation",
@@ -509,6 +526,8 @@ __all__ = [
     # W68
     "ControlRoomSnapshot",
     "build_control_room_snapshot",
+    "build_research_projections",
+    "build_data_plane_projections",
     # W69
     "ReportSection",
     "GovernanceReportPack",

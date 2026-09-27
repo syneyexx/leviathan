@@ -69,9 +69,273 @@ def _dm2_market_paper_deployments(conn: sqlite3.Connection, domain: DatabaseDoma
 
     _m57_market_paper_deployments(conn)
 
+def _dm3_market_qualification_authority(conn: sqlite3.Connection, domain: DatabaseDomain) -> None:
+    """MARKET domain v3 — QualificationAuthority persistence (Wave 2–3)."""
+    if domain is not DatabaseDomain.MARKET:
+        return
 
-def _dm3_external_capability_fabric(conn: sqlite3.Connection, domain: DatabaseDomain) -> None:
-    """CONTROL domain v3 — external capability fabric tables."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_qualification_policies (
+            policy_id TEXT PRIMARY KEY,
+            version INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            policy_hash TEXT NOT NULL UNIQUE,
+            policy_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            created_by TEXT NOT NULL,
+            active INTEGER NOT NULL DEFAULT 1
+        )
+        """
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_market_qualification_policies_hash "
+        "ON market_qualification_policies(policy_hash)"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_market_qualification_policies_name_ver "
+        "ON market_qualification_policies(name, version)"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_qualification_runs (
+            qualification_id TEXT PRIMARY KEY,
+            policy_id TEXT NOT NULL,
+            experiment_id TEXT,
+            learning_run_id TEXT,
+            candidate_id TEXT,
+            trial_family_id TEXT NOT NULL,
+            strategy_id TEXT NOT NULL,
+            strategy_version INTEGER NOT NULL,
+            strategy_hash TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            dataset_id TEXT,
+            dataset_version_id TEXT,
+            dataset_hash TEXT NOT NULL,
+            git_sha TEXT NOT NULL,
+            code_version TEXT NOT NULL,
+            seed INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            current_gate TEXT,
+            decision TEXT,
+            blockers_json TEXT NOT NULL DEFAULT '[]',
+            warnings_json TEXT NOT NULL DEFAULT '[]',
+            provenance_hash TEXT NOT NULL,
+            sealed_attempt_id TEXT,
+            idempotency_key TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_qualification_runs_strategy "
+        "ON market_qualification_runs(strategy_id, strategy_version)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_qualification_runs_family "
+        "ON market_qualification_runs(trial_family_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_qualification_runs_status "
+        "ON market_qualification_runs(status)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_qualification_runs_experiment "
+        "ON market_qualification_runs(experiment_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_qualification_runs_learning "
+        "ON market_qualification_runs(learning_run_id)"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_qualification_gate_results (
+            gate_result_id TEXT PRIMARY KEY,
+            qualification_id TEXT NOT NULL,
+            gate_id TEXT NOT NULL,
+            state TEXT NOT NULL,
+            passed INTEGER NOT NULL,
+            methodology TEXT NOT NULL,
+            evidence_json TEXT NOT NULL,
+            metrics_json TEXT NOT NULL,
+            blockers_json TEXT NOT NULL,
+            warnings_json TEXT NOT NULL,
+            input_hash TEXT NOT NULL,
+            output_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(qualification_id, gate_id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_qualification_gate_results_qid "
+        "ON market_qualification_gate_results(qualification_id)"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_wfa_folds (
+            fold_id TEXT PRIMARY KEY,
+            qualification_id TEXT NOT NULL,
+            fold_index INTEGER NOT NULL,
+            train_start_ts TEXT NOT NULL,
+            train_end_ts TEXT NOT NULL,
+            validation_start_ts TEXT,
+            validation_end_ts TEXT,
+            test_start_ts TEXT NOT NULL,
+            test_end_ts TEXT NOT NULL,
+            purge_bars INTEGER NOT NULL DEFAULT 0,
+            embargo_bars INTEGER NOT NULL DEFAULT 0,
+            train_run_id TEXT,
+            test_run_id TEXT,
+            strategy_id TEXT NOT NULL,
+            strategy_version INTEGER NOT NULL,
+            frozen_params_json TEXT NOT NULL,
+            metrics_json TEXT NOT NULL,
+            state TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(qualification_id, fold_index)
+        )
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_dataset_certifications (
+            certification_id TEXT PRIMARY KEY,
+            dataset_id TEXT NOT NULL,
+            dataset_version_id TEXT NOT NULL,
+            dataset_hash TEXT NOT NULL,
+            data_type TEXT NOT NULL,
+            certification_state TEXT NOT NULL,
+            pit_state TEXT NOT NULL,
+            survivorship_state TEXT NOT NULL,
+            revision_state TEXT NOT NULL,
+            corporate_action_state TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            license_state TEXT NOT NULL,
+            evidence_json TEXT NOT NULL,
+            certification_hash TEXT NOT NULL UNIQUE,
+            certified_at TEXT NOT NULL,
+            certified_by TEXT NOT NULL,
+            superseded_by TEXT
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_dataset_certifications_dataset "
+        "ON market_dataset_certifications(dataset_id, dataset_version_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_dataset_certifications_hash "
+        "ON market_dataset_certifications(dataset_hash)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_dataset_certifications_state "
+        "ON market_dataset_certifications(certification_state)"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_strategy_behavior_fingerprints (
+            fingerprint_id TEXT PRIMARY KEY,
+            strategy_id TEXT NOT NULL,
+            strategy_version INTEGER NOT NULL,
+            dataset_version_id TEXT NOT NULL,
+            signal_hash TEXT NOT NULL,
+            position_hash TEXT NOT NULL,
+            trade_timing_hash TEXT NOT NULL,
+            return_series_hash TEXT NOT NULL,
+            feature_set_hash TEXT NOT NULL,
+            regime_response_hash TEXT,
+            summary_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(strategy_id, strategy_version, dataset_version_id)
+        )
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_strategy_risk_snapshots (
+            snapshot_id TEXT PRIMARY KEY,
+            portfolio_id TEXT NOT NULL,
+            as_of TEXT NOT NULL,
+            strategy_ids_json TEXT NOT NULL,
+            sample_count INTEGER NOT NULL,
+            covariance_json TEXT NOT NULL,
+            correlation_json TEXT NOT NULL,
+            risk_contribution_json TEXT NOT NULL,
+            methodology TEXT NOT NULL,
+            state TEXT NOT NULL,
+            input_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_strategy_risk_snapshots_portfolio "
+        "ON market_strategy_risk_snapshots(portfolio_id, as_of)"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_execution_calibrations (
+            calibration_id TEXT PRIMARY KEY,
+            execution_model_id TEXT NOT NULL,
+            execution_model_version TEXT NOT NULL,
+            source_deployment_ids_json TEXT NOT NULL,
+            symbol TEXT,
+            provider_id TEXT,
+            order_type TEXT,
+            size_bucket TEXT,
+            regime TEXT,
+            sample_count INTEGER NOT NULL,
+            parameters_json TEXT NOT NULL,
+            metrics_json TEXT NOT NULL,
+            state TEXT NOT NULL,
+            confidence_json TEXT NOT NULL,
+            input_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            created_by TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_execution_calibrations_model "
+        "ON market_execution_calibrations(execution_model_id, execution_model_version)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_execution_calibrations_symbol "
+        "ON market_execution_calibrations(symbol, provider_id)"
+    )
+
+    # Wave 13 table included early so lifecycle can bind to qualification runs.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_strategy_lifecycle (
+            strategy_id TEXT NOT NULL,
+            strategy_version INTEGER NOT NULL,
+            state TEXT NOT NULL,
+            evidence_json TEXT NOT NULL DEFAULT '{}',
+            history_json TEXT NOT NULL DEFAULT '[]',
+            notes_json TEXT NOT NULL DEFAULT '[]',
+            qualification_id TEXT,
+            paper_deployment_id TEXT,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(strategy_id, strategy_version)
+        )
+        """
+    )
+
+def _dm4_external_capability_fabric(conn: sqlite3.Connection, domain: DatabaseDomain) -> None:
+    """CONTROL domain v4 — external capability fabric tables."""
     if domain is not DatabaseDomain.CONTROL:
         return
     conn.executescript(
@@ -184,8 +448,6 @@ def _dm3_external_capability_fabric(conn: sqlite3.Connection, domain: DatabaseDo
         """
     )
 
-
-# Post-baseline domain migrations (independent per DB). Contiguous from v2.
 DOMAIN_MIGRATIONS: tuple[DomainMigration, ...] = (
     DomainMigration(
         version=2,
@@ -194,11 +456,15 @@ DOMAIN_MIGRATIONS: tuple[DomainMigration, ...] = (
     ),
     DomainMigration(
         version=3,
+        name="market_qualification_authority",
+        apply=_dm3_market_qualification_authority,
+    ),
+    DomainMigration(
+        version=4,
         name="external_capability_fabric",
-        apply=_dm3_external_capability_fabric,
+        apply=_dm4_external_capability_fabric,
     ),
 )
-
 
 
 @dataclass
