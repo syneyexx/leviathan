@@ -1155,7 +1155,7 @@
       "status": "PASS",
       "required": true,
       "evidence": [
-        "Single leviathan.db; MigrationRunner contiguous versions through 48",
+        "Canonical CONTROL/KNOWLEDGE/MARKET domain databases; MigrationRunner contiguous domain migrations",
         "Data/backend/tests/test_migrations.py",
         "Data/backend/tests/test_market_sim_characterization.py::D21MigrationHeadCharacterization"
       ],
