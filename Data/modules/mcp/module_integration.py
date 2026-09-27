@@ -31,6 +31,7 @@ def register_module_mcp(
     *,
     module_id: str,
     manifest_path: str | None,
+    install_root: str | Path | None = None,
 ) -> list[Any]:
     """Best-effort: register module-declared MCP servers into the ONE bridge."""
     meta = load_module_mcp_metadata(manifest_path)
@@ -38,7 +39,12 @@ def register_module_mcp(
         return []
     root = Path(manifest_path).parent if manifest_path else None
     try:
-        return bridge.register_servers_from_module(module_id, meta, module_root=root)
+        return bridge.register_servers_from_module(
+            module_id,
+            meta,
+            module_root=root,
+            install_root=install_root,
+        )
     except McpError:
         # required MCP failure — re-raise for caller policy
         raise

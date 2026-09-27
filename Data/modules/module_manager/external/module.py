@@ -70,6 +70,9 @@ class ExternalCapabilityModule:
                 install_root = version.get("install_root")
         from .adapters.base import AdapterContext
 
+        meta = dict(self._ctx_services)
+        if getattr(self._manifest, "source_path", None):
+            meta.setdefault("manifest_path", self._manifest.source_path)
         adapter_ctx = AdapterContext(
             module_id=self._manifest.module_id,
             config=self._config,
@@ -79,7 +82,7 @@ class ExternalCapabilityModule:
             mcp_bridge=self._ctx_services.get("mcp_bridge"),
             artifact_store=self._ctx_services.get("artifact_store"),
             store=self._store,
-            metadata=dict(self._ctx_services),
+            metadata=meta,
         )
         self._adapter = build_adapter(self._config.adapter, adapter_ctx)
         # Reconcile persisted RUNNING — never trust it blindly.

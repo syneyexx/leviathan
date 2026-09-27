@@ -49,14 +49,58 @@ class McpAdapter:
             installed = CliAdapter(self.ctx).ensure_installed(progress=progress, cancel_check=cancel_check)
         else:
             installed = {"status": "INSTALLED"}
+        self._reregister_mcp(install_root=(installed or {}).get("install_root"))
         self._state = ExternalRuntimeState.INSTALLED
         return installed
+
+    def _reregister_mcp(self, *, install_root: str | None = None) -> None:
+        """Ensure module.json mcp.servers are registered with resolved $INSTALL_ROOT."""
+        bridge = self.ctx.mcp_bridge
+        if bridge is None:
+            return
+        root = install_root
+        if not root and self.ctx.store is not None:
+            version = self.ctx.store.get_active_version(self.ctx.module_id)
+            if version:
+                root = version.get("install_root")
+        if not root:
+            root = self.ctx.install_root
+        meta = self.ctx.metadata or {}
+        manifest_path = meta.get("manifest_path") if isinstance(meta, dict) else None
+        if not manifest_path:
+            try:
+                from pathlib import Path
+
+                candidate = (
+                    Path(__file__).resolve().parents[4]
+                    / "external_capabilities"
+                    / self.ctx.module_id
+                    / "module.json"
+                )
+                if candidate.is_file():
+                    manifest_path = str(candidate)
+            except Exception:  # noqa: BLE001
+                pass
+        if not manifest_path:
+            return
+        try:
+            from Data.modules.mcp.module_integration import register_module_mcp
+
+            register_module_mcp(
+                bridge,
+                module_id=self.ctx.module_id,
+                manifest_path=str(manifest_path),
+                install_root=root,
+            )
+        except Exception:  # noqa: BLE001 — optional MCP must not break install
+            pass
 
     def start(self) -> dict[str, Any]:
         bridge = self.ctx.mcp_bridge
         if bridge is None:
             raise RuntimeError("mcp_bridge not configured")
         self._state = ExternalRuntimeState.STARTING
+        self._reregister_mcp()
         try:
             bridge.enable(self._server_id)
         except Exception:  # noqa: BLE001 — enable may already be on

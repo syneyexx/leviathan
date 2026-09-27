@@ -507,8 +507,13 @@ class McpBridge:
         mcp_meta: dict[str, Any],
         *,
         module_root: Path | None = None,
+        install_root: str | Path | None = None,
     ) -> list[McpServerConfig]:
-        """Register servers declared in module.json mcp block."""
+        """Register servers declared in module.json mcp block.
+
+        Accepts ``name``, ``display_name``, or ``server_id`` as the server label.
+        Resolves ``$INSTALL_ROOT`` in command/args/cwd/env when ``install_root`` is set.
+        """
         if not self.enabled:
             return []
         servers_raw = mcp_meta.get("servers") or []
@@ -516,35 +521,62 @@ class McpBridge:
             return []
         default_trust = str(mcp_meta.get("default_trust") or "untrusted")
         expand = bool(mcp_meta.get("expand_tools", True))
+        root_token = str(install_root or module_root or "")
         registered: list[McpServerConfig] = []
         for item in servers_raw:
             if not isinstance(item, dict):
                 continue
-            name = str(item.get("name") or "").strip()
+            name = str(
+                item.get("name")
+                or item.get("display_name")
+                or item.get("server_id")
+                or ""
+            ).strip()
             if not name:
                 continue
+            server_id = str(item.get("server_id") or "").strip() or None
             transport = str(item.get("transport") or "stdio")
             command = item.get("command")
+            if command is not None and root_token:
+                command = str(command).replace("$INSTALL_ROOT", root_token)
             args = item.get("args") or []
-            if module_root is not None and isinstance(args, list):
-                # Resolve relative script paths against module root when present.
+            if isinstance(args, list):
                 resolved_args = []
                 for arg in args:
                     text = str(arg)
-                    candidate = module_root / text
-                    resolved_args.append(str(candidate) if candidate.exists() else text)
+                    if root_token:
+                        text = text.replace("$INSTALL_ROOT", root_token)
+                    if module_root is not None:
+                        candidate = module_root / text
+                        if candidate.exists():
+                            text = str(candidate)
+                    resolved_args.append(text)
                 args = resolved_args
+            cwd_raw = item.get("cwd")
+            if cwd_raw:
+                cwd = str(cwd_raw).replace("$INSTALL_ROOT", root_token) if root_token else str(cwd_raw)
+            elif root_token:
+                cwd = root_token
+            elif module_root is not None:
+                cwd = str(module_root)
+            else:
+                cwd = None
+            env = {
+                str(k): (str(v).replace("$INSTALL_ROOT", root_token) if root_token else str(v))
+                for k, v in dict(item.get("env") or {}).items()
+            }
             try:
                 config = self.register_server(
                     display_name=name,
                     transport=transport,
                     source_kind=McpSourceKind.MODULE,
-                    source_key=f"{module_id}:{name}",
+                    source_key=f"{module_id}:{server_id or name}",
+                    server_id=server_id,
                     command=str(command) if command else None,
                     args=list(args) if isinstance(args, list) else [],
                     url=item.get("url"),
-                    cwd=str(item["cwd"]) if item.get("cwd") else (str(module_root) if module_root else None),
-                    env=dict(item.get("env") or {}),
+                    cwd=cwd,
+                    env=env,
                     secret_refs=dict(item.get("secret_refs") or {}),
                     timeout_seconds=float(item.get("timeout_seconds") or 30),
                     enabled=bool(item.get("enabled", True)),

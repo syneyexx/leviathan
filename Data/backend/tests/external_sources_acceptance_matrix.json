@@ -9,7 +9,7 @@
     "NOT_APPLICABLE",
     "FAILED"
   ],
-  "notes": "Fixture adapters prove all adapter kinds. Live installs: 21/21. Skill packs search/load PASS (incl. catalog materialize). DesktopCommander MCP gateway+approval PASS. Osintgram start/invoke/stop PASS. OpenMAIC health+generate 202+skills PASS. ScrollCraft generate+build PASS. Fincept metrics PASS. llm-agent-trader start/docs/stop PASS without LLM keys. Selfstarter status PASS (EXIT_NONZERO honest). GhostTrack interactive-only BLOCKED_EXTERNAL (install/status only). Vibe-Trading MCP connect still needs secrets. Heavy modules resource_class\u2192EXTERNAL_REQUIRED. No per-repository wrappers.",
+  "notes": "Fixture adapters prove all adapter kinds. Live installs: 21/21. Skill packs search/load PASS. DesktopCommander + Vibe-Trading MCP via McpBridge PASS (74 tools; alpha_zoo/analyze_options). Osintgram/OpenMAIC/ScrollCraft/Fincept/llm-agent-trader docs PASS. GhostTrack interactive-only BLOCKED_EXTERNAL. MCP module registration accepts server_id/display_name and resolves $INSTALL_ROOT. Heavy modules resource_class\u2192EXTERNAL_REQUIRED. No per-repository wrappers.",
   "sources": [
     {
       "source": "wonderwhy-er/DesktopCommanderMCP",
@@ -133,12 +133,12 @@
       "module_id": "vibe-trading",
       "install_verified": "PASS",
       "discovery_verified": "PASS",
-      "start_verified": "BLOCKED_EXTERNAL",
-      "stop_verified": "BLOCKED_EXTERNAL",
+      "start_verified": "PASS",
+      "stop_verified": "PASS",
       "capability_discovery": "PASS",
-      "invoke_verified": "BLOCKED_EXTERNAL",
+      "invoke_verified": "PASS",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PARTIAL",
       "knowledge_assimilation": "PARTIAL",
       "known_external_requirements": [
@@ -148,7 +148,7 @@
         "broker/API keys for some tools"
       ],
       "status": "PARTIAL",
-      "limitations": "Live GIT+venv install PASS. MCP connect requires McpBridge + broker/API keys / runtime module path (BLOCKED_EXTERNAL without secrets). MarketSim bypass forbidden."
+      "limitations": "Live GIT+venv install PASS. Fixed MCP entrypoint vibe-trading-mcp; McpBridge register via server_id/display_name + $INSTALL_ROOT resolution PASS; connect discovers 74 tools; alpha_zoo health + analyze_options invoke PASS without broker keys. Broker/live-trading tools may still need API keys. MarketSim bypass forbidden."
     },
     {
       "source": "anthropics/financial-services",
@@ -202,8 +202,8 @@
       "module_id": "fincept-terminal",
       "install_verified": "PASS",
       "discovery_verified": "PASS",
-      "start_verified": "BLOCKED_EXTERNAL",
-      "stop_verified": "BLOCKED_EXTERNAL",
+      "start_verified": "NOT_APPLICABLE",
+      "stop_verified": "NOT_APPLICABLE",
       "capability_discovery": "PASS",
       "invoke_verified": "PASS",
       "result_normalization": "PASS",
@@ -616,7 +616,9 @@
       "resource_class_external_required": "PASS",
       "skill_pack_invokes": "PASS",
       "llm_agent_trader_start_docs": "PASS",
-      "ghosttrack_no_hang": "PASS"
+      "ghosttrack_no_hang": "PASS",
+      "vibe_trading_mcp": "PASS",
+      "mcp_server_id_registration": "PASS"
     },
     "skill_pack_invoke": {
       "claude-osint": {
@@ -682,6 +684,17 @@
       "status": "PASS",
       "invoke": "BLOCKED_EXTERNAL interactive TUI",
       "capability_not_found_on_run": "PASS"
+    },
+    "vibe-trading": {
+      "install": "PASS",
+      "mcp_entrypoint": "vibe-trading-mcp",
+      "connect": "PASS",
+      "tools_discovered": 74,
+      "invoke_alpha_zoo_health": "PASS",
+      "invoke_analyze_options": "PASS",
+      "disconnect": "PASS",
+      "module_manager_start_stop": "PASS",
+      "broker_keys": "NOT_REQUIRED_for_research_tools"
     }
   }
 }

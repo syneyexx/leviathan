@@ -67,13 +67,11 @@
     "servers": [
       {
         "server_id": "vibe-trading",
+        "name": "Vibe Trading",
         "display_name": "Vibe Trading",
         "transport": "stdio",
-        "command": "python",
-        "args": [
-          "-m",
-          "vibe_trading"
-        ],
+        "command": "$INSTALL_ROOT/.venv/bin/vibe-trading-mcp",
+        "args": [],
         "cwd": "$INSTALL_ROOT",
         "enabled": false,
         "eager_connect": false,

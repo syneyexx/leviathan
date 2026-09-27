@@ -777,6 +777,7 @@ class ExternalAdapterFixtureE2ETests(unittest.TestCase):
         """McpAdapter start/status/stop through a real McpBridge + fake stdio server."""
         from Data.modules.mcp import McpBridge, McpStore
         from Data.modules.mcp.limits import McpLimits
+        from Data.modules.mcp.module_integration import register_module_mcp
 
         fake = Path(__file__).resolve().parent / "fixtures" / "fake_mcp_server.py"
         self.assertTrue(fake.exists())
@@ -803,19 +804,6 @@ class ExternalAdapterFixtureE2ETests(unittest.TestCase):
                 limits=McpLimits(startup_timeout_seconds=10.0, max_restart_attempts=1),
             )
             bridge.initialize()
-            cfg = bridge.register_server(
-                display_name="Fake MCP",
-                transport="stdio",
-                source_kind="manual",
-                source_key="fake-mcp",
-                server_id="fake-mcp",
-                command=sys.executable,
-                args=[str(fake), "--mode=normal"],
-                enabled=True,
-                trust="untrusted",
-                expand_tools=True,
-            )
-            self.assertEqual(cfg.server_id, "fake-mcp")
             manifest = {
                 "module_id": "fake-mcp",
                 "name": "Fake MCP Module",
@@ -842,8 +830,33 @@ class ExternalAdapterFixtureE2ETests(unittest.TestCase):
                         "side_effects": ["READ"],
                     },
                 ],
+                "mcp": {
+                    "servers": [
+                        {
+                            "server_id": "fake-mcp",
+                            "display_name": "Fake MCP",
+                            "transport": "stdio",
+                            "command": sys.executable,
+                            "args": [str(fake), "--mode=normal"],
+                            "cwd": "$INSTALL_ROOT",
+                            "enabled": True,
+                            "eager_connect": False,
+                            "trust": "untrusted",
+                        }
+                    ]
+                },
             }
             (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+            # server_id/display_name (no legacy "name") must register + resolve $INSTALL_ROOT
+            registered = register_module_mcp(
+                bridge,
+                module_id="fake-mcp",
+                manifest_path=str(root / "module.json"),
+                install_root=str(pkg),
+            )
+            self.assertEqual(len(registered), 1)
+            self.assertEqual(registered[0].server_id, "fake-mcp")
+            self.assertEqual(registered[0].cwd, str(pkg))
             manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
             manager.discover()
             manager.initialize(

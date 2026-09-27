@@ -56,6 +56,7 @@
     "servers": [
       {
         "server_id": "desktop-commander",
+        "name": "Desktop Commander",
         "display_name": "Desktop Commander",
         "transport": "stdio",
         "command": "npx",
