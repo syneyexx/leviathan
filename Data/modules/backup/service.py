@@ -324,9 +324,29 @@ class BackupService:
             }
         return {"CONTROL": Path(self.database_path)}
 
-    def restore(self, backup_id: str, *, confirm: bool = False) -> BackupManifest:
+    def restore(
+        self,
+        backup_id: str,
+        *,
+        confirm: bool = False,
+        maintenance_boundary: bool = False,
+        inject_crash_after: str | None = None,
+    ) -> BackupManifest:
+        """Restore a backup set with durable journaling for three-DB cutover.
+
+        BACKUP-002: cross-file replace is not atomic — phases/journal expose
+        OLD_SET_ACTIVE / NEW_SET_ACTIVE / RECOVERY_REQUIRED.
+        BACKUP-003: live DB files are only replaced when
+        ``maintenance_boundary=True``.
+        ``inject_crash_after`` is test-only (``before_cutover``, ``after_CONTROL``, …).
+        """
         if not confirm:
             raise BackupError("Restore refused: confirm=true is required")
+        if not maintenance_boundary:
+            raise BackupError(
+                "Restore refused: maintenance_boundary=true is required — "
+                "refusing to replace DB files under live connections"
+            )
         dest = self.backup_root / backup_id
         manifest_path = dest / "manifest.json"
         if not manifest_path.is_file():
@@ -335,9 +355,26 @@ class BackupService:
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
         databases = dict(data.get("databases") or {})
         live_paths = self._canonical_paths()
+        journal_path = self.backup_root / RESTORE_JOURNAL_NAME
+        crash_at = (inject_crash_after or "").strip() or None
 
+        def _maybe_crash(point: str) -> None:
+            if crash_at and crash_at == point:
+                # Persist RECOVERY_REQUIRED when mid-cutover; before_cutover stays OLD.
+                raise BackupError(f"injected_crash:{point}")
+
+        prior = self._read_restore_journal(journal_path)
+        if prior and prior.get("state") == RESTORE_RECOVERY_REQUIRED:
+            if prior.get("backup_id") == backup_id:
+                return self._resume_restore_journal(journal_path, prior, data)
+            raise BackupError(
+                f"Restore recovery required for backup {prior.get('backup_id')} — "
+                "refusing to start a different restore while mixed revisions may exist"
+            )
+
+        restore_terminal = RESTORE_OLD_SET_ACTIVE
         if databases:
-            # Three-DB (or multi-DB) backup set — refuse partial/missing members.
+            staged: dict[str, Path] = {}
             for domain in live_paths:
                 entry = databases.get(domain)
                 if not entry:
@@ -353,17 +390,82 @@ class BackupService:
                 actual = hashlib.sha256(db_copy.read_bytes()).hexdigest()
                 if expected and actual != expected:
                     raise BackupError(f"{domain} backup hash mismatch — refusing restore")
-            for domain, live in live_paths.items():
-                entry = databases[domain]
-                db_copy = dest / str(entry["backupFile"])
-                live.parent.mkdir(parents=True, exist_ok=True)
-                tmp = live.with_suffix(".restore-tmp")
-                shutil.copy2(db_copy, tmp)
-                tmp.replace(live)
-            primary_digest = str(databases.get("CONTROL", {}).get("sha256") or data.get("database_sha256") or "")
-            primary_schema = int(databases.get("CONTROL", {}).get("schemaVersion") or data.get("schema_version") or 0)
+                staged[domain] = db_copy
+
+            journal: dict[str, Any] = {
+                "backup_id": backup_id,
+                "started_at": utc_now(),
+                "state": RESTORE_OLD_SET_ACTIVE,
+                "phase": "VERIFIED",
+                "domains": list(live_paths.keys()),
+                "replaced": [],
+                "pending": list(live_paths.keys()),
+                "truth": {
+                    "crossFileRestoreIsNotAtomic": True,
+                    "mixedRevisionsMustNotResumeNormally": True,
+                },
+            }
+            self._write_restore_journal(journal_path, journal)
+            _maybe_crash("before_cutover")
+
+            try:
+                staged_live: dict[str, Path] = {}
+                for domain, live in live_paths.items():
+                    live.parent.mkdir(parents=True, exist_ok=True)
+                    pre = live.with_suffix(".pre-restore")
+                    if live.is_file():
+                        shutil.copy2(live, pre)
+                    tmp = live.with_suffix(".restore-tmp")
+                    shutil.copy2(staged[domain], tmp)
+                    staged_live[domain] = tmp
+                journal["phase"] = "FILES_STAGED"
+                journal["state"] = RESTORE_OLD_SET_ACTIVE
+                self._write_restore_journal(journal_path, journal)
+
+                for domain, live in live_paths.items():
+                    journal["phase"] = f"REPLACING_{domain}"
+                    journal["state"] = RESTORE_RECOVERY_REQUIRED
+                    self._write_restore_journal(journal_path, journal)
+                    staged_live[domain].replace(live)
+                    journal.setdefault("replaced", []).append(domain)
+                    journal["pending"] = [d for d in journal["pending"] if d != domain]
+                    self._write_restore_journal(journal_path, journal)
+                    _maybe_crash(f"after_{domain}")
+
+                journal["phase"] = "NEW_SET_ACTIVE"
+                journal["state"] = RESTORE_NEW_SET_ACTIVE
+                journal["completed_at"] = utc_now()
+                self._write_restore_journal(journal_path, journal)
+            except BackupError as exc:
+                # Crash injection or explicit refuse mid-cutover.
+                if "injected_crash:" in str(exc):
+                    cur = self._read_restore_journal(journal_path) or journal
+                    # before_cutover: still OLD_SET_ACTIVE; after_* already RECOVERY_REQUIRED
+                    if crash_at and crash_at.startswith("after_"):
+                        cur["state"] = RESTORE_RECOVERY_REQUIRED
+                        cur["error"] = str(exc)[:500]
+                        cur["failed_at"] = utc_now()
+                        self._write_restore_journal(journal_path, cur)
+                    raise
+                raise
+            except Exception as exc:
+                journal["state"] = RESTORE_RECOVERY_REQUIRED
+                journal["error"] = str(exc)[:500]
+                journal["failed_at"] = utc_now()
+                self._write_restore_journal(journal_path, journal)
+                raise BackupError(
+                    f"Restore interrupted — state={RESTORE_RECOVERY_REQUIRED}: {exc}"
+                ) from exc
+
+            primary_digest = str(
+                databases.get("CONTROL", {}).get("sha256") or data.get("database_sha256") or ""
+            )
+            primary_schema = int(
+                databases.get("CONTROL", {}).get("schemaVersion") or data.get("schema_version") or 0
+            )
             total_size = sum(int(v.get("sizeBytes") or 0) for v in databases.values())
             backup_set_complete = True
+            restore_terminal = RESTORE_NEW_SET_ACTIVE
         else:
             # Legacy single-DB backup compatibility.
             db_copy = dest / "leviathan.db"
@@ -382,6 +484,9 @@ class BackupService:
             total_size = int(data.get("size_bytes") or db_copy.stat().st_size)
             backup_set_complete = False
             databases = {}
+            restore_terminal = RESTORE_NEW_SET_ACTIVE
+            if journal_path.is_file():
+                journal_path.unlink(missing_ok=True)
 
         art_src = dest / "artifacts"
         if art_src.is_dir():
@@ -425,6 +530,21 @@ class BackupService:
         meta = {**(data.get("metadata") or {}), "restored_at": utc_now()}
         if missing:
             meta["missingCorpusFilesDetected"] = True
+        meta["restoreTerminalState"] = restore_terminal
+        meta["crossFileRestoreIsNotAtomic"] = True
+        meta["maintenanceBoundaryHonored"] = True
+        meta["corpusInventorySourceDomain"] = (data.get("metadata") or {}).get(
+            "corpusInventorySourceDomain", "KNOWLEDGE"
+        )
+
+        if restore_terminal == RESTORE_NEW_SET_ACTIVE and journal_path.is_file():
+            try:
+                done = self._read_restore_journal(journal_path) or {}
+                done["state"] = RESTORE_NEW_SET_ACTIVE
+                done["cleared_for_runtime"] = True
+                self._write_restore_journal(journal_path, done)
+            except OSError:
+                pass
 
         return BackupManifest(
             backup_id=str(data["backup_id"]),
@@ -447,6 +567,119 @@ class BackupService:
             missing_corpus_files=missing,
             databases=databases,
             backup_set_complete=backup_set_complete,
+        )
+
+    def restore_status(self) -> dict[str, Any]:
+        """Operator-visible restore journal — mixed revisions ⇒ RECOVERY_REQUIRED."""
+        journal_path = self.backup_root / RESTORE_JOURNAL_NAME
+        journal = self._read_restore_journal(journal_path)
+        if not journal:
+            return {
+                "state": RESTORE_OLD_SET_ACTIVE,
+                "active": False,
+                "truth": {"crossFileRestoreIsNotAtomic": True},
+            }
+        state = str(journal.get("state") or RESTORE_RECOVERY_REQUIRED)
+        return {
+            "state": state,
+            "active": state == RESTORE_RECOVERY_REQUIRED,
+            "journal": journal,
+            "truth": {
+                "crossFileRestoreIsNotAtomic": True,
+                "mixedRevisionsMustNotResumeNormally": state == RESTORE_RECOVERY_REQUIRED,
+            },
+        }
+
+    def _write_restore_journal(self, path: Path, payload: dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        # fsync via replace of fully written temp file
+        tmp.replace(path)
+
+    def _read_restore_journal(self, path: Path) -> dict[str, Any] | None:
+        if not path.is_file():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else None
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return None
+
+    def _resume_restore_journal(
+        self,
+        journal_path: Path,
+        journal: dict[str, Any],
+        data: dict[str, Any],
+    ) -> BackupManifest:
+        """Finish pending domain replacements after crash; refuse mixed silent resume."""
+        backup_id = str(journal.get("backup_id") or "")
+        dest = self.backup_root / backup_id
+        databases = dict(data.get("databases") or {})
+        live_paths = self._canonical_paths()
+        pending = list(journal.get("pending") or [])
+        if not pending:
+            journal["state"] = RESTORE_NEW_SET_ACTIVE
+            journal["phase"] = "RESUMED_COMPLETE"
+            journal["completed_at"] = utc_now()
+            self._write_restore_journal(journal_path, journal)
+        else:
+            for domain in list(pending):
+                entry = databases.get(domain)
+                live = live_paths.get(domain)
+                if not entry or live is None:
+                    raise BackupError(
+                        f"Cannot resume restore: missing {domain} — {RESTORE_RECOVERY_REQUIRED}"
+                    )
+                db_copy = dest / str(entry.get("backupFile") or "")
+                if not db_copy.is_file():
+                    raise BackupError(
+                        f"Cannot resume restore: {domain} backup file missing — "
+                        f"{RESTORE_RECOVERY_REQUIRED}"
+                    )
+                journal["phase"] = f"RESUMING_{domain}"
+                journal["state"] = RESTORE_RECOVERY_REQUIRED
+                self._write_restore_journal(journal_path, journal)
+                tmp = live.with_suffix(".restore-tmp")
+                shutil.copy2(db_copy, tmp)
+                tmp.replace(live)
+                journal.setdefault("replaced", []).append(domain)
+                journal["pending"] = [d for d in journal["pending"] if d != domain]
+                self._write_restore_journal(journal_path, journal)
+            journal["state"] = RESTORE_NEW_SET_ACTIVE
+            journal["phase"] = "RESUMED_COMPLETE"
+            journal["completed_at"] = utc_now()
+            self._write_restore_journal(journal_path, journal)
+
+        primary_digest = str(
+            databases.get("CONTROL", {}).get("sha256") or data.get("database_sha256") or ""
+        )
+        primary_schema = int(
+            databases.get("CONTROL", {}).get("schemaVersion") or data.get("schema_version") or 0
+        )
+        total_size = sum(int(v.get("sizeBytes") or 0) for v in databases.values())
+        meta = {**(data.get("metadata") or {}), "restored_at": utc_now()}
+        meta["restoreTerminalState"] = RESTORE_NEW_SET_ACTIVE
+        meta["restoreResumed"] = True
+        meta["crossFileRestoreIsNotAtomic"] = True
+        meta["maintenanceBoundaryHonored"] = True
+        return BackupManifest(
+            backup_id=str(data["backup_id"]),
+            created_at=str(data["created_at"]),
+            database_path=str(self.database_path),
+            database_sha256=primary_digest,
+            size_bytes=total_size or int(data.get("size_bytes") or 0),
+            schema_version=primary_schema,
+            artifacts_copied=int(data.get("artifacts_copied") or 0),
+            metadata=meta,
+            backup_kind=str(data.get("backupKind") or BACKUP_KIND_METADATA_ONLY),
+            corpus_files_included=bool(data.get("corpusFilesIncluded")),
+            artifacts_included=bool(data.get("artifactsIncluded")),
+            is_complete_data_snapshot=False,
+            corpus_inventory=list(data.get("corpusInventory") or []),
+            missing_corpus_files=[],
+            databases=databases,
+            backup_set_complete=True,
         )
 
     def _manifest_from_dict(self, data: dict[str, Any]) -> BackupManifest:

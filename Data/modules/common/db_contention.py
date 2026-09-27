@@ -62,3 +62,41 @@ def db_contention_snapshot(database_path: Path | str | None) -> dict[str, Any]:
             "fromSqlitePolicy": True,
         },
     }
+
+
+def three_database_contention_snapshot(paths: Any | None = None) -> dict[str, Any]:
+    """Per-domain contention for CONTROL / KNOWLEDGE / MARKET (OBS-001)."""
+    out: dict[str, Any] = {
+        "domains": {},
+        "truth": {
+            "perDomain": True,
+            "unmeasuredIsNotZero": True,
+            "notControlOnly": True,
+        },
+    }
+    if paths is None:
+        try:
+            from Data.backend.config import load_settings
+
+            paths = load_settings().database_paths
+        except Exception:  # noqa: BLE001
+            out["domains"] = {
+                "CONTROL": {"status": UNMEASURED},
+                "KNOWLEDGE": {"status": UNMEASURED},
+                "MARKET": {"status": UNMEASURED},
+            }
+            return out
+    mapping = {
+        "CONTROL": getattr(paths, "control", None),
+        "KNOWLEDGE": getattr(paths, "knowledge", None),
+        "MARKET": getattr(paths, "market", None),
+    }
+    for name, path in mapping.items():
+        if path is None:
+            out["domains"][name] = {"status": UNMEASURED}
+        else:
+            snap = db_contention_snapshot(path)
+            snap["domain"] = name
+            snap["path"] = str(path)
+            out["domains"][name] = snap
+    return out

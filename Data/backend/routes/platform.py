@@ -40,11 +40,14 @@ class TradingOrderRequest(BaseModel):
 
 class BackupCreateRequest(BaseModel):
     note: str | None = Field(default=None, max_length=500)
+    include_corpus: bool = False
 
 
 class BackupRestoreRequest(BaseModel):
     backup_id: str = Field(min_length=1, max_length=120)
     confirm: bool = False
+    # Operator acknowledges maintenance window — DB files will be replaced.
+    maintenance_boundary: bool = False
 
 
 class ChaosConfigureRequest(BaseModel):
@@ -129,14 +132,30 @@ def build_platform_router(
         )
         payload = {"metrics": snap.public_dict()}
         try:
-            from Data.modules.common.db_contention import db_contention_snapshot
+            from Data.modules.common.db_contention import (
+                db_contention_snapshot,
+                three_database_contention_snapshot,
+            )
+
+            # Legacy single-key field retained for older UI; truth is per-domain.
             payload["dbContention"] = db_contention_snapshot(settings.database_path)
+            payload["dbContentionByDomain"] = three_database_contention_snapshot(
+                getattr(settings, "database_paths", None)
+            )
         except Exception:  # noqa: BLE001
             payload["dbContention"] = {
                 "dbFileSize": "UNMEASURED",
                 "walSize": "UNMEASURED",
                 "busyRetries": "UNMEASURED",
                 "commitQueueDepth": "UNMEASURED",
+            }
+            payload["dbContentionByDomain"] = {
+                "domains": {
+                    "CONTROL": {"status": "UNMEASURED"},
+                    "KNOWLEDGE": {"status": "UNMEASURED"},
+                    "MARKET": {"status": "UNMEASURED"},
+                },
+                "truth": {"perDomain": True, "unmeasuredIsNotZero": True},
             }
         return payload
 
@@ -264,12 +283,20 @@ def build_platform_router(
     def create_backup(payload: BackupCreateRequest | None = None) -> dict:
         from Data.modules.workers.settings import load_worker_settings
 
+        include_corpus = bool(payload.include_corpus) if payload else False
         wsettings = load_worker_settings()
-        if wsettings.enabled and wsettings.externalize_api_runners:
+        # BACKUP-005: heavy corpus/DB copy prefers worker fabric when enabled.
+        use_worker = wsettings.enabled and (
+            wsettings.externalize_api_runners or include_corpus
+        )
+        if use_worker:
             try:
                 job = job_runtime.enqueue(
                     capability_id="backup.create",
-                    arguments={"note": (payload.note if payload else None)},
+                    arguments={
+                        "note": (payload.note if payload else None),
+                        "include_corpus": include_corpus,
+                    },
                     requested_by="api",
                     domain="backup",
                     worker_pool="backup",
@@ -281,24 +308,50 @@ def build_platform_router(
             metrics.incr("backups_enqueued")
             return {"job": job.public_dict(), "queued": True}
         try:
-            manifest = backup_service.create(note=(payload.note if payload else None))
+            manifest = backup_service.create(
+                note=(payload.note if payload else None),
+                include_corpus=include_corpus,
+            )
         except BackupError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         metrics.incr("backups_created")
         return {"backup": manifest.public_dict()}
 
+    @router.get("/api/backup/restore/status")
+    def backup_restore_status() -> dict:
+        status_fn = getattr(backup_service, "restore_status", None)
+        if not callable(status_fn):
+            return {"state": "OLD_SET_ACTIVE", "active": False}
+        return {"restore": status_fn()}
+
     @router.post("/api/backup/restore")
     def restore_backup(payload: BackupRestoreRequest, request: Request) -> dict:
+        # BACKUP-004: restore is operator-privileged (loopback / mutation guard).
         assert_loopback_fn(request)
         try:
-            manifest = backup_service.restore(payload.backup_id, confirm=payload.confirm)
+            manifest = backup_service.restore(
+                payload.backup_id,
+                confirm=payload.confirm,
+                maintenance_boundary=bool(payload.maintenance_boundary),
+            )
         except BackupError as exc:
-            status = 400 if "confirm" in str(exc).lower() else 404
-            if "hash" in str(exc).lower():
+            detail = str(exc)
+            status = 400
+            if "confirm" in detail.lower() or "maintenance_boundary" in detail.lower():
+                status = 400
+            elif "not found" in detail.lower():
+                status = 404
+            elif "hash" in detail.lower():
                 status = 409
-            raise HTTPException(status_code=status, detail=str(exc)) from exc
+            elif "recovery required" in detail.lower() or "interrupted" in detail.lower():
+                status = 409
+            raise HTTPException(status_code=status, detail=detail) from exc
         metrics.incr("backups_restored")
-        return {"backup": manifest.public_dict(), "warning": "process should be restarted after restore"}
+        return {
+            "backup": manifest.public_dict(),
+            "warning": "process should be restarted after restore",
+            "restoreTerminalState": (manifest.metadata or {}).get("restoreTerminalState"),
+        }
 
     @router.get("/api/chaos")
     def chaos_status() -> dict:

@@ -90,15 +90,45 @@ def _commit_index_batch(
     finally:
         conn.close()
 
-    # Touch dataset record when present (CONTROL-adjacent metadata; still via store).
+    # Auxiliary dataset metadata touch — same authoritative contract for index commits.
+    # TRUTH-002: do not claim APPLIED if this fails when the dataset record exists.
+    auxiliary_ok = True
+    auxiliary_error: str | None = None
     try:
         if store.get_dataset(dataset_id) is not None:
             store.update_dataset(
                 dataset_id,
                 metadata={"last_commit_id": intent.commit_id, "last_index_rows": len(rows)},
             )
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        auxiliary_ok = False
+        auxiliary_error = str(exc)[:400]
+
+    if not auxiliary_ok:
+        return CommitReceipt(
+            commit_id=intent.commit_id,
+            idempotency_key=intent.idempotency_key,
+            domain="dataset",
+            operation=intent.operation,
+            status=CommitReceiptStatus.REJECTED.value,
+            entity_type="dataset",
+            entity_id=dataset_id,
+            payload_hash=intent.payload_hash,
+            applied_at=utc_now(),
+            record_count=len(rows),
+            producer_job_id=intent.source_job_id,
+            trace_id=intent.trace_id,
+            batch_index=intent.batch_index,
+            batch_count=intent.batch_count,
+            result={
+                "dataset_id": dataset_id,
+                "rows": len(rows),
+                "index_rows_written": True,
+                "auxiliary_metadata_ok": False,
+                "auxiliary_error": auxiliary_error,
+                "truth": {"false_applied_after_auxiliary_failure": False},
+            },
+        )
 
     return CommitReceipt(
         commit_id=intent.commit_id,
@@ -115,7 +145,11 @@ def _commit_index_batch(
         trace_id=intent.trace_id,
         batch_index=intent.batch_index,
         batch_count=intent.batch_count,
-        result={"dataset_id": dataset_id, "rows": len(rows)},
+        result={
+            "dataset_id": dataset_id,
+            "rows": len(rows),
+            "auxiliary_metadata_ok": True,
+        },
     )
 
 

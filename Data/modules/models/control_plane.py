@@ -322,7 +322,14 @@ class ModelControlPlane:
         return binding
 
     def reconcile_persisted_serving_workers(self) -> list[dict[str, Any]]:
-        """On restart: persisted READY/STARTING with dead/missing pid → DEAD (honest)."""
+        """On restart: reconcile stale/orphan serving PIDs without killing strangers.
+
+        MODEL-002:
+        - dead / missing PID → DEAD
+        - live PID after API restart is an orphan we no longer own → mark DEAD/ORPHAN
+          (do not SIGKILL; operator may reclaim). PID alone is never proof of ownership
+          after process restart (PID reuse risk).
+        """
         from Data.modules.common.process import pid_is_alive
 
         changed: list[dict[str, Any]] = []
@@ -332,28 +339,56 @@ class ModelControlPlane:
                 continue
             pid = row.get("pid")
             alive = isinstance(pid, int) and pid_is_alive(pid)
+            meta = dict(row.get("metadata") or {})
             if alive:
-                # Do not auto-reattach into in-memory supervisor from SQLite alone.
-                continue
-            updated = {
-                "worker_id": row["worker_id"],
-                "provider_id": row["provider_id"],
-                "model_id": row["model_id"],
-                "backend_kind": row.get("backend_kind") or "unknown",
-                "endpoint": row.get("endpoint"),
-                "state": "DEAD",
-                "pid": None,
-                "health_score": 0.0,
-                "revision_id": row.get("revision_id"),
-                "last_error": row.get("last_error")
-                or "stale serving worker after application restart",
-                "started_at": row.get("started_at"),
-                "last_health_at": row.get("last_health_at"),
-                "metadata": {
-                    **(row.get("metadata") or {}),
-                    "reconcile_note": "process restart — prior READY is not current truth",
-                },
-            }
+                # After API restart we have no in-memory Popen handle. Treat the
+                # still-running child as an orphan — do not kill (may be PID reuse
+                # of an unrelated process occupying the same numeric pid).
+                updated = {
+                    "worker_id": row["worker_id"],
+                    "provider_id": row["provider_id"],
+                    "model_id": row["model_id"],
+                    "backend_kind": row.get("backend_kind") or "unknown",
+                    "endpoint": row.get("endpoint"),
+                    "state": "DEAD",
+                    "pid": int(pid) if isinstance(pid, int) else None,
+                    "health_score": 0.0,
+                    "revision_id": row.get("revision_id"),
+                    "last_error": (
+                        row.get("last_error")
+                        or "orphan serving worker after application restart — "
+                        "PID alive but ownership unverified; not killed"
+                    ),
+                    "started_at": row.get("started_at"),
+                    "last_health_at": row.get("last_health_at"),
+                    "metadata": {
+                        **meta,
+                        "reconcile_note": "orphan_after_restart",
+                        "orphan_pid": pid,
+                        "ownership_verified": False,
+                        "kill_skipped": True,
+                    },
+                }
+            else:
+                updated = {
+                    "worker_id": row["worker_id"],
+                    "provider_id": row["provider_id"],
+                    "model_id": row["model_id"],
+                    "backend_kind": row.get("backend_kind") or "unknown",
+                    "endpoint": row.get("endpoint"),
+                    "state": "DEAD",
+                    "pid": None,
+                    "health_score": 0.0,
+                    "revision_id": row.get("revision_id"),
+                    "last_error": row.get("last_error")
+                    or "stale serving worker after application restart",
+                    "started_at": row.get("started_at"),
+                    "last_health_at": row.get("last_health_at"),
+                    "metadata": {
+                        **meta,
+                        "reconcile_note": "process restart — prior READY is not current truth",
+                    },
+                }
             self.store.upsert_serving_worker(updated)
             try:
                 self.registry.set_lifecycle(

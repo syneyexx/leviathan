@@ -104,6 +104,11 @@ class ResearchService:
             snapshots_root=self.snapshots_root,
         )
         self.source_ingestion = None
+        self.source_ingestion_status: dict[str, Any] = {
+            "state": "NOT_INITIALIZED",
+            "reason": None,
+            "error_class": None,
+        }
         try:
             from Data.modules.source_ingestion.service import SourceIngestionService
             from Data.modules.source_ingestion.settings import load_source_ingestion_settings
@@ -152,8 +157,34 @@ class ResearchService:
                 dataset_service=dataset_service,
                 settings=load_source_ingestion_settings(),
             )
-        except Exception:  # noqa: BLE001 — keep Research usable if SI init fails
+            self.source_ingestion_status = {
+                "state": "READY",
+                "reason": None,
+                "error_class": None,
+            }
+        except Exception as exc:  # noqa: BLE001 — keep Research usable if SI init fails
+            # TRUTH-001: record cause — silent None alone is forbidden.
             self.source_ingestion = None
+            err_cls = type(exc).__name__
+            msg = str(exc)[:400]
+            if "knowledge_database_path" in msg or "KnowledgeStore" in msg:
+                reason = "configuration_error"
+            elif "OperationalError" in err_cls or "schema" in msg.lower():
+                reason = "db_schema_error"
+            elif err_cls in {"ImportError", "ModuleNotFoundError"}:
+                reason = "dependency_absent"
+            else:
+                reason = "runtime_initialization_failure"
+            self.source_ingestion_status = {
+                "state": "UNAVAILABLE",
+                "reason": reason,
+                "error_class": err_cls,
+                "error": msg,
+                "truth": {
+                    "silent_none_forbidden": True,
+                    "feature_not_intentionally_disabled": True,
+                },
+            }
         self.runner = ResearchRunner(
             store,
             local=self.local,

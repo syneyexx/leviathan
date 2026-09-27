@@ -100,6 +100,8 @@ class ServingSupervisor:
         self._processes: dict[str, subprocess.Popen[Any]] = {}
         self._lock = threading.RLock()
         self._inproc_loaded: dict[str, dict[str, Any]] = {}
+        self._stderr_tails: dict[str, str] = {}
+        self._stderr_threads: dict[str, threading.Thread] = {}
 
     def list_workers(self) -> list[ServingWorker]:
         with self._lock:
@@ -178,6 +180,8 @@ class ServingSupervisor:
             return worker
 
         try:
+            # MODEL-001: stderr=PIPE must be drained continuously or the child
+            # deadlocks once the OS pipe buffer fills.
             proc = subprocess.Popen(
                 command,
                 stdout=subprocess.DEVNULL,
@@ -214,6 +218,8 @@ class ServingSupervisor:
                 self._workers[worker_id] = worker
             return worker
 
+        self._start_stderr_drain(worker_id, proc)
+
         worker = ServingWorker(
             worker_id=worker_id,
             provider_id=provider_id,
@@ -233,11 +239,16 @@ class ServingSupervisor:
         deadline = time.monotonic() + ready_timeout_seconds
         while time.monotonic() < deadline:
             if proc.poll() is not None:
-                err = ""
-                try:
-                    err = (proc.stderr.read() or b"").decode("utf-8", errors="replace")[:400]
-                except Exception:  # noqa: BLE001
-                    err = "process exited during start"
+                err = self._stderr_tail(worker_id) or ""
+                if not err:
+                    try:
+                        # Drain thread may still be finishing; best-effort leftover read.
+                        if proc.stderr is not None:
+                            err = (proc.stderr.read() or b"").decode(
+                                "utf-8", errors="replace"
+                            )[:400]
+                    except Exception:  # noqa: BLE001
+                        err = "process exited during start"
                 worker.state = WorkerState.DEAD
                 worker.last_error = err or f"exit code {proc.returncode}"
                 return worker
@@ -252,6 +263,49 @@ class ServingSupervisor:
         worker.last_error = "ready timeout — process still starting or unhealthy"
         worker.health_score = 0.0
         return worker
+
+    def _start_stderr_drain(self, worker_id: str, proc: subprocess.Popen[Any]) -> None:
+        """Background reader so PIPE stderr cannot fill and stall the child."""
+        if not hasattr(self, "_stderr_tails"):
+            self._stderr_tails: dict[str, str] = {}
+            self._stderr_threads: dict[str, threading.Thread] = {}
+
+        def _drain() -> None:
+            chunks: list[str] = []
+            total = 0
+            try:
+                stream = proc.stderr
+                if stream is None:
+                    return
+                while True:
+                    raw = stream.readline()
+                    if not raw:
+                        break
+                    line = raw.decode("utf-8", errors="replace")
+                    chunks.append(line)
+                    total += len(line)
+                    # Bound retained tail to avoid unbounded memory.
+                    while total > 8_000 and chunks:
+                        dropped = chunks.pop(0)
+                        total -= len(dropped)
+            except Exception:  # noqa: BLE001
+                pass
+            with self._lock:
+                self._stderr_tails[worker_id] = "".join(chunks)[-400:]
+
+        thread = threading.Thread(
+            target=_drain,
+            name=f"serving-stderr-{worker_id[:8]}",
+            daemon=True,
+        )
+        self._stderr_threads[worker_id] = thread
+        thread.start()
+
+    def _stderr_tail(self, worker_id: str) -> str:
+        if not hasattr(self, "_stderr_tails"):
+            return ""
+        with self._lock:
+            return str(self._stderr_tails.get(worker_id) or "")
 
     def stop(self, worker_id: str, *, drain: bool = True) -> ServingWorker:
         with self._lock:
