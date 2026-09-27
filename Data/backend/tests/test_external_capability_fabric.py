@@ -606,6 +606,93 @@ class ExternalAdapterFixtureE2ETests(unittest.TestCase):
             except Exception:  # noqa: BLE001
                 proc.kill()
 
+    def test_http_requires_agent_runtime_returns_not_available(self) -> None:
+        """Gated HTTP ops must not surface opaque 404 when agent runtime is disabled."""
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        class _Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_args: Any) -> None:  # noqa: ANN401
+                return
+
+            def do_GET(self) -> None:  # noqa: N802
+                if self.path.startswith("/api/agent/runtime"):
+                    body = b'{"enabled":false,"runtimeEnabled":false}'
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                self.send_response(404)
+                self.end_headers()
+
+        port = _free_port()
+        server = HTTPServer(("127.0.0.1", port), _Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            deadline = time.time() + 3
+            while time.time() < deadline:
+                try:
+                    with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.05)
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "mods" / "gated-http"
+                root.mkdir(parents=True)
+                manifest = {
+                    "module_id": "gated-http",
+                    "name": "Gated HTTP",
+                    "version": "0.0.1",
+                    "entrypoint": FACTORY,
+                    "external": {
+                        "adapter": "HTTP_OPENAPI",
+                        "source_type": "none",
+                        "install": {"strategy": "NONE"},
+                        "runtime": {
+                            "base_url": f"http://127.0.0.1:{port}",
+                            "operations": [
+                                {
+                                    "name": "list_skills",
+                                    "method": "GET",
+                                    "path": "/api/agent/skills",
+                                    "metadata": {
+                                        "requires_agent_runtime": True,
+                                        "preflight_path": "/api/agent/runtime",
+                                    },
+                                }
+                            ],
+                        },
+                        "result": {"format": "json"},
+                    },
+                    "capabilities": [
+                        {
+                            "capability_id": "external.gated_http.list_skills",
+                            "name": "List Skills",
+                            "external_name": "list_skills",
+                            "side_effects": ["NETWORK"],
+                        }
+                    ],
+                }
+                (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+                manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+                manager.discover()
+                manager.initialize(
+                    "gated-http",
+                    ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp),
+                )
+                result = manager.execute("gated-http", "list_skills", {})
+                self.assertEqual(result.status, "FAILED", msg=result.error)
+                self.assertEqual(result.error, "NOT_AVAILABLE")
+                parts = (result.output or {}).get("parts") or []
+                err_part = next((p for p in parts if isinstance(p, dict) and p.get("kind") == "ERROR"), {})
+                self.assertEqual(err_part.get("code"), "NOT_AVAILABLE", msg=result.output)
+                self.assertEqual(err_part.get("reason"), "agent_runtime_disabled", msg=result.output)
+        finally:
+            server.shutdown()
+            server.server_close()
+
     def test_script_package_runs(self) -> None:
         script = FIXTURES / "fake_script" / "run.sh"
         with tempfile.TemporaryDirectory() as tmp:

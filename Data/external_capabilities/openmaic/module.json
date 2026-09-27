@@ -121,7 +121,8 @@
           ],
           "metadata": {
             "requires_agent_runtime": true,
-            "note": "Returns HTTP 404 unless OPENMAIC agent runtime flag + DATABASE_URL are configured."
+            "preflight_path": "/api/agent/runtime",
+            "note": "NOT_AVAILABLE unless OpenMAIC agent runtime is enabled; prefer SKILL_PACK + generate-classroom."
           }
         },
         {
@@ -129,7 +130,8 @@
           "method": "GET",
           "path": "/api/agent/sessions/status",
           "metadata": {
-            "requires_agent_runtime": true
+            "requires_agent_runtime": true,
+            "preflight_path": "/api/agent/runtime"
           }
         },
         {
@@ -140,7 +142,8 @@
             "session_id"
           ],
           "metadata": {
-            "requires_agent_runtime": true
+            "requires_agent_runtime": true,
+            "preflight_path": "/api/agent/runtime"
           }
         },
         {
@@ -149,6 +152,7 @@
           "path": "/api/agent/skills",
           "metadata": {
             "requires_agent_runtime": true,
+            "preflight_path": "/api/agent/runtime",
             "note": "Agent-runtime gated. Prefer SKILL_PACK importer for on-demand skill load."
           }
         }

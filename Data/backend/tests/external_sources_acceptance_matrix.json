@@ -579,7 +579,7 @@
       "agent_runtime_status": "PASS enabled=false",
       "generate_course": "PASS 202 job queued via /api/generate-classroom",
       "full_course_content": "BLOCKED_EXTERNAL LLM keys",
-      "list_skills_api": "HTTP_404_WITHOUT_AGENT_RUNTIME"
+      "list_skills_api": "NOT_AVAILABLE agent_runtime_disabled (structured)"
     },
     "feynman": {
       "install": "PASS",
@@ -662,7 +662,12 @@
       "regression_guards_191_192_193": "PASS",
       "cognition_external_preferred_offload": "PASS",
       "cognition_cancel_via_job_runtime": "PASS",
-      "job_runtime_auto_cancel_probe": "PASS"
+      "job_runtime_auto_cancel_probe": "PASS",
+      "cli_accept_exit_codes": "PASS",
+      "declared_ops_over_lifecycle": "PASS status/health invoke declared runtime ops",
+      "chat_job_status_labels": "PASS formatJobStateLabel for job.* SSE",
+      "http_agent_runtime_preflight": "PASS NOT_AVAILABLE when requires_agent_runtime",
+      "modules_page_sweep_idle": "PASS"
     },
     "skill_pack_invoke": {
       "claude-osint": {
@@ -754,9 +759,5 @@
       "v2ex_hot": "PASS",
       "skill_routed_zero_config_cli": "PASS"
     }
-  },
-  "dod_audit": {
-    "cli_accept_exit_codes": "PASS",
-    "declared_ops_over_lifecycle": "PASS status/health invoke declared runtime ops"
   }
 }

@@ -6,6 +6,7 @@ import { media } from "../assets/media";
 import { BrandMark, BotAvatar } from "../components/BrandMark";
 import { AppShell } from "../layouts/AppShell";
 import { chatIneligibilityReason, partitionChatModels } from "../lib/chatModels";
+import { formatJobStateLabel, normalizeJobStatus } from "../lib/jobStatus";
 import { useAppToast } from "../state/useAppToast";
 import type {
   AssistantToolCallTelemetry,
@@ -531,14 +532,32 @@ export function ChatPage() {
           },
           onCapabilityEvent: (event, payload) => {
             // Operational status only — surface as a pending assistant status line.
-            const cap = String(payload.capability_id || payload.module_id || event);
-            const status = String(payload.status || event);
+            // job.* events reuse shared JobRuntime label semantics (Datasets/Training).
+            const cap = String(
+              payload.capability_id || payload.module_id || payload.job_id || event,
+            );
+            let statusLabel = "";
+            if (event.startsWith("job.")) {
+              const raw =
+                payload.state ||
+                payload.status ||
+                payload.phase ||
+                event.replace(/^job\./, "");
+              statusLabel = formatJobStateLabel(normalizeJobStatus(String(raw)));
+              const pct = payload.progress ?? payload.percent;
+              if (typeof pct === "number" && Number.isFinite(pct)) {
+                statusLabel = `${statusLabel} · ${Math.round(pct * (pct <= 1 ? 100 : 1))}%`;
+              }
+            } else {
+              const status = String(payload.status || payload.phase || "");
+              statusLabel = status && status !== event ? status : "";
+            }
             setMessages((current) => {
               const copy = [...current];
               const last = copy[copy.length - 1];
               if (last?.pending && last.role === "assistant") {
                 const prev = last.content === "Thinking…" ? "" : last.content;
-                const line = `[${event}] ${cap}${status && status !== event ? ` · ${status}` : ""}`;
+                const line = `[${event}] ${cap}${statusLabel ? ` · ${statusLabel}` : ""}`;
                 // Keep the last status line short; don't accumulate private detail.
                 const withoutStatus = prev.replace(/\n?\[[^\]]+\].*$/s, "").trimEnd();
                 copy[copy.length - 1] = {

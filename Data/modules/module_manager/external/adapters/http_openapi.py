@@ -135,6 +135,11 @@ class HttpOpenApiAdapter:
                 status="CANCELLED",
                 error=ExternalFailureCode.CANCELLED.value,
             )
+        # Declarative gate: ops that require an optional upstream feature return
+        # NOT_AVAILABLE instead of opaque upstream 404s.
+        gated = self._agent_runtime_gate(op)
+        if gated is not None:
+            return gated
         method = str(op.get("method") or "GET").upper()
         path = str(op.get("path") or "/")
         for key, value in arguments.items():
@@ -235,3 +240,74 @@ class HttpOpenApiAdapter:
                 error=ExternalFailureCode.REMOTE_ERROR.value,
                 output={"error": {"code": ExternalFailureCode.REMOTE_ERROR.value, "detail": str(exc)}},
             )
+
+    def _agent_runtime_gate(self, op: Mapping[str, Any]) -> ModuleResult | None:
+        """Return NOT_AVAILABLE when op.metadata.requires_agent_runtime and probe says disabled."""
+        meta = op.get("metadata") if isinstance(op.get("metadata"), Mapping) else {}
+        if not bool(meta.get("requires_agent_runtime")):
+            return None
+        base = str(op.get("base_url") or self._base_url or "").rstrip("/")
+        if not base:
+            return ModuleResult(
+                module_id=self.ctx.module_id,
+                operation=str(op.get("name") or "unknown"),
+                status="FAILED",
+                error=ExternalFailureCode.NOT_AVAILABLE.value,
+                output=normalize_capability_parts(
+                    summary="agent runtime unavailable (no base_url)",
+                    error={"code": ExternalFailureCode.NOT_AVAILABLE.value, "reason": "no_base_url"},
+                ),
+            )
+        probe_path = str(meta.get("preflight_path") or "/api/agent/runtime")
+        if not probe_path.startswith("/"):
+            probe_path = f"/{probe_path}"
+        url = f"{base}{probe_path}"
+        try:
+            req = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=5.0) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+                status_code = int(getattr(resp, "status", 200))
+        except Exception as exc:  # noqa: BLE001
+            return ModuleResult(
+                module_id=self.ctx.module_id,
+                operation=str(op.get("name") or "unknown"),
+                status="FAILED",
+                error=ExternalFailureCode.NOT_AVAILABLE.value,
+                output=normalize_capability_parts(
+                    summary="agent runtime preflight failed",
+                    error={
+                        "code": ExternalFailureCode.NOT_AVAILABLE.value,
+                        "reason": "preflight_failed",
+                        "detail": str(exc)[:400],
+                    },
+                ),
+            )
+        enabled = False
+        structured: Any = None
+        try:
+            structured = json.loads(raw) if raw else None
+        except json.JSONDecodeError:
+            structured = None
+        if isinstance(structured, dict):
+            enabled = bool(
+                structured.get("enabled")
+                or structured.get("runtimeEnabled")
+                or structured.get("runtime_enabled")
+            )
+        if status_code == 200 and enabled:
+            return None
+        return ModuleResult(
+            module_id=self.ctx.module_id,
+            operation=str(op.get("name") or "unknown"),
+            status="FAILED",
+            error=ExternalFailureCode.NOT_AVAILABLE.value,
+            output=normalize_capability_parts(
+                summary="agent runtime not enabled",
+                structured_data=structured if isinstance(structured, dict) else None,
+                error={
+                    "code": ExternalFailureCode.NOT_AVAILABLE.value,
+                    "reason": "agent_runtime_disabled",
+                    "http_status": status_code,
+                },
+            ),
+        )
