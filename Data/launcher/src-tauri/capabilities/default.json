@@ -21,6 +21,7 @@
     "allow-host-open",
     "allow-host-console",
     "allow-host-preferences-get",
-    "allow-host-preferences-set"
+    "allow-host-preferences-set",
+    "allow-host-trace"
   ]
 }

@@ -34,3 +34,20 @@ export function stoppedSnapshot(): HostSnapshot {
 
 export const FIXTURE_MODE =
   import.meta.env.MODE === "fixture" && import.meta.env.VITE_LEVIATHAN_VISUAL_FIXTURE === "1";
+
+export function isHostSnapshot(value: unknown): value is HostSnapshot {
+  if (!value || typeof value !== "object") return false;
+  const snap = value as Partial<HostSnapshot>;
+  return typeof snap.state === "string" && typeof snap.ownership === "string" && typeof snap.message === "string";
+}
+
+/** Immediate visible state for operator commands. The invoke result replaces this. */
+export function optimisticCommand(host: HostSnapshot, command: string): HostSnapshot | null {
+  if (command === "host_start" || command === "host_restart") {
+    return { ...host, state: "PREFLIGHT", message: "Running preflight." };
+  }
+  if (command === "host_stop" || command === "host_emergency" || command === "host_confirm_close") {
+    return { ...host, state: "STOPPING", message: "Stopping the owned backend." };
+  }
+  return null;
+}

@@ -3,10 +3,12 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 export function VirtualList<T>({
   items,
   rowHeight,
+  stickToBottom = false,
   render,
 }: {
   items: T[];
   rowHeight: number;
+  stickToBottom?: boolean;
   render: (item: T, index: number) => ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -17,10 +19,11 @@ export function VirtualList<T>({
     if (!node) return;
     const measure = () => setHeight(node.clientHeight || 180);
     measure();
+    if (stickToBottom) node.scrollTop = node.scrollHeight;
     const observer = new ResizeObserver(measure);
     observer.observe(node);
     return () => observer.disconnect();
-  }, []);
+  }, [stickToBottom, items.length]);
   const start = Math.max(0, Math.floor(scroll / rowHeight) - 6);
   const count = Math.ceil(height / rowHeight) + 12;
   const slice = items.slice(start, start + count);

@@ -8,8 +8,11 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import "./styles/tokens.css";
+import "./styles/geometry.css";
+import "./styles/reference-stage.css";
 import "./styles/shell.css";
 import "./styles/panels.css";
+import "./styles/tables.css";
 import "./styles/console.css";
 import "./styles/responsive.css";
 

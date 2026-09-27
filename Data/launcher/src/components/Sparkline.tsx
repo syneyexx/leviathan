@@ -1,6 +1,6 @@
 export function Sparkline({ samples, color }: { samples: Array<number | null>; color: string }) {
   const values = samples.filter((value): value is number => typeof value === "number");
-  if (values.length < 2) return <div className="spark empty">no samples</div>;
+  if (values.length < 2) return <div className="spark" aria-label="UNMEASURED" />;
   const min = Math.min(...values);
   const max = Math.max(...values);
   const span = max - min || 1;

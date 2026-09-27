@@ -1,14 +1,7 @@
-@media (max-width: 1400px) {
-  .banner { grid-template-columns: 240px 1fr 200px; }
-  .brand h1 { font-size: 22px; }
-  .health { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #6a5d42 #0b1012;
 }
-@media (max-width: 1100px) {
-  .app { overflow: auto; height: auto; min-height: 100%; }
-  .mid, .low { grid-template-columns: 1fr; }
-  .runtime, .statusbar { grid-template-columns: 1fr; }
-  .status-center, .statusbar .center { text-align: left; }
-}
-@media (min-width: 2400px) {
-  .app { max-width: 2200px; margin: 0 auto; }
-}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: #0b1012; }
+*::-webkit-scrollbar-thumb { background: #6a5d42; border: 1px solid #0b1012; }

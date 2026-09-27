@@ -8,14 +8,14 @@ export function displayPercent(value: number | null | undefined): string {
   return `${value.toFixed(1)}%`;
 }
 
-export function formatClock(date: Date): { date: string; time: string; zone: string } {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  const hour = String(date.getHours()).padStart(2, "0");
-  const minute = String(date.getMinutes()).padStart(2, "0");
-  const second = String(date.getSeconds()).padStart(2, "0");
-  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "local";
+export function formatClock(date: Date, utc = false): { date: string; time: string; zone: string } {
+  const year = utc ? date.getUTCFullYear() : date.getFullYear();
+  const month = String((utc ? date.getUTCMonth() : date.getMonth()) + 1).padStart(2, "0");
+  const day = String(utc ? date.getUTCDate() : date.getDate()).padStart(2, "0");
+  const hour = String(utc ? date.getUTCHours() : date.getHours()).padStart(2, "0");
+  const minute = String(utc ? date.getUTCMinutes() : date.getMinutes()).padStart(2, "0");
+  const second = String(utc ? date.getUTCSeconds() : date.getSeconds()).padStart(2, "0");
+  const zone = utc ? "UTC" : Intl.DateTimeFormat().resolvedOptions().timeZone || "local";
   return { date: `${year}-${month}-${day}`, time: `${hour}:${minute}:${second}`, zone };
 }
 

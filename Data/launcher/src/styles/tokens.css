@@ -1,9 +1,11 @@
 :root {
-  --bg: #05080a;
+  --bg: #05080b;
   --bg-2: #0a1012;
-  --panel: rgba(7, 12, 14, 0.92);
-  --line: rgba(196, 160, 86, 0.62);
-  --line-dim: rgba(196, 160, 86, 0.28);
+  --panel: rgba(7, 12, 14, 0.94);
+  --gold-line: rgba(186, 146, 74, 0.72);
+  --gold-bright: #e4c78a;
+  --line: rgba(186, 146, 74, 0.62);
+  --line-dim: rgba(186, 146, 74, 0.32);
   --gold: #d7b56a;
   --gold-2: #a68445;
   --ivory: #e7e1d2;

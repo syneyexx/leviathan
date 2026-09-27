@@ -61,3 +61,11 @@ export interface ControlGate {
   enabled: boolean;
   reason: string;
 }
+
+export type BridgeState = "CONNECTING" | "READY" | "FAILED";
+
+export interface CommandError {
+  action: string;
+  message: string;
+  at: string;
+}

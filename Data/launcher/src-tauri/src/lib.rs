@@ -90,7 +90,8 @@ pub fn run() {
             commands::host_open,
             commands::host_console,
             commands::host_preferences_get,
-            commands::host_preferences_set
+            commands::host_preferences_set,
+            commands::host_trace
         ])
         .run(tauri::generate_context!())
         .expect("failed to run LEVIATHAN backend host");

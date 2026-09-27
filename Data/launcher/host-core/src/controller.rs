@@ -7,6 +7,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 use crate::envbuild::build_child_env;
+use crate::redaction::redact_line;
 use crate::logbuf::{ConsoleLine, LogRing, RotatingLog};
 use crate::paths::{self, allowlisted_open_path, canonical_env_file, launcher_log_dir, venv_python};
 use crate::preflight::{self, PreflightReport, SystemCommandRunner};
@@ -184,6 +185,23 @@ impl HostController {
             startup_timeout,
             shutdown_timeout,
         }
+    }
+
+    pub fn client_trace(&self, event: &str, detail: &str) -> Result<(), String> {
+        if event.is_empty()
+            || event.len() > 48
+            || !event.chars().all(|ch| ch.is_ascii_uppercase() || ch == '_')
+        {
+            return Err(format!("trace event rejected: {event}"));
+        }
+        let clean = redact_line(detail).replace(['\n', '\r'], " ");
+        let clean = if clean.len() > 240 {
+            format!("{}…", &clean[..240])
+        } else {
+            clean
+        };
+        self.push_line("ui", "info", "system", &format!("{event} {clean}"), None);
+        Ok(())
     }
 
     pub fn install_root(&self) -> &Path {

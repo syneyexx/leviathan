@@ -18,6 +18,7 @@ const COMMANDS: &[&str] = &[
     "host_console",
     "host_preferences_get",
     "host_preferences_set",
+    "host_trace",
 ];
 
 fn main() {
