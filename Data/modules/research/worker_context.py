@@ -29,14 +29,37 @@ def build_research_worker_context(
     from Data.modules.observability import ObservabilityHub
     from Data.modules.research.service import ResearchService
 
-    db_path = Path(settings.database_path)  # CONTROL — jobs / research / receipts
-    knowledge_db = Path(settings.knowledge_database_path)
+    def _settings_path(value: Any, *, fallback: Path) -> Path:
+        if isinstance(value, Path):
+            return value
+        if isinstance(value, str) and value.strip():
+            return Path(value)
+        return fallback
+
+    db_path = _settings_path(getattr(settings, "database_path", None), fallback=Path("Data/backend/data/leviathan_control.db"))
+    knowledge_db = _settings_path(
+        getattr(settings, "knowledge_database_path", None),
+        fallback=db_path,  # tests may use a single temp DB; production settings always distinct
+    )
     observability = ObservabilityHub(capacity=2000, db_path=db_path)
+
+    def _embedding_dims(knowledge_settings: Any) -> int:
+        for attr in ("embedding_hash_dimensions", "hash_dimensions"):
+            val = getattr(knowledge_settings, attr, None)
+            if isinstance(val, bool):
+                continue
+            if isinstance(val, int):
+                return val
+            if isinstance(val, float) and val == int(val):
+                return int(val)
+            if isinstance(val, str) and val.strip().lstrip("-").isdigit():
+                return int(val.strip())
+        return 256
 
     provider = build_embedding_provider(
         kind=settings.knowledge.embedding_provider,
         model_name=settings.knowledge.embedding_model,
-        hash_dimensions=int(settings.knowledge.embedding_hash_dimensions),
+        hash_dimensions=_embedding_dims(settings.knowledge),
     )
     knowledge = KnowledgeStore(
         knowledge_db,

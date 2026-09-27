@@ -1554,7 +1554,21 @@ def _assess_product_truth_report():
         else:
             browser_capable = False
 
-    model_cards = model_plane.status_cards()
+    try:
+        model_cards = model_plane.status_cards()
+    except Exception as exc:  # noqa: BLE001 — truth posture must not crash on unread schema
+        observability.emit(
+            "product_truth.model_plane_unmeasured",
+            {"error": type(exc).__name__, "detail": str(exc)[:240]},
+        )
+        model_cards = {
+            "gatewayHealth": "unknown",
+            "providerCount": 0,
+            "runtime": "—",
+            "availableModels": 0,
+            "activeModel": None,
+            "loadedModels": 0,
+        }
     # Media/voice services are real entry points but fixture/stub backends are not production.
     media_capable = False
     voice_capable = False

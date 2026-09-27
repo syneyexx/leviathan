@@ -140,11 +140,24 @@ def build_service_from_env():
     from Data.modules.knowledge import KnowledgeStore
     from Data.modules.knowledge.embeddings import build_embedding_provider
 
+    def _embedding_dims(knowledge_settings) -> int:
+        for attr in ("embedding_hash_dimensions", "hash_dimensions"):
+            val = getattr(knowledge_settings, attr, None)
+            if isinstance(val, bool):
+                continue
+            if isinstance(val, int):
+                return val
+            if isinstance(val, float) and val == int(val):
+                return int(val)
+            if isinstance(val, str) and val.strip().lstrip("-").isdigit():
+                return int(val.strip())
+        return 256
+
     settings = load_settings()
     provider = build_embedding_provider(
         kind=settings.knowledge.embedding_provider,
         model_name=settings.knowledge.embedding_model,
-        hash_dimensions=int(settings.knowledge.embedding_hash_dimensions),
+        hash_dimensions=_embedding_dims(settings.knowledge),
     )
     knowledge = KnowledgeStore(
         settings.knowledge_database_path,

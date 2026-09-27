@@ -143,7 +143,9 @@ class ResearchService:
                 )
             ingestion_db: Path | None = self._knowledge_database_path
             if ingestion_db is None and knowledge is not None:
-                ingestion_db = Path(knowledge.db_path)
+                raw = getattr(knowledge, "db_path", None) or getattr(knowledge, "path", None)
+                if raw is not None:
+                    ingestion_db = Path(raw)
             if ingestion_db is None:
                 raise RuntimeError(
                     "SourceIngestion requires knowledge_database_path or a KnowledgeStore"
