@@ -72,6 +72,28 @@ if errorlevel 1 goto :fail
 copy /Y "%BUILT%" "run_leviathan.exe" >nul
 if errorlevel 1 goto :fail
 
+powershell -NoProfile -Command ^
+  "$src = (Resolve-Path '%BUILT%').Path;" ^
+  "$root = (Resolve-Path 'run_leviathan.exe').Path;" ^
+  "$dist = (Resolve-Path 'dist\run_leviathan.exe').Path;" ^
+  "$hs = (Get-FileHash -Algorithm SHA256 $src).Hash;" ^
+  "$hr = (Get-FileHash -Algorithm SHA256 $root).Hash;" ^
+  "$hd = (Get-FileHash -Algorithm SHA256 $dist).Hash;" ^
+  "Write-Host ('SOURCE EXE: ' + $src);" ^
+  "Write-Host ('SOURCE SIZE: ' + (Get-Item $src).Length);" ^
+  "Write-Host ('SOURCE SHA256: ' + $hs);" ^
+  "Write-Host ('ROOT EXE: ' + $root);" ^
+  "Write-Host ('ROOT SIZE: ' + (Get-Item $root).Length);" ^
+  "Write-Host ('ROOT SHA256: ' + $hr);" ^
+  "Write-Host ('DIST EXE: ' + $dist);" ^
+  "Write-Host ('DIST SIZE: ' + (Get-Item $dist).Length);" ^
+  "Write-Host ('DIST SHA256: ' + $hd);" ^
+  "if ($hs -ne $hr -or $hs -ne $hd) { exit 1 }"
+if errorlevel 1 (
+  echo  [ERROR] Copied run_leviathan.exe hash does not match the release binary.
+  goto :fail
+)
+
 echo.
 echo  ============================================
 echo    run_leviathan.exe is ready

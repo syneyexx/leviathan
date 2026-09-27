@@ -10,6 +10,7 @@ unless --allow-host-binary is passed to build the current OS binary for inspecti
 from __future__ import annotations
 
 import argparse
+import hashlib
 import platform
 import shutil
 import subprocess
@@ -19,6 +20,27 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = ROOT / "Data" / "launcher"
 DIST = ROOT / "dist"
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def publish(source: Path, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, dest)
+    source_hash = sha256(source)
+    dest_hash = sha256(dest)
+    print(f"SOURCE EXE: {source}")
+    print(f"SOURCE SIZE: {source.stat().st_size}")
+    print(f"SOURCE SHA256: {source_hash}")
+    print(f"DEST EXE: {dest}")
+    print(f"DEST SIZE: {dest.stat().st_size}")
+    print(f"DEST SHA256: {dest_hash}")
+    if source_hash != dest_hash or source.stat().st_size != dest.stat().st_size:
+        raise SystemExit(f"ERROR: copied binary hash mismatch for {dest}")
 
 
 def run(cmd: list[str], cwd: Path) -> None:
@@ -59,10 +81,10 @@ def main() -> int:
     if not candidates:
         print("ERROR: Tauri build finished without a run_leviathan binary.", file=sys.stderr)
         return 4
-    DIST.mkdir(parents=True, exist_ok=True)
-    dest = DIST / f"run_leviathan{suffix}"
-    shutil.copy2(candidates[0], dest)
-    print(f"Published {dest}")
+    built = candidates[0]
+    publish(built, DIST / f"run_leviathan{suffix}")
+    if platform.system() == "Windows":
+        publish(built, ROOT / "run_leviathan.exe")
     if platform.system() != "Windows":
         print("NOTE: this is not run_leviathan.exe. Windows WebView2 builds produce the canonical name.")
     return 0

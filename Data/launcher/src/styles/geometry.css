@@ -1,0 +1,14 @@
+:root {
+  --ref-w: 1672;
+  --ref-h: 941;
+  --titlebar-h: 28px;
+  --banner-h: 108px;
+  --runtime-h: 58px;
+  --health-h: 76px;
+  --main-h: 329px;
+  --low-h: 269px;
+  --status-h: 29px;
+  --frame-x: 11px;
+  --frame-w: 1650px;
+  --col-gap: 11px;
+}

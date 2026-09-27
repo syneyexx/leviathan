@@ -66,9 +66,9 @@ function firstNumber(bag: Record<string, unknown>, keys: string[]): number | nul
 export function metricCards(samples: MetricHistories, latest: ReturnType<typeof readPerformance>, queueDepth: number | null): MetricCardModel[] {
   const queue = queueDepth;
   return [
-    metric("queue", "QUEUE DEPTH", queue == null ? "UNMEASURED" : displayNumber(queue), "", samples.queue, "cyan"),
-    metric("tasks", "TASKS / MIN", displayNumber(latest.tasksPerMin, 1), "", samples.tasks, "green"),
-    metric("done", "COMPLETED / 24H", displayNumber(latest.completed), "", samples.completed, "cyan"),
+    metric("tasks", "TASKS / MIN", displayNumber(latest.tasksPerMin, 1), "", samples.tasks, "cyan", "bars"),
+    metric("queue", "TASKS IN QUEUE", queue == null ? "UNMEASURED" : displayNumber(queue), "", samples.queue, "cyan", "bars"),
+    metric("done", "COMPLETED (24H)", displayNumber(latest.completed), "", samples.completed, "green", "bars"),
     metric("cpu", "CPU USAGE", displayPercent(latest.cpu), "", samples.cpu, "cyan"),
     metric("mem", "MEMORY USAGE", displayPercent(latest.memory), "", samples.memory, "green"),
     metric("disk", "DISK USAGE", displayPercent(latest.disk), "", samples.disk, "amber"),
@@ -78,6 +78,14 @@ export function metricCards(samples: MetricHistories, latest: ReturnType<typeof 
   ];
 }
 
-function metric(id: string, label: string, value: string, unit: string, samples: Array<number | null>, tone: MetricCardModel["tone"]): MetricCardModel {
-  return { id, label, value, unit, samples, tone };
+function metric(
+  id: string,
+  label: string,
+  value: string,
+  unit: string,
+  samples: Array<number | null>,
+  tone: MetricCardModel["tone"],
+  chart: MetricCardModel["chart"] = "line",
+): MetricCardModel {
+  return { id, label, value, unit, samples, tone, chart };
 }

@@ -4,26 +4,34 @@
   overflow: auto;
   font-family: var(--font-mono);
   font-size: 11px;
-  line-height: 18px;
-  background: rgba(4, 8, 9, 0.65);
-  padding: 4px 0 8px;
+  line-height: 16px;
+  background: rgba(4, 8, 9, 0.55);
+  padding: 2px 0 6px;
 }
 .console .row {
   display: grid;
-  grid-template-columns: 72px 72px 64px 1fr;
+  grid-template-columns: 78px 92px minmax(0, 1fr);
   gap: 6px;
   padding: 0 8px;
-  height: 18px;
+  height: 16px;
 }
-.console .ts, .console .src { color: #7f8b86; }
-.console .lvl { color: var(--cyan); }
-.console .lvl.error, .console .lvl.ERROR { color: var(--red); }
-.console .lvl.warning, .console .lvl.WARNING { color: var(--amber); }
-.console .lvl.success, .console .lvl.SUCCESS { color: var(--emerald); }
+.console .ts { color: #8e9893; }
+.console .src { color: var(--gold); }
+.console .src.API, .console .src.api { color: var(--cyan); }
+.console .src.RUST, .console .src.rust { color: var(--amber); }
+.console .src.PYTHON, .console .src.python { color: var(--emerald); }
+.console .src.WORKERS, .console .src.workers { color: #8fd0ff; }
+.console .src.VECTOR, .console .src.vector { color: var(--violet); }
+.console .src.QUEUE, .console .src.queue { color: #e07a4b; }
+.console .src.MODELS, .console .src.models { color: #c9a0ff; }
+.console .src.WATCHER, .console .src.watcher { color: #7ec8a3; }
+.console .src.DB, .console .src.db { color: #d7b56a; }
 .console .msg { color: #d9d3c4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.console .msg.error, .console .msg.ERROR { color: var(--red); }
+.console .msg.warning, .console .msg.WARNING { color: var(--amber); }
 .vlist { position: relative; }
-.checks { padding: 4px 8px 8px; font-size: 11px; }
-.checks li { list-style: none; margin: 0 0 4px; }
+.checks { padding: 4px 8px 6px; font-size: 11px; }
+.checks li { list-style: none; margin: 0 0 3px; }
 .checks ul { margin: 0; padding: 0; }
 .checks .FAIL, .checks .fail { color: var(--red); }
 .checks .PASS { color: var(--emerald); }

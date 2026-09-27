@@ -1,22 +1,37 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { controlGates } from "../domain/controls";
 import { countHealthy, mapServices } from "../domain/health";
+import { isHostSnapshot, optimisticCommand, stoppedSnapshot } from "../domain/host";
 import { ingestionActive, mapIngestion } from "../domain/ingestion";
 import { mapEvent } from "../domain/logs";
 import { mapNative } from "../domain/native";
 import { emptyHistories, metricCards, readPerformance, type MetricHistories } from "../domain/telemetry";
 import { mapWorkers } from "../domain/workers";
 import { getJson, invokeHost, tauriAvailable } from "../lib/api";
+import { commandFailureMessage } from "../lib/errors";
 import { formatUptime } from "../lib/format";
 import { appendUnique } from "../lib/ringBuffer";
 import { nextSseDelay, parseSseId } from "../lib/sse";
 import { pushSample } from "../lib/timeSeries";
+import { traceUi } from "../lib/trace";
 import type { LogRowModel } from "../types/backend";
-import type { ConsoleLine, HostSnapshot } from "../types/host";
-import { stoppedSnapshot } from "../domain/host";
+import type { BridgeState, CommandError, ConsoleLine, HostSnapshot } from "../types/host";
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(resolve, reject).finally(() => window.clearTimeout(timer));
+  });
+}
 
 export function useOperator() {
   const [host, setHost] = useState<HostSnapshot>(stoppedSnapshot());
+  const [bridge, setBridge] = useState<BridgeState>(tauriAvailable() ? "CONNECTING" : "FAILED");
+  const [bridgeError, setBridgeError] = useState<string | null>(
+    tauriAvailable() ? null : "Tauri host bridge is missing. __TAURI_INTERNALS__ was not injected. Launch run_leviathan.exe rather than the bare renderer.",
+  );
+  const [commandError, setCommandError] = useState<CommandError | null>(null);
+  const [inflight, setInflight] = useState<string | null>(null);
   const [lines, setLines] = useState<ConsoleLine[]>([]);
   const [paused, setPaused] = useState(false);
   const [logsPaused, setLogsPaused] = useState(false);
@@ -31,31 +46,79 @@ export function useOperator() {
   const [histories, setHistories] = useState<MetricHistories>(emptyHistories());
   const [logs, setLogs] = useState<LogRowModel[]>([]);
   const [frontendReachable, setFrontendReachable] = useState<boolean | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const pausedRef = useRef(false);
   pausedRef.current = paused;
   const clearFloor = useRef(0);
+  const hostRef = useRef(host);
+  hostRef.current = host;
+  const bridgeRef = useRef(bridge);
+  bridgeRef.current = bridge;
+  const inflightRef = useRef<string | null>(null);
 
   const pushLines = useCallback((incoming: ConsoleLine[]) => {
     if (pausedRef.current) return;
     setLines((current) => appendUnique(current.filter((line) => line.seq >= clearFloor.current), incoming, 20_000));
   }, []);
 
+  const noteFailure = useCallback((action: string, message: string) => {
+    const at = new Date().toISOString();
+    setCommandError({ action, message, at });
+    setLines((current) => appendUnique(current, [{
+      seq: (current[current.length - 1]?.seq ?? clearFloor.current) + 1,
+      at,
+      source: "host",
+      level: "error",
+      stream: "system",
+      text: `${action}: ${message}`,
+    }], 20_000));
+  }, []);
+
   useEffect(() => {
-    if (!tauriAvailable()) return;
     let stop = false;
-    void invokeHost<HostSnapshot>("host_snapshot").then((snap) => {
-      if (!stop && snap) setHost(snap);
-    }).catch(() => setNotice("Host snapshot unavailable."));
+    const available = tauriAvailable();
+    traceUi("TAURI_AVAILABLE", String(available));
+    if (!available) {
+      setBridge("FAILED");
+      setBridgeError("Tauri host bridge is missing. __TAURI_INTERNALS__ was not injected. Launch run_leviathan.exe rather than the bare renderer.");
+      return;
+    }
+    setBridge("CONNECTING");
+    void invokeHost<unknown>("host_snapshot").then((snap) => {
+      if (stop) return;
+      if (!isHostSnapshot(snap)) {
+        setBridge("FAILED");
+        setBridgeError("host_snapshot returned an unusable payload.");
+        return;
+      }
+      setHost(snap);
+      setBridge("READY");
+      traceUi("HOST_STATE", snap.state);
+    }).catch((error: unknown) => {
+      if (stop) return;
+      setBridge("FAILED");
+      setBridgeError(`HOST BRIDGE FAILURE: ${commandFailureMessage(error)}`);
+    });
     let unlistenState: (() => void) | undefined;
     let unlistenConsole: (() => void) | undefined;
-    void import("@tauri-apps/api/event").then((mod) => {
-      void mod.listen<HostSnapshot>("host://state", (event) => {
-        if (!stop) setHost(event.payload);
-      }).then((fn) => { unlistenState = fn; });
-      void mod.listen<ConsoleLine[]>("host://console", (event) => {
-        if (!stop) pushLines(event.payload);
-      }).then((fn) => { unlistenConsole = fn; });
+    void import("@tauri-apps/api/event").then(async (mod) => {
+      try {
+        unlistenState = await mod.listen<HostSnapshot>("host://state", (event) => {
+          if (!stop && isHostSnapshot(event.payload)) setHost(event.payload);
+        });
+        unlistenConsole = await mod.listen<ConsoleLine[]>("host://console", (event) => {
+          if (!stop) pushLines(event.payload);
+        });
+      } catch (error) {
+        if (!stop) {
+          setBridge("FAILED");
+          setBridgeError(`HOST BRIDGE FAILURE: event channel: ${commandFailureMessage(error)}`);
+        }
+      }
+    }).catch((error: unknown) => {
+      if (!stop) {
+        setBridge("FAILED");
+        setBridgeError(`HOST BRIDGE FAILURE: ${commandFailureMessage(error)}`);
+      }
     });
     return () => {
       stop = true;
@@ -262,27 +325,68 @@ export function useOperator() {
     queue: queueDepth == null ? "UNMEASURED" : String(queueDepth),
   };
 
-  async function run(command: string, args?: Record<string, unknown>) {
-    if (!tauriAvailable()) {
-      setNotice("Host bridge unavailable. Launch run_leviathan.exe rather than the bare renderer.");
+  const run = useCallback(async (command: string, args?: Record<string, unknown>) => {
+    const available = tauriAvailable();
+    traceUi("TAURI_AVAILABLE", String(available));
+    if (command === "host_start") traceUi("UI_START_CLICK", "host_start");
+    traceUi("INVOKE_BEGIN", command);
+    if (!available || bridgeRef.current !== "READY") {
+      const message = !available
+        ? "HOST BRIDGE FAILURE: Tauri IPC is not injected. Launch run_leviathan.exe."
+        : `HOST BRIDGE FAILURE: bridge is ${bridgeRef.current}. ${bridgeError || "host_snapshot was not received."}`;
+      traceUi("INVOKE_ERROR", `${command}: ${message}`);
+      noteFailure(command, message);
       return;
     }
-    try {
-      const snap = await invokeHost<HostSnapshot>(command, args);
-      if (snap) setHost(snap);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Host command failed");
+    if (inflightRef.current) {
+      const message = `${inflightRef.current} is still running. Wait for it to finish.`;
+      traceUi("INVOKE_ERROR", `${command}: ${message}`);
+      noteFailure(command, message);
+      return;
     }
-  }
+    inflightRef.current = command;
+    setInflight(command);
+    const optimistic = optimisticCommand(hostRef.current, command);
+    if (optimistic) {
+      setHost(optimistic);
+      traceUi("HOST_STATE", optimistic.state);
+    }
+    try {
+      const timeout = command === "host_start" || command === "host_restart" ? 120_000 : 30_000;
+      const result = await withTimeout(invokeHost<unknown>(command, args), timeout, command);
+      if (isHostSnapshot(result)) {
+        setHost(result);
+        traceUi("HOST_STATE", result.state);
+      }
+      traceUi("INVOKE_SUCCESS", command);
+    } catch (error) {
+      const message = commandFailureMessage(error);
+      traceUi("INVOKE_ERROR", `${command}: ${message}`);
+      noteFailure(command, message);
+      try {
+        const snap = await invokeHost<unknown>("host_snapshot");
+        if (isHostSnapshot(snap)) setHost(snap);
+      } catch (reconcile) {
+        setBridge("FAILED");
+        setBridgeError(`HOST BRIDGE FAILURE: ${commandFailureMessage(reconcile)}`);
+      }
+    } finally {
+      inflightRef.current = null;
+      setInflight(null);
+    }
+  }, [bridgeError, noteFailure]);
 
   return {
     model,
     lines,
     paused,
     logsPaused,
-    notice,
-    clearNotice: () => setNotice(null),
-    gates: controlGates(model.host, frontendReachable),
+    bridge,
+    bridgeError,
+    commandError,
+    inflight,
+    clearCommandError: () => setCommandError(null),
+    gates: controlGates(model.host, frontendReachable, bridge),
     actions: {
       start: () => void run("host_start", { safeMode: host.safeModeArmed }),
       stop: () => void run("host_stop"),

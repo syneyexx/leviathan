@@ -1,72 +1,73 @@
 import { useEffect, useState } from "react";
-import { Banner } from "./components/Banner";
+import { CommandErrorDialog, OperatorDesktop, TracePanel } from "./components/OperatorDesktop";
 import { ConfirmDialog } from "./components/ConfirmDialog";
-import { ErrorBoundary } from "./components/ErrorBoundary";
-import { MainConsole } from "./components/MainConsole";
-import { NativeRuntimeConsole } from "./components/NativeRuntimeConsole";
-import { RuntimeControl } from "./components/RuntimeControl";
-import { ServiceHealthStrip } from "./components/ServiceHealthStrip";
-import { SourceIngestionPanel } from "./components/SourceIngestionPanel";
-import { StatusBar } from "./components/StatusBar";
-import { StructuredLogs } from "./components/StructuredLogs";
-import { SystemOverview } from "./components/SystemOverview";
-import { TitleBar } from "./components/TitleBar";
-import { WorkersPanel } from "./components/WorkersPanel";
 import { useOperator } from "./hooks/useOperator";
 import { tauriAvailable } from "./lib/api";
 
 export function App() {
   const operator = useOperator();
   const [dialog, setDialog] = useState<"emergency" | "close" | null>(null);
+  const [windowError, setWindowError] = useState<string | null>(null);
   useEffect(() => {
     if (!tauriAvailable()) return;
     let unlisten: (() => void) | undefined;
     void import("@tauri-apps/api/event").then((mod) => {
       void mod.listen("host://close-requested", () => setDialog("close")).then((fn) => {
         unlisten = fn;
+      }).catch((error: unknown) => {
+        setWindowError(error instanceof Error ? error.message : "Close listener failed");
       });
+    }).catch((error: unknown) => {
+      setWindowError(error instanceof Error ? error.message : "Tauri event import failed");
     });
     return () => unlisten?.();
   }, []);
-  const { model, gates, actions, lines } = operator;
+  const { model, gates, actions, lines, bridge, bridgeError, commandError } = operator;
+  const alert = commandError || (windowError ? { action: "window", message: windowError, at: "" } : null);
   return (
     <>
-    <div className="app">
-        <TitleBar />
-        <Banner />
-        <RuntimeControl
-          host={model.host}
-          gates={gates}
-          onStart={actions.start}
-          onStop={actions.stop}
-          onRestart={actions.restart}
-          onSafe={actions.safe}
-          onFrontend={actions.frontend}
-          onConfig={actions.config}
-          onLogs={actions.logs}
-          onEmergency={() => setDialog("emergency")}
+      <OperatorDesktop
+        host={model.host}
+        gates={gates}
+        bridge={bridge}
+        bridgeError={bridgeError}
+        services={model.services}
+        workers={model.workers}
+        workerSummary={model.workerSummary}
+        metrics={model.metrics}
+        logs={model.logs}
+        ingestion={model.ingestion}
+        native={model.native}
+        lines={lines}
+        checks={model.host.preflight.checks}
+        paused={operator.paused}
+        logsPaused={operator.logsPaused}
+        version={model.host.version}
+        uptime={model.uptime}
+        servicesOnline={model.servicesOnline}
+        queue={model.queue}
+        onStart={actions.start}
+        onStop={actions.stop}
+        onRestart={actions.restart}
+        onSafe={actions.safe}
+        onFrontend={actions.frontend}
+        onConfig={actions.config}
+        onLogs={actions.logs}
+        onEmergency={() => setDialog("emergency")}
+        onPause={actions.togglePause}
+        onClear={actions.clearConsole}
+        onLogPause={actions.toggleLogPause}
+        onWindowError={setWindowError}
+      />
+      <TracePanel />
+      {alert && (
+        <CommandErrorDialog
+          error={{ action: alert.action, message: alert.message, at: alert.at || new Date().toISOString() }}
+          onClose={() => {
+            operator.clearCommandError();
+            setWindowError(null);
+          }}
         />
-        <ErrorBoundary><ServiceHealthStrip cards={model.services} /></ErrorBoundary>
-        <div className="mid">
-          <ErrorBoundary><MainConsole lines={lines} checks={model.host.preflight.checks} paused={operator.paused} onPause={actions.togglePause} onClear={actions.clearConsole} /></ErrorBoundary>
-          <ErrorBoundary><WorkersPanel rows={model.workers} summary={model.workerSummary} /></ErrorBoundary>
-          <ErrorBoundary><SystemOverview metrics={model.metrics} /></ErrorBoundary>
-        </div>
-        <div className="low">
-          <ErrorBoundary><StructuredLogs rows={model.logs} paused={operator.logsPaused} onPause={actions.toggleLogPause} /></ErrorBoundary>
-          <ErrorBoundary><SourceIngestionPanel model={model.ingestion} /></ErrorBoundary>
-          <ErrorBoundary><NativeRuntimeConsole model={model.native} /></ErrorBoundary>
-        </div>
-        <StatusBar version={model.host.version} uptime={model.uptime} services={model.servicesOnline} workers={model.workerSummary} queue={model.queue} />
-      </div>
-      {operator.notice && (
-        <div className="dialog-backdrop" role="presentation">
-          <div className="dialog" role="alertdialog">
-            <h3>Host</h3>
-            <p>{operator.notice}</p>
-            <div className="actions"><button className="btn" type="button" onClick={operator.clearNotice}>Close</button></div>
-          </div>
-        </div>
       )}
       {dialog === "emergency" && (
         <ConfirmDialog

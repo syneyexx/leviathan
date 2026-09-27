@@ -62,3 +62,8 @@ pub fn host_preferences_set(state: State<'_, Arc<HostController>>, preferences: 
     let _ = state.set_preferences(preferences);
     state.snapshot()
 }
+
+#[tauri::command]
+pub fn host_trace(state: State<'_, Arc<HostController>>, event: String, detail: String) -> Result<(), String> {
+    state.client_trace(&event, &detail)
+}

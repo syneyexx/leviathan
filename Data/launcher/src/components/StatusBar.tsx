@@ -11,16 +11,28 @@ export function StatusBar({
   workers: string;
   queue: string;
 }) {
+  const shown = version.startsWith("v") ? version : `v${version}`;
+  const ratio = workers.match(/(\d+)\s*\/\s*(\d+)/);
+  const workersShown = ratio ? `${ratio[1]}/${ratio[2]}` : workers;
   return (
     <footer className="statusbar">
-      <div>run_leviathan.exe | LEVIATHAN Backend Host | {version}</div>
-      <div className="center">TARTARIAN INTELLIGENCE INFRASTRUCTURE · KNOWLEDGE INCIPIT · QUALITY OBEYS · IN AETERNUM</div>
+      <div className="left">
+        <span>run_leviathan.exe</span>
+        <span>LEVIATHAN Backend Host</span>
+        <span>{shown}</span>
+      </div>
+      <div className="center">TARTARIAN INTELLIGENCE INFRASTRUCTURE · KNOWLEDGE INGESTS · REALITY OBEYS · IN AETERNUM</div>
       <div className="right">
-        <span>Uptime {uptime}</span>
-        <span>Services {services}</span>
-        <span>Workers {workers}</span>
-        <span>Queue {queue}</span>
+        <span>Uptime: {uptime}</span>
+        <Metric label="Services" value={services} />
+        <Metric label="Workers" value={workersShown} />
+        <Metric label="Queue" value={queue} />
       </div>
     </footer>
   );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  const live = value !== "UNMEASURED" && value !== "—";
+  return <span>{live ? <i className="dot ok" /> : null}{label}: {value}</span>;
 }

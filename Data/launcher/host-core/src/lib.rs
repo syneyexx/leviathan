@@ -34,6 +34,7 @@ pub const IPC_COMMANDS: &[&str] = &[
     "host_console",
     "host_preferences_get",
     "host_preferences_set",
+    "host_trace",
 ];
 
 pub fn ipc_command_allowed(name: &str) -> bool {

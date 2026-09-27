@@ -6,7 +6,7 @@ import { filterLogs, mapEvent } from "../domain/logs";
 import { mapNative, nativeIsHealthy } from "../domain/native";
 import { metricCards, readPerformance, emptyHistories } from "../domain/telemetry";
 import { mapWorker } from "../domain/workers";
-import { stoppedSnapshot } from "../domain/host";
+import { isHostSnapshot, optimisticCommand, stoppedSnapshot } from "../domain/host";
 import { appendUnique, pushRing } from "../lib/ringBuffer";
 import { pushSample } from "../lib/timeSeries";
 import { redactText } from "../lib/redaction";
@@ -20,6 +20,27 @@ describe("control gates", () => {
     expect(gates.stop.enabled).toBe(false);
     expect(gates.emergency.enabled).toBe(false);
     expect(gates.restart.enabled).toBe(false);
+  });
+
+  it("enables start only when stopped and the bridge is ready", () => {
+    const stopped = controlGates(stoppedSnapshot(), null, "READY");
+    expect(stopped.start.enabled).toBe(true);
+    expect(controlGates({ ...stoppedSnapshot(), state: "PREFLIGHT" }, null).start.enabled).toBe(false);
+    expect(controlGates({ ...stoppedSnapshot(), state: "STARTING" }, null).start.enabled).toBe(false);
+    const running = controlGates({ ...stoppedSnapshot(), state: "RUNNING", ownership: "OWNED", pid: 4 }, null);
+    expect(running.start.enabled).toBe(false);
+    expect(running.stop.enabled).toBe(true);
+    const degraded = controlGates({ ...stoppedSnapshot(), state: "DEGRADED", ownership: "OWNED", pid: 4 }, null);
+    expect(degraded.stop.enabled).toBe(true);
+    expect(controlGates(stoppedSnapshot(), null, "FAILED").start.enabled).toBe(false);
+    expect(controlGates(stoppedSnapshot(), null, "CONNECTING").start.enabled).toBe(false);
+  });
+
+  it("marks an immediate preflight state before the invoke returns", () => {
+    const next = optimisticCommand(stoppedSnapshot(), "host_start");
+    expect(next?.state).toBe("PREFLIGHT");
+    expect(isHostSnapshot("http://127.0.0.1/")).toBe(false);
+    expect(isHostSnapshot(stoppedSnapshot())).toBe(true);
   });
 
   it("enables stop only for an owned live process", () => {
