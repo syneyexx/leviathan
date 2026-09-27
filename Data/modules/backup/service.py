@@ -17,6 +17,12 @@ class BackupError(RuntimeError):
 BACKUP_KIND_METADATA_ONLY = "METADATA_ONLY"
 BACKUP_KIND_FULL_WITH_CORPUS = "FULL_WITH_CORPUS"
 
+# Three-DB restore terminal states — files cannot be replaced cross-file atomically.
+RESTORE_OLD_SET_ACTIVE = "OLD_SET_ACTIVE"
+RESTORE_NEW_SET_ACTIVE = "NEW_SET_ACTIVE"
+RESTORE_RECOVERY_REQUIRED = "RECOVERY_REQUIRED"
+RESTORE_JOURNAL_NAME = "restore_journal.json"
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -93,6 +99,12 @@ class BackupManifest:
                 "missingCorpusFileCount": len(self.missing_corpus_files),
                 "canonicalDatabaseCount": len(self.databases) or 1,
                 "backupSetComplete": self.backup_set_complete,
+                # BACKUP-002: three SQLite files cannot be replaced as one OS transaction.
+                "crossFileRestoreIsNotAtomic": True,
+                "corpusInventorySourceDomain": (self.metadata or {}).get(
+                    "corpusInventorySourceDomain", "KNOWLEDGE"
+                ),
+                "restoreTerminalState": (self.metadata or {}).get("restoreTerminalState"),
             },
         }
 
@@ -207,7 +219,13 @@ class BackupService:
         control_copy = dest / "leviathan_control.db"
         if not control_copy.is_file():
             control_copy = dest / "leviathan.db"
-        inventory = self._build_corpus_inventory(control_copy if control_copy.is_file() else dest / "leviathan.db")
+        # BACKUP-001: dataset metadata / file refs live in KNOWLEDGE after 3-DB cutover.
+        knowledge_copy = dest / "leviathan_knowledge.db"
+        inventory_db = knowledge_copy if knowledge_copy.is_file() else control_copy
+        inventory_source = "KNOWLEDGE" if knowledge_copy.is_file() else "CONTROL_LEGACY"
+        inventory = self._build_corpus_inventory(
+            inventory_db if inventory_db.is_file() else dest / "leviathan.db"
+        )
         corpus_files_included = False
         backup_kind = BACKUP_KIND_METADATA_ONLY
         is_complete = False
@@ -270,6 +288,8 @@ class BackupService:
         meta["includeCorpusRequested"] = bool(include_corpus)
         meta["corpusRoot"] = str(self.corpus_root) if self.corpus_root else None
         meta["canonicalDatabaseCount"] = len(databases) or 1
+        meta["corpusInventorySourceDomain"] = inventory_source
+        meta["crossFileRestoreIsNotAtomic"] = True
 
         manifest = BackupManifest(
             backup_id=backup_id,

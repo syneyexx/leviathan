@@ -11,7 +11,6 @@ import {
   DM_SPLIT_FILTERS,
   DM_STATUS_FILTERS,
   DM_TYPE_FILTERS,
-  type DatasetMgmtStatus,
   type DatasetSampleTab,
 } from "../../mocks/dataset-management";
 import { useAppToast } from "../../state/useAppToast";

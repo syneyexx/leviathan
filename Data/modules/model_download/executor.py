@@ -235,12 +235,34 @@ class ModelDownloadExecutor:
                 "worker_pid": os.getpid(),
                 "download_id": download_id,
             }
-            store.transition(
-                job.job_id,
-                JobState.CANCELLED if cancelled else JobState.FAILED,
-                error=exc.code.value,
-                result=payload,
-            )
+            try:
+                current = store.get(job.job_id)
+            except Exception:  # noqa: BLE001
+                current = None
+            if cancelled and current is not None and current.state == JobState.RUNNING:
+                try:
+                    store.request_cancel(job.job_id, reason=exc.message)
+                except Exception:  # noqa: BLE001
+                    pass
+            target = JobState.CANCELLED if cancelled else JobState.FAILED
+            try:
+                store.transition(
+                    job.job_id,
+                    target,
+                    error=exc.code.value,
+                    result=payload,
+                )
+            except Exception:  # noqa: BLE001 — already terminal / illegal path
+                if cancelled:
+                    try:
+                        store.transition(
+                            job.job_id,
+                            JobState.FAILED,
+                            error=exc.code.value,
+                            result=payload,
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
             return payload
         except LeaseFenceError as exc:
             progress(

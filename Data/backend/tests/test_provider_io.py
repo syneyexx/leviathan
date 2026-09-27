@@ -277,11 +277,11 @@ class ProviderExecutorUnitTests(unittest.TestCase):
         self.server.shutdown()
         self.tmp.cleanup()
 
-    def _ctx(self) -> dict:
+    def _ctx(self, *, worker_id: str = "w1") -> dict:
         return {
             "job_store": self.store,
             "settings": type("S", (), {"database_path": self.db})(),
-            "worker_id": f"test-{os.getpid()}",
+            "worker_id": worker_id,
             "lease_ttl_seconds": 30.0,
         }
 

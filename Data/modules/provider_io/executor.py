@@ -204,25 +204,65 @@ class ProviderIoExecutor:
         for attempt in range(self.settings.max_attempts):
             budget.raise_if_exhausted()
             if cancel_check():
+                # Distinguish cooperative cancel from lease/cancel-read fence.
+                current = None
+                try:
+                    current = store.get(job.job_id)
+                except Exception:  # noqa: BLE001
+                    current = None
+                is_cancel = current is not None and current.state in {
+                    JobState.CANCEL_REQUESTED,
+                    JobState.CANCELLED,
+                }
+                if is_cancel:
+                    result = ProviderExecutionResult(
+                        status="cancelled",
+                        provider=request.provider,
+                        model=request.model,
+                        error=ProviderError(
+                            ProviderErrorCode.EXECUTION_CANCELLED,
+                            "Cancelled",
+                            provider=request.provider,
+                        ).public_dict(),
+                        worker_pid=os.getpid(),
+                    )
+                    if current.state != JobState.CANCELLED:
+                        if current.state == JobState.RUNNING:
+                            store.request_cancel(job.job_id, reason="Cancelled")
+                        store.transition(
+                            job.job_id,
+                            JobState.CANCELLED,
+                            error="EXECUTION_CANCELLED",
+                            result=result.public_dict(),
+                        )
+                    self.policy.telemetry["cancelled"] = (
+                        int(self.policy.telemetry.get("cancelled", 0)) + 1
+                    )
+                    return result.public_dict()
                 result = ProviderExecutionResult(
-                    status="cancelled",
+                    status="failed",
                     provider=request.provider,
                     model=request.model,
                     error=ProviderError(
                         ProviderErrorCode.EXECUTION_CANCELLED,
-                        "Cancelled",
+                        "lease_fence_or_cancel_unreadable",
                         provider=request.provider,
+                        retryable=False,
                     ).public_dict(),
                     worker_pid=os.getpid(),
                 )
-                store.transition(
-                    job.job_id,
-                    JobState.CANCELLED,
-                    error="EXECUTION_CANCELLED",
-                    result=result.public_dict(),
-                )
-                self.policy.telemetry["cancelled"] = (
-                    int(self.policy.telemetry.get("cancelled", 0)) + 1
+                try:
+                    store.transition(
+                        job.job_id,
+                        JobState.FAILED,
+                        error="LEASE_FENCE",
+                        result=result.public_dict(),
+                        expected_lease_owner=worker_id,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+                self.policy.telemetry["failure"] = (
+                    int(self.policy.telemetry.get("failure", 0)) + 1
                 )
                 return result.public_dict()
 

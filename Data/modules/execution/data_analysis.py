@@ -87,7 +87,3 @@ def mcp_trust_policy() -> dict[str, Any]:
         "requires_execution_gateway": True,
         "truth": {"mcp_is_not_private_side_effect_channel": True},
     }
-
-
-# silence unused math import if any
-_ = math
