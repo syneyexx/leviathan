@@ -584,17 +584,36 @@ class ExternalCapabilityStore:
         query: str | None = None,
         enabled_only: bool = True,
         include_catalog: bool = False,
+        classification: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
         limit = max(1, min(int(limit), 200))
         offset = max(0, int(offset))
+        class_key = (classification or "").strip().lower() or None
+        if class_key == "agent":
+            # Cognition agent SkillLibrary is not projected into external_skills.
+            return []
+
         clauses = ["1=1"]
         params: list[Any] = []
+
         if enabled_only:
             clauses.append("enabled = 1")
-        if not include_catalog:
+
+        if class_key in {"core", "installed"}:
             clauses.append("catalog_only = 0")
+        elif class_key in {"external", "catalog"}:
+            clauses.append("catalog_only = 1")
+        elif class_key == "tools":
+            clauses.append(
+                "script_refs_json IS NOT NULL AND script_refs_json NOT IN ('[]', 'null', '')"
+            )
+            if not include_catalog:
+                clauses.append("catalog_only = 0")
+        elif not include_catalog:
+            clauses.append("catalog_only = 0")
+
         if query:
             # Tokenize natural-language goals so "Audit this Cloudflare Worker"
             # matches description/trigger text (not one giant LIKE phrase).
@@ -669,6 +688,76 @@ class ExternalCapabilityStore:
                     (1 if catalog_only else 0,),
                 ).fetchone()
             return int(row["c"] if row else 0)
+
+    def count_skills_available(self) -> int:
+        """Enabled installed skills (usable by CapabilityBroker shortlist)."""
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM external_skills WHERE enabled = 1 AND catalog_only = 0"
+            ).fetchone()
+            return int(row["c"] if row else 0)
+
+    def count_distinct_skill_modules(self) -> int:
+        """Distinct owning module_ids referenced by skill rows."""
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                "SELECT COUNT(DISTINCT module_id) AS c FROM external_skills "
+                "WHERE module_id IS NOT NULL AND TRIM(module_id) != ''"
+            ).fetchone()
+            return int(row["c"] if row else 0)
+
+    def count_skills_with_scripts(self, *, include_catalog: bool = True) -> int:
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            clause = "script_refs_json IS NOT NULL AND script_refs_json NOT IN ('[]', 'null', '')"
+            if not include_catalog:
+                clause += " AND catalog_only = 0"
+            row = conn.execute(f"SELECT COUNT(*) AS c FROM external_skills WHERE {clause}").fetchone()
+            return int(row["c"] if row else 0)
+
+    def count_skill_issues(self) -> int:
+        """Installed skills missing a resolvable source_path (metadata integrity issue)."""
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM external_skills WHERE catalog_only = 0 "
+                "AND (source_path IS NULL OR TRIM(source_path) = '')"
+            ).fetchone()
+            return int(row["c"] if row else 0)
+
+    def skill_totals_projection(self) -> dict[str, Any]:
+        """Deterministic KPI / filter counts. Unmeasurable fields are explicit nulls."""
+        installed = self.count_skills(catalog_only=False)
+        catalog = self.count_skills(catalog_only=True)
+        return {
+            "installed": installed,
+            "catalog": catalog,
+            "total": installed + catalog,
+            "available": self.count_skills_available(),
+            "external_packs": self.count_distinct_skill_modules(),
+            "tools": self.count_skills_with_scripts(include_catalog=True),
+            "issues": self.count_skill_issues(),
+            # Cognition agent SkillLibrary is not persisted on external_skills.
+            "agent_skills": None,
+            # Module version update aggregation is owned by ModuleManager — not invented here.
+            "updates_available": None,
+            "classifications": {
+                "all": installed + catalog,
+                "core": installed,
+                "external": catalog,
+                "tools": self.count_skills_with_scripts(include_catalog=True),
+                "agent": None,
+            },
+            "truth": {
+                "agent_skills_unmeasured": True,
+                "updates_available_unmeasured": True,
+                "core_means_installed_non_catalog": True,
+                "external_means_catalog_only": True,
+                "tools_means_nonempty_script_refs": True,
+            },
+        }
 
     def _skill_row(self, row: sqlite3.Row) -> dict[str, Any]:
         return {

@@ -2544,6 +2544,9 @@ app.include_router(
     build_skills_router(
         external_store=external_capability_store,
         observability=observability,
+        capability_catalog=capability_catalog,
+        execution_gateway=execution_gateway,
+        module_manager=module_manager,
     )
 )
 app.include_router(build_conversations_router(db=db))

@@ -127,7 +127,9 @@ class SkillImporter:
             required = [required]
         required_caps = [str(x) for x in required] if isinstance(required, list) else []
 
-        resource_refs = _collect_relative(path.parent, ("resources", "references", "assets"))
+        resource_refs = _collect_relative(
+            path.parent, ("resources", "references", "assets", "examples")
+        )
         script_refs = _collect_relative(path.parent, ("scripts",))
 
         content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -264,6 +266,103 @@ def load_skill_instructions(record: SkillRecord | dict[str, Any]) -> str:
         _, body = _split_frontmatter(text)
         return body.strip()
     return ""
+
+
+def parse_skill_declarations(record: SkillRecord | dict[str, Any]) -> dict[str, Any]:
+    """Extract safe declared schemas/examples from skill metadata or SKILL.md frontmatter.
+
+    Does not invent schemas. Returns empty structures when undeclared.
+    """
+    if isinstance(record, SkillRecord):
+        metadata = dict(record.metadata or {})
+        source_path = record.source_path
+        resource_refs = list(record.resource_refs or [])
+        script_refs = list(record.script_refs or [])
+        required = list(record.required_capabilities or [])
+    else:
+        metadata = dict(record.get("metadata") or {})
+        source_path = record.get("source_path")
+        resource_refs = list(record.get("resource_refs") or [])
+        script_refs = list(record.get("script_refs") or [])
+        required = list(record.get("required_capabilities") or [])
+
+    frontmatter: dict[str, Any] = {}
+    if source_path and Path(str(source_path)).is_file():
+        try:
+            text = Path(str(source_path)).read_text(encoding="utf-8", errors="replace")
+            frontmatter, _ = _split_frontmatter(text)
+        except OSError:
+            frontmatter = {}
+
+    def _pick_schema(*keys: str) -> Any:
+        for key in keys:
+            if key in metadata and metadata[key] not in (None, "", [], {}):
+                return metadata[key]
+            if key in frontmatter and frontmatter[key] not in (None, "", [], {}):
+                return frontmatter[key]
+        return None
+
+    input_schema = _pick_schema("input_schema", "inputs", "parameters")
+    output_schema = _pick_schema("output_schema", "outputs")
+    examples = _pick_schema("examples", "example")
+    example_refs = [
+        ref
+        for ref in resource_refs
+        if isinstance(ref, str) and ("example" in ref.lower() or ref.lower().startswith("examples/"))
+    ]
+
+    # Normalize list-ish input declarations into rows when possible.
+    input_rows: list[dict[str, Any]] = []
+    if isinstance(input_schema, dict):
+        props = input_schema.get("properties") if isinstance(input_schema.get("properties"), dict) else input_schema
+        required_keys = set(input_schema.get("required") or []) if isinstance(input_schema, dict) else set()
+        if isinstance(props, dict) and all(isinstance(v, (dict, str)) for v in props.values()):
+            for name, spec in props.items():
+                if isinstance(spec, dict):
+                    input_rows.append(
+                        {
+                            "name": str(name),
+                            "type": str(spec.get("type") or "unknown"),
+                            "required": name in required_keys or bool(spec.get("required")),
+                            "description": str(spec.get("description") or "") or None,
+                        }
+                    )
+                else:
+                    input_rows.append(
+                        {
+                            "name": str(name),
+                            "type": str(spec),
+                            "required": name in required_keys,
+                            "description": None,
+                        }
+                    )
+    elif isinstance(input_schema, list):
+        for item in input_schema:
+            if isinstance(item, dict) and item.get("name"):
+                input_rows.append(
+                    {
+                        "name": str(item.get("name")),
+                        "type": str(item.get("type") or "unknown"),
+                        "required": bool(item.get("required")),
+                        "description": str(item.get("description") or "") or None,
+                    }
+                )
+            elif isinstance(item, str):
+                input_rows.append(
+                    {"name": item, "type": "unknown", "required": False, "description": None}
+                )
+
+    return {
+        "required_capabilities": [str(x) for x in required],
+        "resource_refs": resource_refs,
+        "script_refs": script_refs,
+        "input_schema": input_schema,
+        "output_schema": output_schema,
+        "input_rows": input_rows,
+        "examples": examples,
+        "example_refs": example_refs,
+        "frontmatter_keys": sorted(frontmatter.keys()) if frontmatter else list(metadata.get("frontmatter_keys") or []),
+    }
 
 
 def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
