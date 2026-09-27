@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-27T14:35:53+00:00",
+  "generated_at": "2026-09-27T14:37:17+00:00",
   "phase": "Slice16/A0-A4",
   "program": "Master Program v4.1",
   "all_required_pass": false,
@@ -189,10 +189,11 @@
       "status": "IN_PROGRESS",
       "evidence": [
         "Data/backend/tests/test_market_sim_p1_gym.py::P1AStreamingOhlcvTests::test_streaming_peak_rss_bounded_vs_materialize",
-        "Streaming RSS delta bounded vs materialize on 120k bars",
-        "Full 5y\u00d71m absolute no-OOM soak not yet CI-measured"
+        "Data/backend/tests/test_streaming_soak_w19.py::BoundedStreamingSoakTests",
+        "Streaming RSS delta bounded vs materialize on 50k\u2013120k bars",
+        "Full 5y\u00d71m absolute soak: NOT_TESTED_AT_FULL_SCALE"
       ],
-      "notes": "P1A foundation; absolute 5y soak remains for P1B gym long-run worker path"
+      "notes": "Streaming API proven bounded. Absolute 5y\u00d71m product soak remains NOT_TESTED_AT_FULL_SCALE \u2014 do not claim PASS."
     },
     {
       "id": "G14",
