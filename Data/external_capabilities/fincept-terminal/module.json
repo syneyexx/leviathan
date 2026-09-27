@@ -24,7 +24,9 @@
       ],
       "python_packages": [
         "numpy>=2.0,<3",
-        "pandas>=2.0,<3"
+        "pandas>=2.0,<3",
+        "scipy>=1.11,<2",
+        "statsmodels>=0.14,<1"
       ],
       "dependencies": [
         "python3"
@@ -68,7 +70,7 @@
             "?{payload}"
           ],
           "defaults": {
-            "command": "help"
+            "command": "list"
           }
         },
         {

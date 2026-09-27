@@ -497,7 +497,7 @@
     "COMPOSITE": "PASS",
     "MCP": "PASS"
   },
-  "worktree_head": "3bbd3b398c7a7b647c1dfd1224c6879da7b6e65a",
+  "worktree_head": "d4bb593de7686f96e0bc828e9e0696e401d1435b",
   "live_proofs": {
     "install_pass_module_ids": [
       "agent-reach",
@@ -627,7 +627,10 @@
     "fincept-terminal": {
       "install": "PASS",
       "analyze_usage_json": "PASS",
-      "analyze_get_key_metrics": "PASS"
+      "analyze_get_key_metrics": "PASS",
+      "stats": "COMPLETED with numpy/pandas/scipy/statsmodels install",
+      "fixed_income": "COMPLETED help lists available_commands",
+      "python_packages": "numpy,pandas,scipy,statsmodels"
     },
     "skill_selection": {
       "broker_shortlist": "PASS",
@@ -701,7 +704,9 @@
       "observing_to_reasoning_multi_tool_fix": "PASS_UNIT",
       "capability_result_cards_artifact_labels": "PASS_UNIT",
       "agent_reach_version_check_update_caps": "PASS_MANIFEST",
-      "fincept_stats_fixed_income_caps": "PASS_MANIFEST"
+      "fincept_stats_fixed_income_caps": "PASS_MANIFEST",
+      "agent_reach_version_check_update_live": "PASS",
+      "fincept_stats_fixed_income_live": "PASS"
     },
     "skill_pack_invoke": {
       "claude-osint": {
@@ -786,14 +791,15 @@
     },
     "agent-reach": {
       "doctor_json": "PASS",
-      "version": "PASS",
+      "version": "COMPLETED Agent Reach v1.5.0",
       "skill_load": "PASS",
       "native_search_subcommand": "ABSENT",
       "mcp_get_status": "BLOCKED_EXTERNAL upstream mcp SDK API",
       "composite_cli_ops_precedence": "PASS",
       "fetch_url_jina": "PASS",
       "v2ex_hot": "PASS",
-      "skill_routed_zero_config_cli": "PASS"
+      "skill_routed_zero_config_cli": "PASS",
+      "check_update": "COMPLETED already latest"
     },
     "skills_page": {
       "search_pagination_contracts": "PASS vitest"
