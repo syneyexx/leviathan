@@ -1082,6 +1082,27 @@ class QualificationAuthority:
     def _gate_capacity(self, *, context, policy, run) -> QualificationGateResult:
         cap = (context.extra or {}).get("capacity")
         if not cap:
+            # Optional auto-estimate when capital+adv supplied in extra
+            raw = (context.extra or {}).get("capacity_inputs")
+            if isinstance(raw, dict):
+                try:
+                    from .capacity_qualification import estimate_bar_capacity
+
+                    ev = estimate_bar_capacity(
+                        capital=float(raw.get("capital") or 0),
+                        avg_daily_volume=raw.get("avg_daily_volume") or raw.get("adv"),
+                        price=raw.get("price"),
+                        turnover=raw.get("turnover"),
+                        max_participation_pct=float(
+                            raw.get("max_participation_pct")
+                            or policy.config.get("max_participation_pct")
+                            or 10.0
+                        ),
+                    )
+                    cap = ev.public_dict()
+                except Exception:  # noqa: BLE001
+                    cap = None
+        if not cap:
             return _result(
                 "Q09_CAPACITY",
                 state=MeasurementState.UNMEASURED.value,
@@ -1090,13 +1111,23 @@ class QualificationAuthority:
                 blockers=["CAPACITY_UNMEASURED"] if policy.require_capacity else [],
             )
         state = str(cap.get("state") or MeasurementState.UNMEASURED.value).upper()
-        if cap.get("exceeded"):
+        blockers = [str(b) for b in (cap.get("blockers") or [])]
+        if cap.get("exceeded") or "CAPACITY_EXCEEDED" in blockers:
             return _result(
                 "Q09_CAPACITY",
                 state=MeasurementState.FAIL.value,
                 passed=False,
                 methodology="capacity_liquidity",
                 blockers=["CAPACITY_EXCEEDED"],
+                metrics=dict(cap),
+            )
+        if "CAPACITY_UNMEASURED" in blockers:
+            return _result(
+                "Q09_CAPACITY",
+                state=MeasurementState.UNMEASURED.value,
+                passed=not policy.require_capacity,
+                methodology="capacity_liquidity",
+                blockers=["CAPACITY_UNMEASURED"] if policy.require_capacity else [],
                 metrics=dict(cap),
             )
         ok = state in {
@@ -1108,10 +1139,10 @@ class QualificationAuthority:
         return _result(
             "Q09_CAPACITY",
             state=state if ok else MeasurementState.UNMEASURED.value,
-            passed=ok,
+            passed=ok if policy.require_capacity else True,
             methodology="capacity_liquidity",
             metrics=dict(cap),
-            blockers=[] if ok else ["CAPACITY_UNMEASURED"],
+            blockers=[] if ok else (["CAPACITY_UNMEASURED"] if policy.require_capacity else []),
         )
 
     def _gate_sealed(self, *, context, policy, run) -> QualificationGateResult:

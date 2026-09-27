@@ -87,11 +87,16 @@ def default_perturbation_matrix(
     include_parameter: bool = True,
     include_time: bool = True,
     include_regime: bool = False,
+    include_execution_stress: bool = True,
 ) -> list[RobustnessPerturbation]:
-    """Canonical default robustness matrix — rule-based, frozen per objective."""
+    """Canonical default robustness matrix — rule-based, frozen per objective.
+
+    Wave 10 scenario library. Unsupported scenarios are returned with
+    measurement NOT_IMPLEMENTED via metadata — never synthetic PASS.
+    """
     out = [
         RobustnessPerturbation(
-            perturbation_id="cost_x2",
+            perturbation_id="fee_x2",
             kind="cost",
             label="fees_x2",
             fee_bps_factor=2.0,
@@ -110,10 +115,94 @@ def default_perturbation_matrix(
             fee_bps_factor=1.25,
         ),
     ]
+    if include_execution_stress:
+        out.extend(
+            [
+                RobustnessPerturbation(
+                    perturbation_id="execution_delay",
+                    kind="execution",
+                    label="execution_delay",
+                    start_shift_bars=1,
+                    metadata={"scenario": "execution_delay", "support": "MEASURED"},
+                ),
+                RobustnessPerturbation(
+                    perturbation_id="missed_fill_probability",
+                    kind="execution",
+                    label="missed_fill_probability",
+                    metadata={
+                        "scenario": "missed_fill_probability",
+                        "support": "NOT_IMPLEMENTED",
+                        "honesty": "requires_stochastic_fill_model",
+                    },
+                ),
+                RobustnessPerturbation(
+                    perturbation_id="order_rejection",
+                    kind="execution",
+                    label="order_rejection",
+                    metadata={
+                        "scenario": "order_rejection",
+                        "support": "NOT_IMPLEMENTED",
+                    },
+                ),
+                RobustnessPerturbation(
+                    perturbation_id="participation_reduction",
+                    kind="liquidity",
+                    label="participation_reduction",
+                    metadata={
+                        "scenario": "participation_reduction",
+                        "max_participation_factor": 0.5,
+                        "support": "MEASURED",
+                    },
+                ),
+                RobustnessPerturbation(
+                    perturbation_id="liquidity_collapse",
+                    kind="liquidity",
+                    label="liquidity_collapse",
+                    metadata={
+                        "scenario": "liquidity_collapse",
+                        "volume_factor": 0.1,
+                        "support": "MEASURED",
+                    },
+                ),
+                RobustnessPerturbation(
+                    perturbation_id="feature_noise",
+                    kind="data",
+                    label="feature_noise",
+                    metadata={
+                        "scenario": "feature_noise",
+                        "support": "NOT_IMPLEMENTED",
+                    },
+                ),
+                RobustnessPerturbation(
+                    perturbation_id="missing_bars",
+                    kind="data",
+                    label="missing_bars",
+                    metadata={
+                        "scenario": "missing_bars",
+                        "support": "NOT_IMPLEMENTED",
+                    },
+                ),
+                RobustnessPerturbation(
+                    perturbation_id="market_gap",
+                    kind="data",
+                    label="market_gap",
+                    metadata={"scenario": "market_gap", "support": "MEASURED"},
+                ),
+                RobustnessPerturbation(
+                    perturbation_id="feed_staleness",
+                    kind="data",
+                    label="feed_staleness",
+                    metadata={
+                        "scenario": "feed_staleness",
+                        "support": "NOT_IMPLEMENTED",
+                    },
+                ),
+            ]
+        )
     if include_parameter:
         out.append(
             RobustnessPerturbation(
-                perturbation_id="param_jitter_small",
+                perturbation_id="parameter_jitter",
                 kind="parameter",
                 label="local_parameter_perturbation",
                 parameter_jitter={"_relative": 0.05},
@@ -122,7 +211,7 @@ def default_perturbation_matrix(
     if include_time:
         out.append(
             RobustnessPerturbation(
-                perturbation_id="start_shift_+3",
+                perturbation_id="start_date_shift",
                 kind="time",
                 label="start_date_sensitivity",
                 start_shift_bars=3,
@@ -130,7 +219,7 @@ def default_perturbation_matrix(
         )
         out.append(
             RobustnessPerturbation(
-                perturbation_id="end_shift_-3",
+                perturbation_id="end_date_shift",
                 kind="time",
                 label="end_date_sensitivity",
                 end_shift_bars=-3,
@@ -139,7 +228,7 @@ def default_perturbation_matrix(
     if include_regime:
         out.append(
             RobustnessPerturbation(
-                perturbation_id="regime_high_vol",
+                perturbation_id="regime_shift",
                 kind="regime",
                 label="high_vol_slice",
                 regime_label="high_vol",
@@ -147,6 +236,27 @@ def default_perturbation_matrix(
         )
     return out
 
+
+def institutional_scenario_ids() -> tuple[str, ...]:
+    """Wave 10 required scenario library identifiers."""
+    return (
+        "fee_x2",
+        "slippage_x2",
+        "spread_widen",
+        "execution_delay",
+        "missed_fill_probability",
+        "order_rejection",
+        "participation_reduction",
+        "liquidity_collapse",
+        "parameter_jitter",
+        "start_date_shift",
+        "end_date_shift",
+        "feature_noise",
+        "missing_bars",
+        "market_gap",
+        "feed_staleness",
+        "regime_shift",
+    )
 
 def apply_parameter_jitter(
     parameters: dict[str, Any],

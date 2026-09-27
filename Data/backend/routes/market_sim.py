@@ -232,6 +232,50 @@ class ExperimentComplete(BaseModel):
     strategyVersion: int | None = None
 
 
+class QualificationRunCreate(BaseModel):
+    """Immutable identifiers + policy selection — never passed=true evidence."""
+
+    strategyId: str
+    strategyVersion: int
+    strategyHash: str
+    sourceId: str
+    datasetHash: str
+    gitSha: str
+    codeVersion: str
+    seed: int = 42
+    trialFamilyId: str
+    policyId: str | None = None
+    policy: dict[str, Any] | None = None
+    experimentId: str | None = None
+    learningRunId: str | None = None
+    candidateId: str | None = None
+    datasetId: str | None = None
+    datasetVersionId: str | None = None
+    sealedAttemptId: str | None = None
+    featurePipelineHash: str = ""
+    executionModelHash: str = ""
+    costModelHash: str = ""
+    riskModelHash: str = ""
+    sizingModelHash: str = ""
+    splitManifestHash: str = ""
+    dirty: bool = False
+    diffHash: str = ""
+    extra: dict[str, Any] | None = None
+    qualificationId: str | None = None
+    allowInlineDev: bool = False
+    enqueue: bool = True
+
+
+class DatasetCertificationEvaluate(BaseModel):
+    datasetVersionId: str
+    datasetHash: str
+    evidence: dict[str, Any] | None = None
+    sourceId: str = ""
+    dataType: str = "ohlcv"
+    # Rejected if True alone — authority is server-side.
+    certified: bool | None = None
+
+
 class DemoRequest(BaseModel):
     family: str = Field(description="equity | crypto_spot")
     barsLimit: int = Field(120, ge=30, le=2000)
@@ -362,6 +406,45 @@ def build_market_sim_router(
         body = payload or SealDatasetRequest()
         try:
             return {"dataset": service.seal_market_dataset(dataset_id, version, role=body.role)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/datasets/{dataset_id}/certification")
+    def get_dataset_certification(
+        dataset_id: str,
+        version: str | None = Query(None),
+    ) -> dict:
+        try:
+            return {"certification": service.get_dataset_certification(dataset_id, version=version)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/datasets/{dataset_id}/certification/evaluate")
+    def evaluate_dataset_certification(
+        dataset_id: str, payload: DatasetCertificationEvaluate
+    ) -> dict:
+        if payload.certified is True and not payload.evidence:
+            raise_market_sim_error(
+                MarketSimError(
+                    "CALLER_BOOLEAN_NOT_CERTIFICATION",
+                    "certified=true is not accepted as dataset certification authority",
+                    http_status=400,
+                )
+            )
+        evidence = dict(payload.evidence or {})
+        if payload.certified is True:
+            evidence["certified"] = True
+        try:
+            return {
+                "certification": service.evaluate_dataset_certification(
+                    dataset_id,
+                    dataset_version_id=payload.datasetVersionId,
+                    dataset_hash=payload.datasetHash,
+                    evidence=evidence,
+                    source_id=payload.sourceId,
+                    data_type=payload.dataType,
+                )
+            }
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 
@@ -736,6 +819,13 @@ def build_market_sim_router(
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 
+    @router.get("/api/market-sim/paper-deployments/{deployment_id}/execution-calibration")
+    def paper_deployment_execution_calibration(deployment_id: str) -> dict:
+        try:
+            return service.get_execution_calibration(deployment_id)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
     # --- Paper Portefeuille ---
 
     @router.get("/api/market-sim/portfolios")
@@ -888,6 +978,13 @@ def build_market_sim_router(
         try:
             dash = service.portfolio_dashboard(portfolio_id)
             return {"risk": dash.get("risk") or {}}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/portfolios/{portfolio_id}/strategy-risk")
+    def portfolio_strategy_risk(portfolio_id: str) -> dict:
+        try:
+            return service.get_portfolio_strategy_risk(portfolio_id)
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 
@@ -1069,6 +1166,77 @@ def build_market_sim_router(
                     strategy_version=payload.strategyVersion,
                 )
             }
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    # --- QualificationAuthority runs (institutional scientific gates) ---
+
+    @router.post("/api/market-sim/qualification-runs")
+    def create_qualification_run(payload: QualificationRunCreate) -> dict:
+        if payload.extra and (
+            payload.extra.get("passed") is True or payload.extra.get("qualified") is True
+        ):
+            raise_market_sim_error(
+                MarketSimError(
+                    "CALLER_BOOLEAN_NOT_AUTHORITY",
+                    "passed/qualified booleans are not accepted as qualification evidence",
+                    http_status=400,
+                )
+            )
+        try:
+            result = service.create_qualification_run(
+                strategy_id=payload.strategyId,
+                strategy_version=payload.strategyVersion,
+                strategy_hash=payload.strategyHash,
+                source_id=payload.sourceId,
+                dataset_hash=payload.datasetHash,
+                git_sha=payload.gitSha,
+                code_version=payload.codeVersion,
+                seed=payload.seed,
+                trial_family_id=payload.trialFamilyId,
+                policy_id=payload.policyId,
+                policy=payload.policy,
+                experiment_id=payload.experimentId,
+                learning_run_id=payload.learningRunId,
+                candidate_id=payload.candidateId,
+                dataset_id=payload.datasetId,
+                dataset_version_id=payload.datasetVersionId,
+                sealed_attempt_id=payload.sealedAttemptId,
+                feature_pipeline_hash=payload.featurePipelineHash,
+                execution_model_hash=payload.executionModelHash,
+                cost_model_hash=payload.costModelHash,
+                risk_model_hash=payload.riskModelHash,
+                sizing_model_hash=payload.sizingModelHash,
+                split_manifest_hash=payload.splitManifestHash,
+                dirty=payload.dirty,
+                diff_hash=payload.diffHash,
+                extra=payload.extra,
+                qualification_id=payload.qualificationId,
+                allow_inline_dev=payload.allowInlineDev,
+                enqueue=payload.enqueue,
+            )
+            return {"qualification": result}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/qualification-runs/{qualification_id}")
+    def get_qualification_run(qualification_id: str) -> dict:
+        try:
+            return {"qualification": service.get_qualification_run(qualification_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/qualification-runs/{qualification_id}/gates")
+    def get_qualification_gates(qualification_id: str) -> dict:
+        try:
+            return service.get_qualification_gates(qualification_id)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/qualification-runs/{qualification_id}/cancel")
+    def cancel_qualification_run(qualification_id: str) -> dict:
+        try:
+            return {"qualification": service.cancel_qualification_run(qualification_id)}
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 

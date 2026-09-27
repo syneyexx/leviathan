@@ -1127,34 +1127,89 @@ def run_learning_on_worker(plane: Any, learning_run_id: str) -> dict[str, Any]:
     return _finalize_no_qualify(plane, run, reason="no_finalist")
 
 
+def _has_persisted_qualification_decision(
+    plane: Any, run: StrategyLearningRun, candidate_id: str
+) -> bool:
+    """True only when a persisted QualificationDecision with qualified=True exists."""
+    store = getattr(plane, "store", None)
+    if store is None:
+        return False
+    qid = (run.metadata or {}).get("qualification_id")
+    if qid and hasattr(store, "get_qualification_run"):
+        row = store.get_qualification_run(str(qid))
+        if row is not None:
+            decision = str(row.get("decision") or "").upper()
+            status = str(row.get("status") or "").upper()
+            if decision == "QUALIFIED" or status == "QUALIFIED" or bool(row.get("qualified")):
+                return True
+    # Optional store helpers — do not invent qualification rows.
+    if hasattr(store, "find_qualified_decision"):
+        try:
+            found = store.find_qualified_decision(
+                learning_run_id=run.learning_run_id,
+                candidate_id=candidate_id,
+            )
+            if found:
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+    return False
+
+
 def _finalize_qualified(plane: Any, run: StrategyLearningRun, candidate_id: str) -> dict[str, Any]:
-    run.qualified_candidate = candidate_id
+    """Mark a lab finalist — learner cannot claim institutional scientific qualification.
+
+    ``qualified_candidate`` is retained for backward compatibility, but
+    ``institutional_qualified`` is always False here. Authoritative qualification
+    requires QualificationAuthority + a persisted QualificationDecision.
+    """
+    run.qualified_candidate = candidate_id  # backward compat — lab finalist, not authority
     run.status = LearningRunStatus.COMPLETED.value
     run.stage = LearningStage.QUALIFIED_STRATEGY_FOUND.value
     run.updated_at = utc_now()
     run.last_checkpoint_at = run.updated_at
     run.metadata["final_outcome"] = LabOutcome.QUALIFIED_STRATEGY_FOUND.value
-    # A3 eligibility marker only — does not auto-place paper orders or mutate strategy.
-    run.metadata["ready_for_shadow"] = True
+    run.metadata["lab_finalist"] = candidate_id
+    run.metadata["institutional_qualified"] = False
+    run.metadata["qualification_required"] = True
+    run.metadata["learner_cannot_set_authoritative_qualified"] = True
+    run.metadata["note"] = "learner_cannot_set_authoritative_qualified"
+    # ready_for_shadow only when a persisted QualificationDecision(qualified=True) exists
+    ready = _has_persisted_qualification_decision(plane, run, candidate_id)
+    run.metadata["ready_for_shadow"] = bool(ready)
     run.metadata["autonomous_paper_requires_shadow_receipts"] = True
     run.metadata["live_money"] = "BLOCKED"
+    # Do NOT invent fake qualification_id — API/worker must create QualificationAuthority runs.
     persist_learning_run(plane.store, run)
+    honesty = {
+        "learning_run_id": run.learning_run_id,
+        "candidate_id": candidate_id,
+        "lab_finalist": candidate_id,
+        "institutional_qualified": False,
+        "qualification_required": True,
+        "ready_for_shadow": bool(ready),
+        "live_money": "BLOCKED",
+        "learner_cannot_set_authoritative_qualified": True,
+    }
+    _emit(plane, "strategy.finalist_found", honesty)
+    # Legacy event retained with honesty flags — does not claim authority qualification.
     _emit(
         plane,
         "strategy.qualified",
         {
-            "learning_run_id": run.learning_run_id,
-            "candidate_id": candidate_id,
-            "ready_for_shadow": True,
-            "live_money": "BLOCKED",
+            **honesty,
+            "legacy_event": True,
+            "means_lab_finalist_only": True,
         },
     )
     _sync_lab_outcome(plane, run, LabOutcome.QUALIFIED_STRATEGY_FOUND.value)
-    # Post-mortem lesson (AGENT_PROPOSED)
     _maybe_add_lesson(
         plane,
         run,
-        claim=f"qualified candidate {candidate_id} after sealed/validation gates",
+        claim=(
+            f"lab finalist {candidate_id} after sealed/validation gates; "
+            "institutional qualification still required"
+        ),
         applies_to=[],
         evidence_refs=[candidate_id, run.learning_run_id],
     )

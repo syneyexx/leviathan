@@ -1672,6 +1672,19 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         tags=["market_sim", "learning", "strategy"],
     )
     _ext(
+        cap_id="market_sim.qualification_run",
+        name="Run Institutional Qualification",
+        description=(
+            "Execute/resume QualificationAuthority evaluation on the market_sim worker "
+            "(WFA folds, statistical gates, sealed holdout). EXTERNAL_REQUIRED; idempotent."
+        ),
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="market_sim",
+        properties={"qualification_id": {"type": "string"}},
+        permissions=("process.execute",),
+        tags=["market_sim", "qualification"],
+    )
+    _ext(
         cap_id="market_sim.paper_order",
         name="Place Paper Order",
         description="Place a paper (non-live) order via MarketSimControlPlane + RiskGuard.",
