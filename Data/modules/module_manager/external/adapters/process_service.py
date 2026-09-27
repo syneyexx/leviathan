@@ -38,6 +38,20 @@ class ProcessServiceAdapter:
         self._install_root = result.get("install_root") or self._install_root
         return result
 
+    def _resolve_install_root(self) -> str | None:
+        """Prefer in-memory root; else CONTROL active version (restart-safe)."""
+        if self._install_root and Path(self._install_root).exists():
+            return self._install_root
+        if self.ctx.store is not None:
+            version = self.ctx.store.get_active_version(self.ctx.module_id)
+            if version and version.get("install_root") and Path(str(version["install_root"])).exists():
+                self._install_root = str(version["install_root"])
+                return self._install_root
+        if self.ctx.install_root and Path(self.ctx.install_root).exists():
+            self._install_root = self.ctx.install_root
+            return self._install_root
+        return self._install_root
+
     def start(self) -> dict[str, Any]:
         self._reconcile_persisted()
         if self._owned and self._owned.is_alive():
@@ -46,18 +60,21 @@ class ProcessServiceAdapter:
         if not self.config.runtime.command:
             raise InstallError(ExternalFailureCode.START_FAILED, "process service requires runtime.command")
         self._state = ExternalRuntimeState.STARTING
-        cwd = (self.config.runtime.cwd or self._install_root or "").replace("$INSTALL_ROOT", self._install_root or "") or None
-        command = [c.replace("$INSTALL_ROOT", self._install_root or "") for c in self.config.runtime.command]
+        root = self._resolve_install_root()
+        cwd = (self.config.runtime.cwd or root or "").replace("$INSTALL_ROOT", root or "") or None
+        if cwd in {"", "$INSTALL_ROOT"}:
+            cwd = root
+        command = [c.replace("$INSTALL_ROOT", root or "") for c in self.config.runtime.command]
         if command:
             from .cli import _resolve_python_alias
 
             exe = command[0]
-            if self._install_root:
+            if root:
                 import os as _os
                 from pathlib import Path as _Path
 
                 venv_bin = (
-                    _Path(self._install_root)
+                    _Path(root)
                     / ".venv"
                     / ("Scripts" if _os.name == "nt" else "bin")
                     / exe
@@ -69,15 +86,20 @@ class ProcessServiceAdapter:
             else:
                 exe = _resolve_python_alias(exe)
             command[0] = exe
-        env = {k: v.replace("$INSTALL_ROOT", self._install_root or "") for k, v in self.config.runtime.env.items()}
+        env = {k: v.replace("$INSTALL_ROOT", root or "") for k, v in self.config.runtime.env.items()}
         # Prefer install-root venv on PATH for module-local binaries (uvicorn, etc.).
-        if self._install_root:
+        if root:
             import os as _os
             from pathlib import Path as _Path
 
-            venv_path = _Path(self._install_root) / ".venv" / ("Scripts" if _os.name == "nt" else "bin")
+            venv_path = _Path(root) / ".venv" / ("Scripts" if _os.name == "nt" else "bin")
             if venv_path.is_dir():
                 env = {**_os.environ, **env, "PATH": f"{venv_path}{_os.pathsep}{_os.environ.get('PATH', '')}"}
+        if (self.config.runtime.cwd or "").find("$INSTALL_ROOT") >= 0 and not root:
+            raise InstallError(
+                ExternalFailureCode.START_FAILED,
+                "process service $INSTALL_ROOT unresolved; install/activate a version before start",
+            )
         self._owned = OwnedProcess(
             module_id=self.ctx.module_id,
             command=command,
