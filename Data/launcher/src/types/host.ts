@@ -45,6 +45,8 @@ export interface HostSnapshot {
   supervisorHealth: string | null;
   workersExpected: boolean;
   exitWhenStopped: boolean;
+  /** Distinct from process lifecycle. STARTING | READY | DEGRADED | SAFE_MODE | NOT_CONFIGURED | UNMEASURED */
+  systemReadiness?: string;
 }
 
 export interface ConsoleLine {

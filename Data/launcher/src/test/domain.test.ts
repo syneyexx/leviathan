@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { controlGates } from "../domain/controls";
-import { mapServices, toneFor } from "../domain/health";
+import { mapServices, modelStateFrom, toneFor } from "../domain/health";
 import { mapIngestion } from "../domain/ingestion";
 import { filterLogs, mapEvent } from "../domain/logs";
 import { mapNative, nativeIsHealthy } from "../domain/native";
+import {
+  liveProjection,
+  loadingProjection,
+  markTransportError,
+  classifyFetchError,
+} from "../domain/projection";
 import { metricCards, readPerformance, emptyHistories } from "../domain/telemetry";
-import { mapWorker } from "../domain/workers";
+import { mapWorker, mapWorkers } from "../domain/workers";
 import { isHostSnapshot, optimisticCommand, stoppedSnapshot } from "../domain/host";
 import { appendUnique, pushRing } from "../lib/ringBuffer";
 import { pushSample } from "../lib/timeSeries";
@@ -60,6 +66,7 @@ describe("null handling", () => {
     expect(row.cpu).toBe("UNMEASURED");
     expect(row.ram).toBe("UNMEASURED");
     expect(row.id).toBe("pool-1");
+    expect(row.task).toBe("IDLE/WAITING");
   });
 
   it("keeps missing metrics null in the history", () => {
@@ -127,6 +134,184 @@ describe("adapters", () => {
     expect(cards.find((card) => card.id === "native")?.tone).toBe("bad");
     expect(cards.find((card) => card.id === "model")?.state).not.toBe("HEALTHY");
     expect(cards.find((card) => card.id === "workers")?.state).toBe("DEGRADED");
+  });
+});
+
+describe("projection and transport truth", () => {
+  it("test_transport_error_is_not_unmeasured", () => {
+    const failed = markTransportError(loadingProjection<Record<string, unknown>>(), new Error("/api/host/liveness returned 502"));
+    const cards = mapServices({
+      host: { ...stoppedSnapshot(), state: "RUNNING", ownership: "OWNED", systemReadiness: "READY" },
+      liveness: failed,
+      health: failed,
+      databases: failed as never,
+      nativeStatus: null,
+      nativeDetail: null,
+      nativeProjection: failed,
+      supervisor: null,
+      queueDepth: null,
+      queueProjection: failed,
+      pythonVersion: null,
+      modelsStatus: failed,
+      dashboard: failed,
+    });
+    expect(cards.find((card) => card.id === "api")?.state).toBe("TRANSPORT ERROR");
+    expect(cards.find((card) => card.id === "api")?.state).not.toBe("UNMEASURED");
+    expect(toneFor("TRANSPORT ERROR")).toBe("bad");
+    expect(mapWorkers(failed).summary).toBe("TRANSPORT ERROR");
+  });
+
+  it("test_unmeasured_metric_remains_unmeasured", () => {
+    const cards = mapServices({
+      host: { ...stoppedSnapshot(), state: "RUNNING", ownership: "OWNED" },
+      liveness: liveProjection({ started: true }),
+      health: liveProjection({ started: true }),
+      databases: liveProjection([]),
+      modelsStatus: liveProjection({ status: {} }),
+      nativeStatus: null,
+      nativeDetail: null,
+      supervisor: null,
+      queueDepth: null,
+      pythonVersion: null,
+    });
+    expect(cards.find((card) => card.id === "api")?.state).toBe("UNMEASURED");
+    expect(cards.find((card) => card.id === "api")?.detail).toContain("missing");
+    expect(cards.find((card) => card.id === "model")?.state).toBe("UNMEASURED");
+    expect(cards.find((card) => card.id === "queue")?.state).toBe("UNMEASURED");
+  });
+
+  it("test_stale_projection_is_marked_stale", () => {
+    const live = liveProjection({ ok: true, liveness: "alive" }, 1_000);
+    const stale = markTransportError(live, new TypeError("Failed to fetch"), 20_000, 15_000);
+    expect(stale.state).toBe("STALE");
+    expect(stale.data?.ok).toBe(true);
+    expect(toneFor("STALE")).toBe("warn");
+    const cards = mapServices({
+      host: { ...stoppedSnapshot(), state: "RUNNING", ownership: "OWNED" },
+      liveness: stale,
+      health: loadingProjection(),
+      databases: null,
+      nativeStatus: "AVAILABLE",
+      nativeDetail: "ok",
+      supervisor: "RUNNING",
+      queueDepth: 0,
+      pythonVersion: "3.12",
+    });
+    expect(cards.find((card) => card.id === "api")?.state).toBe("STALE");
+  });
+
+  it("test_recovered_projection_returns_live", () => {
+    const failed = markTransportError(loadingProjection<{ ok: boolean }>(), new Error("down"));
+    expect(failed.state).toBe("TRANSPORT_ERROR");
+    const recovered = liveProjection({ ok: true, liveness: "alive" });
+    expect(recovered.state).toBe("LIVE");
+    expect(recovered.errorCode).toBeNull();
+    const cards = mapServices({
+      host: { ...stoppedSnapshot(), state: "RUNNING", ownership: "OWNED" },
+      liveness: recovered,
+      health: loadingProjection(),
+      databases: null,
+      nativeStatus: null,
+      nativeDetail: null,
+      supervisor: null,
+      queueDepth: 0,
+      pythonVersion: "3.12",
+    });
+    expect(cards.find((card) => card.id === "api")?.state).toBe("HEALTHY");
+  });
+
+  it("test_model_available_contract", () => {
+    expect(modelStateFrom({ available: true, activeModel: "llama" })).toEqual({
+      state: "HEALTHY",
+      detail: "llama",
+    });
+    expect(modelStateFrom({ ok: true, model: "mistral" }).state).toBe("HEALTHY");
+    expect(modelStateFrom({ reachable: true, status: "ok" }).state).toBe("HEALTHY");
+    const cards = mapServices({
+      host: { ...stoppedSnapshot(), state: "RUNNING", ownership: "OWNED" },
+      liveness: liveProjection({ ok: true }),
+      modelsStatus: liveProjection({
+        status: { availableModels: 3, gatewayHealth: "healthy", activeModel: "phi" },
+      }),
+      databases: null,
+      nativeStatus: null,
+      nativeDetail: null,
+      supervisor: null,
+      queueDepth: 0,
+      pythonVersion: "3.12",
+    });
+    expect(cards.find((card) => card.id === "model")?.state).toBe("HEALTHY");
+    expect(cards.find((card) => card.id === "model")?.detail).toBe("phi");
+  });
+
+  it("test_no_model_loaded_is_not_backend_failure", () => {
+    const idle = modelStateFrom({ available: true, activeModel: null });
+    expect(idle.state).toBe("IDLE");
+    expect(idle.detail).toBe("NO MODEL LOADED");
+    expect(toneFor(idle.state)).toBe("ok");
+    const fromStatus = modelStateFrom({
+      status: { availableModels: 2, gatewayHealth: "healthy", activeModel: null, loadedModels: 0 },
+    });
+    expect(fromStatus.state).toBe("IDLE");
+    expect(fromStatus.detail).toBe("NO MODEL LOADED");
+    expect(toneFor("TRANSPORT ERROR")).not.toBe("muted");
+  });
+
+  it("test_queue_zero_is_measured_zero", () => {
+    const cards = mapServices({
+      host: { ...stoppedSnapshot(), state: "RUNNING", ownership: "OWNED" },
+      liveness: liveProjection({ ok: true, liveness: "alive" }),
+      databases: null,
+      nativeStatus: null,
+      nativeDetail: null,
+      supervisor: null,
+      queueDepth: 0,
+      pythonVersion: "3.12",
+    });
+    const queue = cards.find((card) => card.id === "queue");
+    expect(queue?.state).toBe("HEALTHY");
+    expect(queue?.detail).toBe("0 queued");
+    expect(queue?.state).not.toBe("UNMEASURED");
+  });
+
+  it("test_safe_mode_worker_reason_visible", () => {
+    const cards = mapServices({
+      host: {
+        ...stoppedSnapshot(),
+        state: "RUNNING",
+        ownership: "OWNED",
+        safeModeActive: true,
+        systemReadiness: "SAFE_MODE",
+      },
+      liveness: liveProjection({ ok: true }),
+      databases: null,
+      nativeStatus: null,
+      nativeDetail: null,
+      supervisor: null,
+      queueDepth: 0,
+      pythonVersion: "3.12",
+    });
+    const workers = cards.find((card) => card.id === "workers");
+    expect(workers?.state).toBe("DISABLED BY SAFE MODE");
+    expect(toneFor("DISABLED BY SAFE MODE")).toBe("warn");
+    expect(mapWorkers({ summary: { running_workers: 0, desired_workers: 0 }, workers: [] }).summary).toBe(
+      "DISABLED / NOT CONFIGURED",
+    );
+  });
+
+  it("classifies fetch errors with status codes", () => {
+    expect(classifyFetchError({ status: 503, path: "/api/host/liveness", code: "HTTP_503" })).toEqual({
+      code: "HTTP_503",
+      detail: "/api/host/liveness returned 503",
+    });
+    const brief = markTransportError(
+      liveProjection({ ok: true }, 10_000),
+      new TypeError("Failed to fetch"),
+      12_000,
+      15_000,
+    );
+    expect(brief.state).toBe("TRANSPORT_ERROR");
+    expect(brief.data?.ok).toBe(true);
   });
 });
 

@@ -358,7 +358,11 @@ schedule_runner = ScheduleRunner(
     workflows=workflow_runtime,
 )
 observability = ObservabilityHub(capacity=2000, db_path=settings.database_path)
-system_telemetry_sampler = SystemTelemetrySampler(interval_s=1.0, gpu_interval_s=2.0)
+system_telemetry_sampler = SystemTelemetrySampler(
+    interval_s=1.0,
+    gpu_interval_s=2.0,
+    data_root=DATA_ROOT,
+)
 metrics = MetricsCollector()
 timeseries = TimeSeriesStore(max_points_per_series=3_600)
 deep_recall_service._emit = lambda name, payload: observability.emit(  # noqa: SLF001
@@ -2201,6 +2205,12 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Leviathan", version="0.73.0-wave9-flywheel", lifespan=lifespan)
+
+# Narrow local-launcher Origin contract for WebView read projections.
+# Not wildcard CORS. Not credentials. Mutations stay loopback/token gated.
+from Data.modules.host_console.launcher_cors import LauncherReadCorsMiddleware
+
+app.add_middleware(LauncherReadCorsMiddleware)
 app.include_router(build_models_router(model_plane))
 app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
@@ -2234,6 +2244,8 @@ app.include_router(
         component_health_fn=_component_health,
         database_path=settings.database_path,
         database_paths=settings.database_paths,
+        job_runtime=job_runtime,
+        job_store=job_store,
     )
 )
 app.include_router(build_brain_router(brain_facade))
@@ -2476,6 +2488,9 @@ async def _observability_http_middleware(request: Request, call_next):
             "/api/metrics",
             "/api/performance/snapshot",
             "/api/health",
+            "/api/host/liveness",
+            "/api/host/overview",
+            "/api/workers/dashboard",
         }
         if not noisy and not path.startswith("/api/events/stream"):
             level = "error" if status_code >= 500 else ("warning" if status_code >= 400 else "info")

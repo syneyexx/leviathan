@@ -32,17 +32,24 @@ export function readPerformance(snapshot: Record<string, unknown> | null): {
   const cpu = nestedNumber(system, ["cpu", "utilizationPct"]) ?? nestedNumber(system, ["dashboard", "cpuPct"]);
   const memory = nestedNumber(system, ["memory", "utilizationPct"]) ?? nestedNumber(system, ["dashboard", "ramPct"]);
   const metrics = (snapshot?.metrics || {}) as Record<string, unknown>;
+  const operator = (snapshot?.operator || {}) as Record<string, unknown>;
   const counters = (metrics.counters || metrics.gauges || metrics) as Record<string, unknown>;
   return {
     cpu,
     memory,
     queue: null,
-    nativeOps: firstNumber(counters, ["native_ops_per_sec", "embeddings_per_sec"]),
-    docs: firstNumber(counters, ["docs_per_sec", "documents_per_sec"]),
+    nativeOps:
+      firstNumber(operator, ["native_ops_per_sec", "embeddings_per_sec"]) ??
+      firstNumber(counters, ["native_ops_per_sec", "embeddings_per_sec"]),
+    docs:
+      firstNumber(operator, ["docs_per_sec", "documents_per_sec"]) ??
+      firstNumber(counters, ["docs_per_sec", "documents_per_sec"]),
     disk: nestedNumber(system, ["disk", "utilizationPct"]),
     network: nestedNumber(system, ["network", "bytesPerSec"]),
-    completed: firstNumber(counters, ["jobs_completed_24h"]),
-    tasksPerMin: firstNumber(counters, ["tasks_per_min"]),
+    completed:
+      firstNumber(operator, ["jobs_completed_24h"]) ?? firstNumber(counters, ["jobs_completed_24h"]),
+    tasksPerMin:
+      firstNumber(operator, ["tasks_per_min"]) ?? firstNumber(counters, ["tasks_per_min"]),
   };
 }
 
@@ -71,7 +78,7 @@ export function metricCards(samples: MetricHistories, latest: ReturnType<typeof 
     metric("done", "COMPLETED (24H)", displayNumber(latest.completed), "", samples.completed, "green", "bars"),
     metric("cpu", "CPU USAGE", displayPercent(latest.cpu), "", samples.cpu, "cyan"),
     metric("mem", "MEMORY USAGE", displayPercent(latest.memory), "", samples.memory, "green"),
-    metric("disk", "DISK USAGE", displayPercent(latest.disk), "", samples.disk, "amber"),
+    metric("disk", "DISK CAPACITY", displayPercent(latest.disk), "", samples.disk, "amber"),
     metric("native", "NATIVE OPS / SEC", displayNumber(latest.nativeOps, 1), "", samples.native, "green"),
     metric("docs", "DOCS / SEC", displayNumber(latest.docs, 1), "", samples.docs, "cyan"),
     metric("net", "NETWORK I/O", latest.network == null ? "UNMEASURED" : displayNumber(latest.network, 1), latest.network == null ? "" : "B/s", samples.network, "violet"),

@@ -164,6 +164,10 @@ class JobStore:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_jobs_worker_pool ON jobs(worker_pool, state)"
         )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_jobs_state_finished "
+            "ON jobs(state, finished_at)"
+        )
 
     def create(
         self,
@@ -347,6 +351,25 @@ class JobStore:
                 params,
             ).fetchall()
         return [self._from_row(row) for row in rows]
+
+    def count_completed_since(self, since_iso: str) -> int:
+        """Bounded COUNT of COMPLETED jobs with finished_at >= since_iso.
+
+        Uses idx_jobs_state_finished. Returns an integer count — never fabricates.
+        """
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS n
+                FROM jobs
+                WHERE state = ?
+                  AND finished_at IS NOT NULL
+                  AND finished_at >= ?
+                """,
+                (JobState.COMPLETED.value, since_iso),
+            ).fetchone()
+        return int(row[0] if row is not None else 0)
 
     def list_children(self, parent_job_id: str, *, limit: int = 100) -> list[JobRecord]:
         with self.connect() as conn:

@@ -11,6 +11,7 @@ from .system_telemetry import (
     collect_system_sample,
     parse_nvidia_smi_csv,
     probe_nvidia_smi,
+    NetIoCounters,
 )
 
 __all__ = [
@@ -26,6 +27,7 @@ __all__ = [
     "redact_value",
     "SystemTelemetrySample",
     "SystemTelemetrySampler",
+    "NetIoCounters",
     "collect_system_sample",
     "parse_nvidia_smi_csv",
     "probe_nvidia_smi",
