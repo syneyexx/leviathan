@@ -126,7 +126,7 @@
         "network"
       ],
       "status": "PARTIAL",
-      "limitations": "Audited: GhostTR.py remains interactive TUI (5x input()). Machine ops use generic CLI argv to the same public APIs GhostTR calls: ip_lookup→ipwho.is/{ip} JSON, show_ip→api.ipify.org text. Live ModuleManager invoke PASS. Phone/username trackers have no argv contract — still BLOCKED_EXTERNAL. No GhostTrackWrapper."
+      "limitations": "Audited: GhostTR.py remains interactive TUI (5x input()). Machine ops use generic CLI argv to the same public APIs GhostTR calls: ip_lookup\u2192ipwho.is/{ip} JSON, show_ip\u2192api.ipify.org text. Live ModuleManager invoke PASS. Phone/username trackers have no argv contract \u2014 still BLOCKED_EXTERNAL. No GhostTrackWrapper."
     },
     {
       "source": "HKUDS/Vibe-Trading",
@@ -496,7 +496,7 @@
     "COMPOSITE": "PASS",
     "MCP": "PASS"
   },
-  "worktree_head": "4dfc6565587b0636fac6b4b53a9965985fb8734b",
+  "worktree_head": "065a19f46c22d58dbddab76679746ea8001417cf",
   "live_proofs": {
     "install_pass_module_ids": [
       "agent-reach",
