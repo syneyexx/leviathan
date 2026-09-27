@@ -17,6 +17,10 @@
       "strategy": [
         "GIT_CHECKOUT",
         "PYTHON_VENV"
+      ],
+      "requirements_file": "requirements.txt",
+      "dependencies": [
+        "python"
       ]
     },
     "runtime": {

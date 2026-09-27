@@ -474,7 +474,9 @@ class ExternalFabricUnitTests(unittest.TestCase):
             self.assertTrue(any(e[1] in {"starting", "running", "cancelled"} for e in events))
 
     def test_source_freshness_fields_preserved(self) -> None:
+        from Data.modules.module_manager.external.post_result import queue_or_run_assimilation
         from Data.modules.module_manager.external.results import normalize_osint_items
+        from Data.modules.module_manager.external.types import AssimilationMode
 
         items = normalize_osint_items(
             [
@@ -493,6 +495,24 @@ class ExternalFabricUnitTests(unittest.TestCase):
         self.assertEqual(items[0]["available_at"], "2026-01-02T01:00:00+00:00")
         self.assertEqual(items[0]["retrieved_at"], "2026-09-27T12:00:00+00:00")
         self.assertNotEqual(items[0]["published_at"], items[0]["retrieved_at"])
+
+        assim = queue_or_run_assimilation(
+            mode=AssimilationMode.EVIDENCE,
+            capability_id="external.agent_reach.search",
+            module_id="agent-reach",
+            request_id="fresh-1",
+            run_id=None,
+            job_id=None,
+            output={
+                "summary": "news",
+                "source_refs": items,
+                "metadata": {"retrieved_at": "2026-09-27T12:00:00+00:00"},
+            },
+            status="COMPLETED",
+        )
+        self.assertTrue(assim.get("completed") or assim.get("queued") is False)
+        # Evidence path must not collapse published time into timeless memory.
+        self.assertEqual(items[0]["published_at"], "2026-01-02T00:00:00+00:00")
 
 
 class ExternalAdapterFixtureE2ETests(unittest.TestCase):
