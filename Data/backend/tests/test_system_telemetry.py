@@ -288,7 +288,7 @@ class SystemTelemetryUnitTests(unittest.TestCase):
         )
         self.assertTrue(sample.network_available)
         self.assertIsNotNone(sample.network_bytes_per_sec)
-        self.assertAlmostEqual(sample.network_bytes_per_sec or -1, 0.0, places=1)
+        self.assertAlmostEqual(sample.network_bytes_per_sec, 0.0, places=1)
 
     def test_metric_failure_does_not_fabricate_zero(self) -> None:
         def boom_usage(_path):  # noqa: ANN001
@@ -400,16 +400,15 @@ class OperatorSnapshotMetricTests(unittest.TestCase):
 
             ts = TimeSeriesStore(max_points_per_series=100)
             runtime = SimpleNamespace(telemetry={"completed": 10})
-            # First observation — no rate yet
-            self.assertIsNone(_tasks_per_min(job_runtime=runtime, timeseries=ts))
-            # Inject an older point ~60s ago with lower completed count
             now_ms = time.time() * 1000
             with ts._lock:  # noqa: SLF001
                 from Data.modules.metrics.timeseries import MetricSample
 
+                # Seed an older baseline before observing the current counter.
                 ts._series["jobs.completed"].append(
                     MetricSample(ts_ms=now_ms - 60_000, value=4.0)
                 )
+            # First observation alone would be unmeasured; with ~60s baseline → rate.
             rate = _tasks_per_min(job_runtime=runtime, timeseries=ts)
             self.assertIsNotNone(rate)
             # 6 jobs over ~60s → ~6/min
