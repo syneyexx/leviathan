@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 import httpx
 
+from Data.modules.jobs.leases import LeaseFenceError, make_lease_bound_checks
 from Data.modules.jobs.states import JobState
 from Data.modules.model_download.errors import ModelDownloadError, ModelDownloadErrorCode
 from Data.modules.models.contracts import (
@@ -134,28 +135,18 @@ class ModelDownloadExecutor:
         worker_id = str(ctx.get("worker_id") or f"model_download-{os.getpid()}")
         source = str(args.get("source") or "huggingface").strip().lower()
 
-        def cancel_check() -> bool:
-            try:
-                current = store.get(job.job_id)
-            except Exception:  # noqa: BLE001
-                return False
-            if current is None:
-                return True
-            if current.state == JobState.CANCEL_REQUESTED:
-                return True
+        def _download_cancel(_current: Any) -> bool:
             row = self.store.get_download(download_id)
             return bool(row and row.get("state") == DownloadState.CANCELLED.value)
 
-        def heartbeat() -> None:
-            try:
-                if hasattr(store, "heartbeat_lease"):
-                    store.heartbeat_lease(
-                        job.job_id,
-                        worker_id=worker_id,
-                        ttl_seconds=float(ctx.get("lease_ttl_seconds") or 60.0),
-                    )
-            except Exception:  # noqa: BLE001
-                pass
+        cancel_check, heartbeat = make_lease_bound_checks(
+            ctx,
+            store,
+            job.job_id,
+            worker_id=worker_id,
+            ttl_seconds=float(ctx.get("lease_ttl_seconds") or 60.0),
+            extra_cancel=_download_cancel,
+        )
 
         def progress(
             *,
@@ -250,6 +241,23 @@ class ModelDownloadExecutor:
                 error=exc.code.value,
                 result=payload,
             )
+            return payload
+        except LeaseFenceError as exc:
+            progress(
+                phase="failed",
+                state=DownloadState.FAILED.value,
+                error=str(exc),
+            )
+            payload = {
+                "status": "failed",
+                "error": {"code": "LEASE_FENCE", "message": str(exc)},
+                "worker_pid": os.getpid(),
+                "download_id": download_id,
+            }
+            try:
+                store.transition(job.job_id, JobState.FAILED, error="LEASE_FENCE", result=payload)
+            except Exception:  # noqa: BLE001
+                pass
             return payload
         except Exception as exc:  # noqa: BLE001
             progress(

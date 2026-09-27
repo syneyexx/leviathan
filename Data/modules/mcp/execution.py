@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from Data.modules.jobs.leases import LeaseFenceError, make_lease_bound_checks
 from Data.modules.jobs.states import JobState
 from Data.modules.mcp.errors import McpError
 from Data.modules.mcp.limits import DEFAULT_MCP_LIMITS
@@ -63,13 +64,13 @@ class McpExecutionExecutor:
             return payload
 
         worker_id = str(ctx.get("worker_id") or f"mcp_execution-{os.getpid()}")
-
-        def cancel_check() -> bool:
-            try:
-                current = store.get(job.job_id)
-            except Exception:  # noqa: BLE001
-                return False
-            return current is None or current.state == JobState.CANCEL_REQUESTED
+        cancel_check, heartbeat = make_lease_bound_checks(
+            ctx,
+            store,
+            job.job_id,
+            worker_id=worker_id,
+            ttl_seconds=float(ctx.get("lease_ttl_seconds") or 30.0),
+        )
 
         session = McpServerSession(
             config=config,
@@ -89,14 +90,20 @@ class McpExecutionExecutor:
                 return payload
 
             try:
-                if hasattr(store, "heartbeat_lease"):
-                    store.heartbeat_lease(
-                        job.job_id,
-                        worker_id=worker_id,
-                        ttl_seconds=float(ctx.get("lease_ttl_seconds") or 30.0),
+                heartbeat()
+            except LeaseFenceError as exc:
+                payload = {
+                    "status": "failed",
+                    "error": {"code": "LEASE_FENCE", "message": str(exc)},
+                    "worker_pid": os.getpid(),
+                }
+                try:
+                    store.transition(
+                        job.job_id, JobState.FAILED, error="LEASE_FENCE", result=payload
                     )
-            except Exception:  # noqa: BLE001
-                pass
+                except Exception:  # noqa: BLE001
+                    pass
+                return payload
 
             session.connect()
             if cancel_check():

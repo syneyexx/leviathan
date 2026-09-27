@@ -44,8 +44,9 @@ class LeaseFenceError(RuntimeError):
 
 
 def _signal_fence(ctx: dict[str, Any] | None) -> None:
-    if not ctx:
+    if ctx is None:
         return
+    ctx["lease_fenced"] = True
     for key in ("lease_lost", "job_cancel_fence"):
         ev = ctx.get(key)
         if ev is not None and hasattr(ev, "set"):
@@ -53,8 +54,10 @@ def _signal_fence(ctx: dict[str, Any] | None) -> None:
 
 
 def _fence_already_signaled(ctx: dict[str, Any] | None) -> bool:
-    if not ctx:
+    if ctx is None:
         return False
+    if ctx.get("lease_fenced"):
+        return True
     for key in ("lease_lost", "job_cancel_fence"):
         ev = ctx.get(key)
         if ev is not None and getattr(ev, "is_set", lambda: False)():

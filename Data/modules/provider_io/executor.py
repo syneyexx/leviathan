@@ -6,6 +6,7 @@ import os
 import time
 from typing import Any, Callable
 
+from Data.modules.jobs.leases import LeaseFenceError, make_lease_bound_checks
 from Data.modules.jobs.states import JobState
 from Data.modules.provider_io.adapters.alpaca_paper import AlpacaPaperAdapter
 from Data.modules.provider_io.adapters.generic_http import GenericHttpAdapter
@@ -156,26 +157,13 @@ class ProviderIoExecutor:
         args = dict(job.arguments or {})
         request = _request_from_job_args(args, job_id=job.job_id)
         worker_id = str(ctx.get("worker_id") or f"provider_io-{os.getpid()}")
-
-        def cancel_check() -> bool:
-            try:
-                current = store.get(job.job_id)
-            except Exception:  # noqa: BLE001
-                return False
-            if current is None:
-                return True
-            return current.state == JobState.CANCEL_REQUESTED
-
-        def heartbeat() -> None:
-            try:
-                if hasattr(store, "heartbeat_lease"):
-                    store.heartbeat_lease(
-                        job.job_id,
-                        worker_id=worker_id,
-                        ttl_seconds=float(ctx.get("lease_ttl_seconds") or 30.0),
-                    )
-            except Exception:  # noqa: BLE001
-                pass
+        cancel_check, heartbeat = make_lease_bound_checks(
+            ctx,
+            store,
+            job.job_id,
+            worker_id=worker_id,
+            ttl_seconds=float(ctx.get("lease_ttl_seconds") or 30.0),
+        )
 
         deadline = float(
             request.deadline_seconds
@@ -265,8 +253,8 @@ class ProviderIoExecutor:
                 time.sleep(self.policy.backoff(attempt))
                 continue
 
-            heartbeat()
             try:
+                heartbeat()
                 emit_cb = None
                 if callable(ctx.get("emit")):
                     emit_cb = ctx.get("emit")
@@ -385,6 +373,28 @@ class ProviderIoExecutor:
                     continue
                 circuit.record_failure()
                 break
+            except LeaseFenceError as exc:
+                last_error = ProviderError(
+                    ProviderErrorCode.EXECUTION_CANCELLED,
+                    f"lease_fence: {exc}",
+                    provider=request.provider,
+                    retryable=False,
+                )
+                store.transition(
+                    job.job_id,
+                    JobState.FAILED,
+                    error="LEASE_FENCE",
+                    result=ProviderExecutionResult(
+                        status="failed",
+                        provider=request.provider,
+                        error=last_error.public_dict(),
+                        worker_pid=os.getpid(),
+                    ).public_dict(),
+                )
+                self.policy.telemetry["failure"] = (
+                    int(self.policy.telemetry.get("failure", 0)) + 1
+                )
+                return {"status": "failed", "error": last_error.public_dict()}
             except Exception as exc:  # noqa: BLE001
                 last_error = ProviderError(
                     ProviderErrorCode.UNKNOWN,

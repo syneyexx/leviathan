@@ -285,6 +285,164 @@ def repair_incompatible_quality_schema(conn: sqlite3.Connection) -> bool:
     return True
 
 
+def _retire_stub_table(conn: sqlite3.Connection, table: str) -> None:
+    if table not in _table_names(conn):
+        return
+    count = _row_count(conn, table)
+    if count > 0:
+        backup = f"{table}_upgrade_stub_backup"
+        if backup in _table_names(conn):
+            conn.execute(f'DROP TABLE IF EXISTS "{backup}"')
+        conn.execute(f'ALTER TABLE "{table}" RENAME TO "{backup}"')
+    else:
+        conn.execute(f'DROP TABLE IF EXISTS "{table}"')
+
+
+# Fingerprints used by _wave3_table_is_stub (documentation / test helpers).
+WAVE3_PRODUCT_TABLES: tuple[str, ...] = (
+    "provider_stream_events",
+    "intelligence_assimilation_receipts",
+    "knowledge_commit_receipts",
+    "source_ingestion_commit_records",
+    "dataset_commit_index_rows",
+    "market_sim_commit_batches",
+)
+
+
+def _wave3_table_is_stub(conn: sqlite3.Connection, table: str) -> bool:
+    """True when table exists but matches the incompatible bootstrap stub shape."""
+    if table not in _table_names(conn):
+        return False
+    cols = {row[1] for row in conn.execute(f'PRAGMA table_info("{table}")').fetchall()}
+    if table == "provider_stream_events":
+        return "stream_id" in cols or ("job_id" not in cols and "sequence" not in cols)
+    if table == "intelligence_assimilation_receipts":
+        return "subject_id" in cols or "kind" not in cols
+    if table == "knowledge_commit_receipts":
+        return "receipt_id" in cols or "artifact_id" not in cols
+    if table == "source_ingestion_commit_records":
+        return "container_id" in cols or "source_id" not in cols
+    if table == "dataset_commit_index_rows":
+        # Stub: row_id PK alone + created_at, missing commit_id/applied_at.
+        return "commit_id" not in cols or "applied_at" not in cols
+    if table == "market_sim_commit_batches":
+        return "batch_id" in cols or "kind" not in cols
+    return False
+
+
+_WAVE3_CANONICAL_DDL: dict[str, str] = {
+    "provider_stream_events": """
+        CREATE TABLE IF NOT EXISTS provider_stream_events (
+            job_id TEXT NOT NULL,
+            sequence INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            correlation_id TEXT,
+            payload_json TEXT NOT NULL,
+            PRIMARY KEY (job_id, sequence)
+        );
+        CREATE INDEX IF NOT EXISTS idx_provider_stream_job
+            ON provider_stream_events(job_id, sequence);
+    """,
+    "intelligence_assimilation_receipts": """
+        CREATE TABLE IF NOT EXISTS intelligence_assimilation_receipts (
+            receipt_id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            ok INTEGER NOT NULL,
+            success_count INTEGER NOT NULL,
+            failure_count INTEGER NOT NULL,
+            skipped_count INTEGER NOT NULL,
+            payload_json TEXT NOT NULL
+        );
+    """,
+    "knowledge_commit_receipts": """
+        CREATE TABLE IF NOT EXISTS knowledge_commit_receipts (
+            commit_id TEXT PRIMARY KEY,
+            artifact_id TEXT NOT NULL,
+            idempotency_key TEXT,
+            receipt_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_commit_idempotency
+            ON knowledge_commit_receipts(idempotency_key)
+            WHERE idempotency_key IS NOT NULL;
+    """,
+    "source_ingestion_commit_records": """
+        CREATE TABLE IF NOT EXISTS source_ingestion_commit_records (
+            source_id TEXT NOT NULL,
+            record_id TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            commit_id TEXT NOT NULL,
+            applied_at TEXT NOT NULL,
+            PRIMARY KEY (source_id, record_id)
+        );
+    """,
+    "dataset_commit_index_rows": """
+        CREATE TABLE IF NOT EXISTS dataset_commit_index_rows (
+            dataset_id TEXT NOT NULL,
+            row_id TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            commit_id TEXT NOT NULL,
+            applied_at TEXT NOT NULL,
+            PRIMARY KEY (dataset_id, row_id)
+        );
+    """,
+    "market_sim_commit_batches": """
+        CREATE TABLE IF NOT EXISTS market_sim_commit_batches (
+            run_id TEXT NOT NULL,
+            record_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            commit_id TEXT NOT NULL,
+            sequence_number INTEGER NOT NULL DEFAULT 0,
+            applied_at TEXT NOT NULL,
+            PRIMARY KEY (run_id, record_id, kind)
+        );
+    """,
+}
+
+
+def repair_incompatible_wave3_product_schemas(conn: sqlite3.Connection) -> list[str]:
+    """Replace SCHEMA-001..006 bootstrap stubs with canonical store schemas.
+
+    Bounded migration compatibility only — not a permanent parallel schema engine.
+    Returns names of tables that were repaired.
+    """
+    repaired: list[str] = []
+    for table, ddl in _WAVE3_CANONICAL_DDL.items():
+        if not _wave3_table_is_stub(conn, table):
+            continue
+        _retire_stub_table(conn, table)
+        conn.executescript(ddl)
+        repaired.append(table)
+    return repaired
+
+
+def repair_domain_wave3_schemas(paths: DatabasePaths) -> dict[str, list[str]]:
+    """Apply WAVE3 stub repairs on each canonical domain DB that owns the tables."""
+    out: dict[str, list[str]] = {}
+    for domain, path in paths:
+        if not path.is_file():
+            continue
+        conn = _connect(path)
+        try:
+            owned = {t for t in _WAVE3_CANONICAL_DDL if ownership_for(t) is domain}
+            repaired: list[str] = []
+            for table in owned:
+                if not _wave3_table_is_stub(conn, table):
+                    continue
+                _retire_stub_table(conn, table)
+                conn.executescript(_WAVE3_CANONICAL_DDL[table])
+                repaired.append(table)
+            if repaired:
+                conn.commit()
+            out[domain.value] = repaired
+        finally:
+            conn.close()
+    return out
+
+
 def _connect(path: Path, *, set_wal: bool = False) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = open_sqlite_connection(path, set_wal=set_wal)
@@ -563,50 +721,73 @@ def _ensure_runtime_bootstrap_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_quality_acceptances_contract
             ON quality_acceptances(contract_id, contract_version);
 
+        -- Canonical ProviderStreamStore schema (SCHEMA-001).
         CREATE TABLE IF NOT EXISTS provider_stream_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            stream_id TEXT NOT NULL,
-            seq INTEGER NOT NULL DEFAULT 0,
-            event_type TEXT NOT NULL DEFAULT '',
-            payload_json TEXT NOT NULL DEFAULT '{}',
-            created_at TEXT NOT NULL DEFAULT ''
+            job_id TEXT NOT NULL,
+            sequence INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            correlation_id TEXT,
+            payload_json TEXT NOT NULL,
+            PRIMARY KEY (job_id, sequence)
         );
+        CREATE INDEX IF NOT EXISTS idx_provider_stream_job
+            ON provider_stream_events(job_id, sequence);
 
+        -- Canonical AssimilationService schema (SCHEMA-002).
         CREATE TABLE IF NOT EXISTS intelligence_assimilation_receipts (
             receipt_id TEXT PRIMARY KEY,
-            subject_id TEXT NOT NULL DEFAULT '',
-            status TEXT NOT NULL DEFAULT '',
-            detail_json TEXT NOT NULL DEFAULT '{}',
-            created_at TEXT NOT NULL DEFAULT ''
+            kind TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            ok INTEGER NOT NULL,
+            success_count INTEGER NOT NULL,
+            failure_count INTEGER NOT NULL,
+            skipped_count INTEGER NOT NULL,
+            payload_json TEXT NOT NULL
         );
 
+        -- Canonical KnowledgeCommitter schema (SCHEMA-003).
         CREATE TABLE IF NOT EXISTS knowledge_commit_receipts (
-            receipt_id TEXT PRIMARY KEY,
-            commit_id TEXT NOT NULL DEFAULT '',
-            status TEXT NOT NULL DEFAULT '',
-            detail_json TEXT NOT NULL DEFAULT '{}',
-            created_at TEXT NOT NULL DEFAULT ''
+            commit_id TEXT PRIMARY KEY,
+            artifact_id TEXT NOT NULL,
+            idempotency_key TEXT,
+            receipt_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
         );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_commit_idempotency
+            ON knowledge_commit_receipts(idempotency_key)
+            WHERE idempotency_key IS NOT NULL;
 
+        -- Canonical source_ingestion commit handler schema (SCHEMA-004).
         CREATE TABLE IF NOT EXISTS source_ingestion_commit_records (
-            record_id TEXT PRIMARY KEY,
-            container_id TEXT NOT NULL DEFAULT '',
+            source_id TEXT NOT NULL,
+            record_id TEXT NOT NULL,
             payload_json TEXT NOT NULL DEFAULT '{}',
-            created_at TEXT NOT NULL DEFAULT ''
+            commit_id TEXT NOT NULL,
+            applied_at TEXT NOT NULL,
+            PRIMARY KEY (source_id, record_id)
         );
 
+        -- Canonical dataset commit handler schema (SCHEMA-005).
         CREATE TABLE IF NOT EXISTS dataset_commit_index_rows (
-            row_id TEXT PRIMARY KEY,
-            dataset_id TEXT NOT NULL DEFAULT '',
+            dataset_id TEXT NOT NULL,
+            row_id TEXT NOT NULL,
             payload_json TEXT NOT NULL DEFAULT '{}',
-            created_at TEXT NOT NULL DEFAULT ''
+            commit_id TEXT NOT NULL,
+            applied_at TEXT NOT NULL,
+            PRIMARY KEY (dataset_id, row_id)
         );
 
+        -- Canonical market_sim commit handler schema (SCHEMA-006).
         CREATE TABLE IF NOT EXISTS market_sim_commit_batches (
-            batch_id TEXT PRIMARY KEY,
-            run_id TEXT NOT NULL DEFAULT '',
+            run_id TEXT NOT NULL,
+            record_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
             payload_json TEXT NOT NULL DEFAULT '{}',
-            created_at TEXT NOT NULL DEFAULT ''
+            commit_id TEXT NOT NULL,
+            sequence_number INTEGER NOT NULL DEFAULT 0,
+            applied_at TEXT NOT NULL,
+            PRIMARY KEY (run_id, record_id, kind)
         );
         """
     )
