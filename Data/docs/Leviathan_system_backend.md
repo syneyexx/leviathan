@@ -927,6 +927,7 @@ Adapter kinds: `DECLARATIVE`, `MCP`, `PROTOCOL`, `SKILL`.
 - **Process ownership:** PID + fingerprint reconciliation — persisted RUNNING is never trusted after restart; PID-reuse kills are refused.
 - **Optional modules:** missing/failed third-party installs do not prevent LEVIATHAN boot.
 - **Trading boundary:** external finance packages with `marketsim_bypass_forbidden` / `real_money_blocked` are research/analytics only. Mutation-like ops (orders/live trades) are REJECTED at `ExternalModuleExecutor` and MCP dispatch; MarketSim remains trading authority; real-money remains BLOCKED.
+- **Live source contracts (audited):** Feynman = Node CLI `bin/feynman.js` + `skills/` (not `python -m`); OpenMAIC = Next.js/`pnpm` on `:3000` + `skills/` + `/api/agent/sessions`; ScrollCraft = `plugins/scrollcraft/skills/.../scripts`; Selfstarter = `bin/*.sh` Unreal harness (UE5 BLOCKED_EXTERNAL); Fincept = Python analytics CLIs under `fincept-qt/scripts/Analytics` (GUI not automated); Agent-Reach = `agent-reach` Python package CLI; DesktopCommander / Vibe-Trading = McpBridge MCP.
 
 Acceptance matrix (machine-readable): `Data/backend/tests/external_sources_acceptance_matrix.json`.
 

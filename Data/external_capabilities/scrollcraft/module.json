@@ -29,56 +29,113 @@
     "runtime": {
       "mode": "EPHEMERAL",
       "timeout_seconds": 900,
+      "cwd": "$INSTALL_ROOT",
       "operations": [
+        {
+          "name": "init",
+          "command": [
+            "node",
+            "plugins/scrollcraft/skills/scrollcraft/scripts/init.mjs",
+            "--name",
+            "{name}",
+            "--style",
+            "{style}",
+            "--grammar",
+            "{grammar}"
+          ]
+        },
         {
           "name": "build",
           "command": [
-            "npm",
-            "run",
-            "build"
+            "node",
+            "plugins/scrollcraft/skills/scrollcraft/scripts/build-site.mjs"
+          ]
+        },
+        {
+          "name": "verify",
+          "command": [
+            "node",
+            "plugins/scrollcraft/skills/scrollcraft/scripts/verify.mjs"
           ]
         },
         {
           "name": "generate",
           "command": [
             "node",
-            "scripts/generate.js",
-            "{prompt}"
+            "plugins/scrollcraft/skills/scrollcraft/scripts/init.mjs",
+            "--name",
+            "{prompt}",
+            "--style",
+            "aurora",
+            "--grammar",
+            "reveal"
+          ]
+        },
+        {
+          "name": "doctor",
+          "command": [
+            "node",
+            "plugins/scrollcraft/skills/scrollcraft/scripts/doctor.mjs"
           ]
         }
-      ],
-      "cwd": "$INSTALL_ROOT"
+      ]
     },
     "result": {
       "format": "FILES",
       "artifact_globs": [
         "dist/**",
-        "output/**",
-        "*.html",
+        "**/index.html",
+        "**/frames/**",
         "*.zip"
       ]
     },
     "skill_roots": [
-      ".",
-      "skills"
+      "plugins/scrollcraft/skills"
     ],
     "assimilation_mode": "NONE",
     "tags": [
       "web",
       "artifact",
-      "scroll"
+      "scroll",
+      "skill"
     ],
     "domain": "artifacts",
-    "resource_class": "CPU_HEAVY"
+    "resource_class": "CPU_HEAVY",
+    "metadata": {
+      "preferred_machine_contract": "SKILL.md + node scripts under plugins/scrollcraft/skills/scrollcraft/scripts/",
+      "optional_dependencies": [
+        "ffmpeg"
+      ]
+    }
   },
   "capabilities": [
     {
       "capability_id": "external.scrollcraft.build",
       "name": "ScrollCraft Build",
-      "description": "Build a cinematic scrolling website via ScrollCraft scripts.",
+      "description": "Build a cinematic scrolling website via ScrollCraft skill scripts.",
       "external_name": "build",
       "side_effects": [
         "WRITE",
+        "EXECUTE"
+      ]
+    },
+    {
+      "capability_id": "external.scrollcraft.generate",
+      "name": "ScrollCraft Generate",
+      "description": "Init + generate a ScrollCraft site from a prompt/name.",
+      "external_name": "generate",
+      "side_effects": [
+        "WRITE",
+        "EXECUTE"
+      ]
+    },
+    {
+      "capability_id": "external.scrollcraft.verify",
+      "name": "ScrollCraft Verify",
+      "description": "Run ScrollCraft verify.mjs against built output.",
+      "external_name": "verify",
+      "side_effects": [
+        "READ",
         "EXECUTE"
       ]
     },

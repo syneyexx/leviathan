@@ -56,6 +56,32 @@ class ExternalFabricUnitTests(unittest.TestCase):
         self.assertEqual(cfg.adapter, AdapterType.CLI)
         self.assertIn("GIT_CHECKOUT", [s.value for s in cfg.install.strategies])
 
+    def test_shipped_manifests_parse_after_live_audit(self) -> None:
+        root = Path(__file__).resolve().parents[2] / "external_capabilities"
+        required = {
+            "feynman": AdapterType.COMPOSITE,
+            "openmaic": AdapterType.COMPOSITE,
+            "selfstarter": AdapterType.COMPOSITE,
+            "scrollcraft": AdapterType.COMPOSITE,
+            "fincept-terminal": AdapterType.COMPOSITE,
+            "agent-reach": AdapterType.COMPOSITE,
+            "desktop-commander-mcp": AdapterType.MCP,
+        }
+        for module_id, adapter in required.items():
+            manifest = json.loads((root / module_id / "module.json").read_text(encoding="utf-8"))
+            cfg = parse_external_config(manifest.get("external"))
+            assert cfg is not None, module_id
+            self.assertEqual(cfg.adapter, adapter, module_id)
+            self.assertTrue(manifest.get("capabilities"), module_id)
+        feynman = json.loads((root / "feynman" / "module.json").read_text(encoding="utf-8"))
+        self.assertIn("NODE_NPM", json.dumps(feynman["external"]["install"]))
+        self.assertNotIn("python -m feynman", json.dumps(feynman))
+        openmaic = json.loads((root / "openmaic" / "module.json").read_text(encoding="utf-8"))
+        self.assertIn("3000", json.dumps(openmaic["external"]["runtime"]))
+        self.assertIn("NODE_PNPM", json.dumps(openmaic["external"]["install"]))
+        scroll = json.loads((root / "scrollcraft" / "module.json").read_text(encoding="utf-8"))
+        self.assertIn("plugins/scrollcraft/skills", json.dumps(scroll["external"]))
+
     def test_skill_importer_parses_frontmatter(self) -> None:
         root = FIXTURES / "fake_skill"
         records = SkillImporter().import_tree(root, source_repo="test/fake", module_id="fake-skill")
@@ -907,8 +933,9 @@ class ExternalAssimilationAndScaleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             store = ExternalCapabilityStore(Path(tmp) / "c.db")
             store.initialize()
-            # Simulate hundreds of catalog entries without reading bodies.
-            for i in range(250):
+            # Thousands of catalog entries — metadata only, never prompt-injected.
+            n = 3000
+            for i in range(n):
                 store.upsert_skill(
                     {
                         "skill_id": f"cat-{i}",
@@ -933,8 +960,12 @@ class ExternalAssimilationAndScaleTests(unittest.TestCase):
             self.assertTrue(all(r.get("catalog_only") for r in rows))
             # Catalog search returns metadata only — no instruction bodies in rows.
             self.assertTrue(all("instruction_artifact" in r for r in rows))
-            self.assertLess(elapsed, 2.0)
-            self.assertEqual(store.count_skills(catalog_only=True), 250)
+            self.assertTrue(all(not (r.get("instructions") or "") for r in rows))
+            self.assertLess(elapsed, 3.0)
+            self.assertEqual(store.count_skills(catalog_only=True), n)
+            page2 = store.search_skills(query="widgets", include_catalog=True, limit=25, offset=25)
+            self.assertEqual(len(page2), 25)
+            self.assertNotEqual(rows[0]["skill_id"], page2[0]["skill_id"])
 
     def test_plugin_registry_hydrate_enabled_not_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

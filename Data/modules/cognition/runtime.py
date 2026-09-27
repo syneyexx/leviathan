@@ -1670,6 +1670,23 @@ class CognitiveRuntime:
                     approval_id=action.arguments.get("approval_id"),
                 )
                 # Operational status only — no private chain-of-thought.
+                module_id_hint = None
+                try:
+                    defn = self.execution_gateway.catalog.get(capability_id) if self.execution_gateway else None
+                    meta_def = dict(getattr(defn, "metadata", None) or {}) if defn is not None else {}
+                    module_id_hint = meta_def.get("module_id")
+                    if module_id_hint:
+                        self._emit(
+                            state,
+                            "module.starting",
+                            {
+                                "module_id": module_id_hint,
+                                "capability_id": capability_id,
+                                "request_id": action.action_id,
+                            },
+                        )
+                except Exception:  # noqa: BLE001
+                    module_id_hint = None
                 self._emit(
                     state,
                     "tool.started",
@@ -1677,6 +1694,7 @@ class CognitiveRuntime:
                         "capability_id": capability_id,
                         "request_id": action.action_id,
                         "trace_id": state.trace_id,
+                        "module_id": module_id_hint,
                     },
                 )
                 self._emit(
@@ -1693,6 +1711,20 @@ class CognitiveRuntime:
                 status_value = str(result_dict.get("status") or "")
                 success = status_value in {"COMPLETED", "OK", "SUCCESS"}
                 output = result_dict.get("output") if isinstance(result_dict.get("output"), dict) else {}
+                out_meta = output.get("metadata") if isinstance(output.get("metadata"), dict) else {}
+                module_id = out_meta.get("module_id") or module_id_hint
+                if module_id and success:
+                    self._emit(
+                        state,
+                        "module.ready",
+                        {
+                            "module_id": module_id,
+                            "capability_id": capability_id,
+                            "request_id": action.action_id,
+                        },
+                    )
+                artifact_refs = list(output.get("artifact_refs") or [])[:16]
+                source_refs = list(output.get("source_refs") or [])[:16]
                 self._emit(
                     state,
                     "tool.completed" if success else "tool.failed",
@@ -1701,25 +1733,49 @@ class CognitiveRuntime:
                         "request_id": action.action_id,
                         "status": status_value,
                         "success": success,
-                        "artifact_count": len(list(output.get("artifact_refs") or [])),
-                        "source_count": len(list(output.get("source_refs") or [])),
-                        "assimilation": (output.get("metadata") or {}).get("assimilation")
-                        if isinstance(output.get("metadata"), dict)
-                        else None,
+                        "module_id": module_id,
+                        "artifact_count": len(artifact_refs),
+                        "source_count": len(source_refs),
+                        "result_count": (
+                            len((output.get("structured_data") or {}).get("results") or [])
+                            if isinstance(output.get("structured_data"), dict)
+                            else None
+                        ),
+                        "assimilation": out_meta.get("assimilation"),
                     },
                 )
-                if isinstance(output.get("metadata"), dict):
-                    assim = output["metadata"].get("assimilation") or {}
-                    if assim.get("queued"):
-                        self._emit(
-                            state,
-                            "knowledge.assimilation_queued",
-                            {
-                                "capability_id": capability_id,
-                                "job_id": assim.get("job_id"),
-                                "mode": assim.get("mode"),
-                            },
-                        )
+                for ref in artifact_refs[:8]:
+                    self._emit(
+                        state,
+                        "artifact.created",
+                        {
+                            "capability_id": capability_id,
+                            "module_id": module_id,
+                            "artifact_ref": ref,
+                        },
+                    )
+                if source_refs:
+                    self._emit(
+                        state,
+                        "source.observed",
+                        {
+                            "capability_id": capability_id,
+                            "module_id": module_id,
+                            "source_count": len(source_refs),
+                            "source_refs": source_refs[:8],
+                        },
+                    )
+                assim = out_meta.get("assimilation") or {}
+                if assim.get("queued"):
+                    self._emit(
+                        state,
+                        "knowledge.assimilation_queued",
+                        {
+                            "capability_id": capability_id,
+                            "job_id": assim.get("job_id"),
+                            "mode": assim.get("mode"),
+                        },
+                    )
                 self._transition(state, CognitiveRunStatus.OBSERVING)
                 self._ingest_tool_result(state, capability_id, result_dict, success=success)
                 return CognitiveObservation(

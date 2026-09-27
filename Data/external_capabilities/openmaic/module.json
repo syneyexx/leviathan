@@ -1,7 +1,7 @@
 {
   "module_id": "openmaic",
   "name": "OpenMAIC",
-  "version": "0.1.0",
+  "version": "1.1.1",
   "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
   "side_effects": [
     "READ",
@@ -20,35 +20,67 @@
     "install": {
       "strategy": [
         "GIT_CHECKOUT",
-        "NODE_NPM",
-        "PYTHON_VENV"
+        "NODE_PNPM"
+      ],
+      "dependencies": [
+        "node",
+        "pnpm"
       ]
     },
     "runtime": {
       "mode": "LAZY",
       "command": [
-        "npm",
-        "run",
-        "dev"
+        "pnpm",
+        "dev",
+        "--",
+        "-p",
+        "3000",
+        "-H",
+        "127.0.0.1"
       ],
       "cwd": "$INSTALL_ROOT",
-      "startup_timeout_seconds": 120,
+      "startup_timeout_seconds": 180,
       "idle_timeout_seconds": 1800,
-      "base_url": "http://127.0.0.1:5173",
+      "base_url": "http://127.0.0.1:3000",
       "ready_probe": {
         "kind": "http",
-        "url": "http://127.0.0.1:5173",
+        "url": "http://127.0.0.1:3000",
+        "expect_status": 200
+      },
+      "health_probe": {
+        "kind": "http",
+        "url": "http://127.0.0.1:3000",
         "expect_status": 200
       },
       "operations": [
         {
           "name": "generate_course",
           "method": "POST",
-          "path": "/api/course",
+          "path": "/api/agent/sessions",
           "body_from": [
             "topic",
-            "level"
+            "level",
+            "prompt",
+            "message"
           ]
+        },
+        {
+          "name": "session_status",
+          "method": "GET",
+          "path": "/api/agent/sessions/status"
+        },
+        {
+          "name": "cancel_session",
+          "method": "POST",
+          "path": "/api/agent/sessions/{session_id}/cancel",
+          "path_params": [
+            "session_id"
+          ]
+        },
+        {
+          "name": "list_skills",
+          "method": "GET",
+          "path": "/api/agent/skills"
         }
       ],
       "eager_start": false
@@ -63,22 +95,28 @@
       ]
     },
     "skill_roots": [
-      ".",
-      "skills"
+      "skills",
+      "packages/@openmaic/importer"
     ],
     "assimilation_mode": "NONE",
     "tags": [
       "education",
-      "course"
+      "course",
+      "skill"
     ],
     "domain": "education",
-    "resource_class": "CPU_HEAVY"
+    "resource_class": "CPU_HEAVY",
+    "metadata": {
+      "preferred_machine_contract": "Next.js PROCESS_SERVICE on :3000 + SKILL.md packs under skills/",
+      "requires_node": ">=22.19.0",
+      "llm_provider_keys_required": true
+    }
   },
   "capabilities": [
     {
       "capability_id": "external.openmaic.generate_course",
       "name": "OpenMAIC Generate Course",
-      "description": "Generate course outline/slides/quizzes via OpenMAIC.",
+      "description": "Create an OpenMAIC agent session to generate course/slides/quizzes for a topic.",
       "external_name": "generate_course",
       "side_effects": [
         "EXECUTE",
@@ -89,7 +127,7 @@
     {
       "capability_id": "external.openmaic.start",
       "name": "Start OpenMAIC",
-      "description": "Start OpenMAIC local runtime if needed.",
+      "description": "Start OpenMAIC local Next.js runtime if needed.",
       "external_name": "start",
       "side_effects": [
         "EXECUTE"
@@ -102,6 +140,15 @@
       "external_name": "stop",
       "side_effects": [
         "EXECUTE"
+      ]
+    },
+    {
+      "capability_id": "external.openmaic.load_skill",
+      "name": "Load OpenMAIC Skill",
+      "description": "Load an OpenMAIC skill pack instruction on demand.",
+      "external_name": "load",
+      "side_effects": [
+        "READ"
       ]
     }
   ]

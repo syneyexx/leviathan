@@ -16,7 +16,12 @@
     "install": {
       "strategy": [
         "GIT_CHECKOUT",
-        "PYTHON_VENV"
+        "PYTHON_VENV",
+        "PIP_PACKAGE"
+      ],
+      "python_packages": [
+        "-e",
+        "."
       ]
     },
     "runtime": {
@@ -33,7 +38,9 @@
     "domain": "finance",
     "metadata": {
       "marketsim_bypass_forbidden": true,
-      "real_money_blocked": true
+      "real_money_blocked": true,
+      "preferred_machine_contract": "MCP + FastAPI research surface (pip: vibe-trading-ai); not MarketSim authority",
+      "not_a_second_trading_platform": true
     }
   },
   "capabilities": [

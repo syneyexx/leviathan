@@ -5,18 +5,24 @@
   "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
   "side_effects": [
     "READ",
-    "NETWORK"
+    "EXECUTE"
   ],
   "hot_reload": false,
   "external": {
-    "adapter": "CLI",
+    "adapter": "COMPOSITE",
+    "children": [
+      "SCRIPT_PACKAGE",
+      "CLI"
+    ],
     "source_type": "git",
     "source": "https://github.com/ukanwat/selfstarter",
     "ref": "main",
     "install": {
       "strategy": [
-        "GIT_CHECKOUT",
-        "PYTHON_VENV"
+        "GIT_CHECKOUT"
+      ],
+      "dependencies": [
+        "bash"
       ]
     },
     "runtime": {
@@ -27,41 +33,37 @@
         {
           "name": "run_brief",
           "command": [
-            "python",
-            "-m",
-            "selfstarter",
-            "run",
-            "{brief}"
+            "bash",
+            "bin/run-agent.sh"
           ]
         },
         {
           "name": "status",
           "command": [
-            "python",
-            "-m",
-            "selfstarter",
-            "status",
-            "{session_id}"
+            "bash",
+            "bin/health.sh"
+          ]
+        },
+        {
+          "name": "supervise",
+          "command": [
+            "bash",
+            "bin/supervise.sh"
+          ]
+        },
+        {
+          "name": "setup",
+          "command": [
+            "bash",
+            "bin/setup-capabilities.sh"
           ]
         },
         {
           "name": "cancel",
           "command": [
-            "python",
-            "-m",
-            "selfstarter",
-            "cancel",
-            "{session_id}"
-          ]
-        },
-        {
-          "name": "results",
-          "command": [
-            "python",
-            "-m",
-            "selfstarter",
-            "results",
-            "{session_id}"
+            "bash",
+            "-c",
+            "test -f /tmp/aaabench-agent.lock && kill \"$(cat /tmp/aaabench-agent.lock)\" || true"
           ]
         }
       ]
@@ -69,27 +71,37 @@
     "result": {
       "format": "MIXED",
       "artifact_globs": [
-        "output/**",
-        "artifacts/**"
+        "project/**",
+        "docs/**",
+        "artifacts/**",
+        "output/**"
       ]
     },
     "assimilation_mode": "NONE",
     "tags": [
       "autonomous",
       "long-horizon",
-      "coding"
+      "coding",
+      "unreal"
     ],
     "domain": "specialist",
     "resource_class": "CPU_HEAVY",
     "metadata": {
-      "does_not_replace_cognitive_runtime": true
+      "does_not_replace_cognitive_runtime": true,
+      "preferred_machine_contract": "Shell harness under bin/ (run-agent/health/supervise); Unreal MCP bridge",
+      "blocked_external_requirements": [
+        "Unreal Engine 5.8",
+        "Unreal MCP plugin",
+        "Claude Code / coding agent CLI"
+      ],
+      "not_a_python_module": true
     }
   },
   "capabilities": [
     {
       "capability_id": "external.selfstarter.run_brief",
       "name": "Selfstarter Run Brief",
-      "description": "Run a Selfstarter brief as an external specialist job.",
+      "description": "Run Selfstarter bin/run-agent.sh as an external specialist job (requires UE5 + MCP; otherwise DEPENDENCY_MISSING).",
       "external_name": "run_brief",
       "side_effects": [
         "EXECUTE",
@@ -99,7 +111,7 @@
     {
       "capability_id": "external.selfstarter.status",
       "name": "Selfstarter Status",
-      "description": "Check Selfstarter session status.",
+      "description": "Check Selfstarter harness health via bin/health.sh.",
       "external_name": "status",
       "side_effects": [
         "READ"
@@ -108,7 +120,7 @@
     {
       "capability_id": "external.selfstarter.cancel",
       "name": "Selfstarter Cancel",
-      "description": "Cancel a Selfstarter session.",
+      "description": "Cancel the Selfstarter agent lock/session when supported.",
       "external_name": "cancel",
       "side_effects": [
         "EXECUTE"
@@ -117,8 +129,8 @@
     {
       "capability_id": "external.selfstarter.results",
       "name": "Selfstarter Results",
-      "description": "Fetch Selfstarter results/artifacts.",
-      "external_name": "results",
+      "description": "Collect Selfstarter project/docs artifacts after a run.",
+      "external_name": "supervise",
       "side_effects": [
         "READ"
       ]

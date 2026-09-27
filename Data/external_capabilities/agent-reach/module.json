@@ -20,9 +20,13 @@
     "install": {
       "strategy": [
         "GIT_CHECKOUT",
-        "PYTHON_VENV"
+        "PYTHON_VENV",
+        "PIP_PACKAGE"
       ],
-      "requirements_file": "requirements.txt"
+      "python_packages": [
+        "-e",
+        "."
+      ]
     },
     "skill_roots": [
       ".",

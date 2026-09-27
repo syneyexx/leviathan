@@ -9,7 +9,7 @@
     "NOT_APPLICABLE",
     "FAILED"
   ],
-  "notes": "Live third-party installs/network invocations are BLOCKED_EXTERNAL in CI unless dependencies and network are available. Fixture adapters prove CLI/PROCESS_SERVICE/HTTP_OPENAPI/SKILL_PACK/CATALOG_SOURCE/SCRIPT_PACKAGE/COMPOSITE/MCP. Source-level chat_rendering/artifact_support are PARTIAL unless that source has a dedicated invoke proof \u2014 generic CapabilityResultCards cover the shared Chat path. Version update, idle shutdown, and trading-boundary enforcement are fixture-tested. No per-repository wrappers.",
+  "notes": "Live third-party installs/network invocations are BLOCKED_EXTERNAL in CI unless dependencies and network are available. Fixture adapters prove all adapter kinds. Source manifests refreshed from live GitHub surfaces 2026-09-27 (Feynman Node CLI, OpenMAIC pnpm:3000, Selfstarter UE harness, ScrollCraft skill scripts, Fincept Analytics CLIs). Source chat/artifact remain PARTIAL without per-source invoke proof. No per-repository wrappers.",
   "sources": [
     {
       "source": "wonderwhy-er/DesktopCommanderMCP",
@@ -95,11 +95,12 @@
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
         "git",
-        "python",
-        "network"
+        "python>=3.10",
+        "network",
+        "yt-dlp"
       ],
       "status": "PARTIAL",
-      "limitations": "COMPOSITE CLI+SKILL_PACK capability layer (doctor/search/load_skill). Optional MCP channel backends via mcporter remain BLOCKED_EXTERNAL without network/deps. Not a parallel agent runtime."
+      "limitations": "Audited: Python package agent-reach 1.5.0 CLI (pyproject scripts). COMPOSITE CLI+SKILL. Optional MCP via mcporter. Live network scrape BLOCKED_EXTERNAL in CI."
     },
     {
       "source": "HunxByts/GhostTrack",
@@ -140,11 +141,12 @@
       "knowledge_assimilation": "PARTIAL",
       "known_external_requirements": [
         "git",
-        "python",
-        "mcp entrypoint"
+        "python>=3.11",
+        "network",
+        "broker/API keys for some tools"
       ],
       "status": "PARTIAL",
-      "limitations": "MCP lifecycle via ensure_ready/status MODULE capabilities; individual MCP tools expand into CapabilityCatalog through McpBridge and invoke via ExecutionGateway. Not MarketSim authority. Live connect BLOCKED_EXTERNAL without network/deps."
+      "limitations": "Audited: FastAPI + MCP research agent (pip vibe-trading-ai). MCP via McpBridge only; marketsim_bypass_forbidden enforced. Live connect BLOCKED_EXTERNAL."
     },
     {
       "source": "anthropics/financial-services",
@@ -192,7 +194,7 @@
     {
       "source": "Fincept-Corporation/FinceptTerminal",
       "category": "FINANCE_ANALYTICS",
-      "adapter": "HTTP_OPENAPI",
+      "adapter": "COMPOSITE",
       "module_id": "fincept-terminal",
       "install_verified": "BLOCKED_EXTERNAL",
       "discovery_verified": "PASS",
@@ -207,10 +209,10 @@
       "known_external_requirements": [
         "git",
         "python",
-        "local API if available"
+        "analytics script deps"
       ],
       "status": "PARTIAL",
-      "limitations": "Prefer SDK/API over GUI automation; MarketSim owns trading mutation."
+      "limitations": "Audited: C++/Qt GUI not automated. Python analytics CLIs under fincept-qt/scripts/Analytics preferred. Fake HTTP :8080 removed. MarketSim bypass forbidden."
     },
     {
       "source": "singhharsh1708/scrollcraft",
@@ -231,19 +233,20 @@
         "git",
         "node",
         "npm",
-        "optional ffmpeg"
+        "ffmpeg(optional)"
       ],
-      "status": "PARTIAL"
+      "status": "PARTIAL",
+      "limitations": "Audited: SKILL at plugins/scrollcraft/skills/scrollcraft + node scripts (init/build/verify). ffmpeg optional for video frames."
     },
     {
       "source": "ukanwat/selfstarter",
       "category": "LONG_HORIZON_SPECIALIST",
-      "adapter": "CLI",
+      "adapter": "COMPOSITE",
       "module_id": "selfstarter",
       "install_verified": "BLOCKED_EXTERNAL",
       "discovery_verified": "PASS",
-      "start_verified": "NOT_APPLICABLE",
-      "stop_verified": "NOT_APPLICABLE",
+      "start_verified": "BLOCKED_EXTERNAL",
+      "stop_verified": "PARTIAL",
       "capability_discovery": "PASS",
       "invoke_verified": "BLOCKED_EXTERNAL",
       "result_normalization": "PASS",
@@ -252,14 +255,17 @@
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
         "git",
-        "python"
+        "bash",
+        "Unreal Engine 5.8",
+        "Unreal MCP",
+        "coding agent CLI"
       ],
       "status": "PARTIAL",
-      "limitations": "Does not replace CognitiveRuntime/CodingControlPlane."
+      "limitations": "Audited: shell harness bin/run-agent.sh + Unreal MCP \u2014 not python -m selfstarter. Invoke BLOCKED_EXTERNAL without UE 5.8 + coding agent CLI."
     },
     {
       "source": "THU-MAIC/OpenMAIC",
-      "category": "EDUCATION",
+      "category": "COURSE_GENERATION",
       "adapter": "COMPOSITE",
       "module_id": "openmaic",
       "install_verified": "BLOCKED_EXTERNAL",
@@ -274,16 +280,17 @@
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
         "git",
-        "node",
-        "npm",
-        "python"
+        "node>=22.19",
+        "pnpm",
+        "LLM API keys"
       ],
-      "status": "PARTIAL"
+      "status": "PARTIAL",
+      "limitations": "Audited: Next.js PROCESS_SERVICE on :3000 (pnpm) + skills/ packs. Fake /api/course removed; uses /api/agent/sessions. LLM keys required for generation."
     },
     {
       "source": "Companion-Inc/feynman",
-      "category": "RESEARCH",
-      "adapter": "CLI",
+      "category": "RESEARCH_AGENT",
+      "adapter": "COMPOSITE",
       "module_id": "feynman",
       "install_verified": "BLOCKED_EXTERNAL",
       "discovery_verified": "PASS",
@@ -297,11 +304,12 @@
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
         "git",
-        "python",
-        "network"
+        "node>=22.22",
+        "npm",
+        "model provider auth"
       ],
       "status": "PARTIAL",
-      "limitations": "Does not replace ResearchService; external specialist only."
+      "limitations": "Audited 2026-09-27: Node CLI bin/feynman.js (@companion-ai/feynman>=0.5.9) + skills/. Not python -m. Live invoke needs node>=22 + provider auth (BLOCKED_EXTERNAL)."
     },
     {
       "source": "multica-ai/andrej-karpathy-skills",
@@ -475,5 +483,5 @@
     "COMPOSITE": "PASS",
     "MCP": "PASS"
   },
-  "worktree_head": "a9e1ac41cdbb96979cf3e6e5db60b8328e010482"
+  "worktree_head": "pending"
 }

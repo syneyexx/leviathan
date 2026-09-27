@@ -1,7 +1,7 @@
 {
   "module_id": "feynman",
   "name": "Feynman Research",
-  "version": "0.1.0",
+  "version": "0.5.9",
   "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
   "side_effects": [
     "READ",
@@ -9,38 +9,76 @@
   ],
   "hot_reload": false,
   "external": {
-    "adapter": "CLI",
+    "adapter": "COMPOSITE",
+    "children": [
+      "SKILL_PACK",
+      "CLI"
+    ],
     "source_type": "git",
     "source": "https://github.com/Companion-Inc/feynman",
     "ref": "main",
     "install": {
       "strategy": [
         "GIT_CHECKOUT",
-        "PYTHON_VENV"
+        "NODE_NPM"
+      ],
+      "dependencies": [
+        "node"
       ]
     },
+    "skill_roots": [
+      "skills"
+    ],
     "runtime": {
       "mode": "EPHEMERAL",
       "timeout_seconds": 1800,
       "cwd": "$INSTALL_ROOT",
+      "command": [
+        "node",
+        "bin/feynman.js",
+        "--help"
+      ],
       "operations": [
         {
           "name": "research",
           "command": [
-            "python",
-            "-m",
-            "feynman",
-            "research",
+            "node",
+            "bin/feynman.js",
+            "{topic}"
+          ]
+        },
+        {
+          "name": "deepresearch",
+          "command": [
+            "node",
+            "bin/feynman.js",
+            "deepresearch",
+            "{topic}"
+          ]
+        },
+        {
+          "name": "lit",
+          "command": [
+            "node",
+            "bin/feynman.js",
+            "lit",
             "{topic}"
           ]
         },
         {
           "name": "run",
           "command": [
-            "python",
-            "-m",
-            "feynman",
+            "node",
+            "bin/feynman.js",
             "{topic}"
+          ]
+        },
+        {
+          "name": "load",
+          "command": [
+            "node",
+            "-e",
+            "console.log(JSON.stringify({ok:true,note:'use external.skills.load'}))"
           ]
         }
       ]
@@ -48,8 +86,8 @@
     "result": {
       "format": "MIXED",
       "artifact_globs": [
+        "outputs/**",
         "reports/**",
-        "output/**",
         "*.md",
         "*.pdf"
       ]
@@ -57,24 +95,60 @@
     "assimilation_mode": "KNOWLEDGE_CANDIDATE",
     "tags": [
       "research",
-      "summarization"
+      "summarization",
+      "papers",
+      "skill"
     ],
     "domain": "research",
     "resource_class": "NETWORK_HEAVY",
     "metadata": {
-      "does_not_replace_research_service": true
+      "does_not_replace_research_service": true,
+      "preferred_machine_contract": "Node CLI bin/feynman.js (@companion-ai/feynman) + skills/ SKILL packs",
+      "requires_node": ">=22.22.0",
+      "setup_note": "Provider auth via `feynman setup` remains BLOCKED_EXTERNAL without credentials"
     }
   },
   "capabilities": [
     {
       "capability_id": "external.feynman.research",
       "name": "Feynman Research",
-      "description": "Long-running research synthesis via Feynman (external specialist).",
+      "description": "Long-running research synthesis via Feynman Node CLI (external specialist; not ResearchService).",
       "external_name": "research",
       "side_effects": [
         "READ",
         "NETWORK",
         "WRITE"
+      ]
+    },
+    {
+      "capability_id": "external.feynman.deepresearch",
+      "name": "Feynman Deep Research",
+      "description": "Plan-first multi-researcher investigation via Feynman deepresearch.",
+      "external_name": "deepresearch",
+      "side_effects": [
+        "READ",
+        "NETWORK",
+        "WRITE"
+      ]
+    },
+    {
+      "capability_id": "external.feynman.lit",
+      "name": "Feynman Literature Review",
+      "description": "Literature review via Feynman lit workflow.",
+      "external_name": "lit",
+      "side_effects": [
+        "READ",
+        "NETWORK",
+        "WRITE"
+      ]
+    },
+    {
+      "capability_id": "external.feynman.load_skill",
+      "name": "Load Feynman Skill",
+      "description": "Load a Feynman skills/ pack instruction on demand.",
+      "external_name": "load",
+      "side_effects": [
+        "READ"
       ]
     }
   ]

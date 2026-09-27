@@ -1,7 +1,7 @@
 {
   "module_id": "fincept-terminal",
   "name": "Fincept Terminal Analytics",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
   "side_effects": [
     "READ",
@@ -9,7 +9,11 @@
   ],
   "hot_reload": false,
   "external": {
-    "adapter": "HTTP_OPENAPI",
+    "adapter": "COMPOSITE",
+    "children": [
+      "SCRIPT_PACKAGE",
+      "CLI"
+    ],
     "source_type": "git",
     "source": "https://github.com/Fincept-Corporation/FinceptTerminal",
     "ref": "main",
@@ -20,49 +24,85 @@
       ]
     },
     "runtime": {
-      "mode": "LAZY",
-      "base_url": "http://127.0.0.1:8080",
-      "timeout_seconds": 120,
+      "mode": "EPHEMERAL",
+      "timeout_seconds": 300,
+      "cwd": "$INSTALL_ROOT/fincept-qt/scripts/Analytics",
       "operations": [
         {
-          "name": "health",
-          "method": "GET",
-          "path": "/health"
+          "name": "analyze",
+          "command": [
+            "python",
+            "financial_analysis_cli.py",
+            "{query}"
+          ]
         },
         {
-          "name": "analyze",
-          "method": "POST",
-          "path": "/api/analyze",
-          "body_from": [
-            "query",
-            "symbol",
-            "mode"
+          "name": "quant",
+          "command": [
+            "python",
+            "quant_analytics_cli.py",
+            "{query}"
+          ]
+        },
+        {
+          "name": "stats",
+          "command": [
+            "python",
+            "statsmodels_cli.py",
+            "{query}"
+          ]
+        },
+        {
+          "name": "fixed_income",
+          "command": [
+            "python",
+            "fixedIncome/cli.py",
+            "{query}"
           ]
         }
-      ],
-      "health_probe": {
-        "kind": "http",
-        "url": "http://127.0.0.1:8080/health",
-        "expect_status": 200
-      }
+      ]
+    },
+    "result": {
+      "format": "MIXED",
+      "artifact_globs": [
+        "output/**",
+        "*.json",
+        "*.csv",
+        "*.xlsx"
+      ]
     },
     "assimilation_mode": "EVIDENCE",
     "tags": [
       "finance",
-      "analytics"
+      "analytics",
+      "research"
     ],
     "domain": "finance",
     "metadata": {
       "marketsim_bypass_forbidden": true,
-      "prefer_sdk_over_gui": true
+      "real_money_blocked": true,
+      "prefer_sdk_over_gui": true,
+      "preferred_machine_contract": "Python analytics CLIs under fincept-qt/scripts/Analytics (not the C++/Qt GUI)",
+      "gui_not_automated": true,
+      "not_marketsim_authority": true
     }
   },
   "capabilities": [
     {
       "capability_id": "external.fincept.analyze",
       "name": "Fincept Analyze",
-      "description": "Financial analytics via Fincept programmatic surface when available.",
+      "description": "Run Fincept financial_analysis_cli analytics (research only; MarketSim remains trading authority).",
       "external_name": "analyze",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.fincept.quant",
+      "name": "Fincept Quant Analytics",
+      "description": "Run Fincept quant_analytics_cli (research/analytics only).",
+      "external_name": "quant",
       "side_effects": [
         "READ",
         "NETWORK"
