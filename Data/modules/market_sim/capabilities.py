@@ -39,10 +39,18 @@ def _env_truthy(name: str) -> bool:
 
 
 def _alpaca_paper_configured() -> bool:
-    """Secrets present does not mean live money — paper endpoint only."""
-    key = os.environ.get("LEVIATHAN_ALPACA_PAPER_KEY_ID", "").strip()
-    secret = os.environ.get("LEVIATHAN_ALPACA_PAPER_SECRET", "").strip()
-    return bool(key and secret)
+    """Secrets present does not mean live money — paper endpoint only.
+
+    Presence uses the same secret: refs as SecretsBroker (env-backed).
+    """
+    try:
+        from Data.modules.mcp.secrets import resolve_secret_ref
+
+        key = str(resolve_secret_ref("secret:LEVIATHAN_ALPACA_PAPER_KEY_ID") or "").strip()
+        secret = str(resolve_secret_ref("secret:LEVIATHAN_ALPACA_PAPER_SECRET") or "").strip()
+        return bool(key and secret)
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _binance_reachable(probe: Callable[[], bool] | None = None) -> bool:

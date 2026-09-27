@@ -1152,12 +1152,27 @@
     "G40": {
       "title": "Settings + SecretsBroker",
       "phase": "T4C",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/paper_broker.py::resolve_alpaca_paper_credentials + SecretsBroker leases",
+        "AlpacaPaperBroker uses secret:LEVIATHAN_ALPACA_PAPER_* refs",
+        "Data/backend/tests/test_market_sim_characterization.py::D19SecretsCharacterization",
+        "Data/modules/security/secrets_broker.py::SecretsBroker"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_characterization.py::D19SecretsCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_characterization.py::D19SecretsCharacterization"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "Trading paper broker credentials leased via SecretsBroker; plaintext not in public lease payloads. Live money remains BLOCKED.",
       "related_defects": [
         "D19"
       ]

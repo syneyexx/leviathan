@@ -1,13 +1,13 @@
 {
-  "generated_at": "2026-09-27T14:32:57+00:00",
+  "generated_at": "2026-09-27T14:35:53+00:00",
   "phase": "Slice16/A0-A4",
   "program": "Master Program v4.1",
   "all_required_pass": false,
   "allow_incomplete": true,
   "counts": {
-    "PASS": 74,
+    "PASS": 75,
     "IN_PROGRESS": 2,
-    "NOT_STARTED": 3,
+    "NOT_STARTED": 2,
     "FEATURE_GATED": 1,
     "NOT_TESTED_IN_CI": 1
   },
@@ -520,9 +520,15 @@
     },
     {
       "id": "G40",
-      "status": "NOT_STARTED",
-      "evidence": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/paper_broker.py::resolve_alpaca_paper_credentials + SecretsBroker leases",
+        "AlpacaPaperBroker uses secret:LEVIATHAN_ALPACA_PAPER_* refs",
+        "Data/backend/tests/test_market_sim_characterization.py::D19SecretsCharacterization",
+        "Data/modules/security/secrets_broker.py::SecretsBroker",
+        "pytest:deferred(--run-tests not set)"
+      ],
+      "notes": "Trading paper broker credentials leased via SecretsBroker; plaintext not in public lease payloads. Live money remains BLOCKED."
     },
     {
       "id": "G41",
@@ -1026,5 +1032,5 @@
     "feature_gated_is_not_pass_claim": true,
     "baseline_green_does_not_mark_trading_pass": true
   },
-  "exit_reason": "incomplete gates reported honestly (6 open); no FAIL"
+  "exit_reason": "incomplete gates reported honestly (5 open); no FAIL"
 }
