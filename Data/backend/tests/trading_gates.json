@@ -208,12 +208,30 @@
     "G07": {
       "title": "Providers pagination/backoff/network policy",
       "phase": "T2D",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/backend/tests/test_market_provider_hardening.py::MarketProviderHardeningTests::test_pagination_beyond_1000",
+        "Data/backend/tests/test_market_provider_hardening.py::MarketProviderHardeningTests::test_429_retry_after",
+        "Data/backend/tests/test_market_provider_hardening.py::MarketProviderHardeningTests::test_backoff_exhaustion",
+        "Data/backend/tests/test_market_provider_hardening.py::MarketProviderHardeningTests::test_timeout_cancel",
+        "Data/backend/tests/test_market_provider_hardening.py::MarketProviderHardeningTests::test_host_allowlist_blocks_unknown",
+        "Data/modules/market_sim/providers/http_transport.py request_with_retry",
+        "BinancePublicProvider pagination via startTime"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_provider_hardening.py::MarketProviderHardeningTests::test_pagination_beyond_1000",
+        "Data/backend/tests/test_market_provider_hardening.py::MarketProviderHardeningTests::test_429_retry_after",
+        "Data/backend/tests/test_market_provider_hardening.py::MarketProviderHardeningTests::test_backoff_exhaustion",
+        "Data/backend/tests/test_market_provider_hardening.py::MarketProviderHardeningTests::test_host_allowlist_blocks_unknown"
+      ],
+      "checks": [
+        "pagination beyond 1000 bars",
+        "Retry-After honored",
+        "bounded backoff exhaustion",
+        "cancellation stops retries"
+      ],
+      "notes": "Reconciled from executable provider hardening tests (was stale NOT_STARTED).",
       "related_defects": [
         "D23"
       ]

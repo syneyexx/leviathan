@@ -35,14 +35,34 @@ def block_bootstrap_mean(
     samples: int = 500,
     alpha: float = 0.05,
     seed: int = 42,
-) -> BootstrapCI:
-    """Block bootstrap of mean return (stationary blocks approximated by fixed length)."""
+) -> BootstrapCI | dict[str, Any]:
+    """Block bootstrap of mean return (stationary blocks approximated by fixed length).
+
+    Empty sample → UNMEASURED (never fabricate zero). Method is labeled
+    ``block_bootstrap_fixed_length_APPROXIMATE`` until circular-block validated.
+    """
     n = len(returns)
     if n == 0:
-        return BootstrapCI(0.0, 0.0, 0.0, 0, 0)
+        return {
+            "mean": None,
+            "ci_low": None,
+            "ci_high": None,
+            "n": 0,
+            "samples": 0,
+            "method": "block_bootstrap_fixed_length_APPROXIMATE",
+            "measurement": "UNMEASURED",
+            "reason": "empty_sample",
+        }
     mean = sum(returns) / n
     if n == 1:
-        return BootstrapCI(mean, mean, mean, 1, samples)
+        return BootstrapCI(
+            mean=mean,
+            ci_low=mean,
+            ci_high=mean,
+            n=1,
+            samples=samples,
+            method="block_bootstrap_fixed_length_APPROXIMATE",
+        )
     bs = max(1, min(int(block_size), n))
     rng = random.Random(seed)
     boots: list[float] = []
@@ -58,7 +78,14 @@ def block_bootstrap_mean(
     boots.sort()
     lo = boots[int(math.floor((alpha / 2) * len(boots)))]
     hi = boots[min(len(boots) - 1, int(math.ceil((1 - alpha / 2) * len(boots))) - 1)]
-    return BootstrapCI(mean=mean, ci_low=lo, ci_high=hi, n=n, samples=samples)
+    return BootstrapCI(
+        mean=mean,
+        ci_low=lo,
+        ci_high=hi,
+        n=n,
+        samples=samples,
+        method="block_bootstrap_fixed_length_APPROXIMATE",
+    )
 
 
 def sharpe_ratio(returns: Sequence[float], *, risk_free: float = 0.0) -> float | None:
@@ -145,10 +172,13 @@ def deflated_sharpe_ratio(
         "se": se,
         "n_trials": n_trials,
         "n_observations": n_observations,
-        "measurement": "MEASURED",
+        "measurement": "APPROXIMATE",
+        "qualification_authority": False,
         "truth": {
             "trial_ledger_count_used": True,
             "point_estimate_alone_is_not_acceptance": True,
+            "method": "bailey_lopez_de_prado_simplified_APPROXIMATE",
+            "not_qualification_grade_until_reference_validated": True,
         },
     }
 
@@ -193,10 +223,14 @@ def probability_of_backtest_overfitting(
         "pbo": pbo,
         "n_trials": n,
         "samples": samples,
-        "measurement": "MEASURED",
+        "measurement": "APPROXIMATE",
+        "qualification_authority": False,
         "truth": {
             "losing_trials_must_remain_in_ledger": True,
             "high_pbo_means_selection_suspect": pbo >= 0.5,
+            "method": "random_is_oos_rank_APPROXIMATE",
+            "not_cscv_bailey_lopez_de_prado": True,
+            "not_qualification_grade_until_reference_validated": True,
         },
     }
 
@@ -279,11 +313,20 @@ def monte_carlo_mean_resample(
     samples: int = 500,
     alpha: float = 0.05,
     seed: int = 42,
-) -> BootstrapCI:
+) -> BootstrapCI | dict[str, Any]:
     """IID Monte Carlo resampling of mean return (complements block bootstrap)."""
     n = len(returns)
     if n == 0:
-        return BootstrapCI(0.0, 0.0, 0.0, 0, 0, method="monte_carlo_iid")
+        return {
+            "mean": None,
+            "ci_low": None,
+            "ci_high": None,
+            "n": 0,
+            "samples": 0,
+            "method": "monte_carlo_iid",
+            "measurement": "UNMEASURED",
+            "reason": "empty_sample",
+        }
     mean = sum(returns) / n
     if n == 1:
         return BootstrapCI(mean, mean, mean, 1, samples, method="monte_carlo_iid")
