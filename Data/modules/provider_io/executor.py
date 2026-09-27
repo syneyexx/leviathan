@@ -6,7 +6,12 @@ import os
 import time
 from typing import Any, Callable
 
-from Data.modules.jobs.leases import LeaseFenceError, make_lease_bound_checks
+from Data.modules.jobs.leases import (
+    LeaseFenceError,
+    fenced_transition,
+    make_lease_bound_checks,
+    record_stale_lease_fence,
+)
 from Data.modules.jobs.states import JobState
 from Data.modules.provider_io.adapters.alpaca_paper import AlpacaPaperAdapter
 from Data.modules.provider_io.adapters.generic_http import GenericHttpAdapter
@@ -86,11 +91,21 @@ def _request_from_job_args(args: dict[str, Any], *, job_id: str) -> ProviderRequ
         idem = IdempotencyClass.READ
 
     # Authority is URL/policy derived — never from job payload flags.
+    # Model-provider endpoints may use configured base_url trust; generic HTTP must not.
     candidate_url = str(
         payload.get("url") or payload.get("endpoint") or payload.get("base_url") or ""
     ).strip()
+    trust_model = capability in {
+        "chat.complete",
+        "chat.stream",
+        "openai_compatible",
+    } or provider in {"openai_compatible", "openai", "ollama", "vllm", "llama_cpp"}
     allow_private = bool(
-        candidate_url and resolve_allow_private_hosts_for_url(candidate_url)
+        candidate_url
+        and resolve_allow_private_hosts_for_url(
+            candidate_url,
+            trust_model_endpoints=trust_model,
+        )
     )
 
     return ProviderRequest(
@@ -229,9 +244,13 @@ class ProviderIoExecutor:
                     if current.state != JobState.CANCELLED:
                         if current.state == JobState.RUNNING:
                             store.request_cancel(job.job_id, reason="Cancelled")
-                        store.transition(
+                        fenced_transition(
+                            store,
                             job.job_id,
                             JobState.CANCELLED,
+                            worker_id=worker_id,
+                            ctx=ctx,
+                            telemetry=self.policy.telemetry,
                             error="EXECUTION_CANCELLED",
                             result=result.public_dict(),
                         )
@@ -251,16 +270,17 @@ class ProviderIoExecutor:
                     ).public_dict(),
                     worker_pid=os.getpid(),
                 )
-                try:
-                    store.transition(
-                        job.job_id,
-                        JobState.FAILED,
-                        error="LEASE_FENCE",
-                        result=result.public_dict(),
-                        expected_lease_owner=worker_id,
-                    )
-                except Exception:  # noqa: BLE001
-                    pass
+                record_stale_lease_fence(ctx, telemetry=self.policy.telemetry)
+                fenced_transition(
+                    store,
+                    job.job_id,
+                    JobState.FAILED,
+                    worker_id=worker_id,
+                    ctx=ctx,
+                    telemetry=self.policy.telemetry,
+                    error="LEASE_FENCE",
+                    result=result.public_dict(),
+                )
                 self.policy.telemetry["failure"] = (
                     int(self.policy.telemetry.get("failure", 0)) + 1
                 )
@@ -320,10 +340,11 @@ class ProviderIoExecutor:
                         "ingest_callback"
                     )
                     # Checkpoints are MARKET-owned; JobStore path is CONTROL — do not conflate.
-                    market_path = resolve_market_database_path(
-                        explicit=request.payload.get("market_db_path")
-                        or ctx.get("market_db_path")
-                    )
+                    # Ignore payload market_db_path/db_path — untrusted job input must not
+                    # choose the market authority DB (WAVE 23).
+                    request.payload.pop("market_db_path", None)
+                    request.payload.pop("db_path", None)
+                    market_path = resolve_market_database_path()
                     execute_kwargs["ctx"] = {
                         **{k: v for k, v in ctx.items() if k != "job_store"},
                         "db_path": str(market_path),
@@ -347,9 +368,13 @@ class ProviderIoExecutor:
                 self.policy.telemetry["success"] = (
                     int(self.policy.telemetry.get("success", 0)) + 1
                 )
-                store.transition(
+                fenced_transition(
+                    store,
                     job.job_id,
                     JobState.COMPLETED,
+                    worker_id=worker_id,
+                    ctx=ctx,
+                    telemetry=self.policy.telemetry,
                     result=result.public_dict(),
                 )
                 return result.public_dict()
@@ -371,9 +396,13 @@ class ProviderIoExecutor:
                             {"reason": "cancel_requested"},
                             correlation_id=request.correlation_id,
                         )
-                    store.transition(
+                    fenced_transition(
+                        store,
                         job.job_id,
                         JobState.CANCELLED,
+                        worker_id=worker_id,
+                        ctx=ctx,
+                        telemetry=self.policy.telemetry,
                         error=exc.code.value,
                         result=ProviderExecutionResult(
                             status="cancelled",
@@ -414,23 +443,14 @@ class ProviderIoExecutor:
                 circuit.record_failure()
                 break
             except LeaseFenceError as exc:
+                # After any side effect / mid-flight fence: do not overwrite job state.
                 last_error = ProviderError(
                     ProviderErrorCode.EXECUTION_CANCELLED,
                     f"lease_fence: {exc}",
                     provider=request.provider,
                     retryable=False,
                 )
-                store.transition(
-                    job.job_id,
-                    JobState.FAILED,
-                    error="LEASE_FENCE",
-                    result=ProviderExecutionResult(
-                        status="failed",
-                        provider=request.provider,
-                        error=last_error.public_dict(),
-                        worker_pid=os.getpid(),
-                    ).public_dict(),
-                )
+                record_stale_lease_fence(ctx, telemetry=self.policy.telemetry)
                 self.policy.telemetry["failure"] = (
                     int(self.policy.telemetry.get("failure", 0)) + 1
                 )
@@ -460,10 +480,13 @@ class ProviderIoExecutor:
             error=err.public_dict(),
             worker_pid=os.getpid(),
         )
-        # Non-retryable or exhausted → FAILED (job kernel may still schedule retry on lease)
-        store.transition(
+        fenced_transition(
+            store,
             job.job_id,
             JobState.FAILED,
+            worker_id=worker_id,
+            ctx=ctx,
+            telemetry=self.policy.telemetry,
             error=err.code.value,
             result=result.public_dict(),
         )

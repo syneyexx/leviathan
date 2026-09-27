@@ -9,6 +9,7 @@ from Data.modules.workers.loop import build_minimal_job_context
 
 
 def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
+    from Data.modules.jobs.leases import fenced_transition
     from Data.modules.jobs.states import JobState
     from Data.modules.schedules.runner import ScheduleRunner
     from Data.modules.schedules.store import ScheduleStore
@@ -30,11 +31,14 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
             results = runner.tick()
         finally:
             jobs.process_next = original  # type: ignore[method-assign]
-    ctx["job_store"].transition(
-        job.job_id,
-        JobState.COMPLETED,
+    fenced_transition(
+            ctx["job_store"],
+            job.job_id,
+            JobState.COMPLETED,
         result={"fired": results},
-    )
+            worker_id=str(ctx.get("worker_id") or ""),
+            ctx=ctx,
+        )
     return {"results": results}
 
 

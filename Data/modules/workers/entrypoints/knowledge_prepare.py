@@ -12,11 +12,12 @@ from Data.modules.workers.loop import _default_gateway_execute
 
 
 def _knowledge_store(ctx: dict[str, Any]) -> Any:
+    from Data.modules.common.database_domains import knowledge_path_from_settings
     from Data.modules.knowledge import KnowledgeStore
 
     settings = ctx["settings"]
-    # Knowledge domain authority — never the Control Plane compat alias alone.
-    db_path = getattr(settings, "knowledge_database_path", None) or settings.database_path
+    # Knowledge domain authority — never the Control Plane compat alias.
+    db_path = knowledge_path_from_settings(settings)
     store = KnowledgeStore(
         db_path,
         data_root=settings.knowledge.data_root,
@@ -28,6 +29,7 @@ def _knowledge_store(ctx: dict[str, Any]) -> Any:
 
 
 def _handle_ingest_scan(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
+    from Data.modules.jobs.leases import fenced_transition
     from Data.modules.jobs.states import JobState
 
     args = dict(getattr(job, "arguments", None) or {})
@@ -43,14 +45,15 @@ def _handle_ingest_scan(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
             "executed_via": "knowledge_prepare_worker",
             "truth": {"uses_knowledge_v2_ingest": True, "no_parallel_ingest_pipeline": True},
         }
-        ctx["job_store"].transition(job.job_id, JobState.COMPLETED, result=result)
+        fenced_transition(ctx["job_store"], job.job_id, JobState.COMPLETED, result=result, worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         return result
     except Exception as exc:  # noqa: BLE001
-        ctx["job_store"].transition(job.job_id, JobState.FAILED, error=str(exc)[:500])
+        fenced_transition(ctx["job_store"], job.job_id, JobState.FAILED, error=str(exc)[:500], worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         return {"error": str(exc)}
 
 
 def _handle_prepare(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
+    from Data.modules.jobs.leases import fenced_transition
     from Data.modules.jobs.states import JobState
 
     args = dict(getattr(job, "arguments", None) or {})
@@ -61,7 +64,7 @@ def _handle_prepare(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
             result = store.backfill_content(limit=int(args.get("limit") or 50))
             result["action"] = action
             result["executed_via"] = "knowledge_prepare_worker"
-            ctx["job_store"].transition(job.job_id, JobState.COMPLETED, result=result)
+            fenced_transition(ctx["job_store"], job.job_id, JobState.COMPLETED, result=result, worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
             return result
 
         if action in {"ingest_path", "path"}:
@@ -77,7 +80,7 @@ def _handle_prepare(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
                 "reason": None if record else "unchanged",
                 "executed_via": "knowledge_prepare_worker",
             }
-            ctx["job_store"].transition(job.job_id, JobState.COMPLETED, result=result)
+            fenced_transition(ctx["job_store"], job.job_id, JobState.COMPLETED, result=result, worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
             return result
 
         if action in {"upsert", "ingest_document", "prepare", "stage_prepare"}:
@@ -111,7 +114,7 @@ def _handle_prepare(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
                 or str(getattr(record, "status", "")),
                 "executed_via": "knowledge_prepare_worker",
             }
-            ctx["job_store"].transition(job.job_id, JobState.COMPLETED, result=result)
+            fenced_transition(ctx["job_store"], job.job_id, JobState.COMPLETED, result=result, worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
             return result
 
         # Unknown prepare action — fall through to gateway for artifact_id style jobs.
@@ -128,10 +131,13 @@ def _handle_prepare(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
             lease_ttl,
         )
     except Exception as exc:  # noqa: BLE001
-        ctx["job_store"].transition(
+        fenced_transition(
+            ctx["job_store"],
             job.job_id,
             JobState.FAILED,
             error=f"KNOWLEDGE_PREPARE_FAILED: {exc}"[:500],
+            worker_id=str(ctx.get("worker_id") or ""),
+            ctx=ctx,
         )
         return {"error": str(exc)}
 

@@ -48,9 +48,11 @@ def _ingest_knowledge_commit_job(ctx: dict[str, Any], job: Any, coordinator: Any
     """Convert a legacy knowledge.commit job into a CommitIntent (same writer PID)."""
     from Data.modules.db_commit.producer import CommitProducer
     from Data.modules.db_commit.types import CommitPriority
+    from Data.modules.jobs.leases import fenced_transition
     from Data.modules.jobs.states import JobState
 
     store = ctx["job_store"]
+    worker_id = str(ctx.get("worker_id") or "")
     args = dict(getattr(job, "arguments", None) or {})
     artifact = args.get("artifact") or {}
     if hasattr(artifact, "public_dict"):
@@ -94,22 +96,31 @@ def _ingest_knowledge_commit_job(ctx: dict[str, Any], job: Any, coordinator: Any
     if receipt is None and idem:
         receipt = knowledge_lane.receipts.get_by_idempotency_key(str(idem))
     if receipt is not None:
-        store.transition(
+        fenced_transition(
+            store,
             job.job_id,
             JobState.COMPLETED,
+            worker_id=worker_id,
+            ctx=ctx,
             result=receipt.to_dict(),
             metadata_update={"commit_phase": "COMPLETED", "via": "db_commit"},
         )
     elif not result.accepted:
-        store.transition(
+        fenced_transition(
+            store,
             job.job_id,
             JobState.FAILED,
+            worker_id=worker_id,
+            ctx=ctx,
             error=f"{result.ack_status}: {result.message}"[:500],
         )
     else:
-        store.transition(
+        fenced_transition(
+            store,
             job.job_id,
             JobState.FAILED,
+            worker_id=worker_id,
+            ctx=ctx,
             error="COMMIT_FAILED: receipt missing after db_commit ingest",
         )
 
@@ -179,9 +190,17 @@ def run_db_commit_worker(*, once: bool = False, max_commits: int | None = None) 
                     _ingest_knowledge_commit_job(ctx, job, coordinator)
                     processed += 1
                 except Exception as exc:  # noqa: BLE001
+                    from Data.modules.jobs.leases import fenced_transition
                     from Data.modules.jobs.states import JobState
 
-                    store.transition(job.job_id, JobState.FAILED, error=str(exc)[:500])
+                    fenced_transition(
+                        store,
+                        job.job_id,
+                        JobState.FAILED,
+                        worker_id=worker_id,
+                        ctx=ctx,
+                        error=str(exc)[:500],
+                    )
 
             did = coordinator.process_one()
             if did:

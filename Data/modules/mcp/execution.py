@@ -10,7 +10,12 @@ import os
 from pathlib import Path
 from typing import Any
 
-from Data.modules.jobs.leases import LeaseFenceError, make_lease_bound_checks
+from Data.modules.jobs.leases import (
+    LeaseFenceError,
+    fenced_transition,
+    make_lease_bound_checks,
+    record_stale_lease_fence,
+)
 from Data.modules.jobs.states import JobState
 from Data.modules.mcp.errors import McpError
 from Data.modules.mcp.limits import DEFAULT_MCP_LIMITS
@@ -41,6 +46,8 @@ class McpExecutionExecutor:
         server_id = str(args.get("server_id") or "").strip()
         tool_name = str(args.get("tool_name") or "").strip()
         arguments = dict(args.get("arguments") or {})
+        worker_id = str(ctx.get("worker_id") or f"mcp_execution-{os.getpid()}")
+
         if not server_id or not tool_name:
             payload = {
                 "status": "failed",
@@ -50,7 +57,15 @@ class McpExecutionExecutor:
                 },
                 "worker_pid": os.getpid(),
             }
-            store.transition(job.job_id, JobState.FAILED, error="MCP_INVALID_REQUEST", result=payload)
+            fenced_transition(
+                store,
+                job.job_id,
+                JobState.FAILED,
+                worker_id=worker_id,
+                ctx=ctx,
+                error="MCP_INVALID_REQUEST",
+                result=payload,
+            )
             return payload
 
         config = self.store.get_server(server_id)
@@ -60,10 +75,17 @@ class McpExecutionExecutor:
                 "error": {"code": "MCP_SERVER_NOT_FOUND", "message": server_id},
                 "worker_pid": os.getpid(),
             }
-            store.transition(job.job_id, JobState.FAILED, error="MCP_SERVER_NOT_FOUND", result=payload)
+            fenced_transition(
+                store,
+                job.job_id,
+                JobState.FAILED,
+                worker_id=worker_id,
+                ctx=ctx,
+                error="MCP_SERVER_NOT_FOUND",
+                result=payload,
+            )
             return payload
 
-        worker_id = str(ctx.get("worker_id") or f"mcp_execution-{os.getpid()}")
         cancel_check, heartbeat = make_lease_bound_checks(
             ctx,
             store,
@@ -97,9 +119,12 @@ class McpExecutionExecutor:
                     if current.state != JobState.CANCELLED:
                         if current.state == JobState.RUNNING:
                             store.request_cancel(job.job_id, reason="Cancelled")
-                        store.transition(
+                        fenced_transition(
+                            store,
                             job.job_id,
                             JobState.CANCELLED,
+                            worker_id=worker_id,
+                            ctx=ctx,
                             error="MCP_CALL_CANCELLED",
                             result=payload,
                         )
@@ -109,16 +134,16 @@ class McpExecutionExecutor:
                     "error": {"code": "LEASE_FENCE", "message": "lease_fence_or_cancel_unreadable"},
                     "worker_pid": os.getpid(),
                 }
-                try:
-                    store.transition(
-                        job.job_id,
-                        JobState.FAILED,
-                        error="LEASE_FENCE",
-                        result=payload,
-                        expected_lease_owner=worker_id,
-                    )
-                except Exception:  # noqa: BLE001
-                    pass
+                record_stale_lease_fence(ctx)
+                fenced_transition(
+                    store,
+                    job.job_id,
+                    JobState.FAILED,
+                    worker_id=worker_id,
+                    ctx=ctx,
+                    error="LEASE_FENCE",
+                    result=payload,
+                )
                 return payload
 
             try:
@@ -129,12 +154,16 @@ class McpExecutionExecutor:
                     "error": {"code": "LEASE_FENCE", "message": str(exc)},
                     "worker_pid": os.getpid(),
                 }
-                try:
-                    store.transition(
-                        job.job_id, JobState.FAILED, error="LEASE_FENCE", result=payload
-                    )
-                except Exception:  # noqa: BLE001
-                    pass
+                record_stale_lease_fence(ctx)
+                fenced_transition(
+                    store,
+                    job.job_id,
+                    JobState.FAILED,
+                    worker_id=worker_id,
+                    ctx=ctx,
+                    error="LEASE_FENCE",
+                    result=payload,
+                )
                 return payload
 
             session.connect()
@@ -156,19 +185,52 @@ class McpExecutionExecutor:
                 "tool_name": tool_name,
             }
             if result.status == McpCallStatus.COMPLETED and not result.is_error:
-                store.transition(job.job_id, JobState.COMPLETED, result=out)
+                fenced_transition(
+                    store,
+                    job.job_id,
+                    JobState.COMPLETED,
+                    worker_id=worker_id,
+                    ctx=ctx,
+                    result=out,
+                )
             elif result.status == McpCallStatus.CANCELLED:
-                store.transition(job.job_id, JobState.CANCELLED, error=result.error_code, result=out)
+                fenced_transition(
+                    store,
+                    job.job_id,
+                    JobState.CANCELLED,
+                    worker_id=worker_id,
+                    ctx=ctx,
+                    error=result.error_code,
+                    result=out,
+                )
             elif result.status == McpCallStatus.TIMEOUT:
-                store.transition(job.job_id, JobState.FAILED, error="MCP_CALL_TIMEOUT", result=out)
-            else:
-                store.transition(
+                fenced_transition(
+                    store,
                     job.job_id,
                     JobState.FAILED,
+                    worker_id=worker_id,
+                    ctx=ctx,
+                    error="MCP_CALL_TIMEOUT",
+                    result=out,
+                )
+            else:
+                fenced_transition(
+                    store,
+                    job.job_id,
+                    JobState.FAILED,
+                    worker_id=worker_id,
+                    ctx=ctx,
                     error=result.error_code or "MCP_TOOL_CALL_FAILED",
                     result=out,
                 )
             return out
+        except LeaseFenceError as exc:
+            record_stale_lease_fence(ctx)
+            return {
+                "status": "failed",
+                "error": {"code": "LEASE_FENCE", "message": str(exc)},
+                "worker_pid": os.getpid(),
+            }
         except McpError as exc:
             cancelled = exc.code == "MCP_CALL_CANCELLED"
             payload = {
@@ -176,9 +238,12 @@ class McpExecutionExecutor:
                 "error": {"code": exc.code, "message": exc.message},
                 "worker_pid": os.getpid(),
             }
-            store.transition(
+            fenced_transition(
+                store,
                 job.job_id,
                 JobState.CANCELLED if cancelled else JobState.FAILED,
+                worker_id=worker_id,
+                ctx=ctx,
                 error=exc.code,
                 result=payload,
             )

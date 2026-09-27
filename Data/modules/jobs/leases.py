@@ -183,6 +183,65 @@ def make_lease_bound_checks(
     return cancel_check, heartbeat
 
 
+def record_stale_lease_fence(
+    ctx: dict[str, Any] | None = None,
+    *,
+    telemetry: dict[str, Any] | None = None,
+) -> None:
+    """Emit telemetry when a stale worker is fenced from mutating canonical job truth."""
+    _signal_fence(ctx)
+    sinks: list[dict[str, Any]] = []
+    if isinstance(telemetry, dict):
+        sinks.append(telemetry)
+    if isinstance(ctx, dict):
+        sinks.append(ctx)
+        nested = ctx.get("telemetry")
+        if isinstance(nested, dict):
+            sinks.append(nested)
+        policy = ctx.get("policy")
+        if policy is not None:
+            pt = getattr(policy, "telemetry", None)
+            if isinstance(pt, dict):
+                sinks.append(pt)
+    seen: set[int] = set()
+    for sink in sinks:
+        sid = id(sink)
+        if sid in seen:
+            continue
+        seen.add(sid)
+        sink["stale_lease_fenced"] = int(sink.get("stale_lease_fenced", 0)) + 1
+
+
+def fenced_transition(
+    store: Any,
+    job_id: str,
+    new_state: Any,
+    *,
+    worker_id: str,
+    ctx: dict[str, Any] | None = None,
+    telemetry: dict[str, Any] | None = None,
+    **kwargs: Any,
+) -> Any | None:
+    """``JobStore.transition`` under ``expected_lease_owner``.
+
+    On ``StaleLeaseError`` (lost lease / takeover): emit telemetry and do **not**
+    overwrite canonical job state. Callers that already performed side effects
+    must treat ``None`` as fenced — never fall back to an unfenced mutation.
+    """
+    from Data.modules.jobs.states import StaleLeaseError
+
+    try:
+        return store.transition(
+            job_id,
+            new_state,
+            expected_lease_owner=worker_id,
+            **kwargs,
+        )
+    except StaleLeaseError:
+        record_stale_lease_fence(ctx, telemetry=telemetry)
+        return None
+
+
 @dataclass(frozen=True)
 class WorkerProtocolInfo:
     """Protocol/version negotiation for supervised workers (U014)."""

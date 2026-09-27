@@ -4,8 +4,10 @@ from __future__ import annotations
 from Data.modules.workers.entrypoints._cli import main_for_pool
 
 def _handler(ctx, job):
+    from Data.modules.jobs.leases import fenced_transition
     from Data.modules.jobs.states import JobState
     store = ctx["job_store"]
+    worker_id = str(ctx.get("worker_id") or "")
     recovered = 0
     if hasattr(store, "recover_expired_leases"):
         recovered = len(store.recover_expired_leases())
@@ -21,7 +23,14 @@ def _handler(ctx, job):
                 pass
     ctx["admission"].recover_expired()
     ctx["registry"].reconcile_stale(heartbeat_ttl_seconds=60.0)
-    store.transition(job.job_id, JobState.COMPLETED, result={"recovered": recovered})
+    fenced_transition(
+        store,
+        job.job_id,
+        JobState.COMPLETED,
+        worker_id=worker_id,
+        ctx=ctx,
+        result={"recovered": recovered},
+    )
     return {"recovered": recovered}
 
 

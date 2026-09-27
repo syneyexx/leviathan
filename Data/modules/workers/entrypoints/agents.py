@@ -31,12 +31,13 @@ def _build_fleet(ctx: dict[str, Any]):
 
 
 def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
+    from Data.modules.jobs.leases import fenced_transition
     from Data.modules.jobs.states import JobState
 
     args = dict(getattr(job, "arguments", None) or {})
     mission_id = str(args.get("mission_id") or "")
     if not mission_id:
-        ctx["job_store"].transition(job.job_id, JobState.FAILED, error="missing mission_id")
+        fenced_transition(ctx["job_store"], job.job_id, JobState.FAILED, error="missing mission_id", worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         return {}
 
     try:
@@ -49,10 +50,10 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
             "progress": mission.progress,
             "error": mission.error,
         }
-        ctx["job_store"].transition(job.job_id, JobState.COMPLETED, result=result)
+        fenced_transition(ctx["job_store"], job.job_id, JobState.COMPLETED, result=result, worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         return result
     except Exception as exc:  # noqa: BLE001
-        ctx["job_store"].transition(job.job_id, JobState.FAILED, error=str(exc)[:500])
+        fenced_transition(ctx["job_store"], job.job_id, JobState.FAILED, error=str(exc)[:500], worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         return {"error": str(exc)}
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 from Data.modules.workers.entrypoints._cli import main_for_pool
 
 def _handler(ctx, job):
+    from Data.modules.jobs.leases import fenced_transition
     from Data.modules.jobs.states import JobState
     # Domain coding worker advances one coding.advance job
     from Data.modules.coding.worker import CodingWorker
@@ -11,7 +12,7 @@ def _handler(ctx, job):
     args = dict(job.arguments or {})
     session_id = str(args.get("session_id") or "")
     if not session_id:
-        ctx["job_store"].transition(job.job_id, JobState.FAILED, error="missing session_id")
+        fenced_transition(ctx["job_store"], job.job_id, JobState.FAILED, error="missing session_id", worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         return {}
     # Leave execution to CodingWorker when bound; here use gateway-less domain import carefully
     try:
@@ -27,7 +28,7 @@ def _handler(ctx, job):
     except Exception as exc:
         refreshed = ctx["job_store"].get(job.job_id)
         if refreshed and refreshed.state.value == "RUNNING":
-            ctx["job_store"].transition(job.job_id, JobState.FAILED, error=str(exc))
+            fenced_transition(ctx["job_store"], job.job_id, JobState.FAILED, error=str(exc), worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
     return {}
 
 

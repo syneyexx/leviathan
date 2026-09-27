@@ -5,13 +5,18 @@ from __future__ import annotations
 from typing import Any
 
 
-def _fail(store: Any, job: Any, error: str, *, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+def _fail(store: Any, job: Any, error: str, *, metadata: dict[str, Any] | None = None, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
+    from Data.modules.jobs.leases import fenced_transition
     from Data.modules.jobs.states import JobState
 
+    worker_id = str((ctx or {}).get("worker_id") or getattr(job, "lease_owner", None) or "")
     try:
-        store.transition(
+        fenced_transition(
+            store,
             job.job_id,
             JobState.FAILED,
+            worker_id=worker_id,
+            ctx=ctx,
             error=error,
             metadata_update=metadata or {},
         )
@@ -20,10 +25,19 @@ def _fail(store: Any, job: Any, error: str, *, metadata: dict[str, Any] | None =
     return {"error": error}
 
 
-def _complete(store: Any, job: Any, result: dict[str, Any]) -> dict[str, Any]:
+def _complete(store: Any, job: Any, result: dict[str, Any], *, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
+    from Data.modules.jobs.leases import fenced_transition
     from Data.modules.jobs.states import JobState
 
-    store.transition(job.job_id, JobState.COMPLETED, result=result)
+    worker_id = str((ctx or {}).get("worker_id") or getattr(job, "lease_owner", None) or "")
+    fenced_transition(
+        store,
+        job.job_id,
+        JobState.COMPLETED,
+        worker_id=worker_id,
+        ctx=ctx,
+        result=result,
+    )
     return result
 
 
@@ -87,7 +101,7 @@ def process_research_job(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None
         action = str(args.get("action") or action).strip().lower()
     project_id = str(args.get("project_id") or "")
     if not project_id:
-        return _fail(store, job, "missing project_id")
+        return _fail(store, job, "missing project_id", ctx=ctx)
 
     try:
         service = _construct_research_service(ctx)
@@ -97,6 +111,7 @@ def process_research_job(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None
             job,
             f"ResearchService not constructible: {type(exc).__name__}: {exc}",
             metadata={"research_action": action, "project_id": project_id},
+            ctx=ctx,
         )
 
     cancel_check = ctx.get("job_cancel_check")
@@ -125,6 +140,7 @@ def process_research_job(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None
                     job,
                     "lease_lost_or_cancel_before_execution",
                     metadata={"research_action": action, "project_id": project_id},
+                    ctx=ctx,
                 )
             result = service.execute_queued_run(
                 project_id,
@@ -149,6 +165,7 @@ def process_research_job(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None
                             "project_id": project_id,
                             "project_status": status_val,
                         },
+                        ctx=ctx,
                     )
         elif action == "plan":
             edits = args.get("edits") if isinstance(args.get("edits"), dict) else None
@@ -191,11 +208,12 @@ def process_research_job(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None
                     job,
                     "research.verify not supported by ResearchService",
                     metadata={"research_action": action, "project_id": project_id},
+                    ctx=ctx,
                 )
         elif action in {"fetch_url", "url"}:
             url = str(args.get("url") or "").strip()
             if not url:
-                return _fail(store, job, "missing url", metadata={"research_action": action})
+                return _fail(store, job, "missing url", metadata={"research_action": action}, ctx=ctx)
             source_id = str(args.get("source_id") or "") or None
             result = service.execute_fetch_url(project_id, url, source_id=source_id)
         elif action in {"regenerate_report", "report", "report.generate"}:
@@ -210,6 +228,7 @@ def process_research_job(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None
                     "enqueue research.advance to run the orchestration loop"
                 ),
                 metadata={"research_action": action, "project_id": project_id},
+                ctx=ctx,
             )
         else:
             return _fail(
@@ -217,16 +236,18 @@ def process_research_job(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None
                 job,
                 f"unsupported research action: {action}",
                 metadata={"research_action": action, "project_id": project_id},
+                ctx=ctx,
             )
 
         payload = _public(result)
         payload.setdefault("action", action)
         payload.setdefault("project_id", project_id)
-        return _complete(store, job, payload)
+        return _complete(store, job, payload, ctx=ctx)
     except Exception as exc:  # noqa: BLE001
         return _fail(
             store,
             job,
             f"{type(exc).__name__}: {exc}",
             metadata={"research_action": action, "project_id": project_id},
+            ctx=ctx,
         )

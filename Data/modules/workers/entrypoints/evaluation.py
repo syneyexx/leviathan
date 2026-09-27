@@ -125,6 +125,7 @@ def execute_evaluation_run(settings: Any, *, suite_id: str, persist: bool = True
 
 
 def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
+    from Data.modules.jobs.leases import fenced_transition
     from Data.modules.jobs.states import JobState
 
     args = dict(getattr(job, "arguments", None) or {})
@@ -147,7 +148,7 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
                         "skipped_unavailable_is_not_success": True,
                     },
                 }
-        ctx["job_store"].transition(job.job_id, JobState.COMPLETED, result=result)
+        fenced_transition(ctx["job_store"], job.job_id, JobState.COMPLETED, result=result, worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         return {
             "suite_id": result.get("suite_id", suite_id),
             "measurement": result.get("measurement"),
@@ -156,7 +157,7 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
             else result.get("persisted_report_id"),
         }
     except Exception as exc:  # noqa: BLE001
-        ctx["job_store"].transition(job.job_id, JobState.FAILED, error=str(exc)[:500])
+        fenced_transition(ctx["job_store"], job.job_id, JobState.FAILED, error=str(exc)[:500], worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
         return {"error": str(exc)}
 
 

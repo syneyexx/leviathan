@@ -13,7 +13,12 @@ from typing import Any, Callable
 
 import httpx
 
-from Data.modules.jobs.leases import LeaseFenceError, make_lease_bound_checks
+from Data.modules.jobs.leases import (
+    LeaseFenceError,
+    fenced_transition,
+    make_lease_bound_checks,
+    record_stale_lease_fence,
+)
 from Data.modules.jobs.states import JobState
 from Data.modules.model_download.errors import ModelDownloadError, ModelDownloadErrorCode
 from Data.modules.models.contracts import (
@@ -220,7 +225,14 @@ class ModelDownloadExecutor:
                 result = self._run_hf(args, cancel_check=cancel_check, progress=progress, heartbeat=heartbeat)
             result["worker_pid"] = os.getpid()
             result["download_id"] = download_id
-            store.transition(job.job_id, JobState.COMPLETED, result=result)
+            fenced_transition(
+                store,
+                job.job_id,
+                JobState.COMPLETED,
+                worker_id=worker_id,
+                ctx=ctx,
+                result=result,
+            )
             return result
         except ModelDownloadError as exc:
             cancelled = exc.code == ModelDownloadErrorCode.MODEL_DOWNLOAD_CANCELLED
@@ -245,24 +257,33 @@ class ModelDownloadExecutor:
                 except Exception:  # noqa: BLE001
                     pass
             target = JobState.CANCELLED if cancelled else JobState.FAILED
+            written = None
             try:
-                store.transition(
+                written = fenced_transition(
+                    store,
                     job.job_id,
                     target,
+                    worker_id=worker_id,
+                    ctx=ctx,
                     error=exc.code.value,
                     result=payload,
                 )
             except Exception:  # noqa: BLE001 — already terminal / illegal path
-                if cancelled:
-                    try:
-                        store.transition(
-                            job.job_id,
-                            JobState.FAILED,
-                            error=exc.code.value,
-                            result=payload,
-                        )
-                    except Exception:  # noqa: BLE001
-                        pass
+                written = None
+            # CANCELLED may be illegal from some states; try FAILED under the same fence only.
+            if written is None and cancelled:
+                try:
+                    fenced_transition(
+                        store,
+                        job.job_id,
+                        JobState.FAILED,
+                        worker_id=worker_id,
+                        ctx=ctx,
+                        error=exc.code.value,
+                        result=payload,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
             return payload
         except LeaseFenceError as exc:
             progress(
@@ -276,10 +297,8 @@ class ModelDownloadExecutor:
                 "worker_pid": os.getpid(),
                 "download_id": download_id,
             }
-            try:
-                store.transition(job.job_id, JobState.FAILED, error="LEASE_FENCE", result=payload)
-            except Exception:  # noqa: BLE001
-                pass
+            # After download side effects: do not overwrite canonical job truth.
+            record_stale_lease_fence(ctx)
             return payload
         except Exception as exc:  # noqa: BLE001
             progress(
@@ -296,7 +315,15 @@ class ModelDownloadExecutor:
                 "worker_pid": os.getpid(),
                 "download_id": download_id,
             }
-            store.transition(job.job_id, JobState.FAILED, error=str(exc), result=payload)
+            fenced_transition(
+                store,
+                job.job_id,
+                JobState.FAILED,
+                worker_id=worker_id,
+                ctx=ctx,
+                error=str(exc),
+                result=payload,
+            )
             return payload
 
     def _auth_headers(self, credential_ref: str | None) -> dict[str, str]:
