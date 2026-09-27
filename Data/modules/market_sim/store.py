@@ -2966,6 +2966,25 @@ class MarketSimStore:
             "updated_at": row["updated_at"],
         }
 
+    def list_qualification_runs(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        """Bounded recent qualification runs — for control-room projections (Wave 30)."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM market_qualification_runs
+                ORDER BY updated_at DESC LIMIT ?
+                """,
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [r for r in (self._row_qualification_run(row) for row in rows) if r]
+
+    def count_qualification_runs(self) -> int:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM market_qualification_runs"
+            ).fetchone()
+        return int(row["c"] if row else 0)
+
     def upsert_qualification_gate_result(self, result: dict[str, Any]) -> dict[str, Any]:
         payload = dict(result)
         now = utc_now()
@@ -3224,6 +3243,146 @@ class MarketSimStore:
             "certified_by": row["certified_by"],
             "superseded_by": row["superseded_by"],
         }
+
+    def list_dataset_certifications(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        """Bounded recent dataset certifications — control-room projections (Wave 30)."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM market_dataset_certifications
+                ORDER BY certified_at DESC LIMIT ?
+                """,
+                (max(1, int(limit)),),
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            out.append(
+                {
+                    "certification_id": row["certification_id"],
+                    "dataset_id": row["dataset_id"],
+                    "dataset_version_id": row["dataset_version_id"],
+                    "dataset_hash": row["dataset_hash"],
+                    "data_type": row["data_type"],
+                    "certification_state": row["certification_state"],
+                    "pit_state": row["pit_state"],
+                    "survivorship_state": row["survivorship_state"],
+                    "revision_state": row["revision_state"],
+                    "corporate_action_state": row["corporate_action_state"],
+                    "source_id": row["source_id"],
+                    "license_state": row["license_state"],
+                    "evidence": _loads(row["evidence_json"], {}),
+                    "certification_hash": row["certification_hash"],
+                    "certified_at": row["certified_at"],
+                    "certified_by": row["certified_by"],
+                    "superseded_by": row["superseded_by"],
+                }
+            )
+        return out
+
+    def list_sealed_attempts(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        """Bounded sealed attempts — control-room sealed-state projection (Wave 30)."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM market_sim_sealed_attempts
+                ORDER BY bound_at DESC LIMIT ?
+                """,
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [r for r in (self._row_sealed_attempt(row) for row in rows) if r]
+
+    # --- Market hypotheses (Wave 25) — reuse experiment/campaign metadata ---
+
+    def save_market_hypothesis(
+        self,
+        hyp: dict[str, Any],
+        *,
+        campaign_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist MarketHypothesis via experiment row + optional campaign metadata."""
+        from .experiments import market_hypothesis_from_mapping, attach_hypothesis_to_campaign
+
+        body = market_hypothesis_from_mapping(hyp).public_dict()
+        hid = str(body["hypothesis_id"])
+        self.save_experiment(
+            {
+                "trial_id": f"hyp::{hid}",
+                "strategy_id": str(hyp.get("strategy_id") or "_market_hypothesis"),
+                "strategy_version": 0,
+                "hypothesis": body.get("falsifiable_prediction") or body.get("observation") or "",
+                "proposer_agent_id": body.get("created_by") or "system",
+                "data_hash": ",".join(body.get("required_data") or []) or "none",
+                "fingerprint": f"hypothesis:{hid}",
+                "status": body["status"],
+                "config": {"kind": "market_hypothesis"},
+                "split": {},
+                "results": {},
+                "acceptance_criteria": {},
+                "seed": 0,
+                "created_at": body.get("created_at") or utc_now(),
+                "metadata": {
+                    "kind": "market_hypothesis",
+                    "market_hypothesis": body,
+                    "hypothesis_id": hid,
+                },
+            }
+        )
+        if campaign_id:
+            camp = self.get_research_campaign(campaign_id)
+            if camp:
+                updated = attach_hypothesis_to_campaign(camp, body)
+                self.upsert_research_campaign(updated)
+        return body
+
+    def get_market_hypothesis(self, hypothesis_id: str) -> dict[str, Any] | None:
+        row = self.get_experiment(f"hyp::{hypothesis_id}")
+        if not row:
+            # Fallback: scan recent campaigns (bounded)
+            for camp in self.list_research_campaigns(limit=50):
+                hyps = (camp.get("metadata") or {}).get("hypotheses") or {}
+                if hypothesis_id in hyps:
+                    return dict(hyps[hypothesis_id])
+            return None
+        meta = dict(row.get("metadata") or {})
+        body = meta.get("market_hypothesis")
+        return dict(body) if isinstance(body, dict) else None
+
+    def list_market_hypotheses(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        """Bounded hypothesis list from experiment fingerprints + campaign metadata."""
+        lim = max(1, int(limit))
+        out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT trial_id, metadata_json, status, created_at FROM market_experiments
+                WHERE fingerprint LIKE 'hypothesis:%'
+                ORDER BY created_at DESC LIMIT ?
+                """,
+                (lim,),
+            ).fetchall()
+        for r in rows:
+            meta = _loads(r["metadata_json"], {})
+            body = meta.get("market_hypothesis")
+            if isinstance(body, dict) and body.get("hypothesis_id"):
+                hid = str(body["hypothesis_id"])
+                if hid not in seen:
+                    seen.add(hid)
+                    out.append(dict(body))
+        if len(out) < lim:
+            for camp in self.list_research_campaigns(limit=min(50, lim)):
+                for body in ((camp.get("metadata") or {}).get("hypotheses") or {}).values():
+                    if not isinstance(body, dict):
+                        continue
+                    hid = str(body.get("hypothesis_id") or "")
+                    if hid and hid not in seen:
+                        seen.add(hid)
+                        out.append(dict(body))
+                        if len(out) >= lim:
+                            break
+                if len(out) >= lim:
+                    break
+        return out[:lim]
 
     def save_strategy_behavior_fingerprint(self, fp: dict[str, Any]) -> dict[str, Any]:
         payload = dict(fp)

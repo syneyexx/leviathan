@@ -256,7 +256,13 @@ def run_assurance(
                 )
             )
 
-    qa_scan = scan_qualification_authority_uniqueness(resolved_roots)
+    # Uniqueness always includes the market_sim package root so callers that
+    # pass only institutional_core/ still see the canonical QualificationAuthority.
+    ms_root = Path(__file__).resolve().parents[1]
+    qa_roots: list[str | Path] = list(resolved_roots)
+    if not any(Path(r).resolve() == ms_root for r in qa_roots):
+        qa_roots = [ms_root, *qa_roots]
+    qa_scan = scan_qualification_authority_uniqueness(qa_roots)
     if not qa_scan.get("ok"):
         for dup in qa_scan.get("duplicates") or []:
             findings.append(

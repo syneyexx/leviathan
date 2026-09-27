@@ -1393,6 +1393,14 @@ def build_market_sim_router(
         live = service.live_guard.public_status()
         trials = 0
         learning_runs = 0
+        qualification_meta: dict[str, Any] = {
+            "qualificationState": "UNMEASURED",
+            "qualified": None,
+            "blockers": [],
+            "pitState": "UNMEASURED",
+            "sealedState": "UNMEASURED",
+            "liveBlocked": True,
+        }
         try:
             trials = int(service.store.count_trials())
         except Exception:
@@ -1401,6 +1409,29 @@ def build_market_sim_router(
             learning_runs = len(service.store.list_learning_runs(limit=500))
         except Exception:
             learning_runs = 0
+        try:
+            if hasattr(service.store, "list_qualification_runs"):
+                recent = service.store.list_qualification_runs(limit=5) or []
+                if recent:
+                    top = recent[0]
+                    decision = str(top.get("decision") or "").upper()
+                    status = str(top.get("status") or "").upper()
+                    qualification_meta["qualificationState"] = decision or status or "UNMEASURED"
+                    qualification_meta["qualified"] = decision == "QUALIFIED"
+                    qualification_meta["blockers"] = list(top.get("blockers") or [])[:10]
+                    if top.get("sealed_attempt_id"):
+                        qualification_meta["sealedState"] = "BOUND"
+                    else:
+                        qualification_meta["sealedState"] = "EMPTY"
+            if hasattr(service.store, "list_dataset_certifications"):
+                certs = service.store.list_dataset_certifications(limit=3) or []
+                if certs:
+                    qualification_meta["pitState"] = str(
+                        certs[0].get("pit_state") or "UNMEASURED"
+                    ).upper()
+            qualification_meta["liveBlocked"] = True
+        except Exception:
+            pass
         return {
             "feature_pipeline_version": FEATURE_PIPELINE_VERSION,
             "dsl_version": DSL_CURRENT_VERSION,
@@ -1418,6 +1449,12 @@ def build_market_sim_router(
             "learning_algorithm_version": LEARNING_ALGORITHM_VERSION,
             "valid_lab_outcomes": [LabOutcome.QUALIFIED_STRATEGY_FOUND.value, LabOutcome.NO_STRATEGY_QUALIFIED.value],
             "live_trading": live,
+            "qualification": qualification_meta,
+            "qualificationState": qualification_meta["qualificationState"],
+            "qualified": qualification_meta["qualified"],
+            "blockers": qualification_meta["blockers"],
+            "pitState": qualification_meta["pitState"],
+            "sealedState": qualification_meta["sealedState"],
             "truth": {
                 "no_mock_kpis": True,
                 "paper_does_not_prove_live_profitability": True,

@@ -11,6 +11,163 @@ from typing import Any
 from .types import MetricStatus
 from .epistemic import is_available
 
+# Wave 25 — market hypothesis lifecycle (NOT MeasurementState)
+HYPOTHESIS_STATUSES: frozenset[str] = frozenset(
+    {
+        "PROPOSED",
+        "TESTING",
+        "SUPPORTED",
+        "FRAGILE",
+        "CONTRADICTED",
+        "REJECTED",
+        "STALE",
+    }
+)
+
+RESEARCH_DEBT_STATES: frozenset[str] = frozenset(
+    {
+        "KNOWN",
+        "UNKNOWN",
+        "UNMEASURED",
+        "ASSUMED",
+        "REQUIRES_TEST",
+    }
+)
+
+
+@dataclass
+class MarketHypothesis:
+    """Formal market hypothesis identity — lifecycle status, not measurement."""
+
+    hypothesis_id: str
+    parent_hypothesis_id: str | None
+    observation: str
+    rationale: str
+    mechanism: str
+    falsifiable_prediction: str
+    universe: list[str]
+    regime_scope: list[str]
+    required_data: list[str]
+    expected_failure_conditions: list[str]
+    created_by: str
+    created_at: str
+    status: str  # PROPOSED|TESTING|SUPPORTED|FRAGILE|CONTRADICTED|REJECTED|STALE
+    evidence_refs: list[str]
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "hypothesis_id": self.hypothesis_id,
+            "parent_hypothesis_id": self.parent_hypothesis_id,
+            "observation": self.observation,
+            "rationale": self.rationale,
+            "mechanism": self.mechanism,
+            "falsifiable_prediction": self.falsifiable_prediction,
+            "universe": list(self.universe),
+            "regime_scope": list(self.regime_scope),
+            "required_data": list(self.required_data),
+            "expected_failure_conditions": list(self.expected_failure_conditions),
+            "created_by": self.created_by,
+            "created_at": self.created_at,
+            "status": self.status,
+            "evidence_refs": list(self.evidence_refs),
+            "truth": {
+                "status_is_lifecycle_not_measurement": True,
+                "not_measurement_state": True,
+            },
+        }
+
+
+def validate_hypothesis_status(status: str) -> str:
+    s = str(status or "").upper().strip()
+    if s not in HYPOTHESIS_STATUSES:
+        raise ValueError(
+            f"invalid hypothesis status {status!r}; "
+            f"allowed={sorted(HYPOTHESIS_STATUSES)}"
+        )
+    return s
+
+
+def new_market_hypothesis(
+    *,
+    observation: str,
+    rationale: str,
+    mechanism: str,
+    falsifiable_prediction: str,
+    created_by: str,
+    created_at: str,
+    universe: list[str] | None = None,
+    regime_scope: list[str] | None = None,
+    required_data: list[str] | None = None,
+    expected_failure_conditions: list[str] | None = None,
+    parent_hypothesis_id: str | None = None,
+    evidence_refs: list[str] | None = None,
+    status: str = "PROPOSED",
+    hypothesis_id: str | None = None,
+) -> MarketHypothesis:
+    return MarketHypothesis(
+        hypothesis_id=hypothesis_id or str(uuid.uuid4()),
+        parent_hypothesis_id=parent_hypothesis_id,
+        observation=observation or "",
+        rationale=rationale or "",
+        mechanism=mechanism or "",
+        falsifiable_prediction=falsifiable_prediction or "",
+        universe=list(universe or []),
+        regime_scope=list(regime_scope or []),
+        required_data=list(required_data or []),
+        expected_failure_conditions=list(expected_failure_conditions or []),
+        created_by=created_by or "system",
+        created_at=created_at,
+        status=validate_hypothesis_status(status),
+        evidence_refs=list(evidence_refs or []),
+    )
+
+
+def market_hypothesis_from_mapping(raw: dict[str, Any] | None) -> MarketHypothesis:
+    raw = dict(raw or {})
+    return MarketHypothesis(
+        hypothesis_id=str(raw.get("hypothesis_id") or uuid.uuid4()),
+        parent_hypothesis_id=raw.get("parent_hypothesis_id"),
+        observation=str(raw.get("observation") or ""),
+        rationale=str(raw.get("rationale") or ""),
+        mechanism=str(raw.get("mechanism") or ""),
+        falsifiable_prediction=str(raw.get("falsifiable_prediction") or ""),
+        universe=list(raw.get("universe") or []),
+        regime_scope=list(raw.get("regime_scope") or []),
+        required_data=list(raw.get("required_data") or []),
+        expected_failure_conditions=list(raw.get("expected_failure_conditions") or []),
+        created_by=str(raw.get("created_by") or "system"),
+        created_at=str(raw.get("created_at") or ""),
+        status=validate_hypothesis_status(str(raw.get("status") or "PROPOSED")),
+        evidence_refs=list(raw.get("evidence_refs") or []),
+    )
+
+
+def attach_hypothesis_to_campaign(
+    campaign: dict[str, Any],
+    hyp: MarketHypothesis | dict[str, Any],
+) -> dict[str, Any]:
+    """Persist hypothesis identity on existing research campaign metadata."""
+    body = hyp.public_dict() if isinstance(hyp, MarketHypothesis) else market_hypothesis_from_mapping(hyp).public_dict()
+    out = dict(campaign)
+    meta = dict(out.get("metadata") or {})
+    hyps = dict(meta.get("hypotheses") or {})
+    hyps[str(body["hypothesis_id"])] = body
+    meta["hypotheses"] = hyps
+    meta["active_hypothesis_id"] = body["hypothesis_id"]
+    out["metadata"] = meta
+    # Keep legacy text field aligned for search/display
+    out["hypothesis"] = body.get("falsifiable_prediction") or body.get("observation") or out.get("hypothesis") or ""
+    return out
+
+
+def bind_hypothesis_id(metadata: dict[str, Any] | None, hypothesis_id: str | None) -> dict[str, Any]:
+    """Attach hypothesis_id onto candidate / trial metadata (Wave 25 binding)."""
+    meta = dict(metadata or {})
+    hid = str(hypothesis_id or "").strip()
+    if hid:
+        meta["hypothesis_id"] = hid
+    return meta
+
 
 @dataclass
 class ExperimentTrial:

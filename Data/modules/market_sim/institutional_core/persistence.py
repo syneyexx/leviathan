@@ -931,3 +931,120 @@ class InstitutionalRepository:
             item = dict(zip(cols, row))
             item["payload"] = json.loads(item.pop("payload_json") or "{}")
             return item
+
+    # --- Model risk / governance (Wave 31) — single registry table ---
+
+    def upsert_model_governance(self, card: Mapping[str, Any]) -> dict[str, Any]:
+        """Persist model-risk metadata into institutional_model_governance."""
+        now = now_canonical()
+        row = {
+            "model_id": str(card["model_id"]),
+            "version": str(card.get("version") or "0"),
+            "intended_use": str(card.get("intended_use") or card.get("name") or ""),
+            "prohibited_use": str(card.get("prohibited_use") or ""),
+            "validation_state": str(card.get("validation_state") or "UNVALIDATED"),
+            "owner": str(card.get("owner") or ""),
+            "validator": str(card.get("validator") or ""),
+            "approval_state": str(card.get("approval_state") or card.get("state") or "CANDIDATE"),
+            "limitations_json": _canon(card.get("limitations") or []),
+            "evidence_json": _canon(card.get("evidence") or card.get("validation_evidence") or {}),
+            "updated_at": now,
+        }
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO institutional_model_governance(
+                    model_id, version, intended_use, prohibited_use, validation_state,
+                    owner, validator, approval_state, limitations_json, evidence_json, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(model_id, version) DO UPDATE SET
+                    intended_use=excluded.intended_use,
+                    prohibited_use=excluded.prohibited_use,
+                    validation_state=excluded.validation_state,
+                    owner=excluded.owner,
+                    validator=excluded.validator,
+                    approval_state=excluded.approval_state,
+                    limitations_json=excluded.limitations_json,
+                    evidence_json=excluded.evidence_json,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    row["model_id"],
+                    row["version"],
+                    row["intended_use"],
+                    row["prohibited_use"],
+                    row["validation_state"],
+                    row["owner"],
+                    row["validator"],
+                    row["approval_state"],
+                    row["limitations_json"],
+                    row["evidence_json"],
+                    row["updated_at"],
+                ),
+            )
+        return row
+
+    def register_execution_model_candidate(
+        self,
+        *,
+        model_id: str,
+        version: str,
+        owner: str = "",
+        intended_use: str = "execution",
+        name: str = "",
+        limitations: list[str] | None = None,
+        evidence: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Thin Wave 31 helper — new execution model versions start as CANDIDATE.
+
+        Does not create a second ModelRegistry; writes the existing governance table.
+        """
+        return self.upsert_model_governance(
+            {
+                "model_id": model_id,
+                "version": version,
+                "name": name or model_id,
+                "intended_use": intended_use or "execution",
+                "owner": owner,
+                "approval_state": "CANDIDATE",
+                "validation_state": "UNVALIDATED",
+                "limitations": list(limitations or []),
+                "evidence": dict(evidence or {"state": "CANDIDATE", "kind": "execution_model"}),
+            }
+        )
+
+    def get_model_governance(self, model_id: str, version: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                SELECT * FROM institutional_model_governance
+                WHERE model_id = ? AND version = ?
+                """,
+                (model_id, version),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            cols = [d[0] for d in cur.description]
+            item = dict(zip(cols, row))
+            item["limitations"] = json.loads(item.pop("limitations_json") or "[]")
+            item["evidence"] = json.loads(item.pop("evidence_json") or "{}")
+            return item
+
+    def list_model_governance(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                SELECT * FROM institutional_model_governance
+                ORDER BY updated_at DESC LIMIT ?
+                """,
+                (max(1, int(limit)),),
+            )
+            cols = [d[0] for d in cur.description]
+            out = []
+            for r in cur.fetchall():
+                item = dict(zip(cols, r))
+                item["limitations"] = json.loads(item.pop("limitations_json") or "[]")
+                item["evidence"] = json.loads(item.pop("evidence_json") or "{}")
+                out.append(item)
+            return out

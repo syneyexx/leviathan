@@ -432,6 +432,7 @@ class CandidateProposal:
             "learner_state_hash": self.learner_state_hash,
             "objective_hash": self.objective_hash,
             "metadata": dict(self.metadata),
+            "hypothesis_id": (self.metadata or {}).get("hypothesis_id"),
         }
 
     @classmethod

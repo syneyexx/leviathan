@@ -265,7 +265,12 @@ from .events import (
     event_catalog_public,
     validate_event,
 )
-from .control_room import ControlRoomSnapshot, build_control_room_snapshot
+from .control_room import (
+    ControlRoomSnapshot,
+    build_control_room_snapshot,
+    build_data_plane_projections,
+    build_research_projections,
+)
 from .reporting import ReportSection, GovernanceReportPack, build_governance_report_pack
 from .illiquid import (
     ILLIQUID_FAMILIES,
@@ -521,6 +526,8 @@ __all__ = [
     # W68
     "ControlRoomSnapshot",
     "build_control_room_snapshot",
+    "build_research_projections",
+    "build_data_plane_projections",
     # W69
     "ReportSection",
     "GovernanceReportPack",

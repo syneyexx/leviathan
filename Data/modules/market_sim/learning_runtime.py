@@ -439,6 +439,11 @@ def _append_trial(
                 "strategy_hash": candidate.content_hash,
                 "environment_fingerprint": run.input_fingerprint,
                 "idempotency_key": trial_id,
+                **(
+                    {"hypothesis_id": (candidate.metadata or {}).get("hypothesis_id")}
+                    if (candidate.metadata or {}).get("hypothesis_id")
+                    else {}
+                ),
             },
         }
     )
