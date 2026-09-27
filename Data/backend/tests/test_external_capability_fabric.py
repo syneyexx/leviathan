@@ -311,7 +311,9 @@ class ExternalFabricUnitTests(unittest.TestCase):
             self.assertIn("parts", result.output or {})
 
     def test_declared_source_manifests_parse(self) -> None:
-        root = Path("/workspace/Data/external_capabilities")
+        # Resolve from this test file — never hardcode /workspace (absent on CI runners).
+        root = Path(__file__).resolve().parents[2] / "external_capabilities"
+        self.assertTrue(root.is_dir(), f"missing external_capabilities at {root}")
         manifests = sorted(root.glob("*/module.json"))
         self.assertGreaterEqual(len(manifests), 20)
         for path in manifests:
@@ -374,8 +376,8 @@ class ExternalFabricUnitTests(unittest.TestCase):
 
 class ExternalAcceptanceMatrixTests(unittest.TestCase):
     def test_matrix_file_exists_and_covers_sources(self) -> None:
-        matrix = Path("/workspace/Data/backend/tests/external_sources_acceptance_matrix.json")
-        self.assertTrue(matrix.exists())
+        matrix = Path(__file__).resolve().parent / "external_sources_acceptance_matrix.json"
+        self.assertTrue(matrix.exists(), f"missing acceptance matrix at {matrix}")
         data = json.loads(matrix.read_text(encoding="utf-8"))
         sources = {row["source"] for row in data["sources"]}
         required = {
