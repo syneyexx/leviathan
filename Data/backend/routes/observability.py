@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import threading
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -21,6 +23,129 @@ class OperatorCommandBody(BaseModel):
     command: str = Field(min_length=1, max_length=2_000)
 
 
+# Cache for jobs_completed_24h — 2s polling must not hammer SQLite.
+_JOBS_24H_LOCK = threading.Lock()
+_JOBS_24H_CACHE: dict[str, Any] = {"value": None, "expires_at": 0.0, "path": None}
+_JOBS_24H_TTL_S = 30.0
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _count_jobs_completed_24h(job_store: Any | None) -> int | None:
+    """Bounded COUNT via JobStore; cached ~30s. None when store unavailable."""
+    if job_store is None or not hasattr(job_store, "count_completed_since"):
+        return None
+    path = str(getattr(job_store, "path", "") or "")
+    now = time.time()
+    with _JOBS_24H_LOCK:
+        if (
+            _JOBS_24H_CACHE["path"] == path
+            and now < float(_JOBS_24H_CACHE["expires_at"])
+            and _JOBS_24H_CACHE["value"] is not None
+        ):
+            return int(_JOBS_24H_CACHE["value"])
+    since = (_utc_now() - timedelta(hours=24)).isoformat(timespec="seconds")
+    try:
+        count = int(job_store.count_completed_since(since))
+    except Exception:  # noqa: BLE001 — leave unmeasured rather than invent
+        return None
+    with _JOBS_24H_LOCK:
+        _JOBS_24H_CACHE["value"] = count
+        _JOBS_24H_CACHE["expires_at"] = now + _JOBS_24H_TTL_S
+        _JOBS_24H_CACHE["path"] = path
+    return count
+
+
+def _tasks_per_min(
+    *,
+    job_runtime: Any | None,
+    timeseries: TimeSeriesStore,
+) -> float | None:
+    """Rolling tasks/min from jobs.completed timeseries or JobRuntime telemetry.
+
+    Observes the cumulative completed counter into timeseries on each call.
+    Requires ~60s of samples with a non-negative delta — otherwise UNMEASURED.
+    """
+    completed: int | None = None
+    if job_runtime is not None:
+        try:
+            telemetry = getattr(job_runtime, "telemetry", None) or {}
+            if "completed" in telemetry:
+                completed = int(telemetry["completed"])
+        except (TypeError, ValueError):
+            completed = None
+
+    now_ms = time.time() * 1000
+    if completed is not None:
+        timeseries.observe("jobs.completed", float(completed))
+
+    # Prefer explicit jobs.completed series over ~60s window.
+    try:
+        points = timeseries.range("jobs.completed", since_ms=now_ms - 90_000, limit=500)
+    except Exception:  # noqa: BLE001
+        points = []
+    if len(points) < 2:
+        return None
+    first = points[0]
+    last = points[-1]
+    try:
+        dt_s = (float(last["ts_ms"]) - float(first["ts_ms"])) / 1000.0
+        dv = float(last["value"]) - float(first["value"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    # Need a meaningful window (~60s). Counter reset → negative dv → unmeasured.
+    if dt_s < 45.0 or dv < 0:
+        return None
+    return (dv / dt_s) * 60.0
+
+
+def _operator_metrics(
+    *,
+    job_runtime: Any | None,
+    job_store: Any | None,
+    metrics: MetricsCollector,
+    timeseries: TimeSeriesStore,
+) -> dict[str, Any]:
+    tasks_per_min = _tasks_per_min(job_runtime=job_runtime, timeseries=timeseries)
+    jobs_24h = _count_jobs_completed_24h(job_store)
+
+    # native_ops_per_sec / docs_per_sec only when already instrumented — never invent.
+    snap = metrics.snapshot().public_dict()
+    gauges = dict(snap.get("gauges") or {})
+    counters = dict(snap.get("counters") or {})
+    native = None
+    docs = None
+    for key in ("native_ops_per_sec", "embeddings_per_sec"):
+        if key in gauges and isinstance(gauges[key], (int, float)):
+            native = float(gauges[key])
+            break
+        if key in counters and isinstance(counters[key], (int, float)):
+            native = float(counters[key])
+            break
+    for key in ("docs_per_sec", "documents_per_sec"):
+        if key in gauges and isinstance(gauges[key], (int, float)):
+            docs = float(gauges[key])
+            break
+        if key in counters and isinstance(counters[key], (int, float)):
+            docs = float(counters[key])
+            break
+
+    return {
+        "tasks_per_min": tasks_per_min,
+        "jobs_completed_24h": jobs_24h,
+        "native_ops_per_sec": native,
+        "docs_per_sec": docs,
+        "truth": {
+            "unmeasured_is_null": True,
+            "tasks_per_min_requires_rolling_window": True,
+            "jobs_completed_24h_cached_s": _JOBS_24H_TTL_S,
+            "no_fabricated_zeros": True,
+        },
+    }
+
+
 def build_observability_router(
     *,
     observability: ObservabilityHub,
@@ -31,6 +156,8 @@ def build_observability_router(
     component_health_fn: Any | None = None,
     database_path: Any | None = None,
     database_paths: Any | None = None,
+    job_runtime: Any | None = None,
+    job_store: Any | None = None,
 ) -> APIRouter:
     router = APIRouter(tags=["observability"])
 
@@ -145,6 +272,24 @@ def build_observability_router(
     def performance_snapshot() -> dict:
         system = sampler.latest_public()
         metrics_snap = metrics.snapshot().public_dict()
+        operator_block = _operator_metrics(
+            job_runtime=job_runtime,
+            job_store=job_store,
+            metrics=metrics,
+            timeseries=timeseries,
+        )
+        # Surface operator rates on gauges so existing launcher clients find them.
+        gauges = dict(metrics_snap.get("gauges") or {})
+        for key in (
+            "tasks_per_min",
+            "jobs_completed_24h",
+            "native_ops_per_sec",
+            "docs_per_sec",
+        ):
+            val = operator_block.get(key)
+            if val is not None:
+                gauges[key] = float(val)
+        metrics_snap = {**metrics_snap, "gauges": gauges}
         latency = {
             "http": timeseries.percentiles("http.request"),
             "capability": timeseries.percentiles("capability.execute"),
@@ -209,6 +354,7 @@ def build_observability_router(
         return {
             "system": system,
             "metrics": metrics_snap,
+            "operator": operator_block,
             "latency": latency,
             "hot_paths": timeseries.hot_paths(limit=25),
             "timeseries": timeseries.snapshot(),
