@@ -596,9 +596,49 @@ class ExternalCapabilityStore:
         if not include_catalog:
             clauses.append("catalog_only = 0")
         if query:
-            clauses.append("(name LIKE ? OR description LIKE ? OR trigger_description LIKE ?)")
-            q = f"%{query}%"
-            params.extend([q, q, q])
+            # Tokenize natural-language goals so "Audit this Cloudflare Worker"
+            # matches description/trigger text (not one giant LIKE phrase).
+            tokens = [
+                t.lower()
+                for t in "".join(ch if ch.isalnum() or ch.isspace() else " " for ch in str(query)).split()
+                if len(t) >= 3
+            ]
+            # Drop ultra-common fillers that would over-match.
+            stop = {
+                "the",
+                "this",
+                "that",
+                "with",
+                "from",
+                "using",
+                "into",
+                "for",
+                "and",
+                "are",
+                "was",
+                "you",
+                "your",
+                "please",
+                "make",
+                "create",
+                "build",
+                "use",
+            }
+            tokens = [t for t in tokens if t not in stop][:8]
+            if tokens:
+                token_clauses = []
+                for tok in tokens:
+                    token_clauses.append(
+                        "(LOWER(name) LIKE ? OR LOWER(description) LIKE ? OR LOWER(trigger_description) LIKE ?)"
+                    )
+                    q = f"%{tok}%"
+                    params.extend([q, q, q])
+                # OR across tokens — any strong keyword hit is enough for shortlist.
+                clauses.append("(" + " OR ".join(token_clauses) + ")")
+            else:
+                clauses.append("(name LIKE ? OR description LIKE ? OR trigger_description LIKE ?)")
+                q = f"%{query}%"
+                params.extend([q, q, q])
         sql = (
             f"SELECT * FROM external_skills WHERE {' AND '.join(clauses)} "
             f"ORDER BY name LIMIT ? OFFSET ?"

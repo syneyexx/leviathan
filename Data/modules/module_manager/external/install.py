@@ -26,8 +26,10 @@ def utc_now() -> str:
 
 class InstallError(RuntimeError):
     def __init__(self, code: ExternalFailureCode, message: str) -> None:
-        super().__init__(message)
+        code_value = code.value if hasattr(code, "value") else str(code)
+        super().__init__(f"{code_value}: {message}")
         self.code = code
+        self.message = message
 
 
 @dataclass

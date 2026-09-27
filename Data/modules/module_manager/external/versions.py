@@ -16,8 +16,10 @@ from .types import ExternalFailureCode, ExternalRuntimeState
 
 class VersionError(RuntimeError):
     def __init__(self, code: ExternalFailureCode, message: str) -> None:
-        super().__init__(message)
+        code_value = code.value if hasattr(code, "value") else str(code)
+        super().__init__(f"{code_value}: {message}")
         self.code = code
+        self.message = message
 
 
 def check_update(

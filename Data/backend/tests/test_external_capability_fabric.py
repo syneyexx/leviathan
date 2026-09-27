@@ -954,6 +954,65 @@ class ExternalAdapterFixtureE2ETests(unittest.TestCase):
             )
             self.assertTrue(any(str(cid).startswith("skill:") for cid in short.capability_ids))
             self.assertIn("skill:scroll-demo", short.inspected)
+            # Instructions must not be present in shortlist metadata.
+            meta = short.inspected["skill:scroll-demo"].get("metadata") or {}
+            self.assertTrue(meta.get("on_demand_instructions"))
+            self.assertNotIn("instructions", short.inspected["skill:scroll-demo"])
+
+    def test_cognition_search_capability_selects_skills_from_store(self) -> None:
+        from Data.modules.cognition.runtime import CognitiveRunState, CognitiveRuntime
+        from Data.modules.cognition.task_model import TaskModel
+        from Data.modules.cognition.types import (
+            CognitiveAction,
+            CognitiveActionKind,
+            CognitiveRunStatus,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ExternalCapabilityStore(Path(tmp) / "c.db")
+            store.initialize()
+            store.upsert_skill(
+                {
+                    "skill_id": "cloudflare-audit",
+                    "name": "cloudflare-security-audit",
+                    "description": "Audit Cloudflare Worker security configuration",
+                    "source_repo": "cloudflare/security-audit-skill",
+                    "content_hash": "hash1",
+                    "enabled": True,
+                    "catalog_only": False,
+                    "trigger_description": "audit cloudflare worker",
+                }
+            )
+            runtime = CognitiveRuntime(enabled=True, factuality_mode="NONE")
+            runtime.broker._skill_store = store  # type: ignore[attr-defined]
+            task = TaskModel(
+                task_id="t-skill",
+                run_id="r-skill",
+                raw_request="Audit this Cloudflare Worker",
+                goal="Audit this Cloudflare Worker",
+                domain="security",
+                task_type="skill",
+            )
+            state = CognitiveRunState(
+                run_id="r-skill",
+                task=task,
+                status=CognitiveRunStatus.REASONING,
+            )
+            obs = runtime._execute_action(  # noqa: SLF001
+                state,
+                CognitiveAction(
+                    kind=CognitiveActionKind.SEARCH_CAPABILITY,
+                    action_id="a-search-skills",
+                    arguments={},
+                ),
+                history=[],
+            )
+            self.assertTrue(obs.success)
+            ids = list((obs.payload or {}).get("capability_ids") or [])
+            self.assertTrue(any(str(i).startswith("skill:") for i in ids), msg=ids)
+            self.assertIn("skill:cloudflare-audit", ids)
+            event_types = [e.get("event_type") for e in state.events]
+            self.assertIn("capability_searched", event_types)
 
 
 class ExternalAcceptanceMatrixTests(unittest.TestCase):
@@ -1290,8 +1349,9 @@ class ExternalAssimilationAndScaleTests(unittest.TestCase):
             self.assertIn("update_available", check)
             # Active job blocks activation.
             manager.register_job("fake-cli", "job-busy")
-            with self.assertRaises(Exception):
+            with self.assertRaises(Exception) as blocked:
                 manager.activate_version("fake-cli", v2["version_id"])
+            self.assertIn("UPDATE_BLOCKED_ACTIVE", str(blocked.exception))
             manager.unregister_job("fake-cli", "job-busy")
             activated = manager.activate_version("fake-cli", v2["version_id"])
             self.assertEqual(activated["version_id"], v2["version_id"])

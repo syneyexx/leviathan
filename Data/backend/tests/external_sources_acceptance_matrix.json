@@ -9,7 +9,7 @@
     "NOT_APPLICABLE",
     "FAILED"
   ],
-  "notes": "Fixture adapters prove all adapter kinds. Live installs: 21/21 sources now have at least GIT checkout where applicable (vibe/llm-agent-trader venv fixed). DesktopCommander MCP gateway+approval PASS. Osintgram process start/invoke PASS. OpenMAIC /api/health + generate-classroom 202 PASS. ScrollCraft generate+build PASS. Skill load on-demand PASS. Cognition cancel\u2192CLI + rich SSE events + JobRuntime assim enqueue + PROCESS_SERVICE dead-PID reconcile proven. Auth/LLM/UE-heavy invokes remain BLOCKED_EXTERNAL. No per-repository wrappers.",
+  "notes": "Fixture adapters prove all adapter kinds. Live installs: 21/21. DesktopCommander MCP gateway+approval PASS. Osintgram start/invoke/stop PASS. OpenMAIC /api/health + generate-classroom 202 PASS. ScrollCraft generate+build PASS. Fincept get_key_metrics PASS. Selfstarter status EXIT_NONZERO PROBLEM lines PASS. Cognition skill shortlist from intent + cancel/SSE/assim/reconcile proven. Auth/LLM/UE-heavy invokes remain BLOCKED_EXTERNAL. No per-repository wrappers.",
   "sources": [
     {
       "source": "wonderwhy-er/DesktopCommanderMCP",
@@ -588,6 +588,13 @@
       "install": "PASS",
       "analyze_usage_json": "PASS",
       "analyze_get_key_metrics": "PASS"
-    }
+    },
+    "skill_selection": {
+      "broker_shortlist": "PASS",
+      "cognition_SEARCH_CAPABILITY": "PASS",
+      "tokenized_skill_search": "PASS",
+      "instructions_not_in_shortlist": "PASS"
+    },
+    "version_activate_blocked_active": "PASS UPDATE_BLOCKED_ACTIVE"
   }
 }
