@@ -1244,6 +1244,7 @@ def upgrade_all_databases(paths: DatabasePaths) -> UpgradeReport:
                 control.commit()
             finally:
                 control.close()
+            report.verification["wave3_schema_repairs"] = repair_domain_wave3_schemas(paths)
             # Reconcile product tables that landed in the wrong domain DB.
             reconcile_report = reconcile_misplaced_product_tables(paths, apply=True)
             report.verification["misplaced_reconcile"] = reconcile_report.public_dict()
@@ -1294,6 +1295,7 @@ def upgrade_all_databases(paths: DatabasePaths) -> UpgradeReport:
                 control.commit()
             finally:
                 control.close()
+            report.verification["wave3_schema_repairs"] = repair_domain_wave3_schemas(paths)
             report.phase = CutoverPhase.COMPLETE
             report.completed = True
             return report
@@ -1313,6 +1315,7 @@ def upgrade_all_databases(paths: DatabasePaths) -> UpgradeReport:
             # Legacy may already have cutover stubs from a prior partial run.
             repair_incompatible_runs_schema(legacy_conn)
             repair_incompatible_quality_schema(legacy_conn)
+            repair_incompatible_wave3_product_schemas(legacy_conn)
             legacy_conn.commit()
             report.legacy_schema_version = MigrationRunner(legacy).current_version(legacy_conn)
         finally:
@@ -1336,6 +1339,7 @@ def upgrade_all_databases(paths: DatabasePaths) -> UpgradeReport:
             apply_domain_baseline(path, domain, template=template)
             report.domain_versions[domain.value] = domain_schema_version(path)
         report.phase = CutoverPhase.TARGETS_CREATED
+        report.verification["wave3_schema_repairs"] = repair_domain_wave3_schemas(paths)
 
         control = _connect(paths.control)
         try:
