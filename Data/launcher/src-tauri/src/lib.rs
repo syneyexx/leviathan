@@ -8,7 +8,7 @@ use std::time::Duration;
 use leviathan_host_core::paths::{discover_install_root, launcher_log_dir};
 use leviathan_host_core::single_instance::{InstanceLock, InstanceLockError};
 use leviathan_host_core::{HostController, OwnershipKind};
-use tauri::{Manager, WindowEvent};
+use tauri::{Emitter, Manager, WindowEvent};
 
 pub fn run() {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
