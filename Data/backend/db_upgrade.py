@@ -402,6 +402,27 @@ _WAVE3_CANONICAL_DDL: dict[str, str] = {
     """,
 }
 
+# Public alias — stores/handlers/bootstrap must reuse this single source.
+WAVE3_CANONICAL_DDL: dict[str, str] = _WAVE3_CANONICAL_DDL
+
+
+def wave3_canonical_ddl(table: str) -> str:
+    """Return canonical DDL script for one WAVE3 product table."""
+    try:
+        return _WAVE3_CANONICAL_DDL[table]
+    except KeyError as exc:
+        raise KeyError(f"Unknown WAVE3 table: {table!r}") from exc
+
+
+def apply_wave3_canonical_ddl(
+    conn: sqlite3.Connection,
+    *tables: str,
+) -> None:
+    """Execute canonical DDL for the given WAVE3 tables (default: all six)."""
+    targets = tables or WAVE3_PRODUCT_TABLES
+    for table in targets:
+        conn.executescript(_WAVE3_CANONICAL_DDL[table])
+
 
 def repair_incompatible_wave3_product_schemas(conn: sqlite3.Connection) -> list[str]:
     """Replace SCHEMA-001..006 bootstrap stubs with canonical store schemas.
@@ -1081,77 +1102,10 @@ def _ensure_runtime_bootstrap_schema(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_quality_acceptances_contract
             ON quality_acceptances(contract_id, contract_version);
-
-        -- Canonical ProviderStreamStore schema (SCHEMA-001).
-        CREATE TABLE IF NOT EXISTS provider_stream_events (
-            job_id TEXT NOT NULL,
-            sequence INTEGER NOT NULL,
-            event_type TEXT NOT NULL,
-            timestamp TEXT NOT NULL,
-            correlation_id TEXT,
-            payload_json TEXT NOT NULL,
-            PRIMARY KEY (job_id, sequence)
-        );
-        CREATE INDEX IF NOT EXISTS idx_provider_stream_job
-            ON provider_stream_events(job_id, sequence);
-
-        -- Canonical AssimilationService schema (SCHEMA-002).
-        CREATE TABLE IF NOT EXISTS intelligence_assimilation_receipts (
-            receipt_id TEXT PRIMARY KEY,
-            kind TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            ok INTEGER NOT NULL,
-            success_count INTEGER NOT NULL,
-            failure_count INTEGER NOT NULL,
-            skipped_count INTEGER NOT NULL,
-            payload_json TEXT NOT NULL
-        );
-
-        -- Canonical KnowledgeCommitter schema (SCHEMA-003).
-        CREATE TABLE IF NOT EXISTS knowledge_commit_receipts (
-            commit_id TEXT PRIMARY KEY,
-            artifact_id TEXT NOT NULL,
-            idempotency_key TEXT,
-            receipt_json TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        );
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_commit_idempotency
-            ON knowledge_commit_receipts(idempotency_key)
-            WHERE idempotency_key IS NOT NULL;
-
-        -- Canonical source_ingestion commit handler schema (SCHEMA-004).
-        CREATE TABLE IF NOT EXISTS source_ingestion_commit_records (
-            source_id TEXT NOT NULL,
-            record_id TEXT NOT NULL,
-            payload_json TEXT NOT NULL DEFAULT '{}',
-            commit_id TEXT NOT NULL,
-            applied_at TEXT NOT NULL,
-            PRIMARY KEY (source_id, record_id)
-        );
-
-        -- Canonical dataset commit handler schema (SCHEMA-005).
-        CREATE TABLE IF NOT EXISTS dataset_commit_index_rows (
-            dataset_id TEXT NOT NULL,
-            row_id TEXT NOT NULL,
-            payload_json TEXT NOT NULL DEFAULT '{}',
-            commit_id TEXT NOT NULL,
-            applied_at TEXT NOT NULL,
-            PRIMARY KEY (dataset_id, row_id)
-        );
-
-        -- Canonical market_sim commit handler schema (SCHEMA-006).
-        CREATE TABLE IF NOT EXISTS market_sim_commit_batches (
-            run_id TEXT NOT NULL,
-            record_id TEXT NOT NULL,
-            kind TEXT NOT NULL,
-            payload_json TEXT NOT NULL DEFAULT '{}',
-            commit_id TEXT NOT NULL,
-            sequence_number INTEGER NOT NULL DEFAULT 0,
-            applied_at TEXT NOT NULL,
-            PRIMARY KEY (run_id, record_id, kind)
-        );
         """
     )
+    # WAVE 24: single schema authority — reuse _WAVE3_CANONICAL_DDL (no duplicated strings).
+    apply_wave3_canonical_ddl(conn)
     try:
         conn.execute(
             """

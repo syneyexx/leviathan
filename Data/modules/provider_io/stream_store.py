@@ -39,27 +39,12 @@ class ProviderStreamStore:
         return open_sqlite_connection(self.db_path, set_wal=False)
 
     def initialize(self) -> None:
+        from Data.backend.db_upgrade import apply_wave3_canonical_ddl
+        from Data.modules.common.sqlite_policy import open_sqlite_connection
+
         conn = open_sqlite_connection(self.db_path, set_wal=True)
         try:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS provider_stream_events (
-                    job_id TEXT NOT NULL,
-                    sequence INTEGER NOT NULL,
-                    event_type TEXT NOT NULL,
-                    timestamp TEXT NOT NULL,
-                    correlation_id TEXT,
-                    payload_json TEXT NOT NULL,
-                    PRIMARY KEY (job_id, sequence)
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_provider_stream_job
-                ON provider_stream_events(job_id, sequence)
-                """
-            )
+            apply_wave3_canonical_ddl(conn, "provider_stream_events")
             conn.commit()
         finally:
             conn.close()

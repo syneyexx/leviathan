@@ -49,8 +49,11 @@ class GenericHttpAdapter:
         )
 
         # Re-resolve at adapter boundary — ignore request/payload forgeable flags.
+        # Generic HTTP must NOT inherit model-provider private endpoint trust.
         allow_private = resolve_allow_private_hosts_for_url(
-            url, request_flag=request.allow_private_hosts
+            url,
+            request_flag=request.allow_private_hosts,
+            trust_model_endpoints=False,
         )
 
         if not url:

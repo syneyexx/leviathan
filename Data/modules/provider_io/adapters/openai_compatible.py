@@ -65,7 +65,9 @@ class OpenAICompatibleAdapter:
         )
 
         allow_private = resolve_allow_private_hosts_for_url(
-            endpoint, request_flag=request.allow_private_hosts
+            endpoint,
+            request_flag=request.allow_private_hosts,
+            trust_model_endpoints=True,
         )
         if not allow_private:
             try:

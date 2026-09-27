@@ -258,10 +258,15 @@ class ServingSupervisor:
                 worker.last_error = err or f"exit code {proc.returncode}"
                 self._persist_registry()
                 return worker
-            if ready_check is None or ready_check():
+            # READY only after health proof — never claim READY without ready_check.
+            if ready_check is not None and ready_check():
                 worker.state = WorkerState.READY
                 worker.last_health_at = _utc_now()
                 worker.health_score = 1.0
+                self._persist_registry()
+                return worker
+            if ready_check is None:
+                # Process alive but unproven — leave STARTING for health reconcile.
                 self._persist_registry()
                 return worker
             time.sleep(0.1)
@@ -518,29 +523,15 @@ class ServingSupervisor:
 
 def _pid_fingerprint(pid: int | None) -> str:
     """Best-effort identity for a PID to detect reuse without scanning / killing."""
-    if not isinstance(pid, int) or pid <= 0:
-        return ""
-    try:
-        # Linux: starttime from /proc/<pid>/stat field 22.
-        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
-        # comm may contain spaces/parens — split after last ')'
-        after = stat.rsplit(")", 1)[-1].strip().split()
-        starttime = after[19] if len(after) > 19 else ""
-        return f"{pid}:{starttime}"
-    except OSError:
-        return f"{pid}:"
+    from Data.modules.common.process import pid_fingerprint
+
+    return pid_fingerprint(pid)
 
 
 def _pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
+    from Data.modules.common.process import pid_is_alive
+
+    return pid_is_alive(pid)
 
 
 # Process-wide supervisor used by managed adapters (one per deployment).

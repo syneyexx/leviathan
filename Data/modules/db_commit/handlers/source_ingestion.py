@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from Data.backend.db_upgrade import apply_wave3_canonical_ddl
 from Data.modules.common.sqlite_policy import open_sqlite_connection, write_transaction
 from Data.modules.db_commit.handlers.registry import FunctionHandler
 from Data.modules.db_commit.types import CommitIntent, CommitReceipt, CommitReceiptStatus, utc_now
@@ -49,18 +50,7 @@ def _commit_batch(
             operation="commit_batch",
             rows=len(records),
         ):
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS source_ingestion_commit_records (
-                    source_id TEXT NOT NULL,
-                    record_id TEXT NOT NULL,
-                    payload_json TEXT NOT NULL DEFAULT '{}',
-                    commit_id TEXT NOT NULL,
-                    applied_at TEXT NOT NULL,
-                    PRIMARY KEY (source_id, record_id)
-                )
-                """
-            )
+            apply_wave3_canonical_ddl(conn, "source_ingestion_commit_records")
             for rec in records:
                 record_id = str(rec.get("id") or rec.get("record_id") or rec.get("path") or "")
                 if not record_id:
@@ -116,6 +106,7 @@ def _commit_brain_sync(
     auxiliary_error: str | None = None
     if container is None:
         # No container to update — brain sync metadata is the authoritative contract.
+        # No durable primary write preceded this — REJECTED is honest.
         auxiliary_ok = False
         auxiliary_error = "container_missing"
     elif hasattr(store, "upsert_container"):

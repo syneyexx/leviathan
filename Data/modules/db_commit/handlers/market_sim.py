@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from Data.backend.db_upgrade import apply_wave3_canonical_ddl
 from Data.modules.common.sqlite_policy import open_sqlite_connection, write_transaction
 from Data.modules.db_commit.handlers.registry import FunctionHandler
 from Data.modules.db_commit.types import CommitIntent, CommitReceipt, CommitReceiptStatus, utc_now
@@ -58,20 +59,7 @@ def _commit_events(
             operation="commit_events",
             rows=len(events) + len(fills) + len(equity),
         ):
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS market_sim_commit_batches (
-                    run_id TEXT NOT NULL,
-                    record_id TEXT NOT NULL,
-                    kind TEXT NOT NULL,
-                    payload_json TEXT NOT NULL DEFAULT '{}',
-                    commit_id TEXT NOT NULL,
-                    sequence_number INTEGER NOT NULL DEFAULT 0,
-                    applied_at TEXT NOT NULL,
-                    PRIMARY KEY (run_id, record_id, kind)
-                )
-                """
-            )
+            apply_wave3_canonical_ddl(conn, "market_sim_commit_batches")
             for event in events:
                 rid = str(event.get("event_id") or event.get("id") or "")
                 if not rid:
@@ -172,20 +160,7 @@ def _commit_trajectory(
             operation="commit_trajectory",
             rows=1,
         ):
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS market_sim_commit_batches (
-                    run_id TEXT NOT NULL,
-                    record_id TEXT NOT NULL,
-                    kind TEXT NOT NULL,
-                    payload_json TEXT NOT NULL DEFAULT '{}',
-                    commit_id TEXT NOT NULL,
-                    sequence_number INTEGER NOT NULL DEFAULT 0,
-                    applied_at TEXT NOT NULL,
-                    PRIMARY KEY (run_id, record_id, kind)
-                )
-                """
-            )
+            apply_wave3_canonical_ddl(conn, "market_sim_commit_batches")
             conn.execute(
                 """
                 INSERT OR REPLACE INTO market_sim_commit_batches(

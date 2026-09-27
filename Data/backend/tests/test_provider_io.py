@@ -272,6 +272,9 @@ class ProviderExecutorUnitTests(unittest.TestCase):
         FAKE.calls = 0
         FAKE.pids = []
         os.environ["LEVIATHAN_PROVIDER_CREDENTIAL_DIR"] = str(Path(self.tmp.name) / "creds")
+        # Trusted operator allowlist — forged job allow_private_hosts is ignored (WAVE 23).
+        os.environ["LEVIATHAN_PROVIDER_PRIVATE_HOST_ALLOWLIST"] = "127.0.0.1"
+        os.environ["LEVIATHAN_PROVIDER_ALLOW_PRIVATE_HOSTS"] = ""
 
     def tearDown(self) -> None:
         self.server.shutdown()
@@ -449,6 +452,8 @@ class ProcessIsolationAcceptanceTests(unittest.TestCase):
         FAKE.fail_count = 0
         FAKE.calls = 0
         os.environ["LEVIATHAN_PROVIDER_CREDENTIAL_DIR"] = str(Path(self.tmp.name) / "creds")
+        os.environ["LEVIATHAN_PROVIDER_PRIVATE_HOST_ALLOWLIST"] = "127.0.0.1"
+        os.environ["LEVIATHAN_PROVIDER_ALLOW_PRIVATE_HOSTS"] = ""
 
     def tearDown(self) -> None:
         self.server.shutdown()
@@ -476,6 +481,8 @@ class ProcessIsolationAcceptanceTests(unittest.TestCase):
         worker_script = f"""
 import os, sys
 sys.path.insert(0, {os.getcwd()!r})
+os.environ["LEVIATHAN_PROVIDER_PRIVATE_HOST_ALLOWLIST"] = "127.0.0.1"
+os.environ["LEVIATHAN_PROVIDER_ALLOW_PRIVATE_HOSTS"] = ""
 from pathlib import Path
 from Data.modules.jobs.store import JobStore
 from Data.modules.provider_io.executor import ProviderIoExecutor
@@ -568,6 +575,8 @@ class BenchmarkSmokeTests(unittest.TestCase):
     def test_control_plane_poll_under_provider_delay(self) -> None:
         server, base = _start_fake_server()
         FAKE.delay_seconds = 0.5
+        os.environ["LEVIATHAN_PROVIDER_PRIVATE_HOST_ALLOWLIST"] = "127.0.0.1"
+        os.environ["LEVIATHAN_PROVIDER_ALLOW_PRIVATE_HOSTS"] = ""
         try:
             tmp = tempfile.TemporaryDirectory()
             db = Path(tmp.name) / "b.db"

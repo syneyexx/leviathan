@@ -84,8 +84,10 @@ class KnowledgeCommitter:
 
     @classmethod
     def from_env(cls, ctx: dict[str, Any]) -> KnowledgeCommitter:
+        from Data.modules.common.database_domains import knowledge_path_from_settings
+
         settings = ctx["settings"]
-        db_path = getattr(settings, "knowledge_database_path", None) or settings.database_path
+        db_path = knowledge_path_from_settings(settings)
         return cls(db_path)
 
     @contextmanager
@@ -106,26 +108,12 @@ class KnowledgeCommitter:
             conn.close()
 
     def initialize(self) -> None:
+        from Data.backend.db_upgrade import apply_wave3_canonical_ddl
         from Data.modules.common.sqlite_policy import ensure_wal
 
         with self.connect() as conn:
             ensure_wal(conn)
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS knowledge_commit_receipts (
-                    commit_id TEXT PRIMARY KEY,
-                    artifact_id TEXT NOT NULL,
-                    idempotency_key TEXT,
-                    receipt_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                )
-                """
-            )
-            conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_commit_idempotency "
-                "ON knowledge_commit_receipts(idempotency_key) "
-                "WHERE idempotency_key IS NOT NULL"
-            )
+            apply_wave3_canonical_ddl(conn, "knowledge_commit_receipts")
 
     def commit_job(self, job: Any) -> dict[str, Any]:
         args = dict(getattr(job, "arguments", None) or {})

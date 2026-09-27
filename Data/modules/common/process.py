@@ -72,3 +72,50 @@ def pid_is_alive(pid: int) -> bool:
     except OSError:
         return False
     return True
+
+
+def pid_fingerprint(pid: int | None) -> str:
+    """Best-effort process identity for PID-reuse detection (Windows + Linux).
+
+    Never kills. Prefer OS creation-time / starttime over bare PID numbers.
+    """
+    if not isinstance(pid, int) or pid <= 0:
+        return ""
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+            if not handle:
+                return f"{pid}:"
+            try:
+                creation = wintypes.FILETIME()
+                exit_time = wintypes.FILETIME()
+                kernel = wintypes.FILETIME()
+                user = wintypes.FILETIME()
+                ok = kernel32.GetProcessTimes(
+                    handle,
+                    ctypes.byref(creation),
+                    ctypes.byref(exit_time),
+                    ctypes.byref(kernel),
+                    ctypes.byref(user),
+                )
+                if not ok:
+                    return f"{pid}:"
+                stamp = (int(creation.dwHighDateTime) << 32) | int(creation.dwLowDateTime)
+                return f"{pid}:{stamp}"
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:  # noqa: BLE001
+            return f"{pid}:"
+    try:
+        # Linux: starttime from /proc/<pid>/stat field 22.
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+        after = stat.rsplit(")", 1)[-1].strip().split()
+        starttime = after[19] if len(after) > 19 else ""
+        return f"{pid}:{starttime}"
+    except OSError:
+        return f"{pid}:"

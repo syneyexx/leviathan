@@ -499,13 +499,9 @@ class MarketStreamAdapter:
         if emit is None and callable(payload.get("emit")):
             emit = payload["emit"]
 
-        db_path = str(
-            payload.get("market_db_path")
-            or payload.get("db_path")
-            or ctx.get("market_db_path")
-            or ctx.get("db_path")
-            or ""
-        )
+        # WAVE 23: never take market_db_path/db_path from untrusted payload.
+        # Trusted authority only — executor-injected ctx or DatabasePaths.market.
+        db_path = str(ctx.get("market_db_path") or ctx.get("db_path") or "").strip()
         if not db_path:
             from Data.modules.common.database_domains import resolve_market_database_path
 

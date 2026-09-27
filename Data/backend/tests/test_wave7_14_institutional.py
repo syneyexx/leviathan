@@ -75,7 +75,7 @@ class TruthTests(unittest.TestCase):
             self.assertEqual(status.get("reason"), "configuration_error")
             self.assertTrue(status.get("truth", {}).get("silent_none_forbidden"))
 
-    def test_dataset_commit_rejects_after_auxiliary_failure(self) -> None:
+    def test_dataset_commit_partial_after_auxiliary_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "k.db"
             intent = CommitIntent(
@@ -85,7 +85,7 @@ class TruthTests(unittest.TestCase):
                 operation="dataset.commit_index_batch",
                 payload_hash="h",
             )
-            # Force DatasetStore.get_dataset to say present, update_dataset to fail.
+            # Aux failure after durable primary — never REJECTED (WAVE 25).
             with mock.patch(
                 "Data.modules.datasets.store.DatasetStore.initialize", lambda self: None
             ), mock.patch(
@@ -97,12 +97,20 @@ class TruthTests(unittest.TestCase):
             ):
                 receipt = _commit_index_batch(
                     intent,
-                    {"dataset_id": "d1", "rows": [{"row_id": "r1"}]},
+                    {
+                        "dataset_id": "d1",
+                        "rows": [{"row_id": "r1"}],
+                        "_fail_aux_after_primary_commit": True,
+                    },
                     db,
                     settings=SimpleNamespace(max_batch_rows=1000),
                 )
-            self.assertEqual(receipt.status, CommitReceiptStatus.REJECTED.value)
+            self.assertEqual(
+                receipt.status, CommitReceiptStatus.FAILED_AFTER_PARTIAL_COMMIT.value
+            )
+            self.assertNotEqual(receipt.status, CommitReceiptStatus.REJECTED.value)
             self.assertFalse(receipt.result.get("auxiliary_metadata_ok"))
+            self.assertTrue(receipt.result.get("index_rows_written"))
 
 
 class Obs001Tests(unittest.TestCase):

@@ -304,7 +304,6 @@ class MarketFeedRuntimeTests(unittest.TestCase):
                     payload={
                         "symbols": ["BTCUSDT"],
                         "feed_id": "feed_ckpt",
-                        "db_path": str(db_path),
                         "max_runtime_seconds": 2.0,
                         "checkpoint_interval_seconds": 60.0,  # coalesce hard
                         "gap_recovery_enabled": False,
@@ -316,6 +315,8 @@ class MarketFeedRuntimeTests(unittest.TestCase):
                 policy=ProviderPolicyRegistry(ProviderIoSettings.load()),
                 budget=DeadlineBudget(total_seconds=5.0),
                 cancel_check=lambda: not ws.messages and ws.recv_count >= 50,
+                # Trusted ctx only — payload db_path is ignored (WAVE 23).
+                ctx={"market_db_path": str(db_path)},
                 # No ingest callback → checkpoint path
             )
             metrics = result.structured["metrics"]

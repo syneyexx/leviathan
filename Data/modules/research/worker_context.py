@@ -28,6 +28,10 @@ def build_research_worker_context(
     from Data.modules.knowledge.embeddings import build_embedding_provider
     from Data.modules.observability import ObservabilityHub
     from Data.modules.research.service import ResearchService
+    from Data.modules.common.database_domains import (
+        knowledge_path_from_settings,
+        resolve_control_database_path,
+    )
 
     def _settings_path(value: Any, *, fallback: Path) -> Path:
         if isinstance(value, Path):
@@ -36,11 +40,12 @@ def build_research_worker_context(
             return Path(value)
         return fallback
 
-    db_path = _settings_path(getattr(settings, "database_path", None), fallback=Path("Data/backend/data/leviathan_control.db"))
-    knowledge_db = _settings_path(
-        getattr(settings, "knowledge_database_path", None),
-        fallback=db_path,  # tests may use a single temp DB; production settings always distinct
+    db_path = _settings_path(
+        getattr(settings, "database_path", None),
+        fallback=resolve_control_database_path(),
     )
+    # WAVE 23: never fall back knowledge → CONTROL. Tests inject knowledge_database_path.
+    knowledge_db = knowledge_path_from_settings(settings)
     observability = ObservabilityHub(capacity=2000, db_path=db_path)
 
     def _embedding_dims(knowledge_settings: Any) -> int:

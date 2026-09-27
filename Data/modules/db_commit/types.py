@@ -35,6 +35,8 @@ PRIORITY_RANK: dict[CommitPriority, int] = {
 class CommitReceiptStatus(str, Enum):
     APPLIED = "APPLIED"
     REJECTED = "REJECTED"
+    PARTIAL = "PARTIAL"
+    FAILED_AFTER_PARTIAL_COMMIT = "FAILED_AFTER_PARTIAL_COMMIT"
 
 
 class AckStatus(str, Enum):
