@@ -108,7 +108,13 @@ class CliAdapter:
 
     def health(self) -> ModuleHealth:
         ready = self.ensure_ready()
-        status = ModuleStatus.READY if ready.get("ready") else ModuleStatus.ERROR
+        if ready.get("ready"):
+            status = ModuleStatus.READY
+        elif str(ready.get("code") or "") == ExternalFailureCode.NOT_INSTALLED.value:
+            # Not installed is lifecycle truth — not a fatal ERROR for composites.
+            status = ModuleStatus.DISCOVERED
+        else:
+            status = ModuleStatus.ERROR
         return ModuleHealth(
             module_id=self.ctx.module_id,
             status=status,

@@ -78,9 +78,19 @@ class CatalogSourceAdapter:
         return {"ready": True, "entries": len(self._entries)}
 
     def health(self) -> ModuleHealth:
+        if self._state == ExternalRuntimeState.READY:
+            status = ModuleStatus.READY
+        elif self._state == ExternalRuntimeState.INSTALLED:
+            status = ModuleStatus.INSTALLED
+        elif self._state == ExternalRuntimeState.FAILED:
+            status = ModuleStatus.FAILED
+        elif self._state in {ExternalRuntimeState.STOPPED, ExternalRuntimeState.DISABLED}:
+            status = ModuleStatus.STOPPED if self._state == ExternalRuntimeState.STOPPED else ModuleStatus.DISABLED
+        else:
+            status = ModuleStatus.DISCOVERED
         return ModuleHealth(
             module_id=self.ctx.module_id,
-            status=ModuleStatus.READY if self._state != ExternalRuntimeState.FAILED else ModuleStatus.ERROR,
+            status=status,
             detail=f"catalog_entries={len(self._entries)}",
             telemetry={"runtime_state": self._state.value, "adapter": "CATALOG_SOURCE"},
         )
