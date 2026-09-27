@@ -192,10 +192,11 @@
         "git",
         "python>=3.12",
         "uv/pip",
-        "LLM API keys"
+        "LLM API keys for analyze/backtest",
+        "dedicated localhost:8010"
       ],
       "status": "PARTIAL",
-      "limitations": "Live GIT+venv install PASS; process start/ready HTTP 200 PASS; GET /docs invoke PASS; stop PASS. Analyze/backtest endpoints need LLM API keys (BLOCKED_EXTERNAL). Not MarketSim qualification."
+      "limitations": "Dedicated port :8010 (avoids Osintgram :8000 collision). Live GIT+venv install PASS; start/ready /docs PASS; GET / + /api/v1/openapi.json (9 paths) PASS; stop PASS. Analyze/backtest need LLM API keys (BLOCKED_EXTERNAL). Not MarketSim qualification."
     },
     {
       "source": "Fincept-Corporation/FinceptTerminal",
@@ -531,7 +532,8 @@
       "selfstarter": "status/health.sh EXIT_NONZERO PROBLEM lines (honest)",
       "openmaic": "health/server_providers/usage_stats + generate-classroom 202 COMPLETED; full content BLOCKED_EXTERNAL LLM",
       "ghosttrack": "ip_lookup (ipwho.is JSON) + show_ip (api.ipify.org) COMPLETED via generic CLI; GhostTR.py TUI unused",
-      "osintgram": "about/list_tools/token_state/balance COMPLETED; Instagram queries BLOCKED_EXTERNAL"
+      "osintgram": "about/list_tools/token_state/balance COMPLETED; Instagram queries BLOCKED_EXTERNAL",
+      "llm-agent-trader": "root+openapi(/api/v1/openapi.json) on :8010 COMPLETED; analyze/backtest BLOCKED_EXTERNAL LLM"
     },
     "desktop_commander_mcp": {
       "connect": "PASS",
@@ -667,7 +669,9 @@
       "declared_ops_over_lifecycle": "PASS status/health invoke declared runtime ops",
       "chat_job_status_labels": "PASS formatJobStateLabel for job.* SSE",
       "http_agent_runtime_preflight": "PASS NOT_AVAILABLE when requires_agent_runtime",
-      "modules_page_sweep_idle": "PASS"
+      "modules_page_sweep_idle": "PASS",
+      "llm_agent_trader_port_isolation": "PASS :8010",
+      "skills_page_search_pagination": "PASS_UI limit=40 offset"
     },
     "skill_pack_invoke": {
       "claude-osint": {
@@ -723,9 +727,11 @@
     },
     "llm-agent-trader": {
       "install": "PASS",
-      "start": "PASS",
-      "docs_invoke": "PASS",
-      "stop": "PASS",
+      "port": "8010",
+      "port_collision_with_osintgram_8000": "FIXED",
+      "root": "PASS",
+      "openapi_api_v1": "PASS paths=9",
+      "docs": "PASS",
       "analyze_backtest": "BLOCKED_EXTERNAL LLM keys"
     },
     "ghosttrack": {

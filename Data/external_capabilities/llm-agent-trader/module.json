@@ -36,18 +36,33 @@
         "--host",
         "127.0.0.1",
         "--port",
-        "8000"
+        "8010"
       ],
       "cwd": "$INSTALL_ROOT/backend",
       "startup_timeout_seconds": 90,
       "idle_timeout_seconds": 1800,
-      "base_url": "http://127.0.0.1:8000",
+      "base_url": "http://127.0.0.1:8010",
       "ready_probe": {
         "kind": "http",
-        "url": "http://127.0.0.1:8000/docs",
+        "url": "http://127.0.0.1:8010/docs",
         "expect_status": 200
       },
       "operations": [
+        {
+          "name": "root",
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "name": "openapi",
+          "method": "GET",
+          "path": "/api/v1/openapi.json"
+        },
+        {
+          "name": "docs",
+          "method": "GET",
+          "path": "/docs"
+        },
         {
           "name": "analyze",
           "method": "POST",
@@ -71,7 +86,7 @@
         {
           "name": "run",
           "method": "GET",
-          "path": "/docs"
+          "path": "/"
         }
       ],
       "eager_start": false
@@ -96,14 +111,44 @@
       "not_leviathan_qualification": true,
       "marketsim_bypass_forbidden": true,
       "real_money_blocked": true,
-      "preferred_machine_contract": "FastAPI backend on :8000 (/api/v1/backtest, /api/v1/llm-stream); not MarketSim authority"
+      "preferred_machine_contract": "FastAPI backend on 127.0.0.1:8010 (/openapi.json, /api/v1/backtest, /api/v1/llm-stream); dedicated port avoids Osintgram :8000 collision; not MarketSim authority"
     }
   },
   "capabilities": [
     {
+      "capability_id": "external.llm_agent_trader.root",
+      "name": "LLM Agent Trader Root",
+      "description": "GET / API identity JSON (no LLM keys).",
+      "external_name": "root",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.llm_agent_trader.openapi",
+      "name": "LLM Agent Trader OpenAPI",
+      "description": "Fetch /api/v1/openapi.json schema (no LLM keys) — machine contract discovery.",
+      "external_name": "openapi",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.llm_agent_trader.docs",
+      "name": "LLM Agent Trader Docs",
+      "description": "Fetch FastAPI docs HTML readiness probe (no LLM keys).",
+      "external_name": "docs",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
       "capability_id": "external.llm_agent_trader.analyze",
       "name": "LLM Agent Trader Analyze",
-      "description": "External trading research/backtest via FastAPI — not MarketSim qualification.",
+      "description": "External trading research/backtest via FastAPI — not MarketSim qualification. Requires LLM API keys.",
       "external_name": "analyze",
       "side_effects": [
         "READ",
@@ -113,7 +158,7 @@
     {
       "capability_id": "external.llm_agent_trader.start",
       "name": "Start LLM Agent Trader API",
-      "description": "Lazy-start the FastAPI research backend.",
+      "description": "Lazy-start the FastAPI research backend on :8010.",
       "external_name": "start",
       "side_effects": [
         "EXECUTE"
