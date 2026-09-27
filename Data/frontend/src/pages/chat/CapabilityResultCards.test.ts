@@ -42,4 +42,32 @@ describe("CapabilityResultCards", () => {
     const html = renderToStaticMarkup(createElement(CapabilityResultCards, { toolCalls: [] }));
     expect(html).toBe("");
   });
+
+  it("ignores malformed result parts without crashing chat", () => {
+    const toolCalls = [
+      {
+        capability_id: "external.demo.tool",
+        module_id: "demo",
+        status: "COMPLETED",
+        success: true,
+        parts: [
+          null,
+          "not-an-object",
+          42,
+          [],
+          { kind: "SOURCE", title: "Good source", url: "https://example.test/ok" },
+          { kind: "PROGRESS", text: "still going" },
+          { kind: "ERROR", message: "partial failure" },
+          { kind: "SOURCE", sources: [null, "x", { title: "Nested", url: "https://example.test/n" }] },
+        ],
+      },
+    ] as unknown as AssistantToolCallTelemetry[];
+    const html = renderToStaticMarkup(createElement(CapabilityResultCards, { toolCalls }));
+    expect(html).toContain("demo");
+    expect(html).toContain("Good source");
+    expect(html).toContain("still going");
+    expect(html).toContain("partial failure");
+    expect(html).toContain("Nested");
+    expect(html).not.toContain("not-an-object");
+  });
 });

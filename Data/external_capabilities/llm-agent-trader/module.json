@@ -85,6 +85,7 @@
       ]
     },
     "assimilation_mode": "EVIDENCE",
+    "resource_class": "CPU_HEAVY",
     "tags": [
       "finance",
       "backtest-reference",

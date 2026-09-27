@@ -28,6 +28,7 @@
       "eager_start": false
     },
     "assimilation_mode": "EVIDENCE",
+    "resource_class": "NETWORK_HEAVY",
     "tags": [
       "finance",
       "research",

@@ -23,8 +23,15 @@ function statusTone(call: AssistantToolCallTelemetry): string {
   return "neutral";
 }
 
-function partKind(part: Record<string, unknown>): string {
-  return String(part.kind || part.type || "").toUpperCase();
+function asPartRecord(part: unknown): Record<string, unknown> | null {
+  if (!part || typeof part !== "object" || Array.isArray(part)) return null;
+  return part as Record<string, unknown>;
+}
+
+function partKind(part: unknown): string {
+  const row = asPartRecord(part);
+  if (!row) return "";
+  return String(row.kind || row.type || "").toUpperCase();
 }
 
 function artifactHref(ref: string): string {
@@ -36,20 +43,22 @@ function artifactHref(ref: string): string {
 function sourceEntries(call: AssistantToolCallTelemetry): Array<{ title: string; url?: string }> {
   const out: Array<{ title: string; url?: string }> = [];
   for (const part of call.parts || []) {
-    const kind = partKind(part);
+    const row = asPartRecord(part);
+    if (!row) continue;
+    const kind = partKind(row);
     if (kind === "SOURCE" || kind === "SOURCE_SET") {
-      const title = String(part.title || part.name || part.url || "Source");
-      const url = part.url != null ? String(part.url) : undefined;
+      const title = String(row.title || row.name || row.url || "Source");
+      const url = row.url != null ? String(row.url) : undefined;
       out.push({ title, url });
     }
-    const nested = part.sources;
+    const nested = row.sources;
     if (Array.isArray(nested)) {
       for (const s of nested.slice(0, 12)) {
-        if (!s || typeof s !== "object") continue;
-        const row = s as Record<string, unknown>;
+        const nestedRow = asPartRecord(s);
+        if (!nestedRow) continue;
         out.push({
-          title: String(row.title || row.name || row.url || "Source"),
-          url: row.url != null ? String(row.url) : undefined,
+          title: String(nestedRow.title || nestedRow.name || nestedRow.url || "Source"),
+          url: nestedRow.url != null ? String(nestedRow.url) : undefined,
         });
       }
     }
@@ -81,9 +90,18 @@ export function CapabilityResultCards({ toolCalls }: Props) {
         const sources = call.source_count ?? null;
         const results = call.result_count ?? null;
         const sourceRows = sourceEntries(call);
-        const progressParts = (call.parts || []).filter((p) => partKind(p) === "PROGRESS").slice(0, 3);
-        const tableParts = (call.parts || []).filter((p) => partKind(p) === "TABLE").slice(0, 1);
-        const errorParts = (call.parts || []).filter((p) => partKind(p) === "ERROR").slice(0, 2);
+        const progressParts = (call.parts || [])
+          .map(asPartRecord)
+          .filter((p): p is Record<string, unknown> => !!p && partKind(p) === "PROGRESS")
+          .slice(0, 3);
+        const tableParts = (call.parts || [])
+          .map(asPartRecord)
+          .filter((p): p is Record<string, unknown> => !!p && partKind(p) === "TABLE")
+          .slice(0, 1);
+        const errorParts = (call.parts || [])
+          .map(asPartRecord)
+          .filter((p): p is Record<string, unknown> => !!p && partKind(p) === "ERROR")
+          .slice(0, 2);
         return (
           <div
             key={`${call.capability_id}:${call.receipt_id || call.status}`}

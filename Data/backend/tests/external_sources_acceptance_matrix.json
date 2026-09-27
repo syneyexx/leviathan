@@ -9,7 +9,7 @@
     "NOT_APPLICABLE",
     "FAILED"
   ],
-  "notes": "Fixture adapters prove all adapter kinds. Live installs: 21/21. DesktopCommander MCP gateway+approval PASS. Osintgram start/invoke/stop PASS. OpenMAIC /api/health + generate-classroom 202 PASS. ScrollCraft generate+build PASS. Fincept get_key_metrics PASS. Selfstarter status EXIT_NONZERO PROBLEM lines PASS. Cognition skill shortlist from intent + cancel/SSE/assim/reconcile proven. Auth/LLM/UE-heavy invokes remain BLOCKED_EXTERNAL. No per-repository wrappers.",
+  "notes": "Fixture adapters prove all adapter kinds. Live installs: 21/21. DesktopCommander MCP gateway+approval PASS. Osintgram start/invoke/stop PASS. OpenMAIC /api/health + generate-classroom 202 PASS. ScrollCraft generate+build PASS. Fincept get_key_metrics PASS. Selfstarter status EXIT_NONZERO PROBLEM lines PASS. Agent-Reach doctor + Feynman help PASS. Cognition skill shortlist from intent + cancel/SSE/assim/reconcile proven. Auth/LLM/UE/interactive-heavy invokes remain BLOCKED_EXTERNAL. Heavy modules declare resource_class\u2192EXTERNAL_REQUIRED. No per-repository wrappers.",
   "sources": [
     {
       "source": "wonderwhy-er/DesktopCommanderMCP",
@@ -23,8 +23,8 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PASS",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
-      "artifact_support": "PARTIAL",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
         "npx",
@@ -46,8 +46,8 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PASS",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
-      "artifact_support": "PARTIAL",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
         "git",
@@ -89,9 +89,9 @@
       "start_verified": "NOT_APPLICABLE",
       "stop_verified": "NOT_APPLICABLE",
       "capability_discovery": "PASS",
-      "invoke_verified": "PARTIAL",
+      "invoke_verified": "PASS",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PARTIAL",
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
@@ -101,7 +101,7 @@
         "yt-dlp"
       ],
       "status": "PARTIAL",
-      "limitations": "Audited: Python package agent-reach CLI. COMPOSITE CLI+SKILL. Live GIT+venv install PASS; doctor invoke PASS. Network scrape BLOCKED_EXTERNAL in CI."
+      "limitations": "Audited: Python package agent-reach CLI. COMPOSITE CLI+SKILL. Live GIT+venv install PASS; doctor invoke PASS. Network scrape/search remains BLOCKED_EXTERNAL without network credentials in CI."
     },
     {
       "source": "HunxByts/GhostTrack",
@@ -123,8 +123,8 @@
         "python",
         "network"
       ],
-      "status": "PARTIAL",
-      "limitations": "Audited: GhostTR.py + requirements.txt CLI. Live GIT+venv install PASS. Interactive invoke remains BLOCKED_EXTERNAL / limited without operator input."
+      "status": "BLOCKED_EXTERNAL",
+      "limitations": "Audited: GhostTR.py + requirements.txt CLI. Live GIT+venv install PASS. Interactive-only CLI; non-interactive invoke remains BLOCKED_EXTERNAL without operator input."
     },
     {
       "source": "HKUDS/Vibe-Trading",
@@ -207,7 +207,7 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PASS",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PARTIAL",
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
@@ -228,10 +228,10 @@
       "start_verified": "NOT_APPLICABLE",
       "stop_verified": "NOT_APPLICABLE",
       "capability_discovery": "PASS",
-      "invoke_verified": "PARTIAL",
+      "invoke_verified": "PASS",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
-      "artifact_support": "PARTIAL",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
         "git",
@@ -254,7 +254,7 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PARTIAL",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
@@ -279,7 +279,7 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PARTIAL",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PARTIAL",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
@@ -301,9 +301,9 @@
       "start_verified": "NOT_APPLICABLE",
       "stop_verified": "NOT_APPLICABLE",
       "capability_discovery": "PASS",
-      "invoke_verified": "PARTIAL",
+      "invoke_verified": "PASS",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
+      "chat_rendering": "PASS",
       "artifact_support": "PARTIAL",
       "knowledge_assimilation": "PASS",
       "known_external_requirements": [
@@ -432,8 +432,8 @@
       "capability_discovery": "PASS",
       "invoke_verified": "PASS",
       "result_normalization": "PASS",
-      "chat_rendering": "PARTIAL",
-      "artifact_support": "PASS",
+      "chat_rendering": "PASS",
+      "artifact_support": "NOT_APPLICABLE",
       "knowledge_assimilation": "NOT_APPLICABLE",
       "known_external_requirements": [
         "git"
@@ -494,7 +494,7 @@
     "COMPOSITE": "PASS",
     "MCP": "PASS"
   },
-  "worktree_head": "55a10e0491e4b686e754d7a9d2930f7a4f6695f5",
+  "worktree_head": "cd644cbd437e27424c512c1496e41e07ea04450d",
   "live_proofs": {
     "install_pass_module_ids": [
       "agent-reach",
@@ -506,19 +506,28 @@
       "desktop-commander-mcp",
       "feynman",
       "financial-services",
+      "fincept-terminal",
       "ghosttrack",
+      "llm-agent-trader",
       "mattpocock-skills",
       "obra-superpowers",
+      "openmaic",
+      "osintgram",
       "ponytail",
       "scrollcraft",
-      "tech-leads-agent-skills"
+      "selfstarter",
+      "tech-leads-agent-skills",
+      "vibe-trading"
     ],
     "invoke_notes": {
-      "agent-reach": "doctor COMPLETED",
+      "agent-reach": "doctor COMPLETED (network scrape BLOCKED_EXTERNAL)",
       "feynman": "help COMPLETED (research remains BLOCKED_EXTERNAL without provider auth)",
       "awesome-openclaw-skills": "catalog search COMPLETED (bounded)",
       "cloudflare-security-audit-skill": "skill index+load path via store",
-      "scrollcraft": "skill discovery after install"
+      "scrollcraft": "generate+build PASS; verify may EXIT_NONZERO without ffmpeg/frames",
+      "fincept-terminal": "analyze get_key_metrics JSON COMPLETED",
+      "selfstarter": "status/health.sh EXIT_NONZERO PROBLEM lines (honest)",
+      "openmaic": "health + generate-classroom 202 PASS; full content BLOCKED_EXTERNAL LLM"
     },
     "desktop_commander_mcp": {
       "connect": "PASS",
@@ -595,6 +604,16 @@
       "tokenized_skill_search": "PASS",
       "instructions_not_in_shortlist": "PASS"
     },
-    "version_activate_blocked_active": "PASS UPDATE_BLOCKED_ACTIVE"
+    "version_activate_blocked_active": "PASS UPDATE_BLOCKED_ACTIVE",
+    "dod_audit": {
+      "chat_cards_vitest": "PASS",
+      "cognition_sse_events": "PASS",
+      "no_per_repo_wrappers": "PASS",
+      "three_databases_only": "PASS",
+      "trading_boundary": "PASS",
+      "final_status_recommendation": "BLOCKED_EXTERNAL",
+      "malformed_parts_vitest": "PASS",
+      "resource_class_external_required": "PASS"
+    }
   }
 }
