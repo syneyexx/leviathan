@@ -5,6 +5,8 @@ title LEVIATHAN Database Upgrade
 
 REM Canonical upgrade entrypoint for Control / Knowledge / Market SQLite DBs.
 REM Does NOT contain schema SQL — calls Data.backend.db_upgrade.
+REM Safe to rerun. Never deletes product databases.
+REM Prefer a BackupService snapshot before destructive reconciliation on production hosts.
 
 set "PYTHONPATH=%~dp0"
 set "PY=.venv\Scripts\python.exe"
@@ -20,7 +22,8 @@ if not exist "%PY%" (
 )
 
 echo [LEVIATHAN] Upgrading Control / Knowledge / Market databases...
-echo [LEVIATHAN] Legacy single-DB installs are migrated; legacy file is never deleted.
+echo [LEVIATHAN] Legacy single-DB installs are migrated; product DB files are never deleted.
+echo [LEVIATHAN] Misplaced-table UNKNOWN/CONFLICT states block completion ^(operator review^).
 echo.
 
 "%PY%" -m Data.backend.db_upgrade %*
@@ -30,11 +33,13 @@ echo [%DATE% %TIME%] exit=%EXITCODE% >> "%LOG%"
 
 if not "%EXITCODE%"=="0" (
   echo.
-  echo [LEVIATHAN] Database upgrade FAILED ^(exit %EXITCODE%^).
-  echo See leviathan_db_upgrade.log for details.
+  echo [LEVIATHAN] Database upgrade FAILED or BLOCKED ^(exit %EXITCODE%^).
+  echo Check misplaced_table_reconcile_receipt.json under the CONTROL data directory
+  echo and leviathan_db_upgrade.log. Do NOT delete databases.
   exit /b %EXITCODE%
 )
 
 echo.
 echo [LEVIATHAN] Database upgrade completed successfully.
+echo [LEVIATHAN] CONTROL / KNOWLEDGE / MARKET paths remain the sole product authorities.
 exit /b 0

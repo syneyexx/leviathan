@@ -452,6 +452,8 @@ Routes cover:
 
 `src/assets/media-control/` contains the visual asset/crop set used by these pages. Media UI capability must reflect the backend media/provider posture; UI presence is not proof that every external platform integration is configured.
 
+**Product truth (PR #181):** When media/platform backends are not connected, routed Media pages render honest `NOT CONNECTED` / `UNAVAILABLE` states via `MediaTruthBanner` / `PlatformUnavailablePage` — they must not present fabricated follower/reach/revenue KPIs as live operational metrics. Dataset unknown status maps to `Onbekend` (muted), never success-like `Verwerkt`. AppShell `systemItems` chrome must not claim `SYSTEMS ONLINE` / `SYSTEMS OPERATIONAL` without measured health.
+
 ---
 
 # 15. Runtime / tools / MCP / workflows UI

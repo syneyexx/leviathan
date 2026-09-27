@@ -1,0 +1,75 @@
+{
+  "program": "large_payload_db_audit",
+  "artifactKind": "bounded_summary",
+  "truth": {
+    "rawScanNotCommitted": true,
+    "boundedModeDefault": true,
+    "fullScanOptIn": true,
+    "threeDatabaseAware": true
+  },
+  "boundedMode": true,
+  "schema": "three_database_v1",
+  "generatedAt": "2026-09-27T11:44:42Z",
+  "domains": {
+    "CONTROL": {
+      "boundedMode": true,
+      "databaseExists": true,
+      "summary": {
+        "large": 0,
+        "metadata_sized": 1116,
+        "reasonable": 1,
+        "unbounded": 1
+      },
+      "columnCount": 1118,
+      "violationCount": 0,
+      "notableColumns": [
+        {
+          "table": "messages",
+          "column": "content",
+          "classification": "unbounded",
+          "role": "text"
+        }
+      ]
+    },
+    "KNOWLEDGE": {
+      "boundedMode": true,
+      "databaseExists": true,
+      "summary": {
+        "large": 0,
+        "metadata_sized": 260,
+        "reasonable": 4,
+        "unbounded": 2
+      },
+      "columnCount": 266,
+      "violationCount": 0,
+      "notableColumns": [
+        {
+          "table": "knowledge_chunks",
+          "column": "content",
+          "classification": "unbounded",
+          "role": "bulk_text_inline"
+        },
+        {
+          "table": "knowledge_documents",
+          "column": "content",
+          "classification": "unbounded",
+          "role": "bulk_text_inline"
+        }
+      ]
+    },
+    "MARKET": {
+      "boundedMode": true,
+      "databaseExists": true,
+      "summary": {
+        "large": 0,
+        "metadata_sized": 609,
+        "reasonable": 0,
+        "unbounded": 0
+      },
+      "columnCount": 609,
+      "violationCount": 0,
+      "notableColumns": []
+    }
+  },
+  "result": "SUMMARY_ONLY"
+}

@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "scripts" / "audit_large_db_payloads.py"
-REPORT = ROOT / "Data" / "backend" / "tests" / "large_payload_db_audit.json"
+SUMMARY = ROOT / "Data" / "backend" / "tests" / "large_payload_db_audit.summary.json"
 
 
 class LargePayloadDbAuditTests(unittest.TestCase):
@@ -95,10 +95,11 @@ class LargePayloadDbAuditTests(unittest.TestCase):
                 "reasonable",
             )
 
-            # Also write the canonical report path for CI readers
-            REPORT.parent.mkdir(parents=True, exist_ok=True)
-            REPORT.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-            self.assertTrue(REPORT.is_file())
+            # Committed evidence is the bounded summary only (no raw firehose).
+            self.assertTrue(SUMMARY.is_file())
+            summary = json.loads(SUMMARY.read_text(encoding="utf-8"))
+            self.assertEqual(summary.get("artifactKind"), "bounded_summary")
+            self.assertTrue(summary.get("truth", {}).get("rawScanNotCommitted"))
 
 
 if __name__ == "__main__":

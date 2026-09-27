@@ -19,7 +19,9 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUT = ROOT / "Data" / "backend" / "tests" / "large_payload_db_audit.json"
+# Full scan output is ephemeral — do not commit machine-local raw scans.
+DEFAULT_OUT = ROOT / "Data" / "backend" / "data" / "artifacts" / "large_payload_db_audit.full.json"
+DEFAULT_SUMMARY_OUT = ROOT / "Data" / "backend" / "tests" / "large_payload_db_audit.summary.json"
 # Legacy single-DB default — prefer --domains or settings three-DB paths.
 DEFAULT_DB = ROOT / "Data" / "backend" / "data" / "leviathan_control.db"
 DEFAULT_SAMPLE_LIMIT = 5000
@@ -423,11 +425,57 @@ def main(argv: list[str] | None = None) -> int:
         )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    # Always refresh the bounded committed summary (no per-column firehose).
+    summary = {
+        "program": "large_payload_db_audit",
+        "artifactKind": "bounded_summary",
+        "schemaVersion": report.get("schemaVersion"),
+        "generatedAt": report.get("generatedAt"),
+        "mode": report.get("mode") or "single",
+        "boundedMode": report.get("boundedMode", True),
+        "fullScan": report.get("fullScan", False),
+        "truth": {
+            **dict(report.get("truth") or {}),
+            "rawScanNotCommitted": True,
+            "fullReportPath": str(args.out),
+        },
+        "domains": {},
+        "result": "SUMMARY_ONLY",
+    }
+    for name, body in (report.get("domains") or {}).items():
+        if not isinstance(body, dict):
+            continue
+        cols = body.get("columns") or []
+        notable = [
+            {
+                "table": c.get("table"),
+                "column": c.get("column"),
+                "classification": c.get("classification"),
+                "role": c.get("role"),
+            }
+            for c in cols
+            if c.get("classification") in {"unbounded", "large", "file_ref"}
+        ][:32]
+        summary["domains"][name] = {
+            "databaseExists": body.get("databaseExists"),
+            "boundedMode": body.get("boundedMode"),
+            "summary": body.get("summary"),
+            "columnCount": len(cols),
+            "notableColumns": notable,
+        }
+    if not summary["domains"] and report.get("summary") is not None:
+        summary["legacySingleDbSummary"] = report.get("summary")
+        summary["columnCount"] = len(report.get("columns") or [])
+    DEFAULT_SUMMARY_OUT.parent.mkdir(parents=True, exist_ok=True)
+    DEFAULT_SUMMARY_OUT.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
     print(
         json.dumps(
             {
                 "ok": True,
                 "out": str(args.out),
+                "summaryOut": str(DEFAULT_SUMMARY_OUT),
                 "mode": report.get("mode") or "single",
                 "boundedMode": report.get("boundedMode", True),
                 "fullScan": report.get("fullScan", False),

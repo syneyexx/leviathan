@@ -776,6 +776,18 @@ Large native/Python streaming jobs (`validate` / `transform` / `export`) write *
 
 **Backup truth:** Local backup/restore (`Data/modules/backup/`) snapshots the **three canonical SQLite databases** as one coherent backup set (plus manifest) under `backup_root`. Partial/missing DB members fail restore honestly. Truth flags include `backup_is_not_cloud_sync` and `backupSetComplete`. Legacy single-DB backup manifests remain restorable into Control when `databases` is absent. Domain schema baseline is version **1** materialized from legacy migration head **56** (`institutional_runtime`).
 
+**Restore maintenance / recovery (PR #181 remediation):** Live three-DB file replacement requires a **server-issued maintenance proof** from `MaintenanceCoordinator` — a client `maintenance_boundary=true` boolean is not authority. Quiescence is proven (mutating enqueue / DB Commit writes fenced) before cutover. Durable restore journal phases include `OLD_SET_ACTIVE`, `NEW_SET_ACTIVE`, and `RECOVERY_REQUIRED`. Application lifespan **refuses normal boot** while the journal indicates `RECOVERY_REQUIRED` or mixed-revision cutover.
+
+**Misplaced-table reconciliation:** Wrong-domain product tables are detected during upgrade. `UNKNOWN` / unreadable / schema mismatch / conflicting content ⇒ `BLOCK_*` (never `MIGRATE`). Migration copies into the **canonical destination schema** (not source stub DDL), verifies counts/checksums, journals phases (`COPY_STARTED` → `COPIED_VERIFIED` → `SOURCE_RETIRED`), and only then drops the source. An upgrade report with blocked tables or errors **must not** claim `completed=True`.
+
+**Worker lease fencing:** Authoritative job terminal mutations (`COMPLETED` / `FAILED` / `CANCELLED`) in provider_io, MCP, model_download, and worker entrypoints go through `fenced_transition` with `expected_lease_owner`. Stale workers after takeover cannot overwrite the new owner's job truth.
+
+**Private-host / SSRF authority:** `allow_private_hosts` cannot be granted from job/capability payloads. Trusted private endpoints are identified by **scheme + host + port** from env allowlist / configured model base URL — not hostname-only, and not inherited by generic HTTP merely because a model endpoint shares a host.
+
+**DB Commit receipt truth:** Handlers must not return `REJECTED` after a durable primary write. Same-DB primary+auxiliary work is one transaction where possible; unavoidable post-commit aux failure uses `FAILED_AFTER_PARTIAL_COMMIT` / `PARTIAL` with explicit side-effect metadata.
+
+**Model serving process ownership:** `ServingSupervisor` is the sole managed-process lifecycle/reconciliation owner. `ModelControlPlane` delegates. Persisted READY is not trusted after restart without health proof; PID reuse without matching fingerprint ⇒ do not kill / do not claim ownership.
+
 **Adversarial / clean-install evidence:** `test_native_adversarial_w188.py`, admission/cancel/orphan tests (`test_native_admission_cancel_w167.py`), supply-chain JSON, `scripts/verify_native_data_plane.py`, and `scripts/verify_clean_install_native.py` (`LOCAL_CLEAN_CHECK` — not a Windows VM claim).
 
 ### Storage authority
