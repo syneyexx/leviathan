@@ -152,8 +152,24 @@ export function ModulesPage() {
       | "install-version"
       | "activate-version"
       | "rollback"
-      | "capabilities",
+      | "capabilities"
+      | "sweep-idle",
   ) {
+    if (action === "sweep-idle") {
+      setLifecycleBusy(true);
+      try {
+        const res = await api.sweepIdleModules();
+        toast(`Sweep idle: stopped ${res.count ?? (res.stopped?.length ?? 0)}`);
+        setVersionsJson(JSON.stringify(res, null, 2));
+        const snap = await api.listModules().catch(() => null);
+        if (snap) applySnapshot(snap);
+      } catch (err) {
+        toast(errorMessage(err));
+      } finally {
+        setLifecycleBusy(false);
+      }
+      return;
+    }
     if (!selected) return;
     const id = moduleId(selected);
     setLifecycleBusy(true);
@@ -352,6 +368,15 @@ export function ModulesPage() {
                 >
                   {discovering ? "Discovering…" : "Discover"}
                 </button>
+                <button
+                  type="button"
+                  className="lv-pr-mcp-btn"
+                  onClick={() => void onLifecycle("sweep-idle")}
+                  disabled={lifecycleBusy || !managerEnabled}
+                  title="POST /api/modules/sweep-idle — stop idle lazy external processes"
+                >
+                  Sweep Idle
+                </button>
               </div>
             }
           >
@@ -499,6 +524,9 @@ export function ModulesPage() {
                     </button>
                     <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("rollback")}>
                       Rollback
+                    </button>
+                    <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("sweep-idle")}>
+                      Sweep Idle
                     </button>
                   </div>
                 ) : null}

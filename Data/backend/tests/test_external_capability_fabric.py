@@ -1778,6 +1778,142 @@ class ExternalAssimilationAndScaleTests(unittest.TestCase):
             self.assertEqual(structured.get("ip"), "8.8.8.8")
             self.assertTrue(structured.get("success"))
 
+    def test_cli_accept_exit_codes_treats_nonzero_as_success(self) -> None:
+        """Declarative accept_exit_codes keeps honest stdout when CLI exits 1."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "mods" / "alpha-ish"
+            root.mkdir(parents=True)
+            tool = Path(tmp) / "status.py"
+            tool.write_text(
+                "import sys\nprint('not logged in')\nsys.exit(1)\n",
+                encoding="utf-8",
+            )
+            manifest = {
+                "module_id": "alpha-ish",
+                "name": "Alpha Ish",
+                "version": "0.0.1",
+                "entrypoint": FACTORY,
+                "external": {
+                    "adapter": "CLI",
+                    "source_type": "path",
+                    "path": str(tmp),
+                    "install": {"strategy": "NONE"},
+                    "runtime": {
+                        "operations": [
+                            {
+                                "name": "status",
+                                "command": [sys.executable, str(tool)],
+                                "accept_exit_codes": [0, 1],
+                                "result_format": "text",
+                            }
+                        ]
+                    },
+                    "result": {"format": "text"},
+                },
+                "capabilities": [
+                    {
+                        "capability_id": "external.alpha_ish.status",
+                        "name": "Status",
+                        "external_name": "status",
+                        "side_effects": ["READ"],
+                    }
+                ],
+            }
+            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+            manager.discover()
+            manager.initialize(
+                "alpha-ish",
+                ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp),
+            )
+            result = manager.execute("alpha-ish", "status", {})
+            self.assertEqual(result.status, "COMPLETED", msg=result.error)
+            self.assertIn("not logged in", str((result.output or {}).get("summary") or ""))
+            meta = (result.output or {}).get("metadata") or {}
+            self.assertEqual(meta.get("exit_code"), 1)
+            self.assertTrue(meta.get("accepted_nonzero_exit"))
+
+    def test_executor_emits_external_observability_metrics(self) -> None:
+        """external.invocations / modules.discovered must reach ObservabilityHub."""
+
+        class _CaptureHub:
+            def __init__(self) -> None:
+                self.events: list[tuple[str, str, dict[str, Any]]] = []
+
+            def emit(self, category: str, name: str, *, payload: dict[str, Any] | None = None, **_: Any) -> None:
+                self.events.append((category, name, dict(payload or {})))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "mods" / "metric-cli"
+            root.mkdir(parents=True)
+            tool = Path(tmp) / "echo.py"
+            tool.write_text(
+                "import json,sys\nprint(json.dumps({'ok':True,'q':sys.argv[1]}))\n",
+                encoding="utf-8",
+            )
+            manifest = {
+                "module_id": "metric-cli",
+                "name": "Metric CLI",
+                "version": "0.0.1",
+                "entrypoint": FACTORY,
+                "external": {
+                    "adapter": "CLI",
+                    "source_type": "path",
+                    "path": str(tmp),
+                    "install": {"strategy": "NONE"},
+                    "runtime": {
+                        "operations": [
+                            {
+                                "name": "search",
+                                "command": [sys.executable, str(tool), "{query}"],
+                                "result_format": "json",
+                            }
+                        ]
+                    },
+                    "result": {"format": "JSON"},
+                },
+                "capabilities": [
+                    {
+                        "capability_id": "external.metric_cli.search",
+                        "name": "Metric Search",
+                        "external_name": "search",
+                        "side_effects": ["READ"],
+                    }
+                ],
+            }
+            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+            manager.discover()
+            manager.initialize(
+                "metric-cli",
+                ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp),
+            )
+            hub = _CaptureHub()
+            catalog = CapabilityCatalog()
+            register_external_control_capabilities(catalog)
+            plugins = PluginRegistry(catalog)
+            managed = manager.get("metric-cli")
+            assert managed is not None
+            register_external_module_capabilities(catalog=catalog, plugin_registry=plugins, managed=managed)
+            gateway = ExecutionGateway(
+                catalog=catalog,
+                module_executor=ExternalModuleExecutor(manager, observability=hub),
+            )
+            result = gateway.execute(
+                CapabilityRequest(
+                    capability_id="external.metric_cli.search",
+                    arguments={"query": "obs"},
+                    requested_by="test",
+                )
+            )
+            self.assertEqual(result.status.value, "COMPLETED", msg=result.error)
+            names = [n for _, n, _ in hub.events]
+            self.assertIn("external.invocations", names, msg=hub.events)
+            self.assertTrue(
+                any(c == "external_capability" for c, _, _ in hub.events),
+                msg=hub.events,
+            )
+
     def test_cli_operation_defaults_fill_placeholders(self) -> None:
         from Data.modules.module_manager.external.adapters.base import AdapterContext
         from Data.modules.module_manager.external.adapters.cli import CliAdapter

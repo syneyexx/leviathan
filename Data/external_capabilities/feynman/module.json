@@ -55,12 +55,61 @@
           ]
         },
         {
+          "name": "version",
+          "command": [
+            "node",
+            "bin/feynman.js",
+            "--version"
+          ],
+          "result_format": "text"
+        },
+        {
+          "name": "status",
+          "command": [
+            "node",
+            "bin/feynman.js",
+            "status"
+          ]
+        },
+        {
           "name": "doctor",
           "command": [
             "node",
             "bin/feynman.js",
             "doctor"
           ]
+        },
+        {
+          "name": "search_status",
+          "command": [
+            "node",
+            "bin/feynman.js",
+            "search",
+            "status"
+          ]
+        },
+        {
+          "name": "packages_list",
+          "command": [
+            "node",
+            "bin/feynman.js",
+            "packages",
+            "list"
+          ]
+        },
+        {
+          "name": "alpha_status",
+          "command": [
+            "node",
+            "bin/feynman.js",
+            "alpha",
+            "status"
+          ],
+          "accept_exit_codes": [
+            0,
+            1
+          ],
+          "notes": "Exit 1 when not logged in is an honest status signal, not a fabric failure."
         },
         {
           "name": "research",
@@ -172,6 +221,61 @@
       "external_name": "load",
       "side_effects": [
         "READ"
+      ]
+    },
+    {
+      "capability_id": "external.feynman.version",
+      "name": "Feynman Version",
+      "description": "Print Feynman CLI version (no provider auth).",
+      "external_name": "version",
+      "side_effects": [
+        "READ"
+      ]
+    },
+    {
+      "capability_id": "external.feynman.status",
+      "name": "Feynman Status",
+      "description": "Feynman setup status (model/auth/web) without running research.",
+      "external_name": "status",
+      "side_effects": [
+        "READ"
+      ]
+    },
+    {
+      "capability_id": "external.feynman.doctor",
+      "name": "Feynman Doctor",
+      "description": "Feynman doctor diagnostics (honest unauthenticated state).",
+      "external_name": "doctor",
+      "side_effects": [
+        "READ"
+      ]
+    },
+    {
+      "capability_id": "external.feynman.search_status",
+      "name": "Feynman Search Status",
+      "description": "Feynman web-search route/config status (no provider auth required).",
+      "external_name": "search_status",
+      "side_effects": [
+        "READ"
+      ]
+    },
+    {
+      "capability_id": "external.feynman.packages_list",
+      "name": "Feynman Packages List",
+      "description": "List Feynman package presets.",
+      "external_name": "packages_list",
+      "side_effects": [
+        "READ"
+      ]
+    },
+    {
+      "capability_id": "external.feynman.alpha_status",
+      "name": "Feynman AlphaXiv Status",
+      "description": "AlphaXiv login status (honest when not logged in).",
+      "external_name": "alpha_status",
+      "side_effects": [
+        "READ",
+        "NETWORK"
       ]
     }
   ]

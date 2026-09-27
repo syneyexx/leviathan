@@ -118,26 +118,33 @@ class ExternalCapabilityModule:
                 status="FAILED",
                 error="module not initialized",
             )
-        # Lifecycle operations routed uniformly.
-        if operation == "ensure_installed":
+        # Declared runtime.operations win over lifecycle shortcuts (e.g. Feynman/Selfstarter
+        # CLI `status` must invoke the tool, not return ModuleHealth).
+        declared_ops = {
+            str(op.get("name") or op.get("operation") or "")
+            for op in (self._config.runtime.operations or ())
+            if isinstance(op, dict)
+        }
+        # Lifecycle operations routed uniformly (unless shadowed by a declared op).
+        if operation == "ensure_installed" and operation not in declared_ops:
             out = self._adapter.ensure_installed()
             return ModuleResult(module_id=self._manifest.module_id, operation=operation, status="COMPLETED", output=out if isinstance(out, dict) else {"result": out})
-        if operation == "ensure_ready":
+        if operation == "ensure_ready" and operation not in declared_ops:
             out = self._adapter.ensure_ready()
             return ModuleResult(module_id=self._manifest.module_id, operation=operation, status="COMPLETED", output=out if isinstance(out, dict) else {"result": out})
-        if operation == "start":
+        if operation == "start" and operation not in declared_ops:
             out = self._adapter.start()
             return ModuleResult(module_id=self._manifest.module_id, operation=operation, status="COMPLETED", output=out if isinstance(out, dict) else {"result": out})
-        if operation == "stop":
+        if operation == "stop" and operation not in declared_ops:
             out = self._adapter.stop()
             return ModuleResult(module_id=self._manifest.module_id, operation=operation, status="COMPLETED", output=out if isinstance(out, dict) else {"result": out})
-        if operation == "restart":
+        if operation == "restart" and operation not in declared_ops:
             out = self._adapter.restart()
             return ModuleResult(module_id=self._manifest.module_id, operation=operation, status="COMPLETED", output=out if isinstance(out, dict) else {"result": out})
-        if operation == "logs":
+        if operation == "logs" and operation not in declared_ops:
             lines = self._adapter.logs(limit=int(arguments.get("limit") or 200))
             return ModuleResult(module_id=self._manifest.module_id, operation=operation, status="COMPLETED", output={"lines": lines})
-        if operation in {"health", "status"}:
+        if operation in {"health", "status"} and operation not in declared_ops:
             health = self.health().public_dict()
             # Prefer adapter status() when present (MCP/process), else health snapshot.
             status_out = health

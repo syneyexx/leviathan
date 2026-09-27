@@ -65,6 +65,16 @@
           "path": "/api/agent/runtime"
         },
         {
+          "name": "server_providers",
+          "method": "GET",
+          "path": "/api/server-providers"
+        },
+        {
+          "name": "usage_stats",
+          "method": "GET",
+          "path": "/api/usage"
+        },
+        {
           "name": "generate_course",
           "method": "POST",
           "path": "/api/generate-classroom",
@@ -239,6 +249,26 @@
       "external_name": "load",
       "side_effects": [
         "READ"
+      ]
+    },
+    {
+      "capability_id": "external.openmaic.server_providers",
+      "name": "OpenMAIC Server Providers",
+      "description": "Read OpenMAIC /api/server-providers registry (empty without LLM keys is honest).",
+      "external_name": "server_providers",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.openmaic.usage_stats",
+      "name": "OpenMAIC Usage Stats",
+      "description": "Read OpenMAIC /api/usage totals (no LLM required).",
+      "external_name": "usage_stats",
+      "side_effects": [
+        "READ",
+        "NETWORK"
       ]
     }
   ]

@@ -55,6 +55,49 @@
           "name": "info",
           "method": "GET",
           "path": "/"
+        },
+        {
+          "name": "about",
+          "method": "GET",
+          "path": "/api/about"
+        },
+        {
+          "name": "list_tools",
+          "method": "GET",
+          "path": "/api/tools"
+        },
+        {
+          "name": "token_state",
+          "method": "GET",
+          "path": "/api/token"
+        },
+        {
+          "name": "balance",
+          "method": "GET",
+          "path": "/api/balance"
+        },
+        {
+          "name": "history_targets",
+          "method": "GET",
+          "path": "/api/history/targets"
+        },
+        {
+          "name": "history_queries",
+          "method": "GET",
+          "path": "/api/history/queries"
+        },
+        {
+          "name": "list_dossiers",
+          "method": "GET",
+          "path": "/api/dossier"
+        },
+        {
+          "name": "cancel_run",
+          "method": "POST",
+          "path": "/api/cancel",
+          "body_from": [
+            "run_id"
+          ]
         }
       ],
       "eager_start": false
@@ -102,6 +145,46 @@
       "external_name": "stop",
       "side_effects": [
         "EXECUTE"
+      ]
+    },
+    {
+      "capability_id": "external.osintgram.about",
+      "name": "Osintgram About",
+      "description": "Read Osintgram /api/about metadata (no Instagram backend required).",
+      "external_name": "about",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.osintgram.list_tools",
+      "name": "Osintgram List Tools",
+      "description": "List Osintgram tool catalog via /api/tools (catalog only; real OSINT needs HikerAPI/session).",
+      "external_name": "list_tools",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.osintgram.token_state",
+      "name": "Osintgram Token State",
+      "description": "Read whether HikerAPI/token backend is configured (honest readiness).",
+      "external_name": "token_state",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.osintgram.balance",
+      "name": "Osintgram Balance",
+      "description": "Read Osintgram backend balance availability (false when no backend).",
+      "external_name": "balance",
+      "side_effects": [
+        "READ",
+        "NETWORK"
       ]
     }
   ]

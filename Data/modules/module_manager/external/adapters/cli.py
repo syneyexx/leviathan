@@ -266,13 +266,36 @@ class CliAdapter:
 
             if progress:
                 progress(0.9, "parsing", f"exit={exit_code}")
+            # Per-op accept_exit_codes: some CLIs use nonzero to mean "not configured"
+            # while still returning useful stdout (e.g. alphaXiv not logged in).
+            op_spec = next(
+                (
+                    o
+                    for o in (self.config.runtime.operations or ())
+                    if isinstance(o, dict) and str(o.get("name") or o.get("operation") or "") == operation
+                ),
+                None,
+            )
+            accept_exit = {0}
+            if isinstance(op_spec, dict) and op_spec.get("accept_exit_codes") is not None:
+                try:
+                    accept_exit = {int(x) for x in op_spec.get("accept_exit_codes") or [0]}
+                except (TypeError, ValueError):
+                    accept_exit = {0}
+            effective_exit = 0 if exit_code in accept_exit else exit_code
             status, output, failure = parse_cli_result(
                 stdout=stdout,
                 stderr=stderr,
-                exit_code=exit_code,
+                exit_code=effective_exit,
                 spec=self.config.result,
                 cwd=Path(cwd) if cwd else None,
             )
+            if isinstance(output, dict):
+                meta = dict(output.get("metadata") or {})
+                meta["exit_code"] = exit_code
+                if effective_exit != exit_code:
+                    meta["accepted_nonzero_exit"] = True
+                output = {**output, "metadata": meta}
             self._state = ExternalRuntimeState.READY
             if self.ctx.store is not None:
                 self.ctx.store.touch_used(self.ctx.module_id)

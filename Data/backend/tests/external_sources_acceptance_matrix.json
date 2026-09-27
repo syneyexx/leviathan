@@ -9,7 +9,7 @@
     "NOT_APPLICABLE",
     "FAILED"
   ],
-  "notes": "Fixture adapters prove all adapter kinds. Live installs 21/21. Skill packs+catalog PASS. Vibe-Trading MCP 74 tools + ExecutionGateway approval path PASS. Agent-Reach real contract: doctor JSON + SKILL router (no fake search CLI). GhostTrack PARTIAL: declarative curl argv for audited public APIs (ipwho.is / api.ipify.org); GhostTR.py TUI phone/username remain blocked. COMPOSITE declared CLI ops beat skill-pack name collisions. MCP lazy ensure_ready. Cognition offloads EXTERNAL_REQUIRED MODULE caps via JobRuntime (job.* SSE). capability.discovered emitted on SEARCH. No per-repository wrappers.",
+  "notes": "Fixture adapters prove all adapter kinds. Live installs 21/21. Skill packs+catalog PASS. Vibe-Trading MCP 74 tools + ExecutionGateway approval path PASS. Agent-Reach real contract: doctor JSON + SKILL router (no fake search CLI). llm-agent-trader PARTIAL (LLM analyze). GhostTrack PARTIAL: declarative curl argv for audited public APIs (ipwho.is / api.ipify.org); GhostTR.py TUI phone/username remain blocked. COMPOSITE declared CLI ops beat skill-pack name collisions. MCP lazy ensure_ready. Cognition offloads EXTERNAL_REQUIRED MODULE caps via JobRuntime (job.* SSE). capability.discovered emitted on SEARCH. No per-repository wrappers.",
   "sources": [
     {
       "source": "wonderwhy-er/DesktopCommanderMCP",
@@ -56,7 +56,7 @@
         "HikerAPI or Instagram session"
       ],
       "status": "PARTIAL",
-      "limitations": "Live GIT+venv install PASS; uvicorn start/ready HTTP 200 PASS; GET / invoke PASS; stop PASS. Instagram data backend (HikerAPI/session) still required for real OSINT."
+      "limitations": "Live GIT+venv install PASS; uvicorn start/ready HTTP 200 PASS; GET / + /api/about + /api/tools + /api/token + /api/balance invoke PASS; stop PASS. Instagram data backend (HikerAPI/session) still required for real OSINT queries."
     },
     {
       "source": "elementalsouls/Claude-OSINT",
@@ -194,8 +194,8 @@
         "uv/pip",
         "LLM API keys"
       ],
-      "status": "PASS",
-      "limitations": "Live GIT+venv install PASS; process start/ready HTTP 200 PASS; GET /docs invoke PASS; stop PASS. Analyze/backtest endpoints need LLM API keys (operator-gated). Not MarketSim qualification."
+      "status": "PARTIAL",
+      "limitations": "Live GIT+venv install PASS; process start/ready HTTP 200 PASS; GET /docs invoke PASS; stop PASS. Analyze/backtest endpoints need LLM API keys (BLOCKED_EXTERNAL). Not MarketSim qualification."
     },
     {
       "source": "Fincept-Corporation/FinceptTerminal",
@@ -291,7 +291,7 @@
         "LLM API keys"
       ],
       "status": "PARTIAL",
-      "limitations": "Live GIT+pnpm install PASS; start/health /api/health PASS; skill search/load 26 PASS; generate-classroom 202 PASS. Full classroom content completion needs LLM keys (BLOCKED_EXTERNAL)."
+      "limitations": "Live GIT+pnpm install PASS; start/health /api/health PASS; server-providers + usage PASS; skill search/load 26 PASS; generate-classroom 202 PASS. Full classroom content completion needs LLM keys (BLOCKED_EXTERNAL)."
     },
     {
       "source": "Companion-Inc/feynman",
@@ -315,7 +315,7 @@
         "model provider auth"
       ],
       "status": "PARTIAL",
-      "limitations": "Audited: Node CLI bin/feynman.js + npm run build post_install + skills/. Live install+build PASS; help invoke PASS. Research needs provider auth (BLOCKED_EXTERNAL)."
+      "limitations": "Audited: Node CLI bin/feynman.js + npm run build post_install + skills/. Live install+build PASS; help/version/status/doctor/search_status/packages_list/alpha_status invoke PASS. Research needs provider auth (BLOCKED_EXTERNAL)."
     },
     {
       "source": "multica-ai/andrej-karpathy-skills",
@@ -523,14 +523,15 @@
     ],
     "invoke_notes": {
       "agent-reach": "doctor COMPLETED (network scrape BLOCKED_EXTERNAL)",
-      "feynman": "help COMPLETED (research remains BLOCKED_EXTERNAL without provider auth)",
+      "feynman": "help/version/status/doctor/search_status/packages_list/alpha_status COMPLETED (research BLOCKED_EXTERNAL without provider auth)",
       "awesome-openclaw-skills": "catalog search COMPLETED (bounded)",
       "cloudflare-security-audit-skill": "skill index+load path via store",
       "scrollcraft": "generate+build PASS; verify may EXIT_NONZERO without ffmpeg/frames",
       "fincept-terminal": "analyze get_key_metrics JSON COMPLETED",
       "selfstarter": "status/health.sh EXIT_NONZERO PROBLEM lines (honest)",
-      "openmaic": "health + generate-classroom 202 PASS; full content BLOCKED_EXTERNAL LLM",
-      "ghosttrack": "ip_lookup (ipwho.is JSON) + show_ip (api.ipify.org) COMPLETED via generic CLI; GhostTR.py TUI unused"
+      "openmaic": "health/server_providers/usage_stats + generate-classroom 202 COMPLETED; full content BLOCKED_EXTERNAL LLM",
+      "ghosttrack": "ip_lookup (ipwho.is JSON) + show_ip (api.ipify.org) COMPLETED via generic CLI; GhostTR.py TUI unused",
+      "osintgram": "about/list_tools/token_state/balance COMPLETED; Instagram queries BLOCKED_EXTERNAL"
     },
     "desktop_commander_mcp": {
       "connect": "PASS",
@@ -560,18 +561,36 @@
     "osintgram": {
       "install": "PASS",
       "start": "PASS",
-      "invoke": "PASS",
-      "stop": "PASS"
+      "invoke_root": "PASS",
+      "about": "PASS",
+      "list_tools": "PASS",
+      "token_state": "PASS",
+      "balance": "PASS",
+      "stop": "PASS",
+      "instagram_queries": "BLOCKED_EXTERNAL HikerAPI/session"
     },
     "openmaic": {
       "install": "PASS",
       "start": "PASS",
       "skills": 26,
-      "health_api": "PASS /api/health",
+      "health_api": "PASS /api/health JSON via declared op (not ModuleHealth shortcut)",
+      "server_providers": "PASS",
+      "usage_stats": "PASS",
       "agent_runtime_status": "PASS enabled=false",
       "generate_course": "PASS 202 job queued via /api/generate-classroom",
       "full_course_content": "BLOCKED_EXTERNAL LLM keys",
       "list_skills_api": "HTTP_404_WITHOUT_AGENT_RUNTIME"
+    },
+    "feynman": {
+      "install": "PASS",
+      "help": "PASS",
+      "version": "PASS",
+      "status": "PASS",
+      "doctor": "PASS",
+      "search_status": "PASS",
+      "packages_list": "PASS",
+      "alpha_status": "PASS",
+      "research": "BLOCKED_EXTERNAL provider auth"
     },
     "gateway_mcp_approval": {
       "without": "REJECTED",
@@ -591,12 +610,13 @@
     },
     "modules_page": {
       "install_start_stop_restart_ensure_ready": "PASS_UI",
-      "versions_check_update_install_activate_rollback": "PASS_UI"
+      "versions_check_update_install_activate_rollback": "PASS_UI",
+      "sweep_idle": "PASS_UI"
     },
     "selfstarter": {
       "install": "PASS",
       "ensure_ready": "PASS",
-      "status_health_sh": "PASS_EXIT_NONZERO_PROBLEM_lines",
+      "status_health_sh": "PASS_EXIT_NONZERO_PROBLEM_lines via ModuleManager.execute",
       "status_timeout_seconds": 45,
       "run_brief": "BLOCKED_EXTERNAL UE5"
     },
@@ -628,7 +648,8 @@
       "mcp_server_id_registration": "PASS",
       "agent_reach_real_contract": "PASS",
       "composite_cli_over_skill_search": "PASS",
-      "status_honesty_pass_upgrades": "PASS",
+      "status_honesty_pass_upgrades": "PASS llm-agent-trader PARTIAL for LLM-gated analyze",
+      "observability_external_metrics": "PASS pytest ExternalModuleExecutor.emit",
       "no_v2_systems": "PASS",
       "agent_reach_web_ops": "PASS",
       "scrollcraft_verify": "PASS",
@@ -637,7 +658,6 @@
       "cli_blocks_api_thread": "NO (EXTERNAL_REQUIRED|PREFERRED MODULE \u2192 JobRuntime)",
       "cognition_iterative_multi_tool": "PASS",
       "assimilation_enqueue_kwargs": "PASS",
-      "observability_external_metrics": "PASS",
       "cognition_job_idempotency": "PASS",
       "regression_guards_191_192_193": "PASS",
       "cognition_external_preferred_offload": "PASS",
@@ -734,5 +754,9 @@
       "v2ex_hot": "PASS",
       "skill_routed_zero_config_cli": "PASS"
     }
+  },
+  "dod_audit": {
+    "cli_accept_exit_codes": "PASS",
+    "declared_ops_over_lifecycle": "PASS status/health invoke declared runtime ops"
   }
 }

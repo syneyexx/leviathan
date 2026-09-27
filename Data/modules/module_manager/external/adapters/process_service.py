@@ -297,8 +297,14 @@ class ProcessServiceAdapter:
         progress: ProgressCb | None = None,
         cancel_check: CancelCheck | None = None,
     ) -> ModuleResult:
-        # Lifecycle ops
-        if operation in {"start", "stop", "restart", "health", "status"}:
+        # Lifecycle ops — skip when the same name is a declared runtime operation
+        # (e.g. OpenMAIC HTTP `health` → /api/health, not ModuleHealth).
+        declared_ops = {
+            str(op.get("name") or op.get("operation") or "")
+            for op in (self.config.runtime.operations or ())
+            if isinstance(op, dict)
+        }
+        if operation in {"start", "stop", "restart", "health", "status"} and operation not in declared_ops:
             if operation == "start":
                 out = self.start()
             elif operation == "stop":
