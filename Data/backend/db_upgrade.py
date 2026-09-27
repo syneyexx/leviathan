@@ -61,6 +61,25 @@ class DomainMigration:
     apply: Callable[[sqlite3.Connection, DatabaseDomain], None]
 
 
+def _dm2_market_paper_deployments(conn: sqlite3.Connection, domain: DatabaseDomain) -> None:
+    """MARKET domain v2 — durable PaperDeployment table (A3/A4)."""
+    if domain is not DatabaseDomain.MARKET:
+        return
+    from Data.backend.migrations import _m57_market_paper_deployments
+
+    _m57_market_paper_deployments(conn)
+
+
+# Post-baseline domain migrations (independent per DB). Contiguous from v2.
+DOMAIN_MIGRATIONS: tuple[DomainMigration, ...] = (
+    DomainMigration(
+        version=2,
+        name="market_paper_deployments",
+        apply=_dm2_market_paper_deployments,
+    ),
+)
+
+
 @dataclass
 class UpgradeReport:
     mode: InstallMode
@@ -1330,6 +1349,42 @@ def domain_schema_version(path: Path) -> int:
         conn.close()
 
 
+def apply_pending_domain_migrations(path: Path, domain: DatabaseDomain) -> list[int]:
+    """Apply DOMAIN_MIGRATIONS after baseline. Idempotent; fail-closed on gaps."""
+    if not path.is_file():
+        return []
+    applied: list[int] = []
+    conn = _connect(path, set_wal=True)
+    try:
+        runner = MigrationRunner(path)
+        runner.ensure_table(conn)
+        current = runner.current_version(conn)
+        if current < DOMAIN_BASELINE_VERSION:
+            return applied
+        for migration in sorted(DOMAIN_MIGRATIONS, key=lambda m: m.version):
+            if migration.version <= current:
+                continue
+            if migration.version != current + 1:
+                raise DatabaseUpgradeError(
+                    f"{domain.value} domain migration gap: current={current}, "
+                    f"next={migration.version}"
+                )
+            migration.apply(conn, domain)
+            conn.execute(
+                "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
+                (migration.version, migration.name, utc_now()),
+            )
+            applied.append(migration.version)
+            current = migration.version
+        conn.commit()
+        return applied
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def _copy_table_rows(
     source: sqlite3.Connection,
     target: sqlite3.Connection,
@@ -1554,11 +1609,12 @@ def upgrade_all_databases(paths: DatabasePaths) -> UpgradeReport:
     template: Path | None = None
     try:
         if mode is InstallMode.THREE_DB:
-            # Apply any future domain migrations (currently baseline only).
+            # Apply baseline when missing, then pending domain migrations.
             template = materialize_full_schema_template()
             for domain, path in paths:
                 if domain_schema_version(path) < DOMAIN_BASELINE_VERSION:
                     apply_domain_baseline(path, domain, template=template)
+                apply_pending_domain_migrations(path, domain)
                 report.domain_versions[domain.value] = domain_schema_version(path)
             # Repair cutover stub schemas that conflict with runtime stores.
             control = _connect(paths.control)
@@ -1614,6 +1670,7 @@ def upgrade_all_databases(paths: DatabasePaths) -> UpgradeReport:
             paths.ensure_parent_dirs()
             for domain, path in paths:
                 apply_domain_baseline(path, domain, template=template)
+                apply_pending_domain_migrations(path, domain)
                 report.domain_versions[domain.value] = domain_schema_version(path)
             control = _connect(paths.control)
             try:
@@ -1758,9 +1815,11 @@ def ensure_domain_schema(path: Path, domain: DatabaseDomain) -> None:
     Stores must not apply the legacy MigrationRunner (that would recreate all
     product tables in every DB). Empty paths get a domain baseline from the
     schema template. Existing DBs with schema_migrations version >= 1 are OK
-    (includes legacy full-schema test fixtures).
+    (includes legacy full-schema test fixtures). Post-baseline DOMAIN_MIGRATIONS
+    are applied idempotently.
     """
     if domain_schema_version(path) >= DOMAIN_BASELINE_VERSION:
+        apply_pending_domain_migrations(path, domain)
         return
     template = materialize_full_schema_template()
     try:
@@ -1775,6 +1834,7 @@ def ensure_domain_schema(path: Path, domain: DatabaseDomain) -> None:
             f"{domain.value} database is not initialized at {path}. "
             "Run upgrade_leviathan_databases (Data.backend.db_upgrade) first."
         )
+    apply_pending_domain_migrations(path, domain)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

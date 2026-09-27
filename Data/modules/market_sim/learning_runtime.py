@@ -1134,11 +1134,20 @@ def _finalize_qualified(plane: Any, run: StrategyLearningRun, candidate_id: str)
     run.updated_at = utc_now()
     run.last_checkpoint_at = run.updated_at
     run.metadata["final_outcome"] = LabOutcome.QUALIFIED_STRATEGY_FOUND.value
+    # A3 eligibility marker only — does not auto-place paper orders or mutate strategy.
+    run.metadata["ready_for_shadow"] = True
+    run.metadata["autonomous_paper_requires_shadow_receipts"] = True
+    run.metadata["live_money"] = "BLOCKED"
     persist_learning_run(plane.store, run)
     _emit(
         plane,
         "strategy.qualified",
-        {"learning_run_id": run.learning_run_id, "candidate_id": candidate_id},
+        {
+            "learning_run_id": run.learning_run_id,
+            "candidate_id": candidate_id,
+            "ready_for_shadow": True,
+            "live_money": "BLOCKED",
+        },
     )
     _sync_lab_outcome(plane, run, LabOutcome.QUALIFIED_STRATEGY_FOUND.value)
     # Post-mortem lesson (AGENT_PROPOSED)

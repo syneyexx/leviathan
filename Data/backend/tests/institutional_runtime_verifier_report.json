@@ -2,9 +2,9 @@
   "overall": "PASS",
   "results": [
     {
-      "detail": "head=56 applied_tail=[54, 55, 56]",
+      "detail": "head=57 applied_tail=[55, 56, 57]",
       "evidence": {
-        "head": 56,
+        "head": 57,
         "names": {
           "55": "institutional_core",
           "56": "institutional_runtime"
@@ -259,7 +259,7 @@
     {
       "detail": "",
       "evidence": {
-        "decision_id": "dec-fill-4aab2072-c9ef-4545-b462-85456787a2a5"
+        "decision_id": "dec-fill-31a7fd0f-b759-4869-8b55-5b031a5c35c1"
       },
       "name": "decision_packet_persisted",
       "section": "19_decision",
@@ -269,7 +269,7 @@
       "detail": "",
       "evidence": {
         "bad": {
-          "brokenAt": "adc964d1-bb0e-4fa7-9b7c-ab22fe660f1c",
+          "brokenAt": "7d24ea29-4370-4a90-ba98-1b3f914df09b",
           "count": 4,
           "ok": false,
           "status": "FAIL"
@@ -294,7 +294,7 @@
         },
         "status": "RUNNING",
         "step_index": 1,
-        "updated_at": "2026-09-26T17:58:21.839130+00:00",
+        "updated_at": "2026-09-27T15:08:57.816817+00:00",
         "workflow_id": "wf"
       },
       "name": "checkpoint_resume",
@@ -374,9 +374,9 @@
       "status": "PASS"
     },
     {
-      "detail": "active_wave=W108",
+      "detail": "active_wave=W140",
       "evidence": {
-        "active_wave": "W108",
+        "active_wave": "W140",
         "keys": [
           "program",
           "version",

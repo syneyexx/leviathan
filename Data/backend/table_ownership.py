@@ -191,6 +191,7 @@ MARKET_TABLES: frozenset[str] = frozenset(
         "market_news_feeds",
         "market_news_items",
         "market_news_signals",
+        "market_paper_deployments",
         "market_paper_sessions",
         "market_sim_agent_labs",
         "market_sim_closed_trades",

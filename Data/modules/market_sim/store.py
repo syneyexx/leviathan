@@ -1049,6 +1049,129 @@ class MarketSimStore:
                 out.append(s)
         return out
 
+    # --- Paper deployments (A3/A4) — MARKET migration 57 / domain v2 ---
+
+    def upsert_paper_deployment(self, deployment: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_paper_deployments(
+                    deployment_id, strategy_asset_id, strategy_version, status, mode,
+                    feed_id, universe_json, risk_config_json, sizing_config_json,
+                    cadence, env_fingerprint, kill_switch, session_id,
+                    compatibility_json, feed_health_json, metadata_json, payload_json,
+                    loop_state_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(deployment_id) DO UPDATE SET
+                    strategy_asset_id=excluded.strategy_asset_id,
+                    strategy_version=excluded.strategy_version,
+                    status=excluded.status,
+                    mode=excluded.mode,
+                    feed_id=excluded.feed_id,
+                    universe_json=excluded.universe_json,
+                    risk_config_json=excluded.risk_config_json,
+                    sizing_config_json=excluded.sizing_config_json,
+                    cadence=excluded.cadence,
+                    env_fingerprint=excluded.env_fingerprint,
+                    kill_switch=excluded.kill_switch,
+                    session_id=excluded.session_id,
+                    compatibility_json=excluded.compatibility_json,
+                    feed_health_json=excluded.feed_health_json,
+                    metadata_json=excluded.metadata_json,
+                    payload_json=excluded.payload_json,
+                    loop_state_json=excluded.loop_state_json,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    deployment["deployment_id"],
+                    deployment["strategy_asset_id"],
+                    int(deployment.get("strategy_version") or 1),
+                    deployment.get("status") or "CREATED",
+                    deployment.get("mode") or "shadow",
+                    deployment.get("feed_id") or "",
+                    json.dumps(deployment.get("universe_json") or deployment.get("universe") or []),
+                    json.dumps(deployment.get("risk_config_json") or deployment.get("risk_config") or {}),
+                    json.dumps(
+                        deployment.get("sizing_config_json") or deployment.get("sizing_config") or {}
+                    ),
+                    deployment.get("cadence") or "every_n_bars",
+                    deployment.get("env_fingerprint") or "",
+                    1 if deployment.get("kill_switch") else 0,
+                    deployment.get("session_id"),
+                    json.dumps(
+                        deployment.get("compatibility_json") or deployment.get("compatibility") or {}
+                    ),
+                    json.dumps(deployment.get("feed_health_json") or deployment.get("feed_health"))
+                    if (deployment.get("feed_health_json") or deployment.get("feed_health")) is not None
+                    else None,
+                    json.dumps(deployment.get("metadata_json") or deployment.get("metadata") or {}),
+                    json.dumps(deployment.get("payload_json") or deployment.get("payload") or {}),
+                    json.dumps(deployment.get("loop_state_json") or deployment.get("loop_state") or {}),
+                    deployment.get("created_at") or utc_now(),
+                    deployment.get("updated_at") or utc_now(),
+                ),
+            )
+        return deployment
+
+    def get_paper_deployment(self, deployment_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM market_paper_deployments WHERE deployment_id=?",
+                (deployment_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "deployment_id": row["deployment_id"],
+            "strategy_asset_id": row["strategy_asset_id"],
+            "strategy_version": row["strategy_version"],
+            "status": row["status"],
+            "mode": row["mode"],
+            "feed_id": row["feed_id"],
+            "universe_json": _loads(row["universe_json"], []),
+            "risk_config_json": _loads(row["risk_config_json"], {}),
+            "sizing_config_json": _loads(row["sizing_config_json"], {}),
+            "cadence": row["cadence"],
+            "env_fingerprint": row["env_fingerprint"],
+            "kill_switch": bool(row["kill_switch"]),
+            "session_id": row["session_id"],
+            "compatibility_json": _loads(row["compatibility_json"], {}),
+            "feed_health_json": _loads(row["feed_health_json"], None)
+            if row["feed_health_json"]
+            else None,
+            "metadata_json": _loads(row["metadata_json"], {}),
+            "payload_json": _loads(row["payload_json"], {}),
+            "loop_state_json": _loads(row["loop_state_json"], {}),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def list_paper_deployments(
+        self,
+        *,
+        strategy_asset_id: str | None = None,
+        mode: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            sql = "SELECT deployment_id FROM market_paper_deployments WHERE 1=1"
+            params: list[Any] = []
+            if strategy_asset_id:
+                sql += " AND strategy_asset_id=?"
+                params.append(strategy_asset_id)
+            if mode:
+                sql += " AND mode=?"
+                params.append(mode)
+            sql += " ORDER BY updated_at DESC LIMIT ?"
+            params.append(int(limit))
+            rows = conn.execute(sql, params).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            d = self.get_paper_deployment(r["deployment_id"])
+            if d:
+                out.append(d)
+        return out
+
     def save_experiment(self, trial: dict[str, Any]) -> dict[str, Any]:
         with self.connect() as conn:
             conn.execute(

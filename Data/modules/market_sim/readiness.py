@@ -120,11 +120,34 @@ def may_promote_to(*, current: str, target: str, evidence: dict[str, Any] | None
             ):
                 required_gaps.append("A2_requires_sealed_kernel_acceptance")
         elif level == "A3":
-            if not (ev.get("paper_shadow_pass") or ev.get("shadow_run_id")):
-                required_gaps.append("A3_requires_paper_shadow_evidence")
+            # Resolved shadow_run_id is required — lone paper_shadow_pass boolean is not proof.
+            shadow_id = ev.get("shadow_run_id")
+            shadow_receipt = (
+                ev.get("shadow_receipt") if isinstance(ev.get("shadow_receipt"), dict) else None
+            )
+            if not shadow_id:
+                required_gaps.append("A3_requires_resolved_shadow_run_id")
+            elif (
+                shadow_receipt is not None
+                and shadow_receipt.get("status") == "INSUFFICIENT_EVIDENCE"
+            ):
+                required_gaps.append("A3_shadow_receipt_insufficient")
         elif level == "A4":
-            if not (ev.get("autonomous_paper_pass") or ev.get("paper_deployment_id")):
-                required_gaps.append("A4_requires_autonomous_paper_evidence")
+            # Resolved paper_deployment_id is required — lone autonomous_paper_pass is not proof.
+            dep_id = ev.get("paper_deployment_id")
+            paper_receipt = (
+                ev.get("paper_receipt") if isinstance(ev.get("paper_receipt"), dict) else None
+            )
+            if not dep_id:
+                required_gaps.append("A4_requires_resolved_paper_deployment_id")
+            elif (
+                paper_receipt is not None
+                and paper_receipt.get("status") == "INSUFFICIENT_EVIDENCE"
+            ):
+                required_gaps.append("A4_paper_receipt_insufficient")
+            # A4 also needs A3-class shadow evidence when jumping from below A3.
+            if not ev.get("shadow_run_id") and cur_i < LEVEL_ORDER.index("A3"):
+                required_gaps.append("A4_requires_prior_shadow_run_id")
 
     if required_gaps and not allow_jump:
         return {

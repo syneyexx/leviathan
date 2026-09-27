@@ -25,13 +25,19 @@ SUPPORTED_KINDS = frozenset(
         "mean_reversion",
         "breakout",
         "rsi",
+        "momentum",
+        "volatility",
+        "relative_strength",
+        "pairs_spread",
         "feature_compare",
         "hold",
         "composite",
     }
 )
 
-SUPPORTED_FILTERS = frozenset({"regime_filter", "universe_filter", "session_filter"})
+SUPPORTED_FILTERS = frozenset(
+    {"regime_filter", "universe_filter", "session_filter", "cooldown_filter", "timeframe_filter"}
+)
 
 
 @dataclass(frozen=True)
@@ -421,6 +427,176 @@ def evaluate_dsl_v2(
             )
         else:
             rationale = f"rsi={rsi:.1f}" if rsi is not None else "rsi n/a"
+
+    elif kind == "momentum":
+        # Rate-of-change / return momentum over lookback — causal bars only.
+        period = int(params.get("period") or entry.get("period") or 20)
+        threshold = float(entry.get("threshold") or params.get("threshold") or 0.0)
+        roc = _feat(engine, bars, "roc", as_of, period)
+        if roc is None:
+            # Fallback: close / close_n - 1
+            if len(bars) > period:
+                prev = float(bars[-(period + 1)].close)
+                last = float(bars[-1].close)
+                roc = (last / prev - 1.0) if prev else None
+        used["roc"] = roc
+        used["period"] = period
+        used["threshold"] = threshold
+        if roc is None:
+            rationale = "momentum unmeasured"
+        elif position_qty <= 0 and roc > threshold and allowed:
+            side = OrderSide.BUY.value
+            rationale = f"momentum roc={roc:.4f}>{threshold}"
+            confidence = 0.65
+        elif position_qty > 0 and roc < -abs(threshold):
+            side = OrderSide.SELL.value
+            rationale = f"momentum fade roc={roc:.4f}"
+            confidence = 0.6
+        elif position_qty <= 0 and not allowed:
+            return DslSignal(
+                side=OrderSide.HOLD.value,
+                qty=None,
+                confidence=0.2,
+                rationale=f"momentum blocked: {filt_reason}",
+                parameters_used=used,
+                filter_passed=False,
+            )
+        else:
+            rationale = f"momentum idle roc={roc}"
+
+    elif kind == "volatility":
+        # Enter on vol contraction breakout proxy; exit on vol spike — fail-closed if unmeasured.
+        period = int(params.get("period") or entry.get("period") or 20)
+        max_vol = entry.get("max_atr_pct") or params.get("max_atr_pct")
+        min_vol = entry.get("min_atr_pct") or params.get("min_atr_pct")
+        atr = _feat(engine, bars, "atr", as_of, period)
+        last = float(bars[-1].close) if bars else None
+        atr_pct = (float(atr) / last) if atr is not None and last else None
+        used.update({"atr": atr, "atr_pct": atr_pct, "period": period})
+        if atr_pct is None:
+            rationale = "volatility unmeasured"
+        elif position_qty <= 0 and allowed:
+            ok = True
+            if max_vol is not None and atr_pct > float(max_vol):
+                ok = False
+                rationale = f"vol too high atr_pct={atr_pct:.4f}"
+            if min_vol is not None and atr_pct < float(min_vol):
+                ok = False
+                rationale = f"vol too low atr_pct={atr_pct:.4f}"
+            if ok and max_vol is None and min_vol is None:
+                # Default: buy when ATR% below median-ish threshold 0.03
+                ok = atr_pct < 0.03
+                rationale = f"vol contraction atr_pct={atr_pct:.4f}" if ok else f"vol idle atr_pct={atr_pct:.4f}"
+            if ok:
+                side = OrderSide.BUY.value
+                confidence = 0.55
+        elif position_qty > 0 and max_vol is not None and atr_pct > float(max_vol):
+            side = OrderSide.SELL.value
+            rationale = f"vol spike exit atr_pct={atr_pct:.4f}"
+            confidence = 0.55
+        elif position_qty <= 0 and not allowed:
+            return DslSignal(
+                side=OrderSide.HOLD.value,
+                qty=None,
+                confidence=0.2,
+                rationale=f"volatility blocked: {filt_reason}",
+                parameters_used=used,
+                filter_passed=False,
+            )
+        else:
+            rationale = f"volatility idle atr_pct={atr_pct}"
+
+    elif kind == "relative_strength":
+        # Cross-sectional / benchmark RS using feature_compare shape when benchmark series present
+        # in parameters. Without benchmark closes → UNMEASURED HOLD (no fabricated strength).
+        period = int(params.get("period") or entry.get("period") or 20)
+        bench = params.get("benchmark_closes") or entry.get("benchmark_closes")
+        used["period"] = period
+        if not isinstance(bench, (list, tuple)) or len(bench) < period + 1 or len(bars) < period + 1:
+            rationale = "relative_strength benchmark_closes UNMEASURED"
+            used["status"] = "UNMEASURED"
+        else:
+            asset_ret = float(bars[-1].close) / float(bars[-(period + 1)].close) - 1.0
+            try:
+                b0 = float(bench[-(period + 1)])
+                b1 = float(bench[-1])
+                bench_ret = (b1 / b0 - 1.0) if b0 else None
+            except (TypeError, ValueError, IndexError, ZeroDivisionError):
+                bench_ret = None
+            if bench_ret is None:
+                rationale = "relative_strength benchmark UNMEASURED"
+            else:
+                rs = asset_ret - bench_ret
+                used.update({"asset_ret": asset_ret, "bench_ret": bench_ret, "rs": rs})
+                thr = float(entry.get("threshold") or params.get("threshold") or 0.0)
+                if position_qty <= 0 and rs > thr and allowed:
+                    side = OrderSide.BUY.value
+                    rationale = f"relative_strength rs={rs:.4f}>{thr}"
+                    confidence = 0.6
+                elif position_qty > 0 and rs < -abs(thr):
+                    side = OrderSide.SELL.value
+                    rationale = f"relative_strength fade rs={rs:.4f}"
+                    confidence = 0.55
+                elif position_qty <= 0 and not allowed:
+                    return DslSignal(
+                        side=OrderSide.HOLD.value,
+                        qty=None,
+                        confidence=0.2,
+                        rationale=f"relative_strength blocked: {filt_reason}",
+                        parameters_used=used,
+                        filter_passed=False,
+                    )
+                else:
+                    rationale = f"relative_strength idle rs={rs:.4f}"
+
+    elif kind == "pairs_spread":
+        # Spread z-score mean reversion. Requires paired_closes in parameters — else UNMEASURED.
+        period = int(params.get("period") or entry.get("period") or 20)
+        paired = params.get("paired_closes") or entry.get("paired_closes")
+        entry_z = float(entry.get("entry_z") or params.get("entry_z") or 2.0)
+        exit_z = float(exit_rules.get("exit_z") or params.get("exit_z") or 0.5)
+        used.update({"period": period, "entry_z": entry_z, "exit_z": exit_z})
+        if not isinstance(paired, (list, tuple)) or len(paired) < period or len(bars) < period:
+            rationale = "pairs_spread paired_closes UNMEASURED"
+            used["status"] = "UNMEASURED"
+        else:
+            n = min(len(bars), len(paired), period)
+            spreads = []
+            for i in range(1, n + 1):
+                try:
+                    spreads.append(float(bars[-i].close) - float(paired[-i]))
+                except (TypeError, ValueError):
+                    spreads = []
+                    break
+            if len(spreads) < max(5, period // 2):
+                rationale = "pairs_spread insufficient overlap UNMEASURED"
+                used["status"] = "UNMEASURED"
+            else:
+                mean = sum(spreads) / len(spreads)
+                var = sum((s - mean) ** 2 for s in spreads) / len(spreads)
+                std = var**0.5
+                z = (spreads[0] - mean) / std if std > 1e-12 else 0.0
+                used.update({"z": z, "spread": spreads[0], "mean": mean, "std": std})
+                # Long spread when z << 0 (asset cheap vs pair); exit near 0.
+                if position_qty <= 0 and z <= -abs(entry_z) and allowed:
+                    side = OrderSide.BUY.value
+                    rationale = f"pairs_spread z={z:.2f}<=-{entry_z}"
+                    confidence = 0.6
+                elif position_qty > 0 and abs(z) <= abs(exit_z):
+                    side = OrderSide.SELL.value
+                    rationale = f"pairs_spread mean-revert exit |z|={abs(z):.2f}"
+                    confidence = 0.55
+                elif position_qty <= 0 and not allowed:
+                    return DslSignal(
+                        side=OrderSide.HOLD.value,
+                        qty=None,
+                        confidence=0.2,
+                        rationale=f"pairs_spread blocked: {filt_reason}",
+                        parameters_used=used,
+                        filter_passed=False,
+                    )
+                else:
+                    rationale = f"pairs_spread idle z={z:.2f}"
 
     elif kind == "feature_compare":
         left_name = str(entry.get("left") or "close")

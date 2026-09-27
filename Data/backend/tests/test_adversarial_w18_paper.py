@@ -222,7 +222,7 @@ class PaperRestartReuseTests(unittest.TestCase):
                 resumed["truth"]["durable_path"], "market_paper_sessions"
             )
             self.assertEqual(
-                resumed["truth"]["paper_deployment_table"], "NOT_PERSISTED"
+                resumed["truth"]["paper_deployment_table"], "PERSISTED"
             )
 
 

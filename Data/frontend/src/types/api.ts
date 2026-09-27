@@ -2340,6 +2340,28 @@ export type MarketSimExecutionGranularity = {
   truth?: Record<string, unknown>;
 };
 
+/** Per family × research/paper mode — backend-authored, never UI-inferred. */
+export type MarketSimModeCapabilityRow = {
+  family: string;
+  modes: Record<string, string>;
+  live_trading: "BLOCKED" | string;
+  notes?: string;
+};
+
+export type MarketSimPaperDeployment = {
+  deployment_id: string;
+  strategy_asset_id: string;
+  strategy_version: number;
+  status: string;
+  mode?: "shadow" | "autonomous_paper" | string;
+  feed_id: string;
+  universe: string[];
+  kill_switch: boolean;
+  session_id?: string | null;
+  loop?: Record<string, unknown>;
+  truth?: Record<string, unknown>;
+};
+
 export type MarketSimCapabilities = {
   feature_enabled: boolean;
   live_trading_default: "BLOCKED" | string;
@@ -2348,17 +2370,21 @@ export type MarketSimCapabilities = {
   binance_public_reachable: boolean;
   force_live_blocked: boolean;
   markets: MarketSimFamilyCapability[];
+  mode_matrix?: MarketSimModeCapabilityRow[];
   execution_granularity: MarketSimExecutionGranularity[];
   action_matrix?: {
     actions: TradingActionCapabilityRow[];
     truth: Record<string, unknown>;
   };
+  exchange_venues?: Record<string, unknown>;
   truth: {
     capability_from_adapters: boolean;
     not_from_ui_presence: boolean;
     profitable_backtest_is_not_proof: boolean;
-    ohlcv_is_not_orderbook: boolean;
-    granularity_honesty_required: boolean;
+    ohlcv_is_not_orderbook?: boolean;
+    granularity_honesty_required?: boolean;
+    mode_matrix_machine_derived?: boolean;
+    [key: string]: unknown;
   };
 };
 
