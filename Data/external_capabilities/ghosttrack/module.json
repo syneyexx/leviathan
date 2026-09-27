@@ -1,0 +1,105 @@
+{
+  "module_id": "ghosttrack",
+  "name": "GhostTrack",
+  "version": "0.1.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "CLI",
+    "source_type": "git",
+    "source": "https://github.com/HunxByts/GhostTrack",
+    "ref": "main",
+    "install": {
+      "strategy": [
+        "GIT_CHECKOUT",
+        "PYTHON_VENV"
+      ],
+      "requirements_file": "requirements.txt",
+      "dependencies": [
+        "python3",
+        "curl"
+      ]
+    },
+    "runtime": {
+      "mode": "EPHEMERAL",
+      "cwd": "$INSTALL_ROOT",
+      "timeout_seconds": 30,
+      "operations": [
+        {
+          "name": "ip_lookup",
+          "command": [
+            "curl",
+            "-sS",
+            "--max-time",
+            "20",
+            "http://ipwho.is/{ip}"
+          ],
+          "result_format": "json",
+          "notes": "Machine contract for GhostTrack IP_Track path (ipwho.is). GhostTR.py interactive menu is not invoked."
+        },
+        {
+          "name": "show_ip",
+          "command": [
+            "curl",
+            "-sS",
+            "--max-time",
+            "15",
+            "https://api.ipify.org/"
+          ],
+          "result_format": "text",
+          "notes": "Machine contract for GhostTrack showIP path (api.ipify.org)."
+        }
+      ]
+    },
+    "result": {
+      "format": "MIXED"
+    },
+    "assimilation_mode": "EVIDENCE",
+    "tags": [
+      "osint",
+      "tracking",
+      "ip"
+    ],
+    "domain": "osint",
+    "resource_class": "NETWORK_HEAVY",
+    "metadata": {
+      "ghosttr_py": "interactive TUI only (input menu) — not invoked",
+      "machine_ops": "Declarative curl argv for the same public APIs GhostTR.py calls (ipwho.is, api.ipify.org). Phone/username trackers remain TUI-only."
+    }
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.ghosttrack.status",
+      "name": "GhostTrack Install Status",
+      "description": "Report GhostTrack installation readiness (lifecycle status).",
+      "external_name": "status",
+      "side_effects": [
+        "READ"
+      ]
+    },
+    {
+      "capability_id": "external.ghosttrack.ip_lookup",
+      "name": "GhostTrack IP Lookup",
+      "description": "Lookup IP geolocation/ASN via ipwho.is (GhostTrack IP_Track machine path).",
+      "external_name": "ip_lookup",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.ghosttrack.show_ip",
+      "name": "GhostTrack Show Public IP",
+      "description": "Show caller public IP via api.ipify.org (GhostTrack showIP machine path).",
+      "external_name": "show_ip",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    }
+  ]
+}

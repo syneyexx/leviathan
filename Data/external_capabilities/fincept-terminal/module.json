@@ -1,0 +1,158 @@
+{
+  "module_id": "fincept-terminal",
+  "name": "Fincept Terminal Analytics",
+  "version": "0.2.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "COMPOSITE",
+    "children": [
+      "SCRIPT_PACKAGE",
+      "CLI"
+    ],
+    "source_type": "git",
+    "source": "https://github.com/Fincept-Corporation/FinceptTerminal",
+    "ref": "main",
+    "install": {
+      "strategy": [
+        "GIT_CHECKOUT",
+        "PYTHON_VENV"
+      ],
+      "python_packages": [
+        "numpy>=2.0,<3",
+        "pandas>=2.0,<3",
+        "scipy>=1.11,<2",
+        "statsmodels>=0.14,<1"
+      ],
+      "dependencies": [
+        "python3"
+      ]
+    },
+    "runtime": {
+      "mode": "EPHEMERAL",
+      "timeout_seconds": 300,
+      "cwd": "$INSTALL_ROOT/fincept-qt/scripts/Analytics",
+      "operations": [
+        {
+          "name": "analyze",
+          "command": [
+            "python",
+            "financial_analysis_cli.py",
+            "{command}",
+            "?{payload}"
+          ],
+          "defaults": {
+            "command": "get_key_metrics"
+          }
+        },
+        {
+          "name": "quant",
+          "command": [
+            "python",
+            "quant_analytics_cli.py",
+            "{command}",
+            "?{payload}"
+          ],
+          "defaults": {
+            "command": "help"
+          }
+        },
+        {
+          "name": "stats",
+          "command": [
+            "python",
+            "statsmodels_cli.py",
+            "{command}",
+            "?{payload}"
+          ],
+          "defaults": {
+            "command": "list"
+          }
+        },
+        {
+          "name": "fixed_income",
+          "command": [
+            "python",
+            "fixedIncome/cli.py",
+            "{command}",
+            "?{payload}"
+          ],
+          "defaults": {
+            "command": "help"
+          }
+        }
+      ]
+    },
+    "result": {
+      "format": "MIXED",
+      "artifact_globs": [
+        "output/**",
+        "*.json",
+        "*.csv",
+        "*.xlsx"
+      ]
+    },
+    "assimilation_mode": "EVIDENCE",
+    "resource_class": "CPU_HEAVY",
+    "tags": [
+      "finance",
+      "analytics",
+      "research"
+    ],
+    "domain": "finance",
+    "metadata": {
+      "marketsim_bypass_forbidden": true,
+      "real_money_blocked": true,
+      "prefer_sdk_over_gui": true,
+      "preferred_machine_contract": "Python analytics CLIs under fincept-qt/scripts/Analytics (not the C++/Qt GUI)",
+      "gui_not_automated": true,
+      "not_marketsim_authority": true
+    }
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.fincept.analyze",
+      "name": "Fincept Analyze",
+      "description": "Run Fincept financial_analysis_cli analytics (research only; MarketSim remains trading authority).",
+      "external_name": "analyze",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.fincept.quant",
+      "name": "Fincept Quant Analytics",
+      "description": "Run Fincept quant_analytics_cli (research/analytics only).",
+      "external_name": "quant",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.fincept.stats",
+      "name": "Fincept Statsmodels",
+      "description": "Run Fincept statsmodels_cli analytics helpers (research only; MarketSim remains trading authority).",
+      "external_name": "stats",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.fincept.fixed_income",
+      "name": "Fincept Fixed Income",
+      "description": "Run Fincept fixedIncome CLI analytics (research only; MarketSim remains trading authority).",
+      "external_name": "fixed_income",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    }
+  ]
+}

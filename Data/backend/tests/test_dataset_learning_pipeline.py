@@ -64,6 +64,13 @@ class _FakeRuntime(AgentRuntime):
 
 
 class DatasetLearningPipelineTests(unittest.TestCase):
+    def _force_knowledge_index(self, dataset_id: str) -> None:
+        """Fixture text JSONL is for Knowledge RAG — override trading-route heuristics."""
+        ds = self.service.get_dataset(dataset_id)
+        meta = dict(ds.metadata or {})
+        meta["forceKnowledgeIndex"] = True
+        self.store.update_dataset(dataset_id, metadata=meta)
+
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
@@ -182,6 +189,7 @@ class DatasetLearningPipelineTests(unittest.TestCase):
         )
         imported = self.service.import_local_sync(str(path), name="e2e-learn", materialize=True)
         ds_id = imported["dataset"]["datasetId"]
+        self._force_knowledge_index(ds_id)
 
         # Sidecar written next to corpus raw folder
         sidecar = read_sidecar(self.corpus.datasets_raw / ds_id / SIDECAR_FILENAME)
@@ -287,6 +295,7 @@ class DatasetLearningPipelineTests(unittest.TestCase):
         )
         imported = self.service.import_local_sync(str(path), materialize=True)
         ds_id = imported["dataset"]["datasetId"]
+        self._force_knowledge_index(ds_id)
         job = self.service.enqueue_learn_to_brain(ds_id, offline_only=False)
         done = self.service.process_jobs(max_jobs=1)[0]
         self.assertEqual(done.status, DatasetJobStatus.COMPLETED, done.error)
@@ -384,6 +393,7 @@ class DatasetLearningPipelineTests(unittest.TestCase):
         )
         imported = self.service.import_local_sync(str(path), materialize=True)
         ds_id = imported["dataset"]["datasetId"]
+        self._force_knowledge_index(ds_id)
         self.service.enqueue_learn_to_brain(ds_id, offline_only=False)
         self.service.process_jobs(max_jobs=1)
         count1 = len(self.knowledge.list_relation_atoms(limit=500))

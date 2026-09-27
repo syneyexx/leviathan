@@ -1,0 +1,279 @@
+{
+  "module_id": "openmaic",
+  "name": "OpenMAIC",
+  "version": "1.1.2",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "COMPOSITE",
+    "children": [
+      "SKILL_PACK",
+      "PROCESS_SERVICE"
+    ],
+    "source_type": "git",
+    "source": "https://github.com/THU-MAIC/OpenMAIC",
+    "ref": "main",
+    "install": {
+      "strategy": [
+        "GIT_CHECKOUT",
+        "NODE_PNPM"
+      ],
+      "dependencies": [
+        "node",
+        "pnpm"
+      ]
+    },
+    "runtime": {
+      "mode": "LAZY",
+      "command": [
+        "pnpm",
+        "exec",
+        "next",
+        "dev",
+        "-p",
+        "3000",
+        "-H",
+        "127.0.0.1"
+      ],
+      "cwd": "$INSTALL_ROOT",
+      "startup_timeout_seconds": 180,
+      "idle_timeout_seconds": 1800,
+      "base_url": "http://127.0.0.1:3000",
+      "ready_probe": {
+        "kind": "http",
+        "url": "http://127.0.0.1:3000/api/health",
+        "expect_status": 200
+      },
+      "health_probe": {
+        "kind": "http",
+        "url": "http://127.0.0.1:3000/api/health",
+        "expect_status": 200
+      },
+      "operations": [
+        {
+          "name": "health",
+          "method": "GET",
+          "path": "/api/health"
+        },
+        {
+          "name": "agent_runtime_status",
+          "method": "GET",
+          "path": "/api/agent/runtime"
+        },
+        {
+          "name": "server_providers",
+          "method": "GET",
+          "path": "/api/server-providers"
+        },
+        {
+          "name": "usage_stats",
+          "method": "GET",
+          "path": "/api/usage"
+        },
+        {
+          "name": "generate_course",
+          "method": "POST",
+          "path": "/api/generate-classroom",
+          "accept_statuses": [
+            200,
+            201,
+            202
+          ],
+          "body_from": [
+            "requirement",
+            "topic",
+            "prompt",
+            "message",
+            "pdfContent",
+            "enableWebSearch",
+            "enableImageGeneration",
+            "enableVideoGeneration",
+            "enableTTS",
+            "agentMode"
+          ],
+          "body_aliases": {
+            "topic": "requirement",
+            "prompt": "requirement",
+            "message": "requirement"
+          }
+        },
+        {
+          "name": "classroom_job_status",
+          "method": "GET",
+          "path": "/api/generate-classroom/{jobId}",
+          "path_params": [
+            "jobId"
+          ]
+        },
+        {
+          "name": "generate_course_agent_session",
+          "method": "POST",
+          "path": "/api/agent/sessions",
+          "body_from": [
+            "topic",
+            "level",
+            "prompt",
+            "message"
+          ],
+          "metadata": {
+            "requires_agent_runtime": true,
+            "preflight_path": "/api/agent/runtime",
+            "note": "NOT_AVAILABLE unless OpenMAIC agent runtime is enabled; prefer SKILL_PACK + generate-classroom."
+          }
+        },
+        {
+          "name": "session_status",
+          "method": "GET",
+          "path": "/api/agent/sessions/status",
+          "metadata": {
+            "requires_agent_runtime": true,
+            "preflight_path": "/api/agent/runtime"
+          }
+        },
+        {
+          "name": "cancel_session",
+          "method": "POST",
+          "path": "/api/agent/sessions/{session_id}/cancel",
+          "path_params": [
+            "session_id"
+          ],
+          "metadata": {
+            "requires_agent_runtime": true,
+            "preflight_path": "/api/agent/runtime"
+          }
+        },
+        {
+          "name": "list_skills",
+          "method": "GET",
+          "path": "/api/agent/skills",
+          "metadata": {
+            "requires_agent_runtime": true,
+            "preflight_path": "/api/agent/runtime",
+            "note": "Agent-runtime gated. Prefer SKILL_PACK importer for on-demand skill load."
+          }
+        }
+      ],
+      "eager_start": false
+    },
+    "result": {
+      "format": "MIXED",
+      "artifact_globs": [
+        "output/**",
+        "courses/**",
+        "*.pptx",
+        "*.html"
+      ]
+    },
+    "skill_roots": [
+      "skills",
+      "packages/@openmaic/importer"
+    ],
+    "assimilation_mode": "NONE",
+    "tags": [
+      "education",
+      "course",
+      "skill"
+    ],
+    "domain": "education",
+    "resource_class": "CPU_HEAVY",
+    "metadata": {
+      "preferred_machine_contract": "PROCESS_SERVICE: Next.js /api/health + /api/generate-classroom; SKILL_PACK under skills/. Agent /api/agent/* requires feature flag + DATABASE_URL.",
+      "requires_node": ">=22.19.0",
+      "llm_provider_keys_required": true
+    }
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.openmaic.generate_course",
+      "name": "OpenMAIC Generate Course",
+      "description": "Create an OpenMAIC classroom generation job (slides/quizzes/course) for a topic via /api/generate-classroom.",
+      "external_name": "generate_course",
+      "side_effects": [
+        "EXECUTE",
+        "WRITE",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.openmaic.classroom_job_status",
+      "name": "OpenMAIC Classroom Job Status",
+      "description": "Poll OpenMAIC classroom generation job status by jobId.",
+      "external_name": "classroom_job_status",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.openmaic.health",
+      "name": "OpenMAIC Health",
+      "description": "Read OpenMAIC /api/health capability probe.",
+      "external_name": "health",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.openmaic.agent_runtime_status",
+      "name": "OpenMAIC Agent Runtime Status",
+      "description": "Probe whether OpenMAIC agent-runtime APIs are enabled (honest gating).",
+      "external_name": "agent_runtime_status",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.openmaic.start",
+      "name": "Start OpenMAIC",
+      "description": "Start OpenMAIC local Next.js runtime if needed.",
+      "external_name": "start",
+      "side_effects": [
+        "EXECUTE"
+      ]
+    },
+    {
+      "capability_id": "external.openmaic.stop",
+      "name": "Stop OpenMAIC",
+      "description": "Stop OpenMAIC local runtime.",
+      "external_name": "stop",
+      "side_effects": [
+        "EXECUTE"
+      ]
+    },
+    {
+      "capability_id": "external.openmaic.load_skill",
+      "name": "Load OpenMAIC Skill",
+      "description": "Load an OpenMAIC skill pack instruction on demand.",
+      "external_name": "load",
+      "side_effects": [
+        "READ"
+      ]
+    },
+    {
+      "capability_id": "external.openmaic.server_providers",
+      "name": "OpenMAIC Server Providers",
+      "description": "Read OpenMAIC /api/server-providers registry (empty without LLM keys is honest).",
+      "external_name": "server_providers",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.openmaic.usage_stats",
+      "name": "OpenMAIC Usage Stats",
+      "description": "Read OpenMAIC /api/usage totals (no LLM required).",
+      "external_name": "usage_stats",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    }
+  ]
+}

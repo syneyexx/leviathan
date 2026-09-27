@@ -5,7 +5,7 @@ Acceptance metrics are read from kernel ``compute_metrics`` / run results,
 never from request payloads or agent claims.
 
 Wave 6: actual fold evaluation (train-fit / test-run) lives here.
-# TODO(Wave 27): register ``market_sim.qualification_run`` worker capability
+# NOTE(Wave 27): register ``market_sim.qualification_run`` worker capability
 # (execution builtins + jobs allowlist + workers entrypoint). Do not register
 # that capability from this module — fold evaluation is callable/orchestrated
 # by QualificationAuthority once Wave 27 wires the background job.

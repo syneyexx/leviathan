@@ -141,6 +141,9 @@ class ModuleExecutor(Protocol):
         *,
         request_id: str,
         run_id: str | None = None,
+        job_id: str | None = None,
+        cancel_check: Any = None,
+        progress: Any = None,
     ) -> dict[str, Any] | CapabilityResult: ...
 
 
@@ -704,19 +707,83 @@ class ExecutionGateway:
     ) -> Any:
         if self.module_executor is None:
             raise RuntimeError("Module executor not configured on ExecutionGateway")
-        return self.module_executor.execute_module_capability(
-            definition.id,
-            definition.provider_ref,
-            dict(request.arguments),
-            request_id=request.request_id or "",
-            run_id=request.run_id,
-        )
+        cancel_check = None
+        progress = None
+        job_id = request.job_id
+        # Cooperative cancel when JobRuntime owns this request.
+        if job_id and hasattr(self, "_job_cancel_check") and callable(getattr(self, "_job_cancel_check")):
+            cancel_check = lambda jid=job_id: bool(self._job_cancel_check(jid))  # noqa: E731
+        # Optional progress sink — never invent percent; adapters report honestly.
+        if hasattr(self, "_job_progress") and callable(getattr(self, "_job_progress")) and job_id:
+            progress = lambda pct, phase, msg, jid=job_id: self._job_progress(  # noqa: E731
+                jid, float(pct or 0.0), str(phase or ""), str(msg or "")
+            )
+        elif isinstance(request.arguments, dict) and callable(request.arguments.get("_progress_cb")):
+            # Test/dev only: explicit callable not persisted into provider args.
+            progress = request.arguments.get("_progress_cb")
+        args = dict(request.arguments)
+        args.pop("_progress_cb", None)
+        args.pop("_cancel_check", None)
+        if cancel_check is None and callable(request.arguments.get("_cancel_check")):
+            cancel_check = request.arguments.get("_cancel_check")
+        try:
+            return self.module_executor.execute_module_capability(
+                definition.id,
+                definition.provider_ref,
+                args,
+                request_id=request.request_id or "",
+                run_id=request.run_id,
+                job_id=job_id,
+                cancel_check=cancel_check,
+                progress=progress,
+            )
+        except TypeError:
+            # Backward-compatible executors without job_id/cancel_check/progress kwargs.
+            try:
+                return self.module_executor.execute_module_capability(
+                    definition.id,
+                    definition.provider_ref,
+                    args,
+                    request_id=request.request_id or "",
+                    run_id=request.run_id,
+                    job_id=job_id,
+                    cancel_check=cancel_check,
+                )
+            except TypeError:
+                return self.module_executor.execute_module_capability(
+                    definition.id,
+                    definition.provider_ref,
+                    args,
+                    request_id=request.request_id or "",
+                    run_id=request.run_id,
+                )
 
     def _dispatch_mcp(
         self, definition: CapabilityDefinition, request: CapabilityRequest
     ) -> CapabilityResult:
         if self.mcp_executor is None:
             raise RuntimeError("MCP executor not configured on ExecutionGateway")
+        # Trading boundary for MCP tools expanded from external finance packages.
+        meta = dict(getattr(definition, "metadata", None) or {})
+        if meta.get("marketsim_bypass_forbidden") or meta.get("real_money_blocked"):
+            from Data.modules.module_manager.external.trading_boundary import (
+                enforce_trading_boundary,
+                module_trading_flags,
+            )
+
+            flags = module_trading_flags(definition)
+            op = definition.provider_ref or definition.id
+            rejected = enforce_trading_boundary(
+                flags=flags,
+                capability_id=definition.id,
+                operation=str(op),
+                arguments=dict(request.arguments),
+                request_id=request.request_id or "",
+                provider_kind="mcp",
+                provider_ref=definition.provider_ref,
+            )
+            if rejected is not None:
+                return rejected
         # approved_by_user may arrive as a top-level sibling in API payloads — never authorize from it.
         return self.mcp_executor.execute_capability(
             definition.id,
@@ -816,6 +883,9 @@ class ExecutionGateway:
                 raise GatewayRejection(f"Missing required argument: {key}", reason="validation")
         for key, value in args.items():
             if key not in properties:
+                # Honor JSON Schema additionalProperties when explicitly true.
+                if schema.get("additionalProperties") is True:
+                    continue
                 raise GatewayRejection(f"Unexpected argument: {key}", reason="validation")
             expected = properties[key].get("type")
             if expected is None:

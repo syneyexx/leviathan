@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import uuid
 from typing import Any
@@ -113,6 +114,24 @@ class JobRuntime:
             "leases_recovered": 0,
         }
         self._maintenance_fenced = False
+        # Ensure MODULE/CLI adapters can cooperatively cancel when this runtime
+        # owns the job — without requiring composition-root wiring.
+        self._ensure_gateway_cancel_probe()
+
+    def _ensure_gateway_cancel_probe(self) -> None:
+        """Attach ``gateway._job_cancel_check`` if the composition root did not."""
+        existing = getattr(self.gateway, "_job_cancel_check", None)
+        if callable(existing):
+            return
+
+        def _probe(job_id: str) -> bool:
+            flag = self._cancel_flags.get(job_id)
+            return bool(flag is not None and flag.is_set())
+
+        try:
+            self.gateway._job_cancel_check = _probe  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 — optional probe must not break construction
+            pass
 
     def enter_maintenance_fence(self) -> None:
         """WAVE 21 — reject new enqueues while restore maintenance is active."""
@@ -431,19 +450,29 @@ class JobRuntime:
                     return current
                 raise
 
-            cap_result = self.gateway.execute(
-                CapabilityRequest(
-                    capability_id=job.capability_id,
-                    arguments=job.arguments,
-                    approval_id=job.approval_id,
-                    run_id=job.run_id,
-                    job_id=job.job_id,
-                    requested_by=job.requested_by,
-                    request_id=job.job_id,
-                    trace_id=job.trace_id,
-                    idempotency_key=job.idempotency_key,
+            # Claimed execution is worker-owned: temporarily mark this process so
+            # EXTERNAL_REQUIRED capabilities are not re-rejected as API-inline.
+            prev_worker = os.environ.get("LEVIATHAN_WORKER_ID")
+            os.environ["LEVIATHAN_WORKER_ID"] = str(self.worker_id or _LOCAL_WORKER_ID)
+            try:
+                cap_result = self.gateway.execute(
+                    CapabilityRequest(
+                        capability_id=job.capability_id,
+                        arguments=job.arguments,
+                        approval_id=job.approval_id,
+                        run_id=job.run_id,
+                        job_id=job.job_id,
+                        requested_by=job.requested_by,
+                        request_id=job.job_id,
+                        trace_id=job.trace_id,
+                        idempotency_key=job.idempotency_key,
+                    )
                 )
-            )
+            finally:
+                if prev_worker is None:
+                    os.environ.pop("LEVIATHAN_WORKER_ID", None)
+                else:
+                    os.environ["LEVIATHAN_WORKER_ID"] = prev_worker
 
             # Re-check cancel after gateway (cooperative).
             current = self.store.get(job.job_id)

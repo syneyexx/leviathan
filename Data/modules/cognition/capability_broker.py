@@ -107,7 +107,57 @@ class CapabilityBroker:
         goal: str,
         domain: str | None = None,
         limit: int = 6,
+        skill_store: Any | None = None,
     ) -> CapabilityShortlist:
         short = self.search(goal, limit=limit, domain=domain)
         # Inspect only top few — avoid prompt explosion.
-        return self.inspect(short.capability_ids[:3])
+        inspected = self.inspect(short.capability_ids[:3])
+        notes = list(inspected.notes)
+        inspected_map = dict(inspected.inspected)
+        store = skill_store if skill_store is not None else getattr(self, "_skill_store", None)
+        # Bounded skill metadata — never inject instruction bodies into prompts.
+        # Skill refs are first-class shortlist IDs so Cognition can select them;
+        # invoke routes through external.skills.load (on-demand instructions).
+        skill_ids: list[str] = []
+        if store is not None and goal.strip():
+            try:
+                skills = store.search_skills(
+                    query=goal.strip(),
+                    enabled_only=True,
+                    include_catalog=False,
+                    limit=min(5, limit),
+                )
+                for skill in skills:
+                    sid = f"skill:{skill.get('skill_id')}"
+                    skill_ids.append(sid)
+                    inspected_map[sid] = {
+                        "id": sid,
+                        "name": skill.get("name"),
+                        "description": skill.get("description"),
+                        "provider_kind": "skill",
+                        "available": bool(skill.get("enabled")),
+                        "metadata": {
+                            "skill_id": skill.get("skill_id"),
+                            "module_id": skill.get("module_id"),
+                            "on_demand_instructions": True,
+                            "load_capability_id": "external.skills.load",
+                            "required_capabilities": skill.get("required_capabilities") or [],
+                        },
+                    }
+                if skills:
+                    notes.append(
+                        f"Matched {len(skills)} installed skill(s); instructions load on demand only"
+                    )
+            except Exception:  # noqa: BLE001
+                notes.append("skill search unavailable")
+        # Cap total shortlist; keep capability hits first, then skills.
+        merged_ids = list(inspected.capability_ids)
+        for sid in skill_ids:
+            if sid not in merged_ids and len(merged_ids) < max(limit, 8):
+                merged_ids.append(sid)
+        return CapabilityShortlist(
+            query=inspected.query,
+            capability_ids=tuple(merged_ids),
+            inspected=inspected_map,
+            notes=tuple(notes),
+        )

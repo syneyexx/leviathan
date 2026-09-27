@@ -182,6 +182,7 @@ from Data.backend.routes.artifacts import build_artifacts_router
 from Data.backend.routes.flywheel import build_flywheel_router
 from Data.backend.routes.plugins import build_plugins_router
 from Data.backend.routes.modules import build_modules_router
+from Data.backend.routes.skills import build_skills_router
 from Data.backend.routes.conversations import build_conversations_router
 from Data.backend.routes.browser import build_browser_router
 from Data.backend.routes.platform import build_platform_router
@@ -434,10 +435,13 @@ neuro_advisor = NeuroAdvisor(
 module_manager = ModuleManager(
     discovery_roots=(
         DATA_ROOT / "modules",
+        DATA_ROOT / "external_capabilities",
         settings.knowledge.data_root / "plugins",
+        settings.knowledge.data_root / "external_capabilities",
     ),
     enabled=settings.features.module_manager_enabled,
     allow_subprocess_isolation=settings.features.module_manager_subprocess,
+    execute_timeout_seconds=120.0,
 )
 plugin_registry = PluginRegistry(capability_catalog)
 plugin_registry.register_echo_mcp_stub()
@@ -451,9 +455,53 @@ mcp_bridge = McpBridge(
     http_enabled=settings.features.mcp_http,
     auto_expand_modules=settings.features.mcp_auto_expand_modules,
     allow_outbound=settings.network.allow_outbound,
+    observability=observability,
 )
 mcp_provider = McpProvider(mcp_bridge, job_runtime=job_runtime)
 execution_gateway.mcp_executor = mcp_provider
+from Data.modules.module_manager.external.executor import ExternalModuleExecutor
+from Data.modules.module_manager.external.store import ExternalCapabilityStore
+from Data.modules.module_manager.external.catalog_register import (
+    register_external_module_capabilities,
+    register_external_control_capabilities,
+)
+
+external_capability_store = ExternalCapabilityStore(settings.database_path)
+external_capability_store.initialize()
+plugin_registry.attach_store(external_capability_store)
+plugin_registry.hydrate_from_store()
+execution_gateway.module_executor = ExternalModuleExecutor(
+    module_manager,
+    job_runtime=job_runtime,
+    assimilation_service=assimilation_service,
+    evidence_service=evidence_service,
+    observation_store=observation_store,
+    observability=observability,
+    catalog=capability_catalog,
+)
+# Cooperative cancel / progress probes for MODULE jobs running via gateway.
+execution_gateway._job_cancel_check = lambda job_id: bool(  # type: ignore[attr-defined]
+    getattr(job_runtime, "_cancel_flags", {}).get(job_id)
+    and getattr(job_runtime, "_cancel_flags", {}).get(job_id).is_set()
+)
+
+
+def _gateway_job_progress(job_id: str, pct: float, phase: str, message: str) -> None:
+    try:
+        if hasattr(job_store, "update_progress"):
+            job_store.update_progress(job_id, progress=pct, phase=phase, message=message[:240])
+        observability.emit(
+            "external_capability",
+            "job.progress",
+            payload={"job_id": job_id, "progress": pct, "phase": phase, "message": message[:240]},
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+execution_gateway._job_progress = _gateway_job_progress  # type: ignore[attr-defined]
+register_external_control_capabilities(capability_catalog)
+
 evaluation_harness = EvaluationHarness(
     catalog=capability_catalog,
     evidence=evidence_store,
@@ -1177,6 +1225,7 @@ cognition_runtime = CognitiveRuntime(
     neuro_advisor=neuro_advisor if settings.features.cognition_neuro else None,
     verification_engine=verification_engine,
     execution_gateway=execution_gateway,
+    job_runtime=job_runtime,
     observability=observability,
     resource_pressure_fn=build_resource_pressure_fn(
         telemetry_provider=lambda: telemetry_dict_from_observability(observability),
@@ -2104,8 +2153,60 @@ async def lifespan(_: FastAPI):
                     "why_library": live_settings().features.why_library,
                     "residual_production": live_settings().features.residual_production,
                 },
+                metadata={
+                    "mcp_bridge": mcp_bridge,
+                    "artifact_store": artifacts,
+                    "database_path": str(settings.database_path),
+                    "external_capability_store": external_capability_store,
+                },
             )
         )
+        # Register MODULE-provider capabilities from declarative external manifests.
+        for managed in ready:
+            try:
+                register_external_module_capabilities(
+                    catalog=capability_catalog,
+                    plugin_registry=plugin_registry,
+                    managed=managed,
+                )
+            except Exception as exc:  # noqa: BLE001 — optional modules must not break boot
+                observability.emit(
+                    "external_capability",
+                    "capability_register_failed",
+                    payload={"module_id": managed.manifest.module_id, "error": str(exc)},
+                    level="warning",
+                )
+            else:
+                observability.emit(
+                    "external_capability",
+                    "external.modules.discovered",
+                    payload={"module_id": managed.manifest.module_id},
+                )
+        # Second-pass hydrate: early startup hydrate may skip bindings whose
+        # capabilities were not yet in the catalog. ENABLED still ≠ READY.
+        try:
+            rehydrated = plugin_registry.hydrate_from_store()
+            observability.emit(
+                "external_capability",
+                "plugin_registry.rehydrated",
+                payload={"count": rehydrated},
+            )
+        except Exception as exc:  # noqa: BLE001
+            observability.emit(
+                "external_capability",
+                "plugin_registry.rehydrate_failed",
+                payload={"error": str(exc)},
+                level="warning",
+            )
+        # Optional idle sweep hook — never blocks boot; operator/API also calls this.
+        try:
+            if hasattr(module_manager, "sweep_idle_modules"):
+                module_manager.sweep_idle_modules()
+        except Exception:  # noqa: BLE001
+            pass
+        # Wire skill store into capability broker for on-demand skill shortlists.
+        if hasattr(cognition_runtime, "broker") and cognition_runtime.broker is not None:
+            cognition_runtime.broker._skill_store = external_capability_store  # type: ignore[attr-defined]
         if live_settings().features.mcp_enabled:
             for managed in ready:
                 try:
@@ -2154,6 +2255,38 @@ async def lifespan(_: FastAPI):
                     )
 
         serving_reconcile_task = asyncio.create_task(_serving_reconcile_loop())
+    # Periodic idle sweep for optional external process services (idle_timeout_seconds).
+    # Does not require health() polling or manual ModulesPage "Sweep Idle".
+    module_idle_sweep_task = None
+    if module_manager.enabled:
+
+        async def _module_idle_sweep_loop() -> None:
+            import os
+
+            interval = float(os.environ.get("LEVIATHAN_MODULE_IDLE_SWEEP_SECONDS") or 60.0)
+            interval = max(5.0, min(interval, 600.0))
+            while True:
+                try:
+                    await asyncio.sleep(interval)
+                    if hasattr(module_manager, "sweep_idle_modules"):
+                        stopped = module_manager.sweep_idle_modules()
+                        if stopped:
+                            observability.emit(
+                                "module_manager",
+                                "idle_sweep",
+                                payload={"stopped": len(stopped), "module_ids": list(stopped)[:32]},
+                            )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    observability.emit(
+                        "module_manager",
+                        "idle_sweep.failed",
+                        payload={"error": str(exc)},
+                        level="warning",
+                    )
+
+        module_idle_sweep_task = asyncio.create_task(_module_idle_sweep_loop())
     metrics.incr("lifespan_starts")
     observability.emit(
         "backend",
@@ -2166,6 +2299,14 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
+        if module_idle_sweep_task is not None:
+            module_idle_sweep_task.cancel()
+            try:
+                await module_idle_sweep_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # noqa: BLE001
+                pass
         if serving_reconcile_task is not None:
             serving_reconcile_task.cancel()
             try:
@@ -2393,7 +2534,17 @@ app.include_router(
     )
 )
 app.include_router(
-    build_modules_router(module_manager=module_manager, observability=observability)
+    build_modules_router(
+        module_manager=module_manager,
+        observability=observability,
+        job_runtime=job_runtime,
+    )
+)
+app.include_router(
+    build_skills_router(
+        external_store=external_capability_store,
+        observability=observability,
+    )
 )
 app.include_router(build_conversations_router(db=db))
 app.include_router(
@@ -2758,6 +2909,38 @@ def _build_assistant_telemetry(
     tool_calls = list(cog.get("tool_calls") or [])
     if not tool_calls and tools:
         tool_calls = [{"capability_id": t, "status": "INVOKED", "success": None} for t in tools]
+    # Enrich optional rich-result fields from cognition tool result payloads (backward compatible).
+    enriched_calls: list[dict[str, Any]] = []
+    for call in tool_calls:
+        if not isinstance(call, dict):
+            continue
+        item = dict(call)
+        output = item.get("output") if isinstance(item.get("output"), dict) else {}
+        parts = output.get("parts") if isinstance(output.get("parts"), list) else item.get("parts")
+        if parts and "parts" not in item:
+            item["parts"] = parts
+        if item.get("artifact_refs") is None and output.get("artifact_refs"):
+            item["artifact_refs"] = list(output.get("artifact_refs") or [])
+        if item.get("source_count") is None:
+            refs = output.get("source_refs") or []
+            if isinstance(refs, list):
+                item["source_count"] = len(refs)
+        if item.get("result_count") is None:
+            structured = output.get("structured_data") if isinstance(output.get("structured_data"), dict) else {}
+            for key in ("items", "results", "sources", "skills"):
+                val = structured.get(key)
+                if isinstance(val, list):
+                    item["result_count"] = len(val)
+                    break
+        meta = output.get("metadata") if isinstance(output.get("metadata"), dict) else {}
+        if item.get("module_id") is None and meta.get("module_id"):
+            item["module_id"] = meta.get("module_id")
+        if item.get("provider") is None:
+            item["provider"] = item.get("provider_kind") or meta.get("adapter")
+        if item.get("summary") is None and output.get("summary"):
+            item["summary"] = output.get("summary")
+        enriched_calls.append(item)
+    tool_calls = enriched_calls
     agent_delegations = list(cog.get("agent_delegations") or [])
     if not agent_delegations and (agents or gi):
         agent_delegations = [
@@ -3939,6 +4122,29 @@ async def chat(payload: ChatRequest, request: Request):
                         "truth": result["truth"],
                     },
                 )
+                # Operational capability status from cognition events (no private CoT).
+                cog_events = []
+                if isinstance(cognition_meta, dict):
+                    cog_events = list(cognition_meta.get("events") or [])[:40]
+                for ev in cog_events:
+                    et = str((ev or {}).get("event_type") or "")
+                    if et in {
+                        "tool.started",
+                        "tool.progress",
+                        "tool.completed",
+                        "tool.failed",
+                        "module.starting",
+                        "module.ready",
+                        "artifact.created",
+                        "source.observed",
+                        "knowledge.assimilation_queued",
+                        "knowledge.assimilated",
+                        "job.started",
+                        "job.progress",
+                        "job.completed",
+                        "capability.discovered",
+                    }:
+                        yield sse_encode(et, (ev or {}).get("payload") or {})
                 yield sse_encode("token", {"text": answer, "model": model_name})
                 yield sse_encode("done", result)
 

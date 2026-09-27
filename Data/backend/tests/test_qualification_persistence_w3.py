@@ -91,14 +91,15 @@ class QualificationPersistenceWave3Tests(unittest.TestCase):
                 self.assertEqual(domain_schema_version(market), 2)
             applied = apply_pending_domain_migrations(market, DatabaseDomain.MARKET)
             self.assertIn(3, applied)
-            self.assertEqual(domain_schema_version(market), 3)
+            tip = max(m.version for m in DOMAIN_MIGRATIONS)
+            self.assertEqual(domain_schema_version(market), tip)
             found = _tables(market)
             for name in REQUIRED_TABLES:
                 self.assertIn(name, found)
             # Idempotent re-apply
             again = apply_pending_domain_migrations(market, DatabaseDomain.MARKET)
             self.assertEqual(again, [])
-            self.assertEqual(domain_schema_version(market), 3)
+            self.assertEqual(domain_schema_version(market), tip)
 
     def test_store_crud_round_trips(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

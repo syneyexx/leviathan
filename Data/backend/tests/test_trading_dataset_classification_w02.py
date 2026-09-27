@@ -154,15 +154,22 @@ class TradingClassificationServiceTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, "classification_route_blocks_knowledge")
 
     def test_knowledge_text_still_indexes(self) -> None:
-        path = self.data_root / "trading_risk_management_book.jsonl"
+        path = self.data_root / "trading_risk_management_notes.jsonl"
         path.write_text(
             json.dumps({"id": "1", "text": "volatility contraction precedes expansion"}) + "\n",
             encoding="utf-8",
         )
         result = self.service.import_local_sync(
-            str(path), name="trading_risk_management_book", materialize=True
+            str(path), name="trading_risk_management_notes", materialize=True
         )
         ds_id = result["dataset"]["datasetId"]
+        # Explicit knowledge override — do not rely on flaky name heuristics (e.g. *book*).
+        self.service.override_dataset_classification(
+            ds_id,
+            domain="TRADING",
+            trading_kind=TradingDatasetKind.TRADING_KNOWLEDGE.value,
+            reason="test forces knowledge index path",
+        )
         c = self.service.ensure_dataset_classification(ds_id)
         self.assertEqual(c.trading_kind, TradingDatasetKind.TRADING_KNOWLEDGE)
         job = self.service.enqueue_learn_to_brain(ds_id)

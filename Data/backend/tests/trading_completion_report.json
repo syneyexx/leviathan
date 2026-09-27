@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-09-27T17:48:29+00:00",
-  "source_commit": "b00bfe23bdabfc6f5d233241d4023d2e5aae03d3",
-  "source_tree": "6ed56ea128815eb963a95eba2fa17c5a564f0780",
+  "generated_at": "2026-09-27T22:02:56+00:00",
+  "source_commit": "7497ecd4959e38350262be7cadd71a2564e9b302",
+  "source_tree": "115431c1bdcb4a576fc5037d5d215c291036bad0",
   "dirty": true,
-  "branch": "cursor/institutional-production-8314",
+  "branch": "cursor/external-capability-fabric-ac82",
   "strict": false,
   "phase": "Slice16/A0-A4",
   "program": "Master Program v4.1",
@@ -1312,7 +1312,12 @@
       "operating_envelope": {}
     }
   ],
-  "anti_shortcut": null,
+  "anti_shortcut": {
+    "ok": true,
+    "finding_count": 0,
+    "findings": [],
+    "truncated": false
+  },
   "explicitly_not_claimed": [
     "profitability or expected returns of any strategy or agent",
     "gym performance transfers to real markets",

@@ -646,6 +646,8 @@ Capabilities declare an `execution_class` in metadata:
 
 `ExecutionGateway` rejects inline API execution of `EXTERNAL_REQUIRED` with `worker_required` (honest `WORKER_UNAVAILABLE` / enqueue path). Worker processes (`LEVIATHAN_WORKER_ID`) and explicit developer mode (`LEVIATHAN_WORKERS_EXTERNALIZE_API=false`) remain exempt. Classification never bypasses authorization.
 
+`CognitiveRuntime` is bound to `JobRuntime`. When API externalization is on, cognition proactively offloads `EXTERNAL_REQUIRED` and `EXTERNAL_PREFERRED` MODULE capabilities through JobRuntime / Worker Fabric (so CLI/process work does not block the API thread). It also recovers when the gateway returns `REJECTED`/`worker_required`. Offload emits `job.started` / `job.progress` / `job.completed` (and `tool.progress`), starts/wakes an in-process JobRuntime background worker when dedicated workers are absent (never blocks the await loop inside `process_next`, so cancel can propagate), and maps the durable result back into the cognition loop. Cancel sets JobRuntime cancel flags; ExecutionGateway `_job_cancel_check` feeds adapter `cancel_check`. Claimed JobRuntime execution temporarily sets `LEVIATHAN_WORKER_ID` so EXTERNAL_REQUIRED is not re-rejected as API-inline. Missing workers surface as honest `TIMEOUT`/`WORKER_UNAVAILABLE` — never silent inline fallback.
+
 ### Terminal observability
 
 Worker lifecycle uses one emitter → human terminal lines + structured logs:
@@ -901,11 +903,41 @@ MCP invocation still passes through `ExecutionGateway`; MCP is not a private sid
 
 ## Plugins — `Data/modules/plugins/`
 
-`registry.py`, `types.py` manage plugin registration/capability exposure.
+`registry.py`, `types.py` manage declarative plugin/MCP/skill capability bindings into `CapabilityCatalog`. PluginRegistry is **not** a loader or lifecycle owner. Binding configuration may persist in CONTROL (`external_plugin_bindings`); hydrated ENABLED ≠ runtime READY.
+
+Adapter kinds: `DECLARATIVE`, `MCP`, `PROTOCOL`, `SKILL`.
 
 ## Module manager — `Data/modules/module_manager/`
 
 `manager.py`, `discovery.py`, `subprocess_exec.py`, `types.py` own dynamic module discovery/lifecycle and optional subprocess isolation.
+
+### External capability fabric (**CURRENT**)
+
+`Data/modules/module_manager/external/` is the **one** generic fabric for third-party software — not a second plugin/runtime/gateway system.
+
+- **Adapters:** `MCP` (via McpBridge), `CLI`, `PROCESS_SERVICE`, `HTTP_OPENAPI`, `SKILL_PACK`, `CATALOG_SOURCE`, `SCRIPT_PACKAGE`, `COMPOSITE`.
+- **Declarative manifests:** `Data/external_capabilities/*/module.json` (plus existing `Data/modules/*/module.json`). Top-level `external` folds into manifest metadata.
+- **Factory:** `create_external_capability_module(manifest=...)` — ModuleManager calls factories with `manifest=` when the signature accepts it; legacy `factory()` still works.
+- **Lifecycle API:** `ensure_installed`, `start`, `stop`, `restart`, `ensure_ready`, `health`, `logs`, `active_jobs` on ModuleManager. HTTP: `/api/modules/{id}/install|start|stop|restart|ensure-ready|health|logs|capabilities|jobs`.
+- **Install:** typed strategies (`GIT_CHECKOUT`, `PYTHON_VENV`, `PIP_PACKAGE`, `NODE_NPM`/`NODE_PNPM`, `BINARY`, `NONE`) under `data_root/external_capabilities/<module-id>/versions/<ref>`. Binary dependency checks alias `python`↔`python3`; Node installs prefer the newest discoverable toolchain (e.g. nvm ≥22.22) and honor argv `post_install` (no shell strings). Version rows auto-upsert parent CONTROL module registration (FK-safe). Missing optional OS packages (`python3-venv`, etc.) surface as `INSTALL_FAILED`/`DEPENDENCY_MISSING` — they must not crash core boot.
+- **Version control:** `check_update`, `install_version`, `activate_version`, `rollback_version`, `list_versions`. HTTP: `/api/modules/{id}/check-update|versions|install-version|activate-version|rollback-version`. Activation refuses while active jobs exist (`UPDATE_BLOCKED_ACTIVE`).
+- **Idle shutdown:** LAZY/RESIDENT process services honor `runtime.idle_timeout_seconds`; `ModuleManager.sweep_idle_modules` / `POST /api/modules/sweep-idle` stop idle processes with no active jobs.
+- **Port isolation:** PROCESS_SERVICE start fails closed with `PORT_IN_USE` when `base_url` / ready-probe host:port already accepts connections (prevents ready-probe success against another module — e.g. llm-agent-trader `:8010` vs Osintgram `:8000`).
+- **Execution:** `ExternalModuleExecutor` is wired as `ExecutionGateway.module_executor`. Catalogued MODULE capabilities execute through the gateway; MCP tools remain McpBridge-owned.
+- **MCP module registration:** `module.json` `mcp.servers` accept `server_id` / `display_name` / `name`; `register_servers_from_module` resolves `$INSTALL_ROOT` in command/args/cwd/env. `McpAdapter.ensure_installed`/`start` re-registers with the active install root before connect.
+- **Skills:** SKILL.md importer indexes metadata; instructions load on demand. Large catalogs (`CATALOG_SOURCE`) never enter system prompts. Skill search tokenizes natural-language goals (OR over keywords ≥3 chars) so CapabilityBroker/CognitiveRuntime `SEARCH_CAPABILITY` can shortlist `skill:` refs without injecting instruction bodies. HTTP: `/api/skills` (search/paginate), `/api/skills/{id}`, `/api/skills/{id}/enable`.
+- **Assimilation:** `KnowledgeAssimilationService.assimilate_external_capability` + `external.knowledge.assimilate` capability. Modes NONE / EVIDENCE / KNOWLEDGE_CANDIDATE / AUTO_KNOWLEDGE. Background via JobRuntime when available; Chat may show "Knowledge ingestion queued".
+- **Chat SSE:** Cognition emits operational events only (`capability.discovered` / `tool.started` / `tool.progress` / `tool.completed` / `tool.failed` / `module.starting` / `module.ready` / `artifact.created` / `source.observed` / `knowledge.assimilation_queued` / `job.started` / `job.progress` / `job.completed`, …) — no private CoT. `SEARCH_CAPABILITY` emits one `capability.discovered` per shortlisted id. Rich tool telemetry includes optional `module_id`, `parts`, artifact/source counts. `INVOKE_CAPABILITY` passes cooperative `_cancel_check` / `_progress_cb` into ExecutionGateway so in-flight external adapters can cancel honestly; EXTERNAL_REQUIRED MODULE caps offload via JobRuntime as above.
+- **Observability (bounded):** `external.modules.discovered|installed|running`, `external.invocations`, `external.failures`, `external.jobs.active`, `external.bytes_output`, `skills.indexed|loaded`, `mcp.sessions`, `assimilation.queued|completed` — no unbounded high-cardinality labels.
+- **CONTROL persistence:** `external_modules`, `external_module_versions`, `external_process_records`, `external_skills`, `external_skill_catalogs`, `external_plugin_bindings`, `external_log_windows` (domain migration v3). No fourth database.
+- **Process ownership:** PID + fingerprint reconciliation — persisted RUNNING is never trusted after restart; PID-reuse kills are refused.
+- **Optional modules:** missing/failed third-party installs do not prevent LEVIATHAN boot.
+- **Trading boundary:** external finance packages with `marketsim_bypass_forbidden` / `real_money_blocked` are research/analytics only. Mutation-like ops (orders/live trades) are REJECTED at `ExternalModuleExecutor` and MCP dispatch; MarketSim remains trading authority; real-money remains BLOCKED.
+- **Live source contracts (audited):** Feynman = Node CLI `bin/feynman.js` + `npm run build` post_install + `skills/` (help/version/status/doctor/search_status/packages_list/alpha_status; research needs provider auth); OpenMAIC = `pnpm exec next dev` + `/api/health|/api/server-providers|/api/usage`, course jobs via `/api/generate-classroom` (agent `/api/agent/*` feature-gated) + `skills/`; Osintgram = uvicorn `src.web.app:app` start + `/api/about|/api/tools|/api/token|/api/balance` invoke/stop proven (Instagram queries need HikerAPI); ScrollCraft = generate + frames-from-style (ffmpeg) + build + verify → `dist/index.html`; Selfstarter = `bin/*.sh` Unreal harness (UE5 BLOCKED_EXTERNAL); Fincept = analytics CLI composite (start N/A); Agent-Reach = SKILL.md internet router + CLI `doctor --json` / `fetch_url` (Jina) / `v2ex_hot` (no native `search` subcommand — other platforms via optional upstream tools); DesktopCommander = McpBridge + ExecutionGateway (approval-gated EXECUTE); Vibe-Trading = `vibe-trading-mcp` via McpBridge (74 tools; `analyze_options` via ExecutionGateway+approval PASS — MarketSim remains trading authority); llm-agent-trader = FastAPI start/docs/stop without LLM keys (analyze/backtest keys BLOCKED_EXTERNAL); GhostTrack = CLI declarative curl for audited public APIs (ip_lookup→ipwho.is, show_ip→api.ipify.org; GhostTR.py TUI phone/username BLOCKED_EXTERNAL); skill packs + OpenClaw catalog = live index/search/materialize.
+- **COMPOSITE routing:** declared `runtime.operations` names win over skill-pack ops with the same name (e.g. CLI `search` vs skill `search`); skill search remains available as `search_skills`. MCP `ensure_ready` is lazy (register without connect) unless `eager_start`.
+- **HTTP body aliases:** `HTTP_OPENAPI` / process-service HTTP ops support declarative `body_aliases` (arg→body rename) and `accept_statuses` without per-source wrappers.
+
+Acceptance matrix (machine-readable): `Data/backend/tests/external_sources_acceptance_matrix.json`.
 
 ---
 
@@ -1192,7 +1224,7 @@ Release/evaluation philosophy: missing measurements remain missing; they are not
 | `model_download/` | model download boundary |
 | `model_runtime/` | inference transport/serving |
 | `models/` | Model Control Plane |
-| `module_manager/` | module discovery/lifecycle |
+| `module_manager/` | module discovery/lifecycle + generic external capability fabric (`external/`) |
 | `native/` | native runtime stub/boundary |
 | `neuro/` | Neuro/Cortex/residual advisory layer |
 | `observability/` | system/operator telemetry |

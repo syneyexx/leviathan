@@ -1,0 +1,191 @@
+{
+  "module_id": "scrollcraft",
+  "name": "ScrollCraft",
+  "version": "0.1.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "COMPOSITE",
+    "children": [
+      "SKILL_PACK",
+      "SCRIPT_PACKAGE"
+    ],
+    "source_type": "git",
+    "source": "https://github.com/singhharsh1708/scrollcraft",
+    "ref": "main",
+    "install": {
+      "strategy": [
+        "GIT_CHECKOUT",
+        "NODE_NPM"
+      ],
+      "dependencies": [
+        "node",
+        "ffmpeg"
+      ]
+    },
+    "runtime": {
+      "mode": "EPHEMERAL",
+      "timeout_seconds": 900,
+      "cwd": "$INSTALL_ROOT",
+      "operations": [
+        {
+          "name": "init",
+          "command": [
+            "node",
+            "plugins/scrollcraft/skills/scrollcraft/scripts/init.mjs",
+            "--name",
+            "{name}",
+            "--style",
+            "{style}",
+            "--grammar",
+            "{grammar}"
+          ],
+          "defaults": {
+            "name": "leviathan-site",
+            "style": "aurora",
+            "grammar": "reveal"
+          }
+        },
+        {
+          "name": "frames",
+          "command": [
+            "node",
+            "plugins/scrollcraft/skills/scrollcraft/scripts/frames-from-style.mjs",
+            "--style",
+            "{style}",
+            "--count",
+            "{count}",
+            "--width",
+            "{width}",
+            "--mobile-width",
+            "{mobile_width}"
+          ],
+          "defaults": {
+            "style": "aurora",
+            "count": "48",
+            "width": "960",
+            "mobile_width": "828"
+          },
+          "timeout_seconds": 180
+        },
+        {
+          "name": "build",
+          "command": [
+            "node",
+            "plugins/scrollcraft/skills/scrollcraft/scripts/build-site.mjs"
+          ]
+        },
+        {
+          "name": "verify",
+          "command": [
+            "node",
+            "plugins/scrollcraft/skills/scrollcraft/scripts/verify.mjs"
+          ],
+          "timeout_seconds": 180
+        },
+        {
+          "name": "generate",
+          "command": [
+            "node",
+            "plugins/scrollcraft/skills/scrollcraft/scripts/init.mjs",
+            "--name",
+            "{prompt}",
+            "--style",
+            "aurora",
+            "--grammar",
+            "reveal"
+          ]
+        },
+        {
+          "name": "doctor",
+          "command": [
+            "node",
+            "plugins/scrollcraft/skills/scrollcraft/scripts/doctor.mjs"
+          ]
+        }
+      ]
+    },
+    "result": {
+      "format": "FILES",
+      "artifact_globs": [
+        "dist/**",
+        "**/index.html",
+        "**/frames/**",
+        "*.zip"
+      ]
+    },
+    "skill_roots": [
+      "plugins/scrollcraft/skills"
+    ],
+    "assimilation_mode": "NONE",
+    "tags": [
+      "web",
+      "artifact",
+      "scroll",
+      "skill"
+    ],
+    "domain": "artifacts",
+    "resource_class": "CPU_HEAVY",
+    "metadata": {
+      "preferred_machine_contract": "SKILL.md + node scripts under plugins/scrollcraft/skills/scrollcraft/scripts/",
+      "optional_dependencies": [
+        "ffmpeg"
+      ]
+    }
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.scrollcraft.build",
+      "name": "ScrollCraft Build",
+      "description": "Build a cinematic scrolling website via ScrollCraft skill scripts.",
+      "external_name": "build",
+      "side_effects": [
+        "WRITE",
+        "EXECUTE"
+      ]
+    },
+    {
+      "capability_id": "external.scrollcraft.generate",
+      "name": "ScrollCraft Generate",
+      "description": "Init + generate a ScrollCraft site from a prompt/name.",
+      "external_name": "generate",
+      "side_effects": [
+        "WRITE",
+        "EXECUTE"
+      ]
+    },
+    {
+      "capability_id": "external.scrollcraft.frames",
+      "name": "ScrollCraft Frames",
+      "description": "Generate style frames via ffmpeg (frames-from-style.mjs) for cinematic scroll sites.",
+      "external_name": "frames",
+      "side_effects": [
+        "WRITE",
+        "EXECUTE"
+      ]
+    },
+    {
+      "capability_id": "external.scrollcraft.verify",
+      "name": "ScrollCraft Verify",
+      "description": "Run ScrollCraft verify.mjs against built output.",
+      "external_name": "verify",
+      "side_effects": [
+        "READ",
+        "EXECUTE"
+      ]
+    },
+    {
+      "capability_id": "external.scrollcraft.load_skill",
+      "name": "Load ScrollCraft Skill",
+      "description": "Load ScrollCraft skill instructions on demand.",
+      "external_name": "load",
+      "side_effects": [
+        "READ"
+      ]
+    }
+  ]
+}

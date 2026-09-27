@@ -1,0 +1,177 @@
+{
+  "module_id": "llm-agent-trader",
+  "name": "LLM Agent Trader (research)",
+  "version": "0.2.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "COMPOSITE",
+    "children": [
+      "PROCESS_SERVICE",
+      "HTTP_OPENAPI"
+    ],
+    "source_type": "git",
+    "source": "https://github.com/jason8745/llm-agent-trader",
+    "ref": "master",
+    "install": {
+      "strategy": [
+        "GIT_CHECKOUT",
+        "PYTHON_VENV"
+      ],
+      "dependencies": [
+        "python3"
+      ]
+    },
+    "runtime": {
+      "mode": "LAZY",
+      "command": [
+        "python",
+        "-m",
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8010"
+      ],
+      "cwd": "$INSTALL_ROOT/backend",
+      "startup_timeout_seconds": 90,
+      "idle_timeout_seconds": 1800,
+      "base_url": "http://127.0.0.1:8010",
+      "ready_probe": {
+        "kind": "http",
+        "url": "http://127.0.0.1:8010/docs",
+        "expect_status": 200
+      },
+      "operations": [
+        {
+          "name": "root",
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "name": "openapi",
+          "method": "GET",
+          "path": "/api/v1/openapi.json"
+        },
+        {
+          "name": "docs",
+          "method": "GET",
+          "path": "/docs"
+        },
+        {
+          "name": "analyze",
+          "method": "POST",
+          "path": "/api/v1/backtest/analyze",
+          "body_from": [
+            "query",
+            "symbol",
+            "mode"
+          ]
+        },
+        {
+          "name": "backtest",
+          "method": "POST",
+          "path": "/api/v1/llm-stream/backtest",
+          "body_from": [
+            "query",
+            "symbol",
+            "prompt"
+          ]
+        },
+        {
+          "name": "run",
+          "method": "GET",
+          "path": "/"
+        }
+      ],
+      "eager_start": false
+    },
+    "result": {
+      "format": "MIXED",
+      "artifact_globs": [
+        "output/**",
+        "*.json",
+        "*.csv"
+      ]
+    },
+    "assimilation_mode": "EVIDENCE",
+    "resource_class": "CPU_HEAVY",
+    "tags": [
+      "finance",
+      "backtest-reference",
+      "research"
+    ],
+    "domain": "finance",
+    "metadata": {
+      "not_leviathan_qualification": true,
+      "marketsim_bypass_forbidden": true,
+      "real_money_blocked": true,
+      "preferred_machine_contract": "FastAPI backend on 127.0.0.1:8010 (/openapi.json, /api/v1/backtest, /api/v1/llm-stream); dedicated port avoids Osintgram :8000 collision; not MarketSim authority"
+    }
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.llm_agent_trader.root",
+      "name": "LLM Agent Trader Root",
+      "description": "GET / API identity JSON (no LLM keys).",
+      "external_name": "root",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.llm_agent_trader.openapi",
+      "name": "LLM Agent Trader OpenAPI",
+      "description": "Fetch /api/v1/openapi.json schema (no LLM keys) — machine contract discovery.",
+      "external_name": "openapi",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.llm_agent_trader.docs",
+      "name": "LLM Agent Trader Docs",
+      "description": "Fetch FastAPI docs HTML readiness probe (no LLM keys).",
+      "external_name": "docs",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.llm_agent_trader.analyze",
+      "name": "LLM Agent Trader Analyze",
+      "description": "External trading research/backtest via FastAPI — not MarketSim qualification. Requires LLM API keys.",
+      "external_name": "analyze",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.llm_agent_trader.start",
+      "name": "Start LLM Agent Trader API",
+      "description": "Lazy-start the FastAPI research backend on :8010.",
+      "external_name": "start",
+      "side_effects": [
+        "EXECUTE"
+      ]
+    },
+    {
+      "capability_id": "external.llm_agent_trader.stop",
+      "name": "Stop LLM Agent Trader API",
+      "description": "Stop the FastAPI research backend.",
+      "external_name": "stop",
+      "side_effects": [
+        "EXECUTE"
+      ]
+    }
+  ]
+}

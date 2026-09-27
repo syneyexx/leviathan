@@ -62,6 +62,9 @@ def parse_manifest(data: dict[str, Any], *, source_path: Path | None = None) -> 
     metadata = dict(data.get("metadata") or {})
     if isinstance(data.get("mcp"), dict):
         metadata = {**metadata, "mcp": data["mcp"]}
+    # External capability fabric — fold top-level `external` into metadata.
+    if isinstance(data.get("external"), dict):
+        metadata = {**metadata, "external": data["external"]}
 
     return ModuleManifest(
         module_id=module_id,

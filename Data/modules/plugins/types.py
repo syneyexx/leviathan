@@ -16,6 +16,7 @@ class AdapterKind(str, Enum):
     DECLARATIVE = "DECLARATIVE"
     MCP = "MCP"
     PROTOCOL = "PROTOCOL"
+    SKILL = "SKILL"
 
 
 @dataclass(frozen=True)

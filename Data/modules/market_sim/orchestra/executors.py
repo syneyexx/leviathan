@@ -748,11 +748,13 @@ def run_postmortem(ctx: ExecutionContext, agent: Any, *, recent: list[DecisionRe
                     applicability={"instruments": list(data.get("appliesTo") or [])[:8]},
                     origin="orchestra_postmortem",
                     epistemic_state="AGENT_PROPOSED",
-                    validation_stage="postmortem",
+                    # RESEARCH keeps the lesson adaptively retrievable; postmortem is not sealed.
+                    validation_stage="research",
                     extra_metadata={
                         "evidenceRefs": list(data.get("evidenceRefs") or []),
                         "missionId": ctx.mission_id,
                         "confidence": data.get("confidence"),
+                        "lesson_kind": "postmortem",
                     },
                 )
                 saved = ctx.strategy_memory_writer(mem)

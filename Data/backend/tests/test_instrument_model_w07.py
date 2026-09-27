@@ -55,6 +55,10 @@ class InstrumentModelW07Tests(unittest.TestCase):
         # FX spot BAR OHLCV historical sim is AVAILABLE (#187); paper/live remain blocked.
         self.assertEqual(fx["HISTORICAL_SIM_AVAILABLE"], "AVAILABLE")
         self.assertEqual(fx["LIVE_TRADING_AVAILABLE"], "BLOCKED")
+        futures = next(m for m in caps["markets"] if m["family"] == "futures")
+        self.assertEqual(futures["HISTORICAL_SIM_AVAILABLE"], "AVAILABLE")
+        options = next(m for m in caps["markets"] if m["family"] == "options")
+        self.assertEqual(options["HISTORICAL_SIM_AVAILABLE"], "NOT_IMPLEMENTED")
 
     def test_instrument_id_round_trip(self) -> None:
         iid = make_instrument_id(InstrumentFamily.EQUITY, "aapl", "nasdaq")

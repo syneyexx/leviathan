@@ -172,19 +172,27 @@ class ActionSelector:
                     failure_risk=0.05,
                 )
                 args: dict[str, Any] = {"query": task.goal, "limit": 5}
+                invoke_id = capability_id
                 if capability_id == "system.inspect":
                     args = {"scope": "all"}
                 elif capability_id == "web.search":
                     args = {"query": task.raw_request or task.goal, "limit": 5}
                 elif capability_id in {"math.calculate", "compute.numeric"}:
                     args = {"expression": task.raw_request or task.goal}
+                elif str(capability_id).startswith("skill:"):
+                    # Skills are not shell authority — load instructions on demand.
+                    invoke_id = "external.skills.load"
+                    args = {
+                        "skill_id": str(capability_id).split(":", 1)[-1],
+                        "query": task.raw_request or task.goal,
+                    }
                 out.append(
                     (
                         score,
                         CognitiveAction(
                             kind=CognitiveActionKind.INVOKE_CAPABILITY,
                             action_id=str(uuid.uuid4()),
-                            capability_id=capability_id,
+                            capability_id=invoke_id,
                             rationale=f"task requires {capability_id}",
                             arguments=args,
                             expected_observation="tool observation",
@@ -267,6 +275,7 @@ class ActionSelector:
             }
         ):
             capability_id = caps[0].content.strip().split()[0]
+            invoke_id, args = self._resolve_invoke(capability_id, task)
             score = self.meta.estimate_value_of_action(
                 expected_gain=0.6,
                 expected_completion_progress=0.2,
@@ -279,9 +288,9 @@ class ActionSelector:
                     CognitiveAction(
                         kind=CognitiveActionKind.INVOKE_CAPABILITY,
                         action_id=str(uuid.uuid4()),
-                        capability_id=capability_id,
+                        capability_id=invoke_id,
                         rationale="invoke shortlisted capability via ExecutionGateway",
-                        arguments={"query": task.goal, "limit": 5},
+                        arguments=args,
                         expected_observation="tool observation",
                         risk_class=task.risk_class,
                         requires_approval=task.risk_class in {RiskClass.HIGH, RiskClass.CRITICAL},
@@ -571,15 +580,17 @@ class ActionSelector:
                 rationale=f"plan step: {step.objective}",
                 arguments={"criteria": list(task.success_criteria), "step_id": step.step_id},
             )
-        if "tool" in objective or "capability" in objective:
+        if "tool" in objective or "capability" in objective or "skill" in objective:
             caps = working_memory.list_by_kind("capability")
             if caps and budgets_remaining.get("tool_calls", 0) > 0:
+                invoke_id, args = self._resolve_invoke(caps[0].content.strip().split()[0], task)
+                args = {**args, "step_id": step.step_id}
                 return CognitiveAction(
                     kind=CognitiveActionKind.INVOKE_CAPABILITY,
                     action_id=str(uuid.uuid4()),
-                    capability_id=caps[0].content.strip().split()[0],
+                    capability_id=invoke_id,
                     rationale=f"plan step: {step.objective}",
-                    arguments={"step_id": step.step_id},
+                    arguments=args,
                 )
         if budgets_remaining.get("model_calls", 0) > 0:
             return CognitiveAction(
@@ -589,6 +600,19 @@ class ActionSelector:
                 arguments={"role": self._role_for(decision.strategy), "step_id": step.step_id},
             )
         return None
+
+    @staticmethod
+    def _resolve_invoke(capability_id: str, task: Any) -> tuple[str, dict[str, Any]]:
+        """Map shortlist skill refs onto external.skills.load; leave real caps unchanged."""
+        if str(capability_id).startswith("skill:"):
+            return (
+                "external.skills.load",
+                {
+                    "skill_id": str(capability_id).split(":", 1)[-1],
+                    "query": getattr(task, "raw_request", None) or getattr(task, "goal", ""),
+                },
+            )
+        return capability_id, {"query": getattr(task, "goal", ""), "limit": 5}
 
     @staticmethod
     def _role_for(strategy: ReasoningStrategy) -> str:

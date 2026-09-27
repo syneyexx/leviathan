@@ -207,6 +207,7 @@ class CognitiveRunState:
             ],
             "agent_delegations": self._agent_delegation_records(),
             "web_sources": self._web_source_records(),
+            "events": self._public_operational_events(),
             "latency_ms": self._latency_ms(),
             "truth": {
                 "no_private_cot": True,
@@ -225,6 +226,40 @@ class CognitiveRunState:
             "memory": len(self.perception.by_type(EpistemicType.EXACT_FACT)),
             "evidence": len(self.perception.by_type(EpistemicType.EVIDENCE)),
         }
+
+    def _public_operational_events(self) -> list[dict[str, Any]]:
+        """Operational status for Chat SSE — never private CoT / planner internals."""
+        allowed = {
+            "tool.started",
+            "tool.progress",
+            "tool.completed",
+            "tool.failed",
+            "module.starting",
+            "module.ready",
+            "artifact.created",
+            "source.observed",
+            "knowledge.assimilation_queued",
+            "knowledge.assimilated",
+            "job.started",
+            "job.progress",
+            "job.completed",
+            "capability.discovered",
+            "capability_invoked",
+            "capability_searched",
+        }
+        out: list[dict[str, Any]] = []
+        for ev in self.events[-48:]:
+            et = str(ev.get("event_type") or "")
+            if et not in allowed:
+                continue
+            out.append(
+                {
+                    "event_type": et,
+                    "payload": dict(ev.get("payload") or {}),
+                    "created_at": ev.get("created_at"),
+                }
+            )
+        return out
 
     def _tool_call_records(self) -> list[dict[str, Any]]:
         """Public tool-call telemetry — status/duration/receipts only (no payloads/CoT)."""
@@ -249,6 +284,18 @@ class CognitiveRunState:
             if duration is None:
                 duration = result.get("duration_ms")
             status = str(result.get("status") or ("OK" if o.success else "FAILED"))
+            output = result.get("output") if isinstance(result.get("output"), dict) else {}
+            meta = output.get("metadata") if isinstance(output.get("metadata"), dict) else {}
+            parts = output.get("parts") if isinstance(output.get("parts"), list) else []
+            artifact_refs = list(output.get("artifact_refs") or o.artifact_refs or ())[:16]
+            source_refs = list(output.get("source_refs") or ())[:50]
+            result_count = None
+            structured = output.get("structured_data") if isinstance(output.get("structured_data"), dict) else {}
+            for key in ("items", "results", "sources", "skills"):
+                val = structured.get(key)
+                if isinstance(val, list):
+                    result_count = len(val)
+                    break
             records.append(
                 {
                     "capability_id": capability_id,
@@ -258,7 +305,13 @@ class CognitiveRunState:
                     "duration_ms": float(duration) if duration is not None else None,
                     "receipt_id": str(receipt_id) if receipt_id else None,
                     "error": o.error or result.get("error"),
-                    "summary": (o.summary or "")[:200],
+                    "summary": (o.summary or str(output.get("summary") or ""))[:200],
+                    "module_id": meta.get("module_id") or telemetry.get("module_id"),
+                    "provider": result.get("provider_kind") or meta.get("adapter"),
+                    "result_count": result_count,
+                    "artifact_refs": artifact_refs,
+                    "source_count": len(source_refs) if source_refs else None,
+                    "parts": parts[:24] if parts else None,
                 }
             )
         return records
@@ -404,6 +457,7 @@ class CognitiveRuntime:
         verification_engine: Any | None = None,
         factuality_mode: str | None = "LIGHT",
         execution_gateway: Any | None = None,
+        job_runtime: Any | None = None,
         observability: Any | None = None,
         resource_pressure_fn: Callable[[], float] | None = None,
         behavior_resolver: Any | None = None,
@@ -441,6 +495,7 @@ class CognitiveRuntime:
         # Thin factuality hook — VerificationEngine owns claim checks; Cognition only applies.
         self.factuality_mode = factuality_mode
         self.execution_gateway = execution_gateway
+        self.job_runtime = job_runtime
         self.observability = observability
         self.resource_pressure_fn = resource_pressure_fn or (lambda: 0.0)
         # Canonical BehaviorSettingsResolver — resolve current persisted profile
@@ -1280,6 +1335,11 @@ class CognitiveRuntime:
                 )
                 return state.public_status()
 
+            # Multi-tool turns: OBSERVING → REASONING before the next select/execute.
+            # Without this, INVOKE_CAPABILITY B fails with Invalid transition OBSERVING → EXECUTING.
+            if state.status == CognitiveRunStatus.OBSERVING:
+                self._transition(state, CognitiveRunStatus.REASONING)
+
             # Critic pass (targeted — DEEP/MAXIMUM, high risk, contradictions)
             critic_justified = bool(
                 state.decision
@@ -1312,6 +1372,271 @@ class CognitiveRuntime:
                 self._finalize(state)
                 return state.public_status()
 
+    def _should_offload_capability(self, capability_id: str) -> tuple[bool, str]:
+        """Return (offload?, reason) for MODULE/external work under externalize-on.
+
+        EXTERNAL_REQUIRED always offloads when JobRuntime is bound.
+        EXTERNAL_PREFERRED MODULE caps also offload so CLI/process work does not
+        block the API/control-plane thread when workers are the execution path.
+        """
+        if self.job_runtime is None or self.execution_gateway is None:
+            return False, ""
+        try:
+            from Data.modules.execution.workload import (
+                ExecutionWorkloadClass,
+                classify_capability,
+                externalize_api_enabled,
+                running_in_worker_process,
+            )
+        except Exception:  # noqa: BLE001
+            return False, ""
+        if running_in_worker_process() or not externalize_api_enabled():
+            return False, ""
+        try:
+            defn = self.execution_gateway.catalog.get(capability_id)
+        except Exception:  # noqa: BLE001
+            defn = None
+        meta = dict(getattr(defn, "metadata", None) or {}) if defn is not None else {}
+        provider_kind = getattr(getattr(defn, "provider_kind", None), "value", None) or getattr(
+            defn, "provider_kind", None
+        )
+        cls = classify_capability(
+            capability_id,
+            metadata=meta,
+            provider_kind=str(provider_kind) if provider_kind else None,
+        )
+        if cls == ExecutionWorkloadClass.EXTERNAL_REQUIRED:
+            return True, "external_required"
+        if cls == ExecutionWorkloadClass.EXTERNAL_PREFERRED and str(provider_kind or "").lower() in {
+            "module",
+            "external",
+        }:
+            return True, "external_preferred"
+        return False, ""
+
+    def _execute_capability_request(
+        self,
+        state: CognitiveRunState,
+        request: Any,
+        *,
+        module_id_hint: str | None = None,
+    ) -> Any:
+        """Execute via ExecutionGateway; offload heavy MODULE work to JobRuntime.
+
+        Proactively offloads EXTERNAL_REQUIRED and EXTERNAL_PREFERRED MODULE
+        capabilities when API externalization is on. Also recovers when the
+        gateway rejects with ``worker_required``. Streams job.* events and
+        returns the durable CapabilityResult. Does not invent success when
+        workers are unavailable.
+        """
+        offload, offload_reason = self._should_offload_capability(request.capability_id)
+        if not offload:
+            result = self.execution_gateway.execute(request)
+            telemetry = getattr(result, "telemetry", None) or {}
+            status = getattr(result, "status", None)
+            status_value = getattr(status, "value", None) or str(status or "")
+            reason = str(telemetry.get("reason") or "")
+            if status_value != "REJECTED" or reason != "worker_required":
+                return result
+            if self.job_runtime is None:
+                return result
+            offload_reason = "worker_required"
+
+        from Data.modules.execution.types import CapabilityResult, CapabilityStatus
+        from Data.modules.jobs.states import TERMINAL_JOB_STATES, JobState
+
+        capability_id = request.capability_id
+        timeout_seconds = 300.0
+        try:
+            defn = self.execution_gateway.catalog.get(capability_id) if self.execution_gateway else None
+            meta = dict(getattr(defn, "metadata", None) or {}) if defn is not None else {}
+            raw_timeout = meta.get("timeout_seconds") or meta.get("job_timeout_seconds")
+            if raw_timeout is not None:
+                timeout_seconds = max(5.0, float(raw_timeout))
+            resource_class = str(meta.get("resource_class") or "NETWORK_BOUND")
+        except Exception:  # noqa: BLE001
+            resource_class = "NETWORK_BOUND"
+
+        # Strip cognition-only callbacks — workers receive JSON-serializable args.
+        job_args = {
+            k: v
+            for k, v in dict(request.arguments or {}).items()
+            if not str(k).startswith("_") and not callable(v)
+        }
+        try:
+            job = self.job_runtime.enqueue(
+                capability_id=capability_id,
+                arguments=job_args,
+                run_id=request.run_id,
+                approval_id=request.approval_id,
+                requested_by=request.requested_by or "cognition",
+                trace_id=request.trace_id,
+                idempotency_key=request.idempotency_key,
+                latency_class="interactive",
+                domain="external",
+                consumer="cognition",
+                resource_class=resource_class,
+                timeout_seconds=timeout_seconds,
+                metadata={
+                    "module_id": module_id_hint,
+                    "offload_reason": offload_reason or "worker_required",
+                    "cognition_run_id": state.run_id,
+                    "action_request_id": request.request_id,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            return CapabilityResult(
+                request_id=request.request_id,
+                capability_id=capability_id,
+                status=CapabilityStatus.FAILED,
+                error=f"WORKER_UNAVAILABLE: enqueue failed: {exc}",
+                telemetry={"reason": "enqueue_failed", "offload": "job_runtime"},
+            )
+
+        self._emit(
+            state,
+            "job.started",
+            {
+                "job_id": job.job_id,
+                "capability_id": capability_id,
+                "module_id": module_id_hint,
+                "request_id": request.request_id,
+            },
+        )
+        # Prefer a background JobRuntime worker so this await loop can observe
+        # cancel_requested without blocking inside process_next (which would
+        # prevent cancel from propagating into the child adapter).
+        start_bg = getattr(self.job_runtime, "start_background_worker", None)
+        worker_thread = getattr(self.job_runtime, "_worker_thread", None)
+        if callable(start_bg) and (worker_thread is None or not worker_thread.is_alive()):
+            try:
+                start_bg()
+            except Exception:  # noqa: BLE001
+                pass
+        wake = getattr(self.job_runtime, "_wake", None)
+        if wake is not None and hasattr(wake, "set"):
+            try:
+                wake.set()
+            except Exception:  # noqa: BLE001
+                pass
+
+        deadline = time.monotonic() + float(timeout_seconds) + 30.0
+        last_progress = 0.0
+        cancel_sent = False
+        while time.monotonic() < deadline:
+            if getattr(state, "cancel_requested", False) and not cancel_sent:
+                cancel_sent = True
+                try:
+                    self.job_runtime.cancel(job.job_id, reason="cognition_cancel_requested")
+                except Exception:  # noqa: BLE001
+                    pass
+                self._emit(
+                    state,
+                    "job.progress",
+                    {
+                        "job_id": job.job_id,
+                        "capability_id": capability_id,
+                        "status": "CANCEL_REQUESTED",
+                    },
+                )
+
+            current = self.job_runtime.get(job.job_id)
+            if current is None:
+                break
+
+            if current.state in TERMINAL_JOB_STATES:
+                raw = current.result if isinstance(current.result, dict) else {}
+                self._emit(
+                    state,
+                    "job.completed",
+                    {
+                        "job_id": job.job_id,
+                        "capability_id": capability_id,
+                        "module_id": module_id_hint,
+                        "status": current.state.value,
+                    },
+                )
+                if current.state == JobState.COMPLETED:
+                    if raw.get("capability_id") and raw.get("status"):
+                        try:
+                            mapped_status = CapabilityStatus(str(raw.get("status")))
+                        except Exception:  # noqa: BLE001
+                            mapped_status = CapabilityStatus.COMPLETED
+                        return CapabilityResult(
+                            request_id=str(raw.get("request_id") or request.request_id),
+                            capability_id=str(raw.get("capability_id") or capability_id),
+                            status=mapped_status,
+                            output=raw.get("output") if isinstance(raw.get("output"), dict) else raw,
+                            error=raw.get("error"),
+                            telemetry={
+                                **(raw.get("telemetry") if isinstance(raw.get("telemetry"), dict) else {}),
+                                "executed_via": "job_runtime",
+                                "job_id": job.job_id,
+                            },
+                        )
+                    return CapabilityResult(
+                        request_id=request.request_id,
+                        capability_id=capability_id,
+                        status=CapabilityStatus.COMPLETED,
+                        output=raw if isinstance(raw, dict) else {"result": raw},
+                        telemetry={"executed_via": "job_runtime", "job_id": job.job_id},
+                    )
+                mapped = (
+                    CapabilityStatus.CANCELLED
+                    if current.state == JobState.CANCELLED
+                    else CapabilityStatus.FAILED
+                )
+                return CapabilityResult(
+                    request_id=request.request_id,
+                    capability_id=capability_id,
+                    status=mapped,
+                    output=raw if isinstance(raw, dict) else None,
+                    error=current.error or current.state.value,
+                    telemetry={
+                        "executed_via": "job_runtime",
+                        "job_id": job.job_id,
+                        "job_state": current.state.value,
+                    },
+                )
+
+            now = time.monotonic()
+            if now - last_progress >= 1.0:
+                last_progress = now
+                self._emit(
+                    state,
+                    "job.progress",
+                    {
+                        "job_id": job.job_id,
+                        "capability_id": capability_id,
+                        "module_id": module_id_hint,
+                        "status": current.state.value,
+                    },
+                )
+                self._emit(
+                    state,
+                    "tool.progress",
+                    {
+                        "capability_id": capability_id,
+                        "request_id": request.request_id,
+                        "job_id": job.job_id,
+                        "status": current.state.value,
+                        "module_id": module_id_hint,
+                    },
+                )
+            time.sleep(0.05)
+
+        return CapabilityResult(
+            request_id=request.request_id,
+            capability_id=capability_id,
+            status=CapabilityStatus.TIMEOUT,
+            error="WORKER_UNAVAILABLE: timed out waiting for JobRuntime worker",
+            telemetry={
+                "executed_via": "job_runtime",
+                "job_id": getattr(job, "job_id", None),
+                "reason": "worker_wait_timeout",
+            },
+        )
+
     def _execute_action(
         self,
         state: CognitiveRunState,
@@ -1338,6 +1663,15 @@ class CognitiveRuntime:
             short = self.broker.shortlist_for_task(goal=state.task.goal, domain=state.task.domain)
             for cid in short.capability_ids:
                 state.working_memory.upsert("capability", cid, priority=0.45)
+                self._emit(
+                    state,
+                    "capability.discovered",
+                    {
+                        "capability_id": cid,
+                        "goal": state.task.goal,
+                        "domain": state.task.domain,
+                    },
+                )
             self._emit(state, "capability_searched", short.public_dict())
             return CognitiveObservation(
                 kind=CognitiveObservationKind.SYSTEM_STATE,
@@ -1606,15 +1940,63 @@ class CognitiveRuntime:
             try:
                 from Data.modules.execution import CapabilityRequest
 
+                # Cooperative cancel + honest progress into gateway/adapters.
+                # Callables are stripped by ExecutionGateway before provider args persist.
+                invoke_args = dict(action.arguments)
+                invoke_args["_cancel_check"] = lambda: bool(state.cancel_requested)
+
+                def _progress(pct: float, phase: str, msg: str) -> None:
+                    self._emit(
+                        state,
+                        "tool.progress",
+                        {
+                            "capability_id": capability_id,
+                            "request_id": action.action_id,
+                            "phase": str(phase or ""),
+                            "message": str(msg or "")[:240],
+                            # Only forward adapter-reported percent — never invent.
+                            "percent": float(pct) if pct is not None else None,
+                        },
+                    )
+
+                invoke_args["_progress_cb"] = _progress
                 request = CapabilityRequest(
                     capability_id=capability_id,
-                    arguments=dict(action.arguments),
+                    arguments=invoke_args,
                     request_id=action.action_id,
                     run_id=state.run_id,
                     requested_by="cognition",
                     trace_id=state.trace_id,
                     idempotency_key=f"cog:{state.run_id}:{action.action_id}",
                     approval_id=action.arguments.get("approval_id"),
+                )
+                # Operational status only — no private chain-of-thought.
+                module_id_hint = None
+                try:
+                    defn = self.execution_gateway.catalog.get(capability_id) if self.execution_gateway else None
+                    meta_def = dict(getattr(defn, "metadata", None) or {}) if defn is not None else {}
+                    module_id_hint = meta_def.get("module_id")
+                    if module_id_hint:
+                        self._emit(
+                            state,
+                            "module.starting",
+                            {
+                                "module_id": module_id_hint,
+                                "capability_id": capability_id,
+                                "request_id": action.action_id,
+                            },
+                        )
+                except Exception:  # noqa: BLE001
+                    module_id_hint = None
+                self._emit(
+                    state,
+                    "tool.started",
+                    {
+                        "capability_id": capability_id,
+                        "request_id": action.action_id,
+                        "trace_id": state.trace_id,
+                        "module_id": module_id_hint,
+                    },
                 )
                 self._emit(
                     state,
@@ -1625,10 +2007,76 @@ class CognitiveRuntime:
                         "trace_id": state.trace_id,
                     },
                 )
-                result = self.execution_gateway.execute(request)
+                result = self._execute_capability_request(state, request, module_id_hint=module_id_hint)
                 result_dict = result.public_dict() if hasattr(result, "public_dict") else dict(result)
                 status_value = str(result_dict.get("status") or "")
                 success = status_value in {"COMPLETED", "OK", "SUCCESS"}
+                output = result_dict.get("output") if isinstance(result_dict.get("output"), dict) else {}
+                out_meta = output.get("metadata") if isinstance(output.get("metadata"), dict) else {}
+                module_id = out_meta.get("module_id") or module_id_hint
+                if module_id and success:
+                    self._emit(
+                        state,
+                        "module.ready",
+                        {
+                            "module_id": module_id,
+                            "capability_id": capability_id,
+                            "request_id": action.action_id,
+                        },
+                    )
+                artifact_refs = list(output.get("artifact_refs") or [])[:16]
+                source_refs = list(output.get("source_refs") or [])[:16]
+                self._emit(
+                    state,
+                    "tool.completed" if success else "tool.failed",
+                    {
+                        "capability_id": capability_id,
+                        "request_id": action.action_id,
+                        "status": status_value,
+                        "success": success,
+                        "module_id": module_id,
+                        "artifact_count": len(artifact_refs),
+                        "source_count": len(source_refs),
+                        "result_count": (
+                            len((output.get("structured_data") or {}).get("results") or [])
+                            if isinstance(output.get("structured_data"), dict)
+                            else None
+                        ),
+                        "assimilation": out_meta.get("assimilation"),
+                    },
+                )
+                for ref in artifact_refs[:8]:
+                    self._emit(
+                        state,
+                        "artifact.created",
+                        {
+                            "capability_id": capability_id,
+                            "module_id": module_id,
+                            "artifact_ref": ref,
+                        },
+                    )
+                if source_refs:
+                    self._emit(
+                        state,
+                        "source.observed",
+                        {
+                            "capability_id": capability_id,
+                            "module_id": module_id,
+                            "source_count": len(source_refs),
+                            "source_refs": source_refs[:8],
+                        },
+                    )
+                assim = out_meta.get("assimilation") or {}
+                if assim.get("queued"):
+                    self._emit(
+                        state,
+                        "knowledge.assimilation_queued",
+                        {
+                            "capability_id": capability_id,
+                            "job_id": assim.get("job_id"),
+                            "mode": assim.get("mode"),
+                        },
+                    )
                 self._transition(state, CognitiveRunStatus.OBSERVING)
                 self._ingest_tool_result(state, capability_id, result_dict, success=success)
                 return CognitiveObservation(
@@ -1642,6 +2090,7 @@ class CognitiveRuntime:
                     source_type=EpistemicType.TOOL_OBSERVATION,
                     success=success,
                     error=result_dict.get("error"),
+                    artifact_refs=tuple(list(output.get("artifact_refs") or [])[:16]),
                     payload={
                         "action_id": action.action_id,
                         "capability_id": capability_id,
@@ -1651,6 +2100,11 @@ class CognitiveRuntime:
                 )
             except Exception as exc:  # noqa: BLE001
                 self._transition(state, CognitiveRunStatus.OBSERVING)
+                self._emit(
+                    state,
+                    "tool.failed",
+                    {"capability_id": capability_id, "error": str(exc)[:240]},
+                )
                 return CognitiveObservation(
                     kind=CognitiveObservationKind.ERROR,
                     observation_id=str(uuid.uuid4()),

@@ -1,0 +1,54 @@
+{
+  "module_id": "obra-superpowers",
+  "name": "Obra Superpowers",
+  "version": "0.2.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "SKILL_PACK",
+    "source_type": "git",
+    "source": "https://github.com/obra/superpowers",
+    "ref": "main",
+    "install": {
+      "strategy": "GIT_CHECKOUT"
+    },
+    "runtime": {
+      "mode": "NONE"
+    },
+    "skill_roots": [
+      "skills"
+    ],
+    "assimilation_mode": "NONE",
+    "tags": [
+      "skill"
+    ],
+    "domain": "skills",
+    "metadata": {
+      "preferred_machine_contract": "skills/*/SKILL.md (obra/superpowers)"
+    }
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.obra_superpowers.search",
+      "name": "Search Obra Superpowers",
+      "description": "Search skills from Obra Superpowers.",
+      "external_name": "search",
+      "side_effects": [
+        "READ"
+      ]
+    },
+    {
+      "capability_id": "external.obra_superpowers.load",
+      "name": "Load Obra Superpowers Skill",
+      "description": "On-demand load a skill from Obra Superpowers.",
+      "external_name": "load",
+      "side_effects": [
+        "READ"
+      ]
+    }
+  ]
+}

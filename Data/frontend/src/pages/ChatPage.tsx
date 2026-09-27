@@ -6,8 +6,10 @@ import { media } from "../assets/media";
 import { BrandMark, BotAvatar } from "../components/BrandMark";
 import { AppShell } from "../layouts/AppShell";
 import { chatIneligibilityReason, partitionChatModels } from "../lib/chatModels";
+import { formatJobStateLabel, normalizeJobStatus } from "../lib/jobStatus";
 import { useAppToast } from "../state/useAppToast";
 import type {
+  AssistantToolCallTelemetry,
   AssistantTurnTelemetry,
   CapabilityListItem,
   Conversation,
@@ -16,6 +18,7 @@ import type {
   ReasoningSummary,
 } from "../types/api";
 import { buildDiagnosticStrip, deriveAssistantTelemetry } from "./chatTelemetry";
+import { CapabilityResultCards } from "./chat/CapabilityResultCards";
 
 type LocationState = {
   draft?: string;
@@ -527,6 +530,44 @@ export function ChatPage() {
           onDone: () => {
             doneOnce = true;
           },
+          onCapabilityEvent: (event, payload) => {
+            // Operational status only — surface as a pending assistant status line.
+            // job.* events reuse shared JobRuntime label semantics (Datasets/Training).
+            const cap = String(
+              payload.capability_id || payload.module_id || payload.job_id || event,
+            );
+            let statusLabel = "";
+            if (event.startsWith("job.")) {
+              const raw =
+                payload.state ||
+                payload.status ||
+                payload.phase ||
+                event.replace(/^job\./, "");
+              statusLabel = formatJobStateLabel(normalizeJobStatus(String(raw)));
+              const pct = payload.progress ?? payload.percent;
+              if (typeof pct === "number" && Number.isFinite(pct)) {
+                statusLabel = `${statusLabel} · ${Math.round(pct * (pct <= 1 ? 100 : 1))}%`;
+              }
+            } else {
+              const status = String(payload.status || payload.phase || "");
+              statusLabel = status && status !== event ? status : "";
+            }
+            setMessages((current) => {
+              const copy = [...current];
+              const last = copy[copy.length - 1];
+              if (last?.pending && last.role === "assistant") {
+                const prev = last.content === "Thinking…" ? "" : last.content;
+                const line = `[${event}] ${cap}${statusLabel ? ` · ${statusLabel}` : ""}`;
+                // Keep the last status line short; don't accumulate private detail.
+                const withoutStatus = prev.replace(/\n?\[[^\]]+\].*$/s, "").trimEnd();
+                copy[copy.length - 1] = {
+                  ...last,
+                  content: withoutStatus ? `${withoutStatus}\n${line}` : line,
+                };
+              }
+              return copy;
+            });
+          },
         },
         { signal: abort.signal },
       );
@@ -899,6 +940,12 @@ export function ChatPage() {
                   >
                     {message.content}
                   </div>
+                  {message.role === "assistant" &&
+                  !message.pending &&
+                  index === messages.length - 1 &&
+                  (lastTurn.telemetry?.tool_calls?.length ?? 0) > 0 ? (
+                    <CapabilityResultCards toolCalls={lastTurn.telemetry?.tool_calls} />
+                  ) : null}
                   <div className="lv-msg-meta">
                     {formatTime(message.created_at) || (message.pending ? "thinking" : "")}
                   </div>
@@ -1302,14 +1349,21 @@ export function ChatPage() {
               ) : (
                 (lastTurn.telemetry?.tool_calls?.length
                   ? lastTurn.telemetry.tool_calls
-                  : (lastTurn.telemetry?.tools_invoked ?? []).map((id) => ({
-                      capability_id: id,
-                      status: "INVOKED",
-                      duration_ms: null,
-                      receipt_id: null,
-                      summary: null,
-                      success: null,
-                    }))
+                  : (lastTurn.telemetry?.tools_invoked ?? []).map(
+                      (id): AssistantToolCallTelemetry => ({
+                        capability_id: id,
+                        status: "INVOKED",
+                        duration_ms: null,
+                        receipt_id: null,
+                        summary: null,
+                        success: null,
+                        module_id: null,
+                        provider: null,
+                        result_count: null,
+                        source_count: null,
+                        artifact_refs: [],
+                      }),
+                    )
                 ).map((call) => (
                   <div
                     className="lv-tool-item"
@@ -1324,8 +1378,15 @@ export function ChatPage() {
                       <strong>{call.capability_id}</strong>
                       <small>
                         {call.status}
+                        {call.module_id ? ` · ${call.module_id}` : ""}
+                        {call.provider ? ` · ${call.provider}` : ""}
                         {call.duration_ms != null ? ` · ${Math.round(call.duration_ms)} ms` : ""}
                         {call.receipt_id ? ` · receipt ${String(call.receipt_id).slice(0, 10)}` : ""}
+                        {call.result_count != null ? ` · ${call.result_count} results` : ""}
+                        {call.source_count != null ? ` · ${call.source_count} sources` : ""}
+                        {call.artifact_refs?.length
+                          ? ` · ${call.artifact_refs.length} artifacts`
+                          : ""}
                         {call.success === false ? " · failed" : ""}
                         {call.summary ? ` · ${call.summary}` : ""}
                       </small>
@@ -1337,6 +1398,11 @@ export function ChatPage() {
                 ))
               )}
             </div>
+            {(lastTurn.telemetry?.tool_calls?.length ?? 0) > 0 ? (
+              <div style={{ marginTop: "0.85rem" }}>
+                <CapabilityResultCards toolCalls={lastTurn.telemetry?.tool_calls} />
+              </div>
+            ) : null}
             <div className="lv-side-card-head" style={{ marginTop: "1rem" }}>
               <h3>Catalog (read-only)</h3>
             </div>

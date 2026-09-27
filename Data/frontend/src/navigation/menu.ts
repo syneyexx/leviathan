@@ -99,11 +99,12 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
     id: "runtime",
     label: "Plugin & Runtime",
     to: "/tools",
-    match: ["/tools", "/modules", "/performance", "/mcp", "/workflows", "/console"],
+    match: ["/tools", "/modules", "/skills", "/performance", "/mcp", "/workflows", "/console"],
     submenu: [
       { id: "performance", label: "Performance", to: "/performance" },
       { id: "tools", label: "Tools", to: "/tools" },
       { id: "modules", label: "Modules", to: "/modules" },
+      { id: "skills", label: "Skills", to: "/skills" },
       { id: "mcp", label: "MCP", to: "/mcp" },
       { id: "workflows", label: "Workflows", to: "/workflows" },
       { id: "console", label: "Console", to: "/console" },

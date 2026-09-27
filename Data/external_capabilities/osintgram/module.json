@@ -1,0 +1,191 @@
+{
+  "module_id": "osintgram",
+  "name": "Osintgram",
+  "version": "0.2.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "COMPOSITE",
+    "children": [
+      "PROCESS_SERVICE",
+      "CLI"
+    ],
+    "source_type": "git",
+    "source": "https://github.com/Datalux/Osintgram",
+    "ref": "master",
+    "install": {
+      "strategy": [
+        "GIT_CHECKOUT",
+        "PYTHON_VENV"
+      ],
+      "requirements_file": "requirements.txt"
+    },
+    "runtime": {
+      "mode": "LAZY",
+      "command": [
+        "python3",
+        "-m",
+        "uvicorn",
+        "src.web.app:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000"
+      ],
+      "cwd": "$INSTALL_ROOT",
+      "startup_timeout_seconds": 60,
+      "idle_timeout_seconds": 1800,
+      "base_url": "http://127.0.0.1:8000",
+      "ready_probe": {
+        "kind": "http",
+        "url": "http://127.0.0.1:8000",
+        "expect_status": 200
+      },
+      "operations": [
+        {
+          "name": "run",
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "name": "info",
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "name": "about",
+          "method": "GET",
+          "path": "/api/about"
+        },
+        {
+          "name": "list_tools",
+          "method": "GET",
+          "path": "/api/tools"
+        },
+        {
+          "name": "token_state",
+          "method": "GET",
+          "path": "/api/token"
+        },
+        {
+          "name": "balance",
+          "method": "GET",
+          "path": "/api/balance"
+        },
+        {
+          "name": "history_targets",
+          "method": "GET",
+          "path": "/api/history/targets"
+        },
+        {
+          "name": "history_queries",
+          "method": "GET",
+          "path": "/api/history/queries"
+        },
+        {
+          "name": "list_dossiers",
+          "method": "GET",
+          "path": "/api/dossier"
+        },
+        {
+          "name": "cancel_run",
+          "method": "POST",
+          "path": "/api/cancel",
+          "body_from": [
+            "run_id"
+          ]
+        }
+      ],
+      "eager_start": false
+    },
+    "result": {
+      "format": "MIXED"
+    },
+    "assimilation_mode": "EVIDENCE",
+    "tags": [
+      "osint",
+      "instagram"
+    ],
+    "domain": "osint",
+    "resource_class": "NETWORK_HEAVY",
+    "metadata": {
+      "preferred_machine_contract": "uvicorn src.web.app:app on 127.0.0.1:8000 (local-first web); HikerAPI or instagrapi backend required",
+      "localhost_only": true,
+      "no_auth_warning": true
+    }
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.osintgram.run",
+      "name": "Osintgram Run",
+      "description": "Ensure Osintgram local web/API is ready for Instagram OSINT (requires configured data backend).",
+      "external_name": "run",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.osintgram.start",
+      "name": "Start Osintgram",
+      "description": "Start Osintgram uvicorn local service.",
+      "external_name": "start",
+      "side_effects": [
+        "EXECUTE"
+      ]
+    },
+    {
+      "capability_id": "external.osintgram.stop",
+      "name": "Stop Osintgram",
+      "description": "Stop Osintgram local service.",
+      "external_name": "stop",
+      "side_effects": [
+        "EXECUTE"
+      ]
+    },
+    {
+      "capability_id": "external.osintgram.about",
+      "name": "Osintgram About",
+      "description": "Read Osintgram /api/about metadata (no Instagram backend required).",
+      "external_name": "about",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.osintgram.list_tools",
+      "name": "Osintgram List Tools",
+      "description": "List Osintgram tool catalog via /api/tools (catalog only; real OSINT needs HikerAPI/session).",
+      "external_name": "list_tools",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.osintgram.token_state",
+      "name": "Osintgram Token State",
+      "description": "Read whether HikerAPI/token backend is configured (honest readiness).",
+      "external_name": "token_state",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.osintgram.balance",
+      "name": "Osintgram Balance",
+      "description": "Read Osintgram backend balance availability (false when no backend).",
+      "external_name": "balance",
+      "side_effects": [
+        "READ",
+        "NETWORK"
+      ]
+    }
+  ]
+}

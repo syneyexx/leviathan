@@ -1,0 +1,54 @@
+{
+  "module_id": "anthropic-skills",
+  "name": "Anthropic Skills",
+  "version": "0.2.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "SKILL_PACK",
+    "source_type": "git",
+    "source": "https://github.com/anthropics/skills",
+    "ref": "main",
+    "install": {
+      "strategy": "GIT_CHECKOUT"
+    },
+    "runtime": {
+      "mode": "NONE"
+    },
+    "skill_roots": [
+      "skills"
+    ],
+    "assimilation_mode": "NONE",
+    "tags": [
+      "skill"
+    ],
+    "domain": "skills",
+    "metadata": {
+      "preferred_machine_contract": "skills/*/SKILL.md (anthropics/skills)"
+    }
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.anthropic_skills.search",
+      "name": "Search Anthropic Skills",
+      "description": "Search skills from Anthropic Skills.",
+      "external_name": "search",
+      "side_effects": [
+        "READ"
+      ]
+    },
+    {
+      "capability_id": "external.anthropic_skills.load",
+      "name": "Load Anthropic Skills Skill",
+      "description": "On-demand load a skill from Anthropic Skills.",
+      "external_name": "load",
+      "side_effects": [
+        "READ"
+      ]
+    }
+  ]
+}

@@ -15,11 +15,90 @@ class PluginRegistry:
 
     Discoverable bindings are not automatically authorized — execution still
     goes through ExecutionGateway + policy/approvals.
+
+    Configuration may be persisted in CONTROL via ExternalCapabilityStore so
+    third-party bindings survive restart. Persisted ENABLED != runtime READY.
     """
 
     def __init__(self, catalog: CapabilityCatalog) -> None:
         self.catalog = catalog
         self._plugins: dict[str, PluginRecord] = {}
+        self._store: Any = None
+
+    def attach_store(self, store: Any) -> None:
+        """Attach CONTROL persistence (ExternalCapabilityStore). Not a second loader."""
+        self._store = store
+
+    def hydrate_from_store(self) -> int:
+        """Reload durable plugin binding configs. Does not imply runtime readiness."""
+        if self._store is None:
+            return 0
+        count = 0
+        for row in self._store.list_plugin_bindings():
+            plugin_id = row["plugin_id"]
+            if plugin_id in self._plugins:
+                continue
+            bindings = []
+            for item in row.get("bindings") or []:
+                if not isinstance(item, dict):
+                    continue
+                cap_id = str(item.get("capability_id") or "")
+                if not cap_id or cap_id not in self.catalog:
+                    # Capability may be re-registered later by module expand.
+                    continue
+                bindings.append(
+                    PluginCapabilityBinding(
+                        external_name=str(item.get("external_name") or ""),
+                        capability_id=cap_id,
+                        description=str(item.get("description") or ""),
+                    )
+                )
+            if not bindings:
+                continue
+            try:
+                kind = AdapterKind(str(row.get("kind") or "DECLARATIVE"))
+            except ValueError:
+                kind = AdapterKind.DECLARATIVE
+            try:
+                status = PluginStatus(str(row.get("status") or "REGISTERED"))
+            except ValueError:
+                status = PluginStatus.REGISTERED
+            # Hydrated ENABLED means desired-enabled, not live-ready.
+            self._plugins[plugin_id] = PluginRecord(
+                plugin_id=plugin_id,
+                name=str(row.get("name") or plugin_id),
+                kind=kind,
+                status=status,
+                version=str(row.get("version") or "0.0.0"),
+                bindings=tuple(bindings),
+                endpoint=row.get("endpoint"),
+                metadata={
+                    **dict(row.get("metadata") or {}),
+                    "hydrated_from_store": True,
+                    "persisted_enabled_is_not_runtime_ready": True,
+                },
+            )
+            count += 1
+        return count
+
+    def persist(self, plugin_id: str) -> None:
+        if self._store is None:
+            return
+        item = self._plugins.get(plugin_id)
+        if item is None:
+            return
+        self._store.upsert_plugin_binding(
+            {
+                "plugin_id": item.plugin_id,
+                "name": item.name,
+                "kind": item.kind.value,
+                "status": item.status.value,
+                "version": item.version,
+                "bindings": [b.public_dict() for b in item.bindings],
+                "endpoint": item.endpoint,
+                "metadata": item.metadata,
+            }
+        )
 
     def list(self) -> list[PluginRecord]:
         return sorted(self._plugins.values(), key=lambda item: item.plugin_id)
@@ -60,6 +139,8 @@ class PluginRegistry:
         if record.plugin_id in self._plugins:
             raise ValueError(f"Plugin already registered: {record.plugin_id}")
         self._plugins[record.plugin_id] = record
+        if (metadata or {}).get("durable"):
+            self.persist(record.plugin_id)
         return record
 
     def set_status(self, plugin_id: str, status: PluginStatus) -> PluginRecord:

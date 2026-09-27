@@ -1,0 +1,55 @@
+{
+  "module_id": "ponytail",
+  "name": "Ponytail Skills",
+  "version": "0.2.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "SKILL_PACK",
+    "source_type": "git",
+    "source": "https://github.com/DietrichGebert/ponytail",
+    "ref": "main",
+    "install": {
+      "strategy": "GIT_CHECKOUT"
+    },
+    "runtime": {
+      "mode": "NONE"
+    },
+    "skill_roots": [
+      "skills",
+      ".openclaw/skills"
+    ],
+    "assimilation_mode": "NONE",
+    "tags": [
+      "skill"
+    ],
+    "domain": "skills",
+    "metadata": {
+      "preferred_machine_contract": "skills/* and .openclaw/skills/* SKILL.md packs"
+    }
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.ponytail.search",
+      "name": "Search Ponytail Skills",
+      "description": "Search skills from Ponytail Skills.",
+      "external_name": "search",
+      "side_effects": [
+        "READ"
+      ]
+    },
+    {
+      "capability_id": "external.ponytail.load",
+      "name": "Load Ponytail Skills Skill",
+      "description": "On-demand load a skill from Ponytail Skills.",
+      "external_name": "load",
+      "side_effects": [
+        "READ"
+      ]
+    }
+  ]
+}

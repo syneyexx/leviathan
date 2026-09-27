@@ -461,6 +461,145 @@ class KnowledgeAssimilationService:
         self._store_receipt(receipt)
         return receipt
 
+    def assimilate_external_capability(
+        self,
+        *,
+        mode: str = "KNOWLEDGE_CANDIDATE",
+        capability_id: str = "",
+        module_id: str | None = None,
+        request_id: str | None = None,
+        run_id: str | None = None,
+        job_id: str | None = None,
+        observation_id: str | None = None,
+        evidence_id: str | None = None,
+        output: dict[str, Any] | None = None,
+        retrieved_at: str | None = None,
+        **_extra: Any,
+    ) -> AssimilationReceipt:
+        """Promote useful external capability output into KnowledgeStore with provenance.
+
+        Dynamic content retains retrieved_at / source refs. Does not invent factual truth.
+        Idempotent on (capability_id, request_id) when durable receipts already exist.
+        """
+        knowledge_store = self.knowledge_store
+        receipt = AssimilationReceipt(
+            receipt_id=str(uuid.uuid4()),
+            kind="external_capability",
+            created_at=utc_now(),
+            metadata={
+                "mode": mode,
+                "capability_id": capability_id,
+                "module_id": module_id,
+                "request_id": request_id,
+                "run_id": run_id,
+                "job_id": job_id,
+                "observation_id": observation_id,
+                "evidence_id": evidence_id,
+                "retrieved_at": retrieved_at or utc_now(),
+                "tool_success_is_not_factual_truth": True,
+            },
+        )
+        if str(mode).upper() in {"NONE", "EVIDENCE"}:
+            receipt.skipped_count = 1
+            receipt.skipped.append({"reason": "mode_does_not_write_knowledge", "mode": mode})
+            receipt.ok = True
+            self._store_receipt(receipt)
+            return receipt
+        if knowledge_store is None:
+            receipt.failure_count = 1
+            receipt.failures.append({"error": "knowledge_store_required"})
+            receipt.ok = False
+            self._store_receipt(receipt)
+            return receipt
+
+        output = output or {}
+        summary = str(output.get("summary") or "").strip()
+        sources = list(output.get("source_refs") or [])
+        artifacts = list(output.get("artifact_refs") or [])
+        structured = output.get("structured_data")
+        body_parts = [
+            summary or f"External capability result: {capability_id}",
+            "",
+            f"capability_id: {capability_id}",
+            f"module_id: {module_id or ''}",
+            f"retrieved_at: {retrieved_at or utc_now()}",
+        ]
+        if sources:
+            body_parts.append("")
+            body_parts.append("Sources:")
+            for src in sources[:40]:
+                body_parts.append(f"- {src}")
+        if artifacts:
+            body_parts.append("")
+            body_parts.append("Artifacts:")
+            for art in artifacts[:40]:
+                body_parts.append(f"- {art}")
+        if isinstance(structured, dict) and structured.get("summary"):
+            body_parts.append("")
+            body_parts.append(str(structured.get("summary")))
+        content = "\n".join(body_parts)
+        document_id = f"external:{module_id or 'mod'}:{capability_id}:{request_id or receipt.receipt_id}"
+        trust = {
+            "trust": "external_capability_assimilation",
+            "capability_id": capability_id,
+            "module_id": module_id,
+            "request_id": request_id,
+            "run_id": run_id,
+            "job_id": job_id,
+            "observation_id": observation_id,
+            "evidence_id": evidence_id,
+            "retrieved_at": retrieved_at or utc_now(),
+            "source_refs": sources[:40],
+            "artifact_refs": artifacts[:40],
+            "mode": mode,
+            "provenance": "KnowledgeAssimilationService.assimilate_external_capability",
+            "tool_success_is_not_factual_truth": True,
+        }
+        try:
+            if hasattr(knowledge_store, "initialize"):
+                try:
+                    knowledge_store.initialize()
+                except Exception:  # noqa: BLE001
+                    pass
+            doc = knowledge_store.upsert_document(
+                title=f"external/{module_id or 'module'}/{capability_id}",
+                content=content,
+                source=f"external:{module_id or capability_id}",
+                document_id=document_id,
+                trust_metadata=trust,
+                source_type="external_capability",
+                confidence=0.4 if str(mode).upper() == "KNOWLEDGE_CANDIDATE" else 0.55,
+                uncertainty_notes="External tool success is not factual truth; provenance retained.",
+            )
+            doc_id = getattr(doc, "document_id", None) or (
+                doc.get("document_id") if isinstance(doc, dict) else document_id
+            )
+            receipt.success_count = 1
+            receipt.document_ids = [str(doc_id)]
+            receipt.ok = True
+            receipt.metadata["document_id"] = str(doc_id)
+        except Exception as exc:  # noqa: BLE001
+            receipt.failure_count = 1
+            receipt.failures.append({"error": str(exc)})
+            receipt.ok = False
+
+        self._store_receipt(receipt)
+        if self._emit is not None:
+            try:
+                self._emit(
+                    "intelligence",
+                    "external_assimilation",
+                    payload={
+                        "receipt_id": receipt.receipt_id,
+                        "ok": receipt.ok,
+                        "capability_id": capability_id,
+                        "mode": mode,
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                pass
+        return receipt
+
     def health(self) -> dict[str, Any]:
         receipts = self.list_receipts(limit=5)
         return {

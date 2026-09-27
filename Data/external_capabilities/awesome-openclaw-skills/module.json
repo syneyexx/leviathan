@@ -1,0 +1,58 @@
+{
+  "module_id": "awesome-openclaw-skills",
+  "name": "Awesome OpenClaw Skills Catalog",
+  "version": "0.1.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "CATALOG_SOURCE",
+    "source_type": "git",
+    "source": "https://github.com/VoltAgent/awesome-openclaw-skills",
+    "ref": "main",
+    "install": {
+      "strategy": "GIT_CHECKOUT"
+    },
+    "runtime": {
+      "mode": "NONE"
+    },
+    "catalog_globs": [
+      "**/SKILL.md",
+      "categories/*.md",
+      "README.md"
+    ],
+    "assimilation_mode": "NONE",
+    "tags": [
+      "catalog",
+      "skills"
+    ],
+    "domain": "skills",
+    "metadata": {
+      "do_not_load_all_into_prompt": true,
+      "preferred_machine_contract": "CATALOG_SOURCE indexes README + categories/*.md metadata only; materialize selected skills on demand"
+    }
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.openclaw_catalog.search",
+      "name": "Search OpenClaw Catalog",
+      "description": "Bounded search of awesome-openclaw-skills catalog metadata.",
+      "external_name": "search",
+      "side_effects": [
+        "READ"
+      ]
+    },
+    {
+      "capability_id": "external.openclaw_catalog.materialize",
+      "name": "Materialize OpenClaw Skill",
+      "description": "Materialize/install a selected catalog skill on demand.",
+      "external_name": "materialize",
+      "side_effects": [
+        "WRITE"
+      ]
+    }
+  ]
+}

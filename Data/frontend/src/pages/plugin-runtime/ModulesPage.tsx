@@ -23,15 +23,20 @@ function moduleName(row: ManagedModuleRow): string {
 
 function statusTone(status?: string): PillTone {
   const s = (status ?? "").toUpperCase();
-  if (s === "READY") return "ok";
-  if (s === "ERROR" || s === "SHUTDOWN") return "err";
-  if (s === "EXECUTING" || s === "LOADED" || s === "INITIALIZED") return "gold";
-  if (s === "DISCOVERED") return "cyan";
+  if (s === "READY" || s === "RUNNING" || s === "INSTALLED") return "ok";
+  if (s === "ERROR" || s === "FAILED" || s === "SHUTDOWN") return "err";
+  if (s === "EXECUTING" || s === "BUSY" || s === "STARTING" || s === "LOADED" || s === "INITIALIZED") return "gold";
+  if (s === "DISCOVERED" || s === "STOPPED" || s === "DISABLED") return "cyan";
   return "muted";
 }
 
 function isReady(row: ManagedModuleRow): boolean {
-  return (row.status ?? "").toUpperCase() === "READY";
+  const s = (row.status ?? "").toUpperCase();
+  return ["READY", "RUNNING", "INSTALLED", "BUSY", "INITIALIZED"].includes(s);
+}
+
+function canLifecycle(row: ManagedModuleRow): boolean {
+  return Boolean(row.adapter || row.manifest?.metadata?.external);
 }
 
 function tryParseArgs(raw: string): { ok: true; value: Record<string, unknown> } | { ok: false; error: string } {
@@ -60,6 +65,11 @@ export function ModulesPage() {
   const [executing, setExecuting] = useState(false);
   const [lastResult, setLastResult] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [lifecycleBusy, setLifecycleBusy] = useState(false);
+  const [logLines, setLogLines] = useState<string[] | null>(null);
+  const [versionsJson, setVersionsJson] = useState<string | null>(null);
+  const [versionRef, setVersionRef] = useState("");
+  const [versionId, setVersionId] = useState("");
 
   const applySnapshot = useCallback((next: ModuleSnapshot) => {
     setSnapshot(next);
@@ -127,6 +137,106 @@ export function ModulesPage() {
     }
   }
 
+  async function onLifecycle(
+    action:
+      | "install"
+      | "start"
+      | "stop"
+      | "restart"
+      | "ensure-ready"
+      | "logs"
+      | "health"
+      | "jobs"
+      | "versions"
+      | "check-update"
+      | "install-version"
+      | "activate-version"
+      | "rollback"
+      | "capabilities"
+      | "sweep-idle",
+  ) {
+    if (action === "sweep-idle") {
+      setLifecycleBusy(true);
+      try {
+        const res = await api.sweepIdleModules();
+        toast(`Sweep idle: stopped ${res.count ?? (res.stopped?.length ?? 0)}`);
+        setVersionsJson(JSON.stringify(res, null, 2));
+        const snap = await api.listModules().catch(() => null);
+        if (snap) applySnapshot(snap);
+      } catch (err) {
+        toast(errorMessage(err));
+      } finally {
+        setLifecycleBusy(false);
+      }
+      return;
+    }
+    if (!selected) return;
+    const id = moduleId(selected);
+    setLifecycleBusy(true);
+    try {
+      if (action === "install") {
+        const res = await api.installModule(id);
+        toast(`Install: ${JSON.stringify(res.job_id ?? res.result ?? "ok")}`);
+      } else if (action === "start") {
+        await api.startModule(id);
+        toast(`Started ${id}`);
+      } else if (action === "stop") {
+        await api.stopModule(id);
+        toast(`Stopped ${id}`);
+      } else if (action === "restart") {
+        await api.restartModule(id);
+        toast(`Restarted ${id}`);
+      } else if (action === "ensure-ready") {
+        const res = await api.ensureReadyModule(id);
+        toast(`Ensure ready: ${JSON.stringify(res.result ?? "ok")}`);
+      } else if (action === "health") {
+        const res = await api.moduleHealth(id);
+        toast(`Health: ${JSON.stringify(res.health?.status ?? res.health ?? "ok")}`);
+      } else if (action === "jobs") {
+        const res = await api.moduleJobs(id);
+        toast(`Active jobs: ${res.count ?? (res.jobs?.length ?? 0)}`);
+      } else if (action === "versions") {
+        const res = await api.moduleVersions(id);
+        setVersionsJson(JSON.stringify(res.versions ?? [], null, 2));
+        toast(`Versions: ${res.count ?? 0}`);
+      } else if (action === "check-update") {
+        const res = await api.moduleCheckUpdate(id);
+        setVersionsJson(JSON.stringify(res.result ?? {}, null, 2));
+        toast(`Update available: ${String(res.result?.update_available ?? "?")}`);
+      } else if (action === "install-version") {
+        const ref = versionRef.trim() || undefined;
+        const res = await api.installModuleVersion(id, { ref, activate: false });
+        setVersionsJson(JSON.stringify(res, null, 2));
+        toast(`Install version: ${JSON.stringify(res.job_id ?? res.result ?? "ok")}`);
+      } else if (action === "activate-version") {
+        const vid = versionId.trim();
+        if (!vid) {
+          toast("version_id is required to activate");
+          return;
+        }
+        const res = await api.activateModuleVersion(id, vid);
+        setVersionsJson(JSON.stringify(res, null, 2));
+        toast(`Activate version: ${JSON.stringify(res.result ?? "ok")}`);
+      } else if (action === "rollback") {
+        const res = await api.rollbackModuleVersion(id, versionId.trim() || undefined);
+        toast(`Rollback: ${JSON.stringify(res.result ?? "ok")}`);
+      } else if (action === "capabilities") {
+        const res = await api.moduleCapabilities(id);
+        setVersionsJson(JSON.stringify(res.capabilities ?? [], null, 2));
+        toast(`Capabilities: ${res.count ?? 0}`);
+      } else {
+        const logs = await api.moduleLogs(id);
+        setLogLines(logs.lines ?? []);
+      }
+      const snap = await api.listModules().catch(() => null);
+      if (snap) applySnapshot(snap);
+    } catch (err) {
+      toast(errorMessage(err));
+    } finally {
+      setLifecycleBusy(false);
+    }
+  }
+
   async function onExecute() {
     if (!selected) return;
     if (!isReady(selected)) {
@@ -190,7 +300,7 @@ export function ModulesPage() {
                 MODULES
               </h1>
               <p className="lv-pr-hero-kicker" style={{ margin: "8px 0 0", opacity: 0.85 }}>
-                ModuleManager control plane — discover, status, execute.
+                ModuleManager control plane — discover, install, start/stop, health, execute.
               </p>
             </div>
           </div>
@@ -258,6 +368,15 @@ export function ModulesPage() {
                 >
                   {discovering ? "Discovering…" : "Discover"}
                 </button>
+                <button
+                  type="button"
+                  className="lv-pr-mcp-btn"
+                  onClick={() => void onLifecycle("sweep-idle")}
+                  disabled={lifecycleBusy || !managerEnabled}
+                  title="POST /api/modules/sweep-idle — stop idle lazy external processes"
+                >
+                  Sweep Idle
+                </button>
               </div>
             }
           >
@@ -276,27 +395,30 @@ export function ModulesPage() {
                 <thead>
                   <tr>
                     <th>Module</th>
+                    <th>Adapter</th>
                     <th>Version</th>
                     <th>Status</th>
-                    <th>Isolation</th>
+                    <th>Runtime</th>
+                    <th>Caps</th>
                     <th>Error</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading && modules.length === 0 ? (
                     <tr>
-                      <td colSpan={5}>Loading module snapshot…</td>
+                      <td colSpan={7}>Loading module snapshot…</td>
                     </tr>
                   ) : null}
                   {!loading && rows.length === 0 ? (
                     <tr>
-                      <td colSpan={5}>
+                      <td colSpan={7}>
                         No modules in snapshot. Use Discover to scan discovery roots.
                       </td>
                     </tr>
                   ) : null}
                   {rows.map((row) => {
                     const id = moduleId(row);
+                    const caps = Array.isArray(row.manifest?.capabilities) ? row.manifest.capabilities.length : 0;
                     return (
                       <tr
                         key={id}
@@ -304,6 +426,7 @@ export function ModulesPage() {
                         onClick={() => {
                           setSelectedId(id);
                           setLastResult(null);
+                          setLogLines(null);
                         }}
                         style={{ cursor: "pointer" }}
                       >
@@ -313,11 +436,15 @@ export function ModulesPage() {
                             {id}
                           </div>
                         </td>
+                        <td>{row.adapter ?? "—"}</td>
                         <td>{row.manifest?.version ?? "—"}</td>
                         <td>
                           <Pill tone={statusTone(row.status)}>{row.status ?? "—"}</Pill>
                         </td>
-                        <td>{row.manifest?.isolation ?? "—"}</td>
+                        <td>
+                          <Pill tone={statusTone(row.runtime_state)}>{row.runtime_state ?? "—"}</Pill>
+                        </td>
+                        <td>{caps}</td>
                         <td>{row.error ?? "—"}</td>
                       </tr>
                     );
@@ -333,11 +460,107 @@ export function ModulesPage() {
                 <div style={{ marginBottom: 12 }}>
                   <h2 style={{ margin: "0 0 6px", fontSize: "1.15rem" }}>{moduleName(selected)}</h2>
                   <Pill tone={statusTone(selected.status)}>{selected.status ?? "unknown"}</Pill>
+                  {selected.runtime_state ? (
+                    <span style={{ marginLeft: 8 }}>
+                      <Pill tone={statusTone(selected.runtime_state)}>{selected.runtime_state}</Pill>
+                    </span>
+                  ) : null}
+                  {selected.adapter ? (
+                    <span className="lv-muted" style={{ marginLeft: 8 }}>
+                      {selected.adapter}
+                    </span>
+                  ) : null}
                   <p className="lv-muted" style={{ marginTop: 8 }}>
                     {moduleId(selected)}
                     {selected.manifest?.source_path ? ` · ${selected.manifest.source_path}` : ""}
                   </p>
                 </div>
+
+                {canLifecycle(selected) ? (
+                  <div className="lv-pr-mcp-panel-actions" style={{ marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+                    <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("install")}>
+                      Install
+                    </button>
+                    <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("start")}>
+                      Start
+                    </button>
+                    <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("stop")}>
+                      Stop
+                    </button>
+                    <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("restart")}>
+                      Restart
+                    </button>
+                    <button
+                      type="button"
+                      className="lv-pr-mcp-btn lv-pr-mcp-btn--gold"
+                      disabled={lifecycleBusy}
+                      onClick={() => void onLifecycle("ensure-ready")}
+                    >
+                      Ensure Ready
+                    </button>
+                    <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("health")}>
+                      Health
+                    </button>
+                    <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("jobs")}>
+                      Jobs
+                    </button>
+                    <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("logs")}>
+                      Logs
+                    </button>
+                    <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("capabilities")}>
+                      Capabilities
+                    </button>
+                    <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("versions")}>
+                      Versions
+                    </button>
+                    <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("check-update")}>
+                      Check Update
+                    </button>
+                    <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("install-version")}>
+                      Install Version
+                    </button>
+                    <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("activate-version")}>
+                      Activate Version
+                    </button>
+                    <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("rollback")}>
+                      Rollback
+                    </button>
+                    <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("sweep-idle")}>
+                      Sweep Idle
+                    </button>
+                  </div>
+                ) : null}
+
+                {canLifecycle(selected) ? (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+                    <label className="lv-form-field" style={{ flex: "1 1 160px" }}>
+                      <span className="lv-muted" style={{ fontSize: 12 }}>
+                        Version ref (install)
+                      </span>
+                      <input
+                        className="lv-pr-mcp-input"
+                        value={versionRef}
+                        onChange={(e) => setVersionRef(e.target.value)}
+                        placeholder="e.g. main / v1.2.3"
+                        disabled={lifecycleBusy}
+                        style={{ width: "100%", marginTop: 4 }}
+                      />
+                    </label>
+                    <label className="lv-form-field" style={{ flex: "1 1 160px" }}>
+                      <span className="lv-muted" style={{ fontSize: 12 }}>
+                        version_id (activate/rollback)
+                      </span>
+                      <input
+                        className="lv-pr-mcp-input"
+                        value={versionId}
+                        onChange={(e) => setVersionId(e.target.value)}
+                        placeholder="from Versions list"
+                        disabled={lifecycleBusy}
+                        style={{ width: "100%", marginTop: 4 }}
+                      />
+                    </label>
+                  </div>
+                ) : null}
 
                 {selected.error ? (
                   <p className="lv-muted" role="status">
@@ -359,12 +582,40 @@ export function ModulesPage() {
                   </>
                 ) : null}
 
+                {logLines ? (
+                  <>
+                    <div className="lv-pr-panel-title" style={{ marginTop: 12 }}>
+                      Logs
+                    </div>
+                    <pre
+                      className="lv-pr-console-log"
+                      style={{ whiteSpace: "pre-wrap", maxHeight: 160, overflow: "auto", fontSize: 12 }}
+                    >
+                      {logLines.join("\n") || "(empty)"}
+                    </pre>
+                  </>
+                ) : null}
+
+                {versionsJson ? (
+                  <>
+                    <div className="lv-pr-panel-title" style={{ marginTop: 12 }}>
+                      Versions / Update / Capabilities
+                    </div>
+                    <pre
+                      className="lv-pr-console-log"
+                      style={{ whiteSpace: "pre-wrap", maxHeight: 180, overflow: "auto", fontSize: 12 }}
+                    >
+                      {versionsJson}
+                    </pre>
+                  </>
+                ) : null}
+
                 <div className="lv-pr-panel-title" style={{ marginTop: 16 }}>
                   Execute
                 </div>
                 <p className="lv-muted" style={{ marginBottom: 8 }}>
-                  HTTP surface is discover + execute only. Start/Stop are not exposed by ModuleManager.
-                  Execute is enabled for READY modules.
+                  Lifecycle uses ModuleManager start/stop/install. Capability execution still goes through
+                  ExecutionGateway for catalogued tools.
                 </p>
                 <label className="lv-form-field" style={{ display: "block" }}>
                   <span>Operation</span>

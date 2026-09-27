@@ -1,0 +1,61 @@
+{
+  "module_id": "financial-services",
+  "name": "Anthropic Financial Services Skills",
+  "version": "0.2.0",
+  "entrypoint": "Data.modules.module_manager.external.module:create_external_capability_module",
+  "side_effects": [
+    "READ",
+    "NETWORK"
+  ],
+  "hot_reload": false,
+  "external": {
+    "adapter": "SKILL_PACK",
+    "source_type": "git",
+    "source": "https://github.com/anthropics/financial-services",
+    "ref": "main",
+    "install": {
+      "strategy": "GIT_CHECKOUT"
+    },
+    "runtime": {
+      "mode": "NONE"
+    },
+    "skill_roots": [
+      "plugins/agent-plugins",
+      "claude-for-msft-365-install"
+    ],
+    "assimilation_mode": "KNOWLEDGE_CANDIDATE",
+    "tags": [
+      "finance",
+      "dcf",
+      "earnings",
+      "skill"
+    ],
+    "domain": "finance",
+    "metadata": {
+      "marketsim_bypass_forbidden": true,
+      "real_money_blocked": true,
+      "preferred_machine_contract": "SKILL.md packs under plugins/agent-plugins (DCF, earnings, comps); not a second Claude agent runtime",
+      "does_not_replace_cognitive_runtime": true
+    }
+  },
+  "capabilities": [
+    {
+      "capability_id": "external.financial_services.search_skills",
+      "name": "Search Financial Skills",
+      "description": "Search financial-services skill procedures (DCF, filings, earnings, etc.).",
+      "external_name": "search",
+      "side_effects": [
+        "READ"
+      ]
+    },
+    {
+      "capability_id": "external.financial_services.load_skill",
+      "name": "Load Financial Skill",
+      "description": "On-demand load a financial skill instruction body (e.g. dcf-model).",
+      "external_name": "load",
+      "side_effects": [
+        "READ"
+      ]
+    }
+  ]
+}

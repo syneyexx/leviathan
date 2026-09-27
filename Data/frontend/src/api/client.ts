@@ -331,6 +331,8 @@ export const api = {
       onDone?: (data: ChatResponse) => void;
       onError?: (detail: string) => void;
       onCancelled?: (data: Record<string, unknown>) => void;
+      /** Operational capability/tool status — never private CoT. */
+      onCapabilityEvent?: (event: string, data: Record<string, unknown>) => void;
     },
     fetchInit?: { signal?: AbortSignal },
   ): Promise<ChatResponse> {
@@ -517,6 +519,19 @@ export const api = {
           typeof parsed.detail === "string" ? parsed.detail : "stream error";
         handlers.onError?.(detail);
         throw new ApiError(503, detail);
+      } else if (
+        eventName.startsWith("tool.") ||
+        eventName.startsWith("module.") ||
+        eventName.startsWith("job.") ||
+        eventName.startsWith("knowledge.") ||
+        eventName.startsWith("artifact.") ||
+        eventName.startsWith("source.") ||
+        eventName === "capability.discovered" ||
+        eventName === "capability_invoked" ||
+        eventName === "capability_searched"
+      ) {
+        // Operational status only — ignore unknown private event names.
+        handlers.onCapabilityEvent?.(eventName, parsed);
       }
       eventName = "message";
     };
@@ -818,8 +833,87 @@ export const api = {
     return request<ModuleSnapshot>("/api/modules");
   },
 
+  getModule(moduleId: string): Promise<{ module: NonNullable<ModuleSnapshot["modules"]>[number] }> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}`);
+  },
+
   discoverModules(): Promise<{ discovered: unknown[]; snapshot: ModuleSnapshot }> {
     return request("/api/modules/discover", { method: "POST" });
+  },
+
+  installModule(moduleId: string, payload: { force?: boolean; ref?: string } = {}): Promise<Record<string, unknown>> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/install`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  startModule(moduleId: string): Promise<Record<string, unknown>> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/start`, { method: "POST" });
+  },
+
+  stopModule(moduleId: string): Promise<Record<string, unknown>> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/stop`, { method: "POST" });
+  },
+
+  restartModule(moduleId: string): Promise<Record<string, unknown>> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/restart`, { method: "POST" });
+  },
+
+  ensureReadyModule(moduleId: string): Promise<Record<string, unknown>> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/ensure-ready`, { method: "POST" });
+  },
+
+  moduleHealth(moduleId: string): Promise<{ health: Record<string, unknown> }> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/health`);
+  },
+
+  moduleLogs(moduleId: string, limit = 200): Promise<{ lines: string[]; count: number }> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/logs?limit=${Math.max(1, Math.min(500, limit))}`);
+  },
+
+  moduleCapabilities(moduleId: string): Promise<{ capabilities: unknown[]; count: number }> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/capabilities`);
+  },
+
+  moduleJobs(moduleId: string): Promise<{ jobs: string[]; count: number }> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/jobs`);
+  },
+
+  moduleVersions(moduleId: string): Promise<{ versions: Array<Record<string, unknown>>; count: number }> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/versions`);
+  },
+
+  moduleCheckUpdate(moduleId: string): Promise<{ result: Record<string, unknown> }> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/check-update`);
+  },
+
+  installModuleVersion(
+    moduleId: string,
+    payload: { ref?: string; activate?: boolean } = {},
+  ): Promise<Record<string, unknown>> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/install-version`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  activateModuleVersion(moduleId: string, versionId: string): Promise<Record<string, unknown>> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/activate-version`, {
+      method: "POST",
+      body: JSON.stringify({ version_id: versionId }),
+    });
+  },
+
+  rollbackModuleVersion(moduleId: string, versionId?: string): Promise<Record<string, unknown>> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/rollback-version`, {
+      method: "POST",
+      body: JSON.stringify(versionId ? { version_id: versionId } : {}),
+    });
+  },
+
+  sweepIdleModules(): Promise<{ stopped: Array<Record<string, unknown>>; count: number }> {
+    return request("/api/modules/sweep-idle", { method: "POST" });
   },
 
   executeModule(
@@ -830,6 +924,48 @@ export const api = {
     return request(`/api/modules/${encodeURIComponent(moduleId)}/execute`, {
       method: "POST",
       body: JSON.stringify({ operation, arguments: arguments_ }),
+    });
+  },
+
+  listSkills(params: {
+    query?: string;
+    include_catalog?: boolean;
+    enabled_only?: boolean;
+    limit?: number;
+    offset?: number;
+  } = {}): Promise<{
+    skills: Array<Record<string, unknown>>;
+    count: number;
+    offset: number;
+    limit: number;
+    totals: { installed: number; catalog: number };
+    truth?: Record<string, boolean>;
+  }> {
+    const q = new URLSearchParams();
+    if (params.query) q.set("query", params.query);
+    if (params.include_catalog) q.set("include_catalog", "true");
+    if (params.enabled_only) q.set("enabled_only", "true");
+    if (params.limit != null) q.set("limit", String(params.limit));
+    if (params.offset != null) q.set("offset", String(params.offset));
+    const qs = q.toString();
+    return request(`/api/skills${qs ? `?${qs}` : ""}`);
+  },
+
+  getSkill(
+    skillId: string,
+    includeInstructions = false,
+  ): Promise<{ skill: Record<string, unknown> }> {
+    const q = includeInstructions ? "?include_instructions=true" : "";
+    return request(`/api/skills/${encodeURIComponent(skillId)}${q}`);
+  },
+
+  setSkillEnabled(
+    skillId: string,
+    enabled: boolean,
+  ): Promise<{ skill: Record<string, unknown> }> {
+    return request(`/api/skills/${encodeURIComponent(skillId)}/enable`, {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
     });
   },
 

@@ -1,0 +1,808 @@
+{
+  "program": "LEVIATHAN Universal External Capability Fabric",
+  "generated_at": "2026-09-27",
+  "baseline_head": "1836d60ebecb52c44c116c70b8630ba6f49a6c38",
+  "vocabulary": [
+    "PASS",
+    "PARTIAL",
+    "BLOCKED_EXTERNAL",
+    "NOT_APPLICABLE",
+    "FAILED"
+  ],
+  "notes": "Fixture adapters prove all adapter kinds. Live installs 21/21. Skill packs+catalog PASS. Vibe-Trading MCP 74 tools + ExecutionGateway approval path PASS. Agent-Reach real contract: doctor JSON + SKILL router (no fake search CLI). llm-agent-trader PARTIAL (LLM analyze). GhostTrack PARTIAL: declarative curl argv for audited public APIs (ipwho.is / api.ipify.org); GhostTR.py TUI phone/username remain blocked. COMPOSITE declared CLI ops beat skill-pack name collisions. MCP lazy ensure_ready. Cognition offloads EXTERNAL_REQUIRED MODULE caps via JobRuntime (job.* SSE). capability.discovered emitted on SEARCH. No per-repository wrappers. Closable-gap unit suite covers declared-ops precedence, HTTP 202 accept_statuses, OpenMAIC fail-poll fixture, boot register swallow, route lifecycle+versions, FE versions/logs/jobs contracts. FILE/artifact_globs promote into artifact_refs so cognition emits artifact.created + knowledge.assimilation_queued SSE. ArtifactStore materialize: CLI FILE globs + oversized stdout become artifact_ids (bounded Chat inline). HTTP large body materialize + periodic module idle sweep loop (LEVIATHAN_MODULE_IDLE_SWEEP_SECONDS). Cognition iterative loop returns OBSERVING\u2192REASONING between tools; ActionSelector-driven A\u2192B proven; OwnedProcess stderr flood drain proven. Chat CapabilityResultCards prefer ARTIFACT part names over raw UUID refs; Agent-Reach version/check_update + Fincept stats/fixed_income capabilities declared.",
+  "sources": [
+    {
+      "source": "wonderwhy-er/DesktopCommanderMCP",
+      "category": "MCP_SERVER",
+      "adapter": "MCP",
+      "module_id": "desktop-commander-mcp",
+      "install_verified": "PASS",
+      "discovery_verified": "PASS",
+      "start_verified": "PASS",
+      "stop_verified": "PASS",
+      "capability_discovery": "PASS",
+      "invoke_verified": "PASS",
+      "result_normalization": "PASS",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
+      "knowledge_assimilation": "NOT_APPLICABLE",
+      "known_external_requirements": [
+        "npx",
+        "node",
+        "network"
+      ],
+      "status": "PASS",
+      "limitations": "Live McpBridge connect/26 tools/list_directory PASS; ExecutionGateway invoke PASS with approval_id (REJECTED without \u2014 expected). Chat cards render artifact/source links."
+    },
+    {
+      "source": "Datalux/Osintgram",
+      "category": "OSINT",
+      "adapter": "COMPOSITE",
+      "module_id": "osintgram",
+      "install_verified": "PASS",
+      "discovery_verified": "PASS",
+      "start_verified": "PASS",
+      "stop_verified": "PASS",
+      "capability_discovery": "PASS",
+      "invoke_verified": "PASS",
+      "result_normalization": "PASS",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
+      "knowledge_assimilation": "PASS",
+      "known_external_requirements": [
+        "git",
+        "python>=3.10",
+        "uvicorn",
+        "HikerAPI or Instagram session"
+      ],
+      "status": "PARTIAL",
+      "limitations": "Live GIT+venv install PASS; uvicorn start/ready HTTP 200 PASS; GET / + /api/about + /api/tools + /api/token + /api/balance invoke PASS; stop PASS. Instagram data backend (HikerAPI/session) still required for real OSINT queries."
+    },
+    {
+      "source": "elementalsouls/Claude-OSINT",
+      "category": "OSINT_SKILL",
+      "adapter": "SKILL_PACK",
+      "module_id": "claude-osint",
+      "install_verified": "PASS",
+      "discovery_verified": "PASS",
+      "start_verified": "NOT_APPLICABLE",
+      "stop_verified": "NOT_APPLICABLE",
+      "capability_discovery": "PASS",
+      "invoke_verified": "PASS",
+      "result_normalization": "PASS",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
+      "knowledge_assimilation": "NOT_APPLICABLE",
+      "known_external_requirements": [
+        "git"
+      ],
+      "status": "PASS",
+      "limitations": "Live GIT install PASS; ModuleManager search/load 10 skills on-demand PASS (SKILL.md not prompt-injected)."
+    },
+    {
+      "source": "Panniantong/Agent-Reach",
+      "category": "OSINT_RESEARCH",
+      "adapter": "COMPOSITE",
+      "module_id": "agent-reach",
+      "install_verified": "PASS",
+      "discovery_verified": "PASS",
+      "start_verified": "NOT_APPLICABLE",
+      "stop_verified": "NOT_APPLICABLE",
+      "capability_discovery": "PASS",
+      "invoke_verified": "PASS",
+      "result_normalization": "PASS",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
+      "knowledge_assimilation": "PASS",
+      "known_external_requirements": [
+        "git",
+        "python>=3.10",
+        "curl",
+        "network",
+        "optional: yt-dlp, gh, mcporter, platform CLIs"
+      ],
+      "status": "PASS",
+      "limitations": "Real contract: SKILL.md router + CLI doctor --json + zero-config fetch_url (Jina) / v2ex_hot via generic curl argv. Live doctor/v2ex_hot/fetch_url PASS. No native search subcommand. Reddit/YouTube/etc. need optional upstream CLIs/login; yt-dlp installable via python_packages. Not a second agent runtime."
+    },
+    {
+      "source": "HunxByts/GhostTrack",
+      "category": "OSINT",
+      "adapter": "CLI",
+      "module_id": "ghosttrack",
+      "install_verified": "PASS",
+      "discovery_verified": "PASS",
+      "start_verified": "NOT_APPLICABLE",
+      "stop_verified": "NOT_APPLICABLE",
+      "capability_discovery": "PASS",
+      "invoke_verified": "PASS",
+      "result_normalization": "PASS",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
+      "knowledge_assimilation": "PASS",
+      "known_external_requirements": [
+        "git",
+        "python",
+        "curl",
+        "network"
+      ],
+      "status": "PARTIAL",
+      "limitations": "Audited: GhostTR.py remains interactive TUI (5x input()). Machine ops use generic CLI argv to the same public APIs GhostTR calls: ip_lookup\u2192ipwho.is/{ip} JSON, show_ip\u2192api.ipify.org text. Live ModuleManager invoke PASS. Phone/username trackers have no argv contract \u2014 still BLOCKED_EXTERNAL. No GhostTrackWrapper."
+    },
+    {
+      "source": "HKUDS/Vibe-Trading",
+      "category": "FINANCE_RESEARCH",
+      "adapter": "MCP",
+      "module_id": "vibe-trading",
+      "install_verified": "PASS",
+      "discovery_verified": "PASS",
+      "start_verified": "PASS",
+      "stop_verified": "PASS",
+      "capability_discovery": "PASS",
+      "invoke_verified": "PASS",
+      "result_normalization": "PASS",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
+      "knowledge_assimilation": "PASS",
+      "known_external_requirements": [
+        "git",
+        "python>=3.11",
+        "network",
+        "broker/API keys for some tools"
+      ],
+      "status": "PASS",
+      "limitations": "Live GIT+venv install PASS. vibe-trading-mcp via McpBridge: 74 tools; alpha_zoo + analyze_options PASS; ExecutionGateway invoke PASS with approval_id (REJECTED without). MarketSim bypass forbidden. Broker/live tools may need API keys."
+    },
+    {
+      "source": "anthropics/financial-services",
+      "category": "FINANCE_SKILLS",
+      "adapter": "SKILL_PACK",
+      "module_id": "financial-services",
+      "install_verified": "PASS",
+      "discovery_verified": "PASS",
+      "start_verified": "NOT_APPLICABLE",
+      "stop_verified": "NOT_APPLICABLE",
+      "capability_discovery": "PASS",
+      "invoke_verified": "PASS",
+      "result_normalization": "PASS",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
+      "knowledge_assimilation": "PASS",
+      "known_external_requirements": [
+        "git"
+      ],
+      "status": "PASS",
+      "limitations": "Live GIT install PASS; skill index+load 32 skills PASS (DCF/earnings/comps). Not a second Claude agent runtime. MarketSim remains trading authority."
+    },
+    {
+      "source": "jason8745/llm-agent-trader",
+      "category": "TRADING_RESEARCH",
+      "adapter": "COMPOSITE",
+      "module_id": "llm-agent-trader",
+      "install_verified": "PASS",
+      "discovery_verified": "PASS",
+      "start_verified": "PASS",
+      "stop_verified": "PASS",
+      "capability_discovery": "PASS",
+      "invoke_verified": "PASS",
+      "result_normalization": "PASS",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
+      "knowledge_assimilation": "PASS",
+      "known_external_requirements": [
+        "git",
+        "python>=3.12",
+        "uv/pip",
+        "LLM API keys for analyze/backtest",
+        "dedicated localhost:8010"
+      ],
+      "status": "PARTIAL",
+      "limitations": "Dedicated port :8010 (avoids Osintgram :8000 collision). Live GIT+venv install PASS; start/ready /docs PASS; GET / + /api/v1/openapi.json (9 paths) PASS; stop PASS. Analyze/backtest need LLM API keys (BLOCKED_EXTERNAL). Not MarketSim qualification."
+    },
+    {
+      "source": "Fincept-Corporation/FinceptTerminal",
+      "category": "FINANCE_ANALYTICS",
+      "adapter": "COMPOSITE",
+      "module_id": "fincept-terminal",
+      "install_verified": "PASS",
+      "discovery_verified": "PASS",
+      "start_verified": "NOT_APPLICABLE",
+      "stop_verified": "NOT_APPLICABLE",
+      "capability_discovery": "PASS",
+      "invoke_verified": "PASS",
+      "result_normalization": "PASS",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
+      "knowledge_assimilation": "PASS",
+      "known_external_requirements": [
+        "git",
+        "python",
+        "analytics script deps"
+      ],
+      "status": "PASS",
+      "limitations": "Live GIT+venv+numpy/pandas install PASS; analyze get_key_metrics JSON invoke PASS. Full FinceptTerminal GUI/vnpy stack not installed. MarketSim remains trading authority."
+    },
+    {
+      "source": "singhharsh1708/scrollcraft",
+      "category": "ARTIFACT_GENERATION",
+      "adapter": "COMPOSITE",
+      "module_id": "scrollcraft",
+      "install_verified": "PASS",
+      "discovery_verified": "PASS",
+      "start_verified": "NOT_APPLICABLE",
+      "stop_verified": "NOT_APPLICABLE",
+      "capability_discovery": "PASS",
+      "invoke_verified": "PASS",
+      "result_normalization": "PASS",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
+      "knowledge_assimilation": "NOT_APPLICABLE",
+      "known_external_requirements": [
+        "git",
+        "node",
+        "npm",
+        "ffmpeg(optional)"
+      ],
+      "status": "PASS",
+      "limitations": "Live GIT+npm install PASS; generate + frames-from-style (ffmpeg) + build + doctor + verify COMPLETED with dist/index.html and 48 desktop/mobile frames. Cinematic video-from-file path optional via frames-from-video."
+    },
+    {
+      "source": "ukanwat/selfstarter",
+      "category": "LONG_HORIZON_SPECIALIST",
+      "adapter": "COMPOSITE",
+      "module_id": "selfstarter",
+      "install_verified": "PASS",
+      "discovery_verified": "PASS",
+      "start_verified": "NOT_APPLICABLE",
+      "stop_verified": "NOT_APPLICABLE",
+      "capability_discovery": "PASS",
+      "invoke_verified": "PASS",
+      "result_normalization": "PASS",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
+      "knowledge_assimilation": "NOT_APPLICABLE",
+      "known_external_requirements": [
+        "git",
+        "bash",
+        "Unreal Engine 5.8",
+        "Unreal MCP",
+        "coding agent CLI"
+      ],
+      "status": "PARTIAL",
+      "limitations": "Live GIT install PASS; ensure_ready PASS; status/health.sh completes under 45s with honest EXIT_NONZERO PROBLEM lines (no UE/MCP). run_brief BLOCKED_EXTERNAL without UE5."
+    },
+    {
+      "source": "THU-MAIC/OpenMAIC",
+      "category": "COURSE_GENERATION",
+      "adapter": "COMPOSITE",
+      "module_id": "openmaic",
+      "install_verified": "PASS",
+      "discovery_verified": "PASS",
+      "start_verified": "PASS",
+      "stop_verified": "PASS",
+      "capability_discovery": "PASS",
+      "invoke_verified": "PASS",
+      "result_normalization": "PASS",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
+      "knowledge_assimilation": "NOT_APPLICABLE",
+      "known_external_requirements": [
+        "git",
+        "node>=22.19",
+        "pnpm",
+        "LLM API keys"
+      ],
+      "status": "PARTIAL",
+      "limitations": "Live GIT+pnpm install PASS; start/health /api/health PASS; server-providers + usage PASS; skill search/load 26 PASS; generate-classroom 202 PASS; classroom_job_status polls to failed/done with \"No model could be resolved\" without LLM keys (honest). Full classroom content completion needs LLM keys (BLOCKED_EXTERNAL)."
+    },
+    {
+      "source": "Companion-Inc/feynman",
+      "category": "RESEARCH_AGENT",
+      "adapter": "COMPOSITE",
+      "module_id": "feynman",
+      "install_verified": "PASS",
+      "discovery_verified": "PASS",
+      "start_verified": "NOT_APPLICABLE",
+      "stop_verified": "NOT_APPLICABLE",
+      "capability_discovery": "PASS",
+      "invoke_verified": "PASS",
+      "result_normalization": "PASS",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
+      "knowledge_assimilation": "PASS",
+      "known_external_requirements": [
+        "git",
+        "node>=22.22",
+        "npm",
+        "model provider auth"
+      ],
+      "status": "PARTIAL",
+      "limitations": "Audited: Node CLI bin/feynman.js + npm run build post_install + skills/. Live install+build PASS; help/version/status/doctor/search_status/packages_list/alpha_status invoke PASS. Research needs provider auth (BLOCKED_EXTERNAL)."
+    },
+    {
+      "source": "multica-ai/andrej-karpathy-skills",
+      "category": "SKILL_PACK",
+      "adapter": "SKILL_PACK",
+      "module_id": "andrej-karpathy-skills",
+      "install_verified": "PASS",
+      "discovery_verified": "PASS",
+      "start_verified": "NOT_APPLICABLE",
+      "stop_verified": "NOT_APPLICABLE",
+      "capability_discovery": "PASS",
+      "invoke_verified": "PASS",
+      "result_normalization": "PASS",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
+      "knowledge_assimilation": "NOT_APPLICABLE",
+      "known_external_requirements": [
+        "git"
+      ],
+      "status": "PASS",
+      "limitations": "Live GIT install PASS; search/load karpathy-guidelines on-demand PASS."
+    },
+    {
+      "source": "DietrichGebert/ponytail",
+      "category": "SKILL_PACK",
+      "adapter": "SKILL_PACK",
+      "module_id": "ponytail",
+      "install_verified": "PASS",
+      "discovery_verified": "PASS",
+      "start_verified": "NOT_APPLICABLE",
+      "stop_verified": "NOT_APPLICABLE",
+      "capability_discovery": "PASS",
+      "invoke_verified": "PASS",
+      "result_normalization": "PASS",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
+      "knowledge_assimilation": "NOT_APPLICABLE",
+      "known_external_requirements": [
+        "git"
+      ],
+      "status": "PASS",
+      "limitations": "Live GIT install PASS; search/load 12 skills on-demand PASS."
+    },
+    {
+      "source": "anthropics/skills",
+      "category": "SKILL_PACK",
+      "adapter": "SKILL_PACK",
+      "module_id": "anthropic-skills",
+      "install_verified": "PASS",
+      "discovery_verified": "PASS",
+      "start_verified": "NOT_APPLICABLE",
+      "stop_verified": "NOT_APPLICABLE",
+      "capability_discovery": "PASS",
+      "invoke_verified": "PASS",
+      "result_normalization": "PASS",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
+      "knowledge_assimilation": "NOT_APPLICABLE",
+      "known_external_requirements": [
+        "git"
+      ],
+      "status": "PASS",
+      "limitations": "Live GIT install PASS; search/load 19 skills on-demand PASS."
+    },
+    {
+      "source": "mattpocock/skills",
+      "category": "SKILL_PACK",
+      "adapter": "SKILL_PACK",
+      "module_id": "mattpocock-skills",
+      "install_verified": "PASS",
+      "discovery_verified": "PASS",
+      "start_verified": "NOT_APPLICABLE",
+      "stop_verified": "NOT_APPLICABLE",
+      "capability_discovery": "PASS",
+      "invoke_verified": "PASS",
+      "result_normalization": "PASS",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
+      "knowledge_assimilation": "NOT_APPLICABLE",
+      "known_external_requirements": [
+        "git"
+      ],
+      "status": "PASS",
+      "limitations": "Live GIT install PASS; search/load 38 skills on-demand PASS."
+    },
+    {
+      "source": "obra/superpowers",
+      "category": "SKILL_PACK",
+      "adapter": "SKILL_PACK",
+      "module_id": "obra-superpowers",
+      "install_verified": "PASS",
+      "discovery_verified": "PASS",
+      "start_verified": "NOT_APPLICABLE",
+      "stop_verified": "NOT_APPLICABLE",
+      "capability_discovery": "PASS",
+      "invoke_verified": "PASS",
+      "result_normalization": "PASS",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
+      "knowledge_assimilation": "NOT_APPLICABLE",
+      "known_external_requirements": [
+        "git"
+      ],
+      "status": "PASS",
+      "limitations": "Live GIT install PASS; search/load 15 skills on-demand PASS."
+    },
+    {
+      "source": "cloudflare/security-audit-skill",
+      "category": "SKILL_PACK",
+      "adapter": "SKILL_PACK",
+      "module_id": "cloudflare-security-audit-skill",
+      "install_verified": "PASS",
+      "discovery_verified": "PASS",
+      "start_verified": "NOT_APPLICABLE",
+      "stop_verified": "NOT_APPLICABLE",
+      "capability_discovery": "PASS",
+      "invoke_verified": "PASS",
+      "result_normalization": "PASS",
+      "chat_rendering": "PASS",
+      "artifact_support": "NOT_APPLICABLE",
+      "knowledge_assimilation": "NOT_APPLICABLE",
+      "known_external_requirements": [
+        "git"
+      ],
+      "status": "PASS",
+      "limitations": "Live GIT install PASS; ModuleManager ensure_installed/ensure_ready/search/load on-demand instructions PASS (SKILL.md not prompt-injected)."
+    },
+    {
+      "source": "tech-leads-club/agent-skills",
+      "category": "SKILL_PACK",
+      "adapter": "SKILL_PACK",
+      "module_id": "tech-leads-agent-skills",
+      "install_verified": "PASS",
+      "discovery_verified": "PASS",
+      "start_verified": "NOT_APPLICABLE",
+      "stop_verified": "NOT_APPLICABLE",
+      "capability_discovery": "PASS",
+      "invoke_verified": "PASS",
+      "result_normalization": "PASS",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
+      "knowledge_assimilation": "NOT_APPLICABLE",
+      "known_external_requirements": [
+        "git"
+      ],
+      "status": "PASS",
+      "limitations": "Live GIT install PASS; search/load 92 skills on-demand PASS."
+    },
+    {
+      "source": "VoltAgent/awesome-openclaw-skills",
+      "category": "SKILL_CATALOG",
+      "adapter": "CATALOG_SOURCE",
+      "module_id": "awesome-openclaw-skills",
+      "install_verified": "PASS",
+      "discovery_verified": "PASS",
+      "start_verified": "NOT_APPLICABLE",
+      "stop_verified": "NOT_APPLICABLE",
+      "capability_discovery": "PASS",
+      "invoke_verified": "PASS",
+      "result_normalization": "PASS",
+      "chat_rendering": "PASS",
+      "artifact_support": "PASS",
+      "knowledge_assimilation": "NOT_APPLICABLE",
+      "known_external_requirements": [
+        "git"
+      ],
+      "status": "PASS",
+      "limitations": "Live install PASS; bounded catalog search over 5000+ entries PASS; materialize selected skill PASS; never prompt-inject."
+    }
+  ],
+  "fixture_adapters": {
+    "CLI": "PASS",
+    "PROCESS_SERVICE": "PASS",
+    "HTTP_OPENAPI": "PASS",
+    "SKILL_PACK": "PASS",
+    "CATALOG_SOURCE": "PASS",
+    "SCRIPT_PACKAGE": "PASS",
+    "COMPOSITE": "PASS",
+    "MCP": "PASS"
+  },
+  "worktree_head": "d4bb593de7686f96e0bc828e9e0696e401d1435b",
+  "live_proofs": {
+    "install_pass_module_ids": [
+      "agent-reach",
+      "andrej-karpathy-skills",
+      "anthropic-skills",
+      "awesome-openclaw-skills",
+      "claude-osint",
+      "cloudflare-security-audit-skill",
+      "desktop-commander-mcp",
+      "feynman",
+      "financial-services",
+      "fincept-terminal",
+      "ghosttrack",
+      "llm-agent-trader",
+      "mattpocock-skills",
+      "obra-superpowers",
+      "openmaic",
+      "osintgram",
+      "ponytail",
+      "scrollcraft",
+      "selfstarter",
+      "tech-leads-agent-skills",
+      "vibe-trading"
+    ],
+    "invoke_notes": {
+      "agent-reach": "doctor COMPLETED (network scrape BLOCKED_EXTERNAL)",
+      "feynman": "help/version/status/doctor/search_status/packages_list/alpha_status COMPLETED (research BLOCKED_EXTERNAL without provider auth)",
+      "awesome-openclaw-skills": "catalog search COMPLETED (bounded)",
+      "cloudflare-security-audit-skill": "skill index+load path via store",
+      "scrollcraft": "generate+build PASS; verify may EXIT_NONZERO without ffmpeg/frames",
+      "fincept-terminal": "analyze get_key_metrics JSON COMPLETED",
+      "selfstarter": "status/health.sh EXIT_NONZERO PROBLEM lines (honest)",
+      "openmaic": "health/server_providers/usage + generate 202 + job poll failed without LLM (honest); full content BLOCKED_EXTERNAL",
+      "ghosttrack": "ip_lookup (ipwho.is JSON) + show_ip (api.ipify.org) COMPLETED via generic CLI; GhostTR.py TUI unused",
+      "osintgram": "about/list_tools/token_state/balance COMPLETED; Instagram queries BLOCKED_EXTERNAL",
+      "llm-agent-trader": "root+openapi(/api/v1/openapi.json) on :8010 COMPLETED; analyze/backtest BLOCKED_EXTERNAL LLM"
+    },
+    "desktop_commander_mcp": {
+      "connect": "PASS",
+      "tools_discovered": 26,
+      "invoke": "list_directory PASS via McpBridge.call_tool",
+      "disconnect": "PASS",
+      "gateway_approval_required_for_EXECUTE": true
+    },
+    "skill_pack_module_manager_e2e": {
+      "module_id": "cloudflare-security-audit-skill",
+      "ensure_installed": "PASS",
+      "ensure_ready": "PASS",
+      "search": "PASS",
+      "load_on_demand": "PASS"
+    },
+    "scrollcraft": {
+      "install": "PASS",
+      "generate": "PASS",
+      "frames_ffmpeg": "PASS",
+      "build": "PASS",
+      "doctor": "PASS",
+      "verify": "PASS",
+      "desktop_frames": 48,
+      "mobile_frames": 48,
+      "dist_index_html": "PASS"
+    },
+    "osintgram": {
+      "install": "PASS",
+      "start": "PASS",
+      "invoke_root": "PASS",
+      "about": "PASS",
+      "list_tools": "PASS",
+      "token_state": "PASS",
+      "balance": "PASS",
+      "stop": "PASS",
+      "instagram_queries": "BLOCKED_EXTERNAL HikerAPI/session"
+    },
+    "openmaic": {
+      "install": "PASS",
+      "start": "PASS",
+      "skills": 26,
+      "health_api": "PASS /api/health JSON via declared op (not ModuleHealth shortcut)",
+      "server_providers": "PASS",
+      "usage_stats": "PASS",
+      "agent_runtime_status": "PASS enabled=false",
+      "generate_course": "PASS 202 job queued via /api/generate-classroom",
+      "full_course_content": "BLOCKED_EXTERNAL LLM keys (honest failed job)",
+      "list_skills_api": "NOT_AVAILABLE agent_runtime_disabled (structured)",
+      "classroom_job_poll_without_llm": "PASS status=failed done=true No model could be resolved"
+    },
+    "feynman": {
+      "install": "PASS",
+      "help": "PASS",
+      "version": "PASS",
+      "status": "PASS",
+      "doctor": "PASS",
+      "search_status": "PASS",
+      "packages_list": "PASS",
+      "alpha_status": "PASS",
+      "research": "BLOCKED_EXTERNAL provider auth"
+    },
+    "gateway_mcp_approval": {
+      "without": "REJECTED",
+      "with": "COMPLETED"
+    },
+    "install_all_remaining": "osintgram/openmaic/selfstarter/fincept/vibe/llm-agent-trader/claude-osint PASS",
+    "dod_proofs": {
+      "cognition_cancel_to_cli": "PASS",
+      "cognition_rich_sse_events": "PASS",
+      "assimilation_job_runtime_enqueue": "PASS",
+      "process_service_dead_pid_reconcile": "PASS",
+      "capability_result_cards_vitest": "PASS"
+    },
+    "http_routes": {
+      "modules_list_install_ensure_ready_health_caps_execute": "PASS",
+      "skills_search_enable_disable_catalog_bounded": "PASS"
+    },
+    "modules_page": {
+      "install_start_stop_restart_ensure_ready": "PASS_UI",
+      "versions_check_update_install_activate_rollback": "PASS_UI",
+      "sweep_idle": "PASS_UI + vitest contract",
+      "frontend_contracts": "PASS"
+    },
+    "selfstarter": {
+      "install": "PASS",
+      "ensure_ready": "PASS",
+      "status_health_sh": "PASS_EXIT_NONZERO_PROBLEM_lines via ModuleManager.execute",
+      "status_timeout_seconds": 45,
+      "run_brief": "BLOCKED_EXTERNAL UE5"
+    },
+    "fincept-terminal": {
+      "install": "PASS",
+      "analyze_usage_json": "PASS",
+      "analyze_get_key_metrics": "PASS",
+      "stats": "COMPLETED with numpy/pandas/scipy/statsmodels install",
+      "fixed_income": "COMPLETED help lists available_commands",
+      "python_packages": "numpy,pandas,scipy,statsmodels"
+    },
+    "skill_selection": {
+      "broker_shortlist": "PASS",
+      "cognition_SEARCH_CAPABILITY": "PASS",
+      "tokenized_skill_search": "PASS",
+      "instructions_not_in_shortlist": "PASS"
+    },
+    "version_activate_blocked_active": "PASS UPDATE_BLOCKED_ACTIVE",
+    "dod_audit": {
+      "chat_cards_vitest": "PASS",
+      "cognition_sse_events": "PASS",
+      "no_per_repo_wrappers": "PASS",
+      "three_databases_only": "PASS",
+      "trading_boundary": "PASS",
+      "final_status_recommendation": "BLOCKED_EXTERNAL",
+      "malformed_parts_vitest": "PASS",
+      "resource_class_external_required": "PASS",
+      "skill_pack_invokes": "PASS",
+      "llm_agent_trader_start_docs": "PASS",
+      "ghosttrack_no_hang": "PASS",
+      "vibe_trading_mcp": "PASS",
+      "mcp_server_id_registration": "PASS",
+      "agent_reach_real_contract": "PASS",
+      "composite_cli_over_skill_search": "PASS",
+      "status_honesty_pass_upgrades": "PASS llm-agent-trader PARTIAL for LLM-gated analyze",
+      "observability_external_metrics": "PASS pytest ExternalModuleExecutor.emit",
+      "no_v2_systems": "PASS",
+      "agent_reach_web_ops": "PASS",
+      "scrollcraft_verify": "PASS",
+      "cognition_job_runtime_offload": "PASS",
+      "capability_discovered_sse": "PASS",
+      "cli_blocks_api_thread": "NO (EXTERNAL_REQUIRED|PREFERRED MODULE \u2192 JobRuntime)",
+      "cognition_iterative_multi_tool": "PASS_UNIT_LOOP",
+      "assimilation_enqueue_kwargs": "PASS",
+      "cognition_job_idempotency": "PASS",
+      "regression_guards_191_192_193": "PASS",
+      "cognition_external_preferred_offload": "PASS",
+      "cognition_cancel_via_job_runtime": "PASS",
+      "job_runtime_auto_cancel_probe": "PASS",
+      "cli_accept_exit_codes": "PASS",
+      "declared_ops_over_lifecycle": "PASS status/health invoke declared runtime ops",
+      "chat_job_status_labels": "PASS formatJobStateLabel for job.* SSE",
+      "http_agent_runtime_preflight": "PASS NOT_AVAILABLE when requires_agent_runtime",
+      "modules_page_sweep_idle": "PASS",
+      "llm_agent_trader_port_isolation": "PASS :8010",
+      "skills_page_search_pagination": "PASS_UI limit=40 offset",
+      "process_service_port_in_use": "PASS fails closed PORT_IN_USE",
+      "modules_skills_frontend_contracts": "PASS vitest modulesSkillsContracts",
+      "modules_page": "see live_proofs.modules_page",
+      "adversarial_architecture_tests": "PASS no wrappers / no V2 owners / manifest-only / CONTROL store",
+      "openmaic_honest_job_failure": "PASS poll failed without LLM",
+      "closable_gap_tests": {
+        "declared_ops_over_lifecycle": "PASS_UNIT",
+        "http_accept_statuses_202": "PASS_UNIT",
+        "openmaic_honest_job_failure_fixture": "PASS_UNIT",
+        "boot_register_failure_swallowed": "PASS_UNIT",
+        "external_failures_metric": "PASS_UNIT",
+        "routes_start_stop_restart_logs_jobs_sweep": "PASS_UNIT",
+        "routes_version_apis_exercised": "PASS_UNIT",
+        "frontend_versions_logs_jobs_contracts": "PASS_UNIT",
+        "assimilation_queued_observability": "PASS_UNIT",
+        "matrix_worktree_head_ancestor": "PASS_UNIT"
+      },
+      "artifact_created_sse_from_file_globs": "PASS_UNIT",
+      "knowledge_assimilation_queued_sse": "PASS_UNIT",
+      "artifact_store_materialize_cli_files": "PASS_UNIT",
+      "large_stdout_spilled_to_artifact_store": "PASS_UNIT",
+      "http_large_body_materialize": "PASS_UNIT",
+      "periodic_module_idle_sweep_loop": "PASS_UNIT",
+      "owned_process_stderr_drain": "PASS_UNIT",
+      "observing_to_reasoning_multi_tool_fix": "PASS_UNIT",
+      "capability_result_cards_artifact_labels": "PASS_UNIT",
+      "agent_reach_version_check_update_caps": "PASS_MANIFEST",
+      "fincept_stats_fixed_income_caps": "PASS_MANIFEST",
+      "agent_reach_version_check_update_live": "PASS",
+      "fincept_stats_fixed_income_live": "PASS"
+    },
+    "skill_pack_invoke": {
+      "claude-osint": {
+        "status": "PASS",
+        "skills": 10,
+        "loaded": "run-claude-osint"
+      },
+      "financial-services": {
+        "status": "PASS",
+        "skills": 32,
+        "loaded": "verify"
+      },
+      "andrej-karpathy-skills": {
+        "status": "PASS",
+        "skills": 1,
+        "loaded": "karpathy-guidelines"
+      },
+      "ponytail": {
+        "status": "PASS",
+        "skills": 12,
+        "loaded": "ponytail"
+      },
+      "anthropic-skills": {
+        "status": "PASS",
+        "skills": 19,
+        "loaded": "academy-guide"
+      },
+      "mattpocock-skills": {
+        "status": "PASS",
+        "skills": 38,
+        "loaded": "ask-matt"
+      },
+      "obra-superpowers": {
+        "status": "PASS",
+        "skills": 15,
+        "loaded": "brainstorming"
+      },
+      "tech-leads-agent-skills": {
+        "status": "PASS",
+        "skills": 92,
+        "loaded": "component-common-domain-detection"
+      },
+      "awesome-openclaw-skills": {
+        "status": "PASS",
+        "skills": 5000,
+        "loaded": "Snyk Skill Security Scanner"
+      },
+      "openmaic": {
+        "status": "PASS",
+        "skills": 26,
+        "loaded": "SKILL"
+      }
+    },
+    "llm-agent-trader": {
+      "install": "PASS",
+      "port": "8010",
+      "port_collision_with_osintgram_8000": "FIXED",
+      "root": "PASS",
+      "openapi_api_v1": "PASS paths=9",
+      "docs": "PASS",
+      "analyze_backtest": "BLOCKED_EXTERNAL LLM keys"
+    },
+    "ghosttrack": {
+      "install": "PASS",
+      "status": "PASS",
+      "ip_lookup_ipwho_is": "PASS",
+      "show_ip_ipify": "PASS",
+      "ghosttr_py_tui": "BLOCKED_EXTERNAL interactive input()",
+      "phone_username_trackers": "BLOCKED_EXTERNAL no argv contract"
+    },
+    "vibe-trading": {
+      "install": "PASS",
+      "mcp_entrypoint": "vibe-trading-mcp",
+      "connect": "PASS",
+      "tools_discovered": 74,
+      "invoke_alpha_zoo_health": "PASS",
+      "invoke_analyze_options": "PASS",
+      "disconnect": "PASS",
+      "module_manager_start_stop": "PASS",
+      "broker_keys": "NOT_REQUIRED_for_research_tools",
+      "gateway_analyze_options_with_approval": "PASS"
+    },
+    "agent-reach": {
+      "doctor_json": "PASS",
+      "version": "COMPLETED Agent Reach v1.5.0",
+      "skill_load": "PASS",
+      "native_search_subcommand": "ABSENT",
+      "mcp_get_status": "BLOCKED_EXTERNAL upstream mcp SDK API",
+      "composite_cli_ops_precedence": "PASS",
+      "fetch_url_jina": "PASS",
+      "v2ex_hot": "PASS",
+      "skill_routed_zero_config_cli": "PASS",
+      "check_update": "COMPLETED already latest"
+    },
+    "skills_page": {
+      "search_pagination_contracts": "PASS vitest"
+    }
+  }
+}
