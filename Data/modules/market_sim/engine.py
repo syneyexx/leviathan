@@ -14,7 +14,7 @@ from .accounting import WalletLedger, money
 from .causality import CausalityViolation, SimulationClock
 from .deliberation import DeliberationRuntime
 from .execution import NextBarFillModel, OrderIntent, make_intent
-from .hashes import checkpoint_state_hash, run_input_fingerprint, trajectory_hash
+from .hashes import checkpoint_state_hash, full_provenance_fingerprint, run_input_fingerprint, trajectory_hash
 from .instruments import infer_family, spec_for_symbol
 from .metrics import compute_metrics, resolve_periods_per_year
 from .ohlcv import load_ohlcv
@@ -60,6 +60,11 @@ class EngineState:
     episodes: PositionEpisodeTracker | None = None
     fill_model: NextBarFillModel | None = None
     intrabar_path_policy: str = IntrabarPathPolicy.CONSERVATIVE.value
+    corporate_actions: list[dict[str, Any]] = field(default_factory=list)
+    applied_ca_ids: set[str] = field(default_factory=set)
+    instrument_family: str | None = None
+    contract_multiplier: float = 1.0
+    last_mark_price: float | None = None
 
     @property
     def portfolio(self) -> Portfolio:
@@ -127,6 +132,12 @@ class SimulationEngine:
 
         meta = dict(run.metadata or {})
         cash0 = run.cash if run.bar_index > 0 else run.initial_cash
+        instrument = spec_for_symbol(
+            run.symbol,
+            timeframe=run.timeframe,
+            metadata=meta,
+        )
+        fam = str(instrument.family.value if hasattr(instrument.family, "value") else instrument.family)
         wallet = WalletLedger(
             wallet_id="shared",
             owner_id="shared",
@@ -136,6 +147,9 @@ class SimulationEngine:
             avg_entry=money(0),
             realized_pnl=money(run.realized_pnl if run.bar_index > 0 else 0.0),
             peak_equity=money(max(cash0, run.equity or cash0)),
+            primary_symbol=run.symbol,
+            valuation_mode="futures_vm" if fam == "futures" else "spot",
+            contract_multiplier=money(instrument.multiplier or 1),
         )
         sizing = SizingModel.from_dict(
             run.sizing_model or meta.get("sizing_model") or meta.get("sizingModel"),
@@ -148,11 +162,6 @@ class SimulationEngine:
         run.sizing_model = sizing.public_dict()
         meta["sizing_model"] = run.sizing_model
         run.metadata = meta
-        instrument = spec_for_symbol(
-            run.symbol,
-            timeframe=run.timeframe,
-            metadata=meta,
-        )
         short_policy = ShortMarginPolicy.from_dict(
             meta.get("short_margin_policy") or meta.get("shortMarginPolicy")
         )
@@ -179,6 +188,12 @@ class SimulationEngine:
         run.bar_count = len(bars)
         first_price = bars[0].close
         bh_shares = run.initial_cash / first_price if first_price > 0 else 0.0
+        raw_cas = meta.get("corporate_actions") or meta.get("corporateActions") or []
+        ca_list: list[dict[str, Any]] = []
+        if isinstance(raw_cas, list):
+            for item in raw_cas:
+                if isinstance(item, dict):
+                    ca_list.append(dict(item))
         state = EngineState(
             run=run,
             clock=clock,
@@ -194,6 +209,10 @@ class SimulationEngine:
             ),
             fill_model=fill_model,
             intrabar_path_policy=policy,
+            corporate_actions=ca_list,
+            instrument_family=str(instrument.family.value if hasattr(instrument.family, "value") else instrument.family),
+            contract_multiplier=float(instrument.multiplier or 1),
+            last_mark_price=None,
         )
         state._bh_shares = bh_shares  # type: ignore[attr-defined]
         state._strategy_params = dict(strategy_params or {"fast_ma": 10, "slow_ma": 30})  # type: ignore[attr-defined]
@@ -220,6 +239,29 @@ class SimulationEngine:
             reward_spec=meta.get("reward_spec") if isinstance(meta.get("reward_spec"), dict) else {},
         )
         meta["input_fingerprint"] = fp
+        # Full provenance pack (G53) — reconstructable qualification lineage.
+        meta["full_provenance"] = full_provenance_fingerprint(
+            run_input_fp=fp,
+            dataset_content_hash=run.data_hash or "",
+            dataset_version=str(meta.get("dataset_version") or meta.get("datasetVersion") or ""),
+            split_manifest_hash=str(
+                meta.get("split_manifest_hash") or meta.get("splitManifestHash") or ""
+            ),
+            objective_hash=str(meta.get("objective_hash") or meta.get("objectiveHash") or ""),
+            strategy_version=str(run.strategy_version or meta.get("strategy_version") or ""),
+            feature_pipeline_version=str(
+                meta.get("feature_pipeline_version") or meta.get("featurePipelineVersion") or ""
+            ),
+            execution_model_version="NextBarFillModel",
+            cost_model_version=str(meta.get("cost_model_version") or ""),
+            code_version=str(meta.get("code_version") or ""),
+            git_sha=str(meta.get("git_sha") or meta.get("gitSha") or ""),
+            sealed_attempt_id=str(meta.get("sealed_attempt_id") or meta.get("sealedAttemptId") or ""),
+            acceptance_criteria_hash=str(
+                meta.get("acceptance_criteria_hash") or meta.get("acceptanceCriteriaHash") or ""
+            ),
+            trial_ledger_refs=list(meta.get("trial_ledger_refs") or meta.get("trialLedgerRefs") or []),
+        )
         run.metadata = meta
         state._trajectory_events = []  # type: ignore[attr-defined]
         return state
@@ -233,6 +275,64 @@ class SimulationEngine:
         run.bar_index = state.clock.index
         run.clock_ts = bar.ts
         state.risk.on_bar_timestamp(bar.ts)
+
+        # Point-in-time corporate actions — apply at effective timestamp before fills.
+        for ca in list(state.corporate_actions):
+            effective = str(ca.get("effective_at") or ca.get("effectiveAt") or "")
+            cid = str(
+                ca.get("ca_id")
+                or ca.get("caId")
+                or f"{ca.get('symbol')}-{ca.get('kind')}-{effective}"
+            )
+            if cid in state.applied_ca_ids:
+                continue
+            if not effective or bar.ts < effective:
+                continue
+            applied = state.wallet.apply_corporate_action(
+                symbol=str(ca.get("symbol") or run.symbol),
+                kind=str(ca.get("kind") or ca.get("ca_type") or ca.get("caType") or ""),
+                effective_at=effective,
+                as_of=bar.ts,
+                factor=(
+                    None
+                    if ca.get("factor", ca.get("ratio")) is None
+                    else float(ca.get("factor", ca.get("ratio")))
+                ),
+                cash_amount=(
+                    None
+                    if ca.get("cash_amount", ca.get("cashAmount")) is None
+                    else float(ca.get("cash_amount", ca.get("cashAmount")))
+                ),
+                new_symbol=(
+                    None
+                    if ca.get("new_symbol", ca.get("newSymbol")) is None
+                    else str(ca.get("new_symbol", ca.get("newSymbol")))
+                ),
+                ca_id=cid,
+            )
+            if applied.get("applied"):
+                state.applied_ca_ids.add(cid)
+                self.store.add_event(
+                    run.run_id,
+                    kind="corporate_action",
+                    payload=applied,
+                    bar_index=state.clock.index,
+                )
+            elif applied.get("reason") not in {
+                "before_effective_time",
+                "no_position",
+                "flat_position",
+                "duplicate_tx_id",
+            }:
+                # Unsupported / missing terms — fail closed for correctness-critical CA.
+                if str(applied.get("status") or "").endswith("NOT_IMPLEMENTED") or (
+                    "NOT_IMPLEMENTED" in str(applied.get("reason") or "")
+                ):
+                    raise MarketSimError(
+                        "CORPORATE_ACTION_NOT_IMPLEMENTED",
+                        f"Corporate action blocked: {applied.get('reason')}",
+                        http_status=501,
+                    )
 
         bh_shares = getattr(state, "_bh_shares", 0.0)
         state.benchmark_equity.append(bh_shares * bar.close)
@@ -453,6 +553,29 @@ class SimulationEngine:
                 bar_index=state.clock.index,
             )
 
+        # Futures / perps: post variation margin using contract multiplier before NAV.
+        if (
+            state.instrument_family == "futures"
+            and float(state.wallet.position_qty) != 0.0
+            and state.last_mark_price is not None
+        ):
+            vm = state.wallet.apply_variation_margin(
+                qty=state.wallet.position_qty,
+                price_from=state.last_mark_price,
+                price_to=bar.close,
+                multiplier=state.contract_multiplier,
+                tx_id=f"vm-{run.run_id}-{state.clock.index}",
+                symbol=run.symbol,
+            )
+            if vm.get("applied"):
+                self.store.add_event(
+                    run.run_id,
+                    kind="variation_margin",
+                    payload=vm,
+                    bar_index=state.clock.index,
+                )
+        if state.instrument_family == "futures":
+            state.last_mark_price = float(bar.close)
         equity = float(state.wallet.mark(bar.close))
         if state.equity_curve:
             state.equity_curve[-1] = equity

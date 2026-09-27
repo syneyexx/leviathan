@@ -83,8 +83,19 @@ class PortfolioBook:
     def available_cash(self) -> Decimal:
         return money(self.cash - self.reserved_cash)
 
-    def market_value(self, marks: dict[str, Any]) -> Decimal:
-        """Signed net market value of open positions (long +, short −)."""
+    def market_value(self, marks: dict[str, Any], *, quote_currencies: dict[str, str] | None = None) -> Decimal:
+        """Signed net market value of open positions (long +, short −).
+
+        When ``quote_currencies`` is provided, any quote currency that differs from
+        the book currency without an explicit FX conversion raises — never silent mix.
+        """
+        if quote_currencies:
+            for sym, ccy in quote_currencies.items():
+                if ccy and str(ccy).upper() != str(self.currency).upper():
+                    raise ValueError(
+                        f"VALUATION_BLOCKED: currency_mismatch book={self.currency} "
+                        f"symbol={sym} quote={ccy} (missing FX rate — never assume 1.0)"
+                    )
         total = ZERO
         for sym, pos in self.positions.items():
             if pos.qty <= ZERO:
@@ -96,8 +107,15 @@ class PortfolioBook:
                 total = money(total - pos.qty * px)
         return total
 
-    def equity(self, marks: dict[str, Any]) -> Decimal:
+    def equity(self, marks: dict[str, Any], *, quote_currencies: dict[str, str] | None = None) -> Decimal:
         """Equity = cash + long MV − short liability (proceeds already in cash)."""
+        if quote_currencies:
+            for sym, ccy in quote_currencies.items():
+                if ccy and str(ccy).upper() != str(self.currency).upper():
+                    raise ValueError(
+                        f"VALUATION_BLOCKED: currency_mismatch book={self.currency} "
+                        f"symbol={sym} quote={ccy} (missing FX rate — never assume 1.0)"
+                    )
         eq = self.cash
         for sym, pos in self.positions.items():
             if pos.qty <= ZERO:

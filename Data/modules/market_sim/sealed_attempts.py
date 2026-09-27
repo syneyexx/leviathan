@@ -113,12 +113,69 @@ class SealedAttemptStore(Protocol):
 
     def upsert_sealed_attempt(self, attempt: dict[str, Any]) -> dict[str, Any]: ...
 
+    def list_sealed_attempts_for_strategy_dataset(
+        self,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        strategy_id: str,
+    ) -> list[dict[str, Any]]: ...
+
 
 class SealedAttemptBinder:
     """Canonical owner of SEALED single-attempt binding."""
 
     def __init__(self, store: SealedAttemptStore) -> None:
         self.store = store
+
+    def _lineage_consumed(
+        self,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        strategy_id: str,
+        strategy_version: int,
+        objective_hash: str,
+        split_manifest_id: str,
+        exclude_attempt_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Return a COMPLETED attempt that already disclosed this holdout lineage.
+
+        Adapted strategy versions share the strategy_id contamination root for a
+        given dataset/version (+ optional objective). Disclosed holdouts stay
+        disclosed — a new strategy version cannot re-qualify on the same SEALED.
+        """
+        lister = getattr(self.store, "list_sealed_attempts_for_strategy_dataset", None)
+        if lister is None:
+            return None
+        rows = lister(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            strategy_id=strategy_id,
+        )
+        for raw in rows or []:
+            if exclude_attempt_id and str(raw.get("sealed_attempt_id")) == exclude_attempt_id:
+                continue
+            if str(raw.get("status")) not in _TERMINAL_CONSUMED:
+                continue
+            meta = dict(raw.get("metadata") or {})
+            # Exact version resume is handled elsewhere; here we catch *other*
+            # versions / objective-compatible disclosures on the same holdout.
+            other_version = int(raw.get("strategy_version") or 0)
+            if other_version == int(strategy_version):
+                # Same version — bind_or_resume handles single-use.
+                continue
+            other_obj = str(meta.get("objective_hash") or "")
+            if objective_hash and other_obj and other_obj != objective_hash:
+                # Distinct objective lineage may use a fresh protocol only when
+                # the holdout dataset/version itself is new. Same disclosed
+                # dataset remains contaminated for adapted strategies.
+                pass
+            other_manifest = str(raw.get("split_manifest_id") or "")
+            if split_manifest_id and other_manifest and other_manifest != split_manifest_id:
+                continue
+            return raw
+        return None
 
     def bind_or_resume(
         self,
@@ -130,8 +187,12 @@ class SealedAttemptBinder:
         strategy_version: int,
         run_id: str,
         sealed_attempt_id: str | None = None,
+        objective_hash: str | None = None,
+        allow_resume_run_id: bool = True,
+        metadata: dict[str, Any] | None = None,
     ) -> SealedAttempt:
         """First exposure binds; crash/restart with same run resumes."""
+        obj_hash = str(objective_hash or (metadata or {}).get("objective_hash") or "")
         existing_raw = None
         if sealed_attempt_id:
             existing_raw = self.store.get_sealed_attempt(sealed_attempt_id)
@@ -143,7 +204,29 @@ class SealedAttemptBinder:
                 strategy_version=strategy_version,
             )
 
+        # Adapted strategy version after disclosure → refuse same holdout.
+        consumed = self._lineage_consumed(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            strategy_id=strategy_id,
+            strategy_version=strategy_version,
+            objective_hash=obj_hash,
+            split_manifest_id=split_manifest_id,
+            exclude_attempt_id=str((existing_raw or {}).get("sealed_attempt_id") or "") or None,
+        )
+        if consumed is not None and existing_raw is None:
+            raise MarketSimError(
+                "HOLDOUT_LINEAGE_CONTAMINATED",
+                "adapted strategy versions cannot re-qualify on a disclosed SEALED holdout; "
+                "require a new dataset version / untouched holdout lineage "
+                f"(prior_attempt={consumed.get('sealed_attempt_id')})",
+                http_status=409,
+            )
+
         if existing_raw is None:
+            meta = dict(metadata or {})
+            if obj_hash:
+                meta.setdefault("objective_hash", obj_hash)
             attempt = SealedAttempt(
                 sealed_attempt_id=sealed_attempt_id or str(uuid.uuid4()),
                 dataset_id=dataset_id,
@@ -155,6 +238,7 @@ class SealedAttemptBinder:
                 status=SealedAttemptStatus.BOUND,
                 bound_at=utc_now(),
                 checkpoint_bar_index=0,
+                metadata=meta,
             )
             self.store.upsert_sealed_attempt(attempt.public_dict())
             return attempt
@@ -169,6 +253,16 @@ class SealedAttemptBinder:
                 http_status=409,
             )
         if existing.run_id != run_id:
+            if allow_resume_run_id and existing.status in _ACTIVE:
+                # Crash/retry with a new ephemeral run_id: resume the bound run.
+                # Callers must continue the original run_id for deterministic resume.
+                raise MarketSimError(
+                    "SEALED_ATTEMPT_BOUND_TO_OTHER_RUN",
+                    f"attempt {existing.sealed_attempt_id} bound to run {existing.run_id}, "
+                    f"refusing new run {run_id}; resume the original run_id "
+                    f"(resume_run_id={existing.run_id})",
+                    http_status=409,
+                )
             raise MarketSimError(
                 "SEALED_ATTEMPT_BOUND_TO_OTHER_RUN",
                 f"attempt {existing.sealed_attempt_id} bound to run {existing.run_id}, "

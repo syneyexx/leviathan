@@ -404,6 +404,25 @@ class TradingBrainAdapter:
         for row in rows or []:
             if not isinstance(row, dict):
                 continue
+            # SEALED / non-adaptive evidence is an epistemic sink — never adaptive retrieval.
+            from .epistemic import is_adaptive_evidence
+
+            meta_row = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+            applicability = row.get("applicability") if isinstance(row.get("applicability"), dict) else {}
+            evidence_class = (
+                meta_row.get("evidence_class")
+                or applicability.get("evidence_class")
+                or meta_row.get("validation_stage")
+                or meta_row.get("split_role")
+            )
+            if not is_adaptive_evidence(
+                evidence_class=str(evidence_class) if evidence_class is not None else None,
+                validation_stage=str(meta_row.get("validation_stage") or "") or None,
+                split_role=str(meta_row.get("split_role") or meta_row.get("validation_stage") or "") or None,
+            ):
+                continue
+            if applicability.get("adaptive") is False:
+                continue
             hit = strategy_memory_to_hit(row, mode="strategy_memory")
             blob = " ".join(
                 [

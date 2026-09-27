@@ -721,24 +721,43 @@ def equity_session_is_open(
     *,
     universe: Any | None = None,
 ) -> dict[str, Any]:
-    """Session calendar hook for equity/ETF (W08). Missing calendar ⇒ default open + UNMEASURED."""
+    """Session calendar hook for equity/ETF (W08).
+
+    Missing calendar ⇒ UNKNOWN / blocked (never silently OPEN).
+    """
     from .universe import PointInTimeUniverse
 
     calendar_id = spec.session_calendar_id or "UNMEASURED"
     if universe is None:
         return {
             "date": date,
-            "isOpen": True,
+            "isOpen": False,
             "sessionCalendarId": calendar_id,
-            "status": "UNMEASURED",
-            "truth": {"missing_calendar_defaults_open_labelled": True},
+            "status": "UNKNOWN",
+            "sessionState": "UNKNOWN",
+            "truth": {
+                "missing_calendar_defaults_open_labelled": False,
+                "fail_closed_on_unknown_calendar": True,
+                "execution_blocked": True,
+            },
         }
     uni = universe if isinstance(universe, PointInTimeUniverse) else universe
-    open_ = bool(uni.is_trading_day(date, exchange=spec.venue))
+    state = (
+        uni.trading_day_state(date, exchange=spec.venue)
+        if hasattr(uni, "trading_day_state")
+        else ("OPEN" if uni.is_trading_day(date, exchange=spec.venue) else "UNKNOWN")
+    )
+    open_ = state in {"OPEN", "HALF_DAY"}
+    status = "MEASURED" if state in {"OPEN", "HALF_DAY", "CLOSED"} else "UNKNOWN"
     return {
         "date": date,
         "isOpen": open_,
         "sessionCalendarId": calendar_id,
-        "status": "MEASURED" if uni.calendar else "UNMEASURED",
-        "truth": {"missing_calendar_defaults_open_labelled": not bool(uni.calendar)},
+        "status": status,
+        "sessionState": state,
+        "truth": {
+            "missing_calendar_defaults_open_labelled": False,
+            "fail_closed_on_unknown_calendar": True,
+            "execution_blocked": not open_,
+        },
     }

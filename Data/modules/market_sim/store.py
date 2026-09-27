@@ -1620,6 +1620,24 @@ class MarketSimStore:
             ).fetchone()
         return self._row_sealed_attempt(row) if row else None
 
+    def list_sealed_attempts_for_strategy_dataset(
+        self,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        strategy_id: str,
+    ) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM market_sim_sealed_attempts
+                WHERE dataset_id=? AND dataset_version=? AND strategy_id=?
+                ORDER BY bound_at ASC
+                """,
+                (dataset_id, dataset_version, strategy_id),
+            ).fetchall()
+        return [self._row_sealed_attempt(r) for r in rows if r is not None]
+
     def _row_sealed_attempt(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
         if row is None:
             return None

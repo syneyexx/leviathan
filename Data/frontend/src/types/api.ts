@@ -2314,6 +2314,62 @@ export type MarketSimLiveState = {
   truth: Record<string, unknown>;
 };
 
+/** Backend-authoritative trading capability matrix — never invent client-side. */
+export type MarketSimFamilyCapability = {
+  family: string;
+  HISTORICAL_SIM_AVAILABLE: string;
+  LIVE_PAPER_AVAILABLE: string;
+  LIVE_TRADING_AVAILABLE: string;
+  data_providers: string[];
+  paper_brokers: string[];
+  notes: string;
+  verified_by: string;
+};
+
+export type MarketSimExecutionGranularity = {
+  granularity: "BAR_OHLCV" | "QUOTE_L1" | "BOOK_L2" | "ORDER_EVENT_L3" | string;
+  status: string;
+  execution_semantics: string;
+  supported_order_types: string[];
+  known_limitations: string[];
+  latency_model: string;
+  fill_model: string;
+  cost_model: string;
+  capacity_assumptions: string;
+  measurement_status: string;
+  truth?: Record<string, unknown>;
+};
+
+export type MarketSimCapabilities = {
+  feature_enabled: boolean;
+  live_trading_default: "BLOCKED" | string;
+  live_credentials_separated: boolean;
+  alpaca_paper_secrets_present: boolean;
+  binance_public_reachable: boolean;
+  force_live_blocked: boolean;
+  markets: MarketSimFamilyCapability[];
+  execution_granularity: MarketSimExecutionGranularity[];
+  action_matrix?: {
+    actions: TradingActionCapabilityRow[];
+    truth: Record<string, unknown>;
+  };
+  truth: {
+    capability_from_adapters: boolean;
+    not_from_ui_presence: boolean;
+    profitable_backtest_is_not_proof: boolean;
+    ohlcv_is_not_orderbook: boolean;
+    granularity_honesty_required: boolean;
+  };
+};
+
+/** Explicit Trading Center action × capability truth (backend-authored semantics). */
+export type TradingActionCapabilityRow = {
+  action: string;
+  requires: string;
+  blocked_when: string[];
+  live_money: "BLOCKED";
+};
+
 export type PaperPortfolio = {
   portfolio_id: string;
   name: string;

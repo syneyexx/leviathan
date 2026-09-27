@@ -843,15 +843,13 @@ class D18PaperCharacterization(unittest.TestCase):
 
 
 class D19SecretsCharacterization(unittest.TestCase):
-    def test_d19_current_alpaca_reads_os_environ(self) -> None:
+    def test_d19_alpaca_uses_secrets_broker(self) -> None:
         import Data.modules.market_sim.paper_broker as pb
 
         text = Path(pb.__file__).read_text(encoding="utf-8")
-        self.assertIn("os.environ", text)
-        self.assertIn("LEVIATHAN_ALPACA_PAPER", text)
-        # HTTP path is ProviderExecutionClient when job_runtime is bound,
-        # but credentials still come from env — not SecretsBroker.
-        self.assertNotIn("SecretsBroker", text)
+        self.assertIn("SecretsBroker", text)
+        self.assertIn("resolve_alpaca_paper_credentials", text)
+        self.assertIn("secret:LEVIATHAN_ALPACA_PAPER_KEY_ID", text)
 
     def test_d19_current_live_guard_reads_env(self) -> None:
         import Data.modules.market_sim.trading_live_guard as lg
@@ -869,12 +867,32 @@ class D19SecretsCharacterization(unittest.TestCase):
         self.assertIn("urllib", text)
         self.assertNotIn("SecretsBroker", text)
 
-    @unittest.expectedFailure  # D19 — fixed in Phase T4C
-    def test_d19_desired_alpaca_uses_secrets_broker(self) -> None:
-        import Data.modules.market_sim.paper_broker as pb
+    def test_d19_alpaca_lease_hides_plaintext(self) -> None:
+        import os
+        import tempfile
+        from pathlib import Path as P
 
-        text = Path(pb.__file__).read_text(encoding="utf-8")
-        self.assertIn("SecretsBroker", text)
+        from Data.modules.market_sim.paper_broker import resolve_alpaca_paper_credentials
+        from Data.modules.security.secrets_broker import SecretsBroker
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = P(tmp) / "s.db"
+            broker = SecretsBroker(
+                db,
+                overrides={
+                    "secret:LEVIATHAN_ALPACA_PAPER_KEY_ID": "PKTEST",
+                    "secret:LEVIATHAN_ALPACA_PAPER_SECRET": "SECRETvalue",
+                },
+            )
+            broker.initialize()
+            key, secret, leases = resolve_alpaca_paper_credentials(
+                secrets_broker=broker, issued_to="test"
+            )
+            self.assertEqual(key, "PKTEST")
+            self.assertEqual(secret, "SECRETvalue")
+            blob = str(leases)
+            self.assertNotIn("SECRETvalue", blob)
+            self.assertTrue(leases[0]["truth"]["lease_is_not_plaintext"])
 
 
 # ---------------------------------------------------------------------------

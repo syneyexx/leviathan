@@ -164,6 +164,17 @@ export function PaperTradingPage() {
         <Panel title="Market capabilities (adapter-derived)">
           <pre className="lv-tp-pre">{JSON.stringify(caps?.markets ?? caps, null, 2)}</pre>
         </Panel>
+        <Panel title="Execution granularity (backend authority)">
+          <pre className="lv-tp-pre">
+            {JSON.stringify(
+              (caps as { execution_granularity?: unknown } | null)?.execution_granularity ??
+                { status: "UNMEASURED", note: "awaiting capabilities payload" },
+              null,
+              2,
+            )}
+          </pre>
+          <p className="lv-tp-footer">OHLCV is never order-book data. L2/L3 remain UNSUPPORTED without real depth feeds.</p>
+        </Panel>
 
         <p className="lv-tp-footer">
           <Link to="/trading/simulatie">Historical simulation</Link>

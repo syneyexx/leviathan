@@ -82,7 +82,61 @@ def trajectory_hash(events: Sequence[dict[str, Any]]) -> str:
     return _sha(_canon(list(events)))
 
 
+def full_provenance_fingerprint(
+    *,
+    run_input_fp: str,
+    dataset_content_hash: str,
+    dataset_version: str | None = None,
+    split_manifest_hash: str | None = None,
+    objective_hash: str | None = None,
+    strategy_version: str | None = None,
+    feature_pipeline_version: str | None = None,
+    execution_model_version: str | None = None,
+    cost_model_version: str | None = None,
+    risk_config_hash: str | None = None,
+    code_version: str | None = None,
+    git_sha: str | None = None,
+    trial_ledger_refs: Sequence[str] | None = None,
+    sealed_attempt_id: str | None = None,
+    acceptance_criteria_hash: str | None = None,
+) -> dict[str, Any]:
+    """Canonical full provenance pack for qualification / audit reconstruction.
+
+    Composes existing input fingerprint with dataset/split/objective/strategy
+    lineage and trial references. Missing optional fields stay explicit empty
+    strings — never silently defaulted to fabricated values.
+    """
+    payload = {
+        "run_input_fingerprint": run_input_fp,
+        "dataset_content_hash": dataset_content_hash,
+        "dataset_version": dataset_version or "",
+        "split_manifest_hash": split_manifest_hash or "",
+        "objective_hash": objective_hash or "",
+        "strategy_version": strategy_version or "",
+        "feature_pipeline_version": feature_pipeline_version or "",
+        "execution_model_version": execution_model_version or "",
+        "cost_model_version": cost_model_version or "",
+        "risk_config_hash": risk_config_hash or "",
+        "code_version": code_version or "",
+        "git_sha": git_sha or "",
+        "trial_ledger_refs": list(trial_ledger_refs or []),
+        "sealed_attempt_id": sealed_attempt_id or "",
+        "acceptance_criteria_hash": acceptance_criteria_hash or "",
+    }
+    digest = _sha(_canon(payload))
+    return {
+        "fingerprint": digest,
+        "components": payload,
+        "truth": {
+            "reconstructable_qualification_evidence": True,
+            "missing_fields_are_explicit_empty": True,
+            "not_a_profitability_claim": True,
+        },
+    }
+
+
 # Public aliases matching the Master Program names
 RunInputFingerprint = run_input_fingerprint
 CheckpointStateHash = checkpoint_state_hash
 TrajectoryHash = trajectory_hash
+FullProvenanceFingerprint = full_provenance_fingerprint

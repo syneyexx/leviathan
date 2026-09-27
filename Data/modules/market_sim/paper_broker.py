@@ -28,6 +28,66 @@ def paper_fill_key_for_event(*, session_id: str, event_id: str) -> str:
     return f"fill:{sid}:{eid}"
 
 
+def resolve_alpaca_paper_credentials(
+    *,
+    secrets_broker: Any | None = None,
+    secrets_db_path: Any | None = None,
+    issued_to: str = "market_sim.alpaca_paper",
+) -> tuple[str, str, list[dict[str, Any]]]:
+    """Resolve Alpaca paper credentials via SecretsBroker leases.
+
+    Secret refs are env-backed (`secret:LEVIATHAN_ALPACA_PAPER_*`). Plaintext is
+    returned only to the broker adapter for HTTP auth — never logged here.
+    """
+    from pathlib import Path
+    import tempfile
+
+    from Data.modules.security.secrets_broker import SecretsBroker
+
+    key_ref = "secret:LEVIATHAN_ALPACA_PAPER_KEY_ID"
+    secret_ref = "secret:LEVIATHAN_ALPACA_PAPER_SECRET"
+    broker = secrets_broker
+    owns_tmp = False
+    tmp_dir: tempfile.TemporaryDirectory[str] | None = None
+    if broker is None:
+        if secrets_db_path is not None:
+            db = Path(secrets_db_path)
+        else:
+            tmp_dir = tempfile.TemporaryDirectory(prefix="lev-secrets-")
+            db = Path(tmp_dir.name) / "secrets.db"
+            owns_tmp = True
+        broker = SecretsBroker(db)
+        broker.initialize()
+    key_id = ""
+    secret = ""
+    leases: list[dict[str, Any]] = []
+    try:
+        key_lease = broker.issue(key_ref, scope="trading.alpaca_paper", issued_to=issued_to)
+        secret_lease = broker.issue(secret_ref, scope="trading.alpaca_paper", issued_to=issued_to)
+        key_id = broker.resolve_lease(key_lease.lease_id, issued_to=issued_to).strip()
+        secret = broker.resolve_lease(secret_lease.lease_id, issued_to=issued_to).strip()
+        leases = [key_lease.public_dict(), secret_lease.public_dict()]
+    except MarketSimError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — map unresolved → domain error
+        raise MarketSimError(
+            "ALPACA_PAPER_NOT_CONFIGURED",
+            "Alpaca paper credentials unresolved via SecretsBroker "
+            "(set LEVIATHAN_ALPACA_PAPER_KEY_ID / LEVIATHAN_ALPACA_PAPER_SECRET)",
+            http_status=503,
+        ) from exc
+    finally:
+        if owns_tmp and tmp_dir is not None:
+            tmp_dir.cleanup()
+    if not key_id or not secret:
+        raise MarketSimError(
+            "ALPACA_PAPER_NOT_CONFIGURED",
+            "Alpaca paper credentials empty after SecretsBroker resolve",
+            http_status=503,
+        )
+    return key_id, secret, leases
+
+
 @dataclass
 class PaperOrder:
     order_id: str
@@ -347,24 +407,43 @@ class AlpacaPaperBroker(PaperBroker):
     """Alpaca paper trading via provider_io — never live money, never Control Plane HTTP.
 
     Live (real-money) Alpaca endpoints are never used here.
+    Credentials are leased via SecretsBroker secret refs (env-backed); plaintext
+    is never logged or returned in public payloads.
     """
 
     broker_id = "alpaca_paper"
+    KEY_REF = "secret:LEVIATHAN_ALPACA_PAPER_KEY_ID"
+    SECRET_REF = "secret:LEVIATHAN_ALPACA_PAPER_SECRET"
 
-    def __init__(self, job_runtime: Any | None = None) -> None:
-        self.key_id = os.environ.get("LEVIATHAN_ALPACA_PAPER_KEY_ID", "").strip()
-        self.secret = os.environ.get("LEVIATHAN_ALPACA_PAPER_SECRET", "").strip()
-        if not self.key_id or not self.secret:
-            raise MarketSimError(
-                "ALPACA_PAPER_NOT_CONFIGURED",
-                "Set LEVIATHAN_ALPACA_PAPER_KEY_ID and LEVIATHAN_ALPACA_PAPER_SECRET",
-                http_status=503,
-            )
+    def __init__(
+        self,
+        job_runtime: Any | None = None,
+        *,
+        secrets_broker: Any | None = None,
+        secrets_db_path: Any | None = None,
+    ) -> None:
+        self.key_id, self.secret, self._credential_leases = resolve_alpaca_paper_credentials(
+            secrets_broker=secrets_broker,
+            secrets_db_path=secrets_db_path,
+        )
         self.job_runtime = job_runtime
         self._orders: dict[str, PaperOrder] = {}
 
     def bind_job_runtime(self, job_runtime: Any | None) -> None:
         self.job_runtime = job_runtime
+
+    def credential_truth(self) -> dict[str, Any]:
+        return {
+            "broker_id": self.broker_id,
+            "key_ref": self.KEY_REF,
+            "secret_ref": self.SECRET_REF,
+            "leases": [dict(x) for x in self._credential_leases],
+            "truth": {
+                "uses_secrets_broker": True,
+                "plaintext_not_in_public_dict": True,
+                "paper_only": True,
+            },
+        }
 
     def _require_provider_io(self) -> Any:
         from Data.modules.provider_io.errors import ProviderError, ProviderErrorCode

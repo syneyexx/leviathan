@@ -204,14 +204,14 @@ class InferentialStatsTests(unittest.TestCase):
         self.assertIsNotNone(sr)
         one = deflated_sharpe_ratio(float(sr), n_trials=1, n_observations=len(rets))
         many = deflated_sharpe_ratio(float(sr), n_trials=100, n_observations=len(rets))
-        self.assertEqual(one["measurement"], "MEASURED")
+        self.assertEqual(one["measurement"], "APPROXIMATE")
         self.assertTrue(one["truth"]["trial_ledger_count_used"])
         self.assertLess(many["dsr"], one["dsr"])
 
     def test_pbo_and_fdr_and_cpcv_geometry(self) -> None:
         sharpes = [0.5, 0.1, -0.2, 0.8, 0.05, 0.3, -0.1, 0.4]
         pbo = probability_of_backtest_overfitting(sharpes, samples=100, seed=3)
-        self.assertEqual(pbo["measurement"], "MEASURED")
+        self.assertEqual(pbo["measurement"], "APPROXIMATE")
         self.assertTrue(pbo["truth"]["losing_trials_must_remain_in_ledger"])
         fdr = benjamini_hochberg([0.001, 0.02, 0.04, 0.2], q=0.05)
         self.assertEqual(fdr["measurement"], "MEASURED")

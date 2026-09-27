@@ -35,14 +35,34 @@ def block_bootstrap_mean(
     samples: int = 500,
     alpha: float = 0.05,
     seed: int = 42,
-) -> BootstrapCI:
-    """Block bootstrap of mean return (stationary blocks approximated by fixed length)."""
+) -> BootstrapCI | dict[str, Any]:
+    """Block bootstrap of mean return (stationary blocks approximated by fixed length).
+
+    Empty sample → UNMEASURED (never fabricate zero). Method is labeled
+    ``block_bootstrap_fixed_length_APPROXIMATE`` until circular-block validated.
+    """
     n = len(returns)
     if n == 0:
-        return BootstrapCI(0.0, 0.0, 0.0, 0, 0)
+        return {
+            "mean": None,
+            "ci_low": None,
+            "ci_high": None,
+            "n": 0,
+            "samples": 0,
+            "method": "block_bootstrap_fixed_length_APPROXIMATE",
+            "measurement": "UNMEASURED",
+            "reason": "empty_sample",
+        }
     mean = sum(returns) / n
     if n == 1:
-        return BootstrapCI(mean, mean, mean, 1, samples)
+        return BootstrapCI(
+            mean=mean,
+            ci_low=mean,
+            ci_high=mean,
+            n=1,
+            samples=samples,
+            method="block_bootstrap_fixed_length_APPROXIMATE",
+        )
     bs = max(1, min(int(block_size), n))
     rng = random.Random(seed)
     boots: list[float] = []
@@ -58,7 +78,14 @@ def block_bootstrap_mean(
     boots.sort()
     lo = boots[int(math.floor((alpha / 2) * len(boots)))]
     hi = boots[min(len(boots) - 1, int(math.ceil((1 - alpha / 2) * len(boots))) - 1)]
-    return BootstrapCI(mean=mean, ci_low=lo, ci_high=hi, n=n, samples=samples)
+    return BootstrapCI(
+        mean=mean,
+        ci_low=lo,
+        ci_high=hi,
+        n=n,
+        samples=samples,
+        method="block_bootstrap_fixed_length_APPROXIMATE",
+    )
 
 
 def sharpe_ratio(returns: Sequence[float], *, risk_free: float = 0.0) -> float | None:
@@ -145,10 +172,13 @@ def deflated_sharpe_ratio(
         "se": se,
         "n_trials": n_trials,
         "n_observations": n_observations,
-        "measurement": "MEASURED",
+        "measurement": "APPROXIMATE",
+        "qualification_authority": False,
         "truth": {
             "trial_ledger_count_used": True,
             "point_estimate_alone_is_not_acceptance": True,
+            "method": "bailey_lopez_de_prado_simplified_APPROXIMATE",
+            "not_qualification_grade_until_reference_validated": True,
         },
     }
 
@@ -162,6 +192,8 @@ def probability_of_backtest_overfitting(
     """Approximate PBO via random split of trials into IS/OOS rank performance.
 
     High PBO ⇒ selection pipeline suspect. Requires Trial Ledger of tried sharpes.
+    Prefer ``probability_of_backtest_overfitting_cscv`` when a time×strategy
+    performance matrix is available.
     """
     vals = [float(x) for x in trial_sharpes if x is not None]
     n = len(vals)
@@ -180,11 +212,7 @@ def probability_of_backtest_overfitting(
         rng.shuffle(idx)
         is_set = idx[:half]
         oos_set = idx[half : half * 2]
-        # Best IS trial
         best_is = max(is_set, key=lambda i: vals[i])
-        # Rank of that trial in OOS (among oos set + the best_is if we evaluate its OOS proxy:
-        # use complementary half performance as OOS for each).
-        # Simpler: compare whether best_is underperforms median of oos.
         oos_vals = [vals[i] for i in oos_set]
         if vals[best_is] < (sum(oos_vals) / len(oos_vals)):
             overfit += 1
@@ -193,10 +221,123 @@ def probability_of_backtest_overfitting(
         "pbo": pbo,
         "n_trials": n,
         "samples": samples,
-        "measurement": "MEASURED",
+        "measurement": "APPROXIMATE",
+        "qualification_authority": False,
         "truth": {
             "losing_trials_must_remain_in_ledger": True,
             "high_pbo_means_selection_suspect": pbo >= 0.5,
+            "method": "random_is_oos_rank_APPROXIMATE",
+            "not_cscv_bailey_lopez_de_prado": True,
+            "not_qualification_grade_until_reference_validated": True,
+            "prefer_cscv_when_performance_matrix_available": True,
+        },
+    }
+
+
+def probability_of_backtest_overfitting_cscv(
+    performance_matrix: Sequence[Sequence[float]],
+    *,
+    n_groups: int = 16,
+) -> dict[str, Any]:
+    """Combinatorial Symmetric Cross-Validation PBO (Bailey–López de Prado style).
+
+    ``performance_matrix``: shape (T, N) — T time observations × N strategies
+    (e.g. period returns). Uses combinatorial splits of T into equal train/test
+    group sets. PBO = fraction of paths where the IS-best strategy's OOS mean
+    is below the median OOS mean across strategies.
+
+    Returns MEASURED geometry+score when matrix is sufficient; never invents
+    zeros for empty input. Qualification authority remains False until the
+    calling acceptance policy freezes thresholds (method is diagnostic by default).
+    """
+    from itertools import combinations
+
+    rows = [list(map(float, row)) for row in performance_matrix]
+    t = len(rows)
+    if t < 4 or n_groups < 4 or n_groups % 2 != 0:
+        return {
+            "pbo": None,
+            "measurement": "UNMEASURED",
+            "reason": "need_T>=4_and_even_n_groups>=4",
+            "T": t,
+            "n_groups": n_groups,
+        }
+    n_strat = len(rows[0]) if rows else 0
+    if n_strat < 2 or any(len(r) != n_strat for r in rows):
+        return {
+            "pbo": None,
+            "measurement": "UNMEASURED",
+            "reason": "need>=2_strategies_rectangular_matrix",
+            "n_strategies": n_strat,
+        }
+
+    # Contiguous time groups
+    boundaries = [int(round(i * t / n_groups)) for i in range(n_groups + 1)]
+    groups = [(boundaries[i], boundaries[i + 1]) for i in range(n_groups) if boundaries[i + 1] > boundaries[i]]
+    if len(groups) < 4 or len(groups) % 2 != 0:
+        return {
+            "pbo": None,
+            "measurement": "UNMEASURED",
+            "reason": "degenerate_groups",
+            "n_groups_realized": len(groups),
+        }
+
+    half = len(groups) // 2
+    overfit = 0
+    n_paths = 0
+    # Cap combinations for runtime — take first 200 if enormous
+    combos = list(combinations(range(len(groups)), half))
+    if len(combos) > 200:
+        # Deterministic subsample of combination space
+        step = max(1, len(combos) // 200)
+        combos = combos[::step][:200]
+
+    for train_idxs in combos:
+        train_set = set(train_idxs)
+        test_idxs = [i for i in range(len(groups)) if i not in train_set]
+        if len(test_idxs) != half:
+            continue
+        train_rows: list[list[float]] = []
+        test_rows: list[list[float]] = []
+        for gi, (lo, hi) in enumerate(groups):
+            chunk = rows[lo:hi]
+            if gi in train_set:
+                train_rows.extend(chunk)
+            else:
+                test_rows.extend(chunk)
+        if not train_rows or not test_rows:
+            continue
+
+        def _col_mean(mat: list[list[float]], j: int) -> float:
+            col = [r[j] for r in mat]
+            return sum(col) / len(col)
+
+        is_means = [_col_mean(train_rows, j) for j in range(n_strat)]
+        oos_means = [_col_mean(test_rows, j) for j in range(n_strat)]
+        best_is = max(range(n_strat), key=lambda j: is_means[j])
+        median_oos = sorted(oos_means)[len(oos_means) // 2]
+        n_paths += 1
+        if oos_means[best_is] < median_oos:
+            overfit += 1
+
+    if n_paths == 0:
+        return {"pbo": None, "measurement": "UNMEASURED", "reason": "no_cscv_paths"}
+
+    pbo = overfit / n_paths
+    return {
+        "pbo": pbo,
+        "n_paths": n_paths,
+        "n_strategies": n_strat,
+        "T": t,
+        "n_groups": len(groups),
+        "measurement": "MEASURED",
+        "qualification_authority": False,
+        "truth": {
+            "method": "cscv_bailey_lopez_de_prado_style",
+            "losing_trials_must_remain_in_ledger": True,
+            "high_pbo_means_selection_suspect": pbo >= 0.5,
+            "qualification_requires_frozen_acceptance_policy": True,
+            "not_a_profitability_claim": True,
         },
     }
 
@@ -279,11 +420,20 @@ def monte_carlo_mean_resample(
     samples: int = 500,
     alpha: float = 0.05,
     seed: int = 42,
-) -> BootstrapCI:
+) -> BootstrapCI | dict[str, Any]:
     """IID Monte Carlo resampling of mean return (complements block bootstrap)."""
     n = len(returns)
     if n == 0:
-        return BootstrapCI(0.0, 0.0, 0.0, 0, 0, method="monte_carlo_iid")
+        return {
+            "mean": None,
+            "ci_low": None,
+            "ci_high": None,
+            "n": 0,
+            "samples": 0,
+            "method": "monte_carlo_iid",
+            "measurement": "UNMEASURED",
+            "reason": "empty_sample",
+        }
     mean = sum(returns) / n
     if n == 1:
         return BootstrapCI(mean, mean, mean, 1, samples, method="monte_carlo_iid")
@@ -367,6 +517,99 @@ def combinatorial_purged_cv_paths(
         "truth": {
             "no_time_shuffle": True,
             "cpcv_geometry_only": True,
+            "selection_bias_still_requires_trial_ledger": True,
+        },
+    }
+
+
+def score_cpcv_paths(
+    returns: Sequence[float],
+    *,
+    n_groups: int = 5,
+    n_test_groups: int = 1,
+    purge_bars: int = 0,
+    embargo_bars: int = 0,
+) -> dict[str, Any]:
+    """Score CPCV paths with OOS mean return / Sharpe — geometry + evaluation.
+
+    Each path runs metrics on test-range returns only (no train leakage into score).
+    Aggregate mean OOS Sharpe is reported; empty/degenerate paths stay UNMEASURED.
+    """
+    n = len(returns)
+    geom = combinatorial_purged_cv_paths(
+        n,
+        n_groups=n_groups,
+        n_test_groups=n_test_groups,
+        purge_bars=purge_bars,
+        embargo_bars=embargo_bars,
+    )
+    if geom.get("measurement") != "MEASURED" or not geom.get("paths"):
+        return {
+            "paths": [],
+            "aggregate": None,
+            "measurement": "UNMEASURED",
+            "reason": geom.get("reason") or "no_cpcv_paths",
+            "geometry": geom,
+        }
+
+    scored: list[dict[str, Any]] = []
+    oos_sharpes: list[float] = []
+    for path in geom["paths"]:
+        test_rets: list[float] = []
+        for lo, hi in path.get("test_ranges") or []:
+            test_rets.extend(float(returns[i]) for i in range(int(lo), min(int(hi), n)))
+        # Verify train/test index sets do not overlap.
+        train_idx: set[int] = set()
+        for lo, hi in path.get("train_ranges") or []:
+            train_idx.update(range(int(lo), min(int(hi), n)))
+        test_idx: set[int] = set()
+        for lo, hi in path.get("test_ranges") or []:
+            test_idx.update(range(int(lo), min(int(hi), n)))
+        overlap = sorted(train_idx & test_idx)
+        sharpe = sharpe_ratio(test_rets)
+        mean_r = (sum(test_rets) / len(test_rets)) if test_rets else None
+        entry = {
+            "test_groups": path.get("test_groups"),
+            "train_ranges": path.get("train_ranges"),
+            "test_ranges": path.get("test_ranges"),
+            "n_oos": len(test_rets),
+            "oos_mean_return": mean_r,
+            "oos_sharpe": sharpe,
+            "train_test_overlap": overlap,
+            "measurement": "MEASURED" if test_rets else "UNMEASURED",
+        }
+        scored.append(entry)
+        if sharpe is not None:
+            oos_sharpes.append(float(sharpe))
+
+    if not oos_sharpes:
+        aggregate = {
+            "mean_oos_sharpe": None,
+            "n_scored_paths": 0,
+            "measurement": "UNMEASURED",
+            "reason": "no_scored_oos_sharpes",
+        }
+    else:
+        aggregate = {
+            "mean_oos_sharpe": sum(oos_sharpes) / len(oos_sharpes),
+            "n_scored_paths": len(oos_sharpes),
+            "n_paths": len(scored),
+            "measurement": "MEASURED",
+        }
+
+    any_overlap = any(p.get("train_test_overlap") for p in scored)
+    return {
+        "paths": scored,
+        "aggregate": aggregate,
+        "n": n,
+        "n_paths": len(scored),
+        "measurement": "MEASURED" if scored else "UNMEASURED",
+        "truth": {
+            "no_time_shuffle": True,
+            "cpcv_geometry_only": False,
+            "cpcv_scored": True,
+            "oos_only_scoring": True,
+            "train_test_overlap_forbidden": not any_overlap,
             "selection_bias_still_requires_trial_ledger": True,
         },
     }

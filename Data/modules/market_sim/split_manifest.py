@@ -355,3 +355,275 @@ def assert_manifest_frozen(manifest: DatasetSplitManifest) -> None:
             "SEALED evaluation requires a frozen DatasetSplitManifest",
             http_status=409,
         )
+
+
+@dataclass(frozen=True)
+class ResearchEpisodeBinding:
+    """Canonical runtime contract for a research episode window.
+
+    Caller-supplied role strings alone are NOT a research-integrity boundary.
+    Episode creation must derive start/end from the frozen split manifest.
+    """
+
+    dataset_id: str
+    dataset_version: str
+    split_manifest_id: str
+    split_manifest_hash: str
+    split_role: str
+    start_ts: str
+    end_ts: str
+    start_index: int
+    end_index: int
+    bar_count: int
+    window_content_hash: str
+    dataset_content_hash: str
+    embargo_bars: int = 0
+    purge_bars: int = 0
+    strategy_id: str = ""
+    strategy_version: int = 0
+    objective_hash: str = ""
+    run_fingerprint: str = ""
+    source_id: str = ""
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "dataset_id": self.dataset_id,
+            "dataset_version": self.dataset_version,
+            "split_manifest_id": self.split_manifest_id,
+            "split_manifest_hash": self.split_manifest_hash,
+            "split_role": self.split_role,
+            "start_ts": self.start_ts,
+            "end_ts": self.end_ts,
+            "start_index": self.start_index,
+            "end_index": self.end_index,
+            "bar_count": self.bar_count,
+            "window_content_hash": self.window_content_hash,
+            "dataset_content_hash": self.dataset_content_hash,
+            "embargo_bars": self.embargo_bars,
+            "purge_bars": self.purge_bars,
+            "strategy_id": self.strategy_id,
+            "strategy_version": self.strategy_version,
+            "objective_hash": self.objective_hash,
+            "run_fingerprint": self.run_fingerprint,
+            "source_id": self.source_id,
+            "truth": {
+                "manifest_bounds_authoritative": True,
+                "caller_cannot_expand_window": True,
+                "role_string_alone_insufficient": True,
+            },
+        }
+
+    def as_split_ref(self) -> dict[str, Any]:
+        """Compact durable ref stored on learning runs / trials."""
+        return {
+            "dataset_id": self.dataset_id,
+            "dataset_version": self.dataset_version,
+            "manifest_id": self.split_manifest_id,
+            "split_manifest_hash": self.split_manifest_hash,
+            "role": self.split_role,
+            "start_ts": self.start_ts,
+            "end_ts": self.end_ts,
+            "start_index": self.start_index,
+            "end_index": self.end_index,
+            "bar_count": self.bar_count,
+            "hash": self.window_content_hash,
+            "content_hash": self.window_content_hash,
+            "dataset_content_hash": self.dataset_content_hash,
+            "embargo_bars": self.embargo_bars,
+            "purge_bars": self.purge_bars,
+        }
+
+
+def _manifest_integrity_hash(manifest: DatasetSplitManifest | dict[str, Any]) -> str:
+    if isinstance(manifest, DatasetSplitManifest):
+        payload = manifest.public_dict()
+    else:
+        payload = dict(manifest)
+    # Hash the frozen geometry only — not created_at noise.
+    geometry = {
+        "manifest_id": payload.get("manifest_id"),
+        "dataset_id": payload.get("dataset_id"),
+        "dataset_version": payload.get("dataset_version"),
+        "dataset_content_hash": payload.get("dataset_content_hash"),
+        "train": payload.get("train"),
+        "val": payload.get("val"),
+        "sealed": payload.get("sealed"),
+        "train_frac": payload.get("train_frac"),
+        "val_frac": payload.get("val_frac"),
+        "sealed_frac": payload.get("sealed_frac"),
+        "embargo_bars": payload.get("embargo_bars"),
+        "frozen": bool(payload.get("frozen")),
+    }
+    blob = json.dumps(geometry, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()
+
+
+def _window_from_manifest(
+    manifest: DatasetSplitManifest | dict[str, Any],
+    split_role: str,
+) -> dict[str, Any]:
+    role = str(split_role or SplitRole.TRAIN).upper()
+    if isinstance(manifest, DatasetSplitManifest):
+        payload = manifest.public_dict()
+    else:
+        payload = dict(manifest)
+    key = {
+        SplitRole.TRAIN: "train",
+        "VALIDATION": "val",
+        SplitRole.VAL: "val",
+        SplitRole.SEALED: "sealed",
+    }.get(role)
+    if key is None:
+        raise MarketSimError(
+            "INVALID_SPLIT_ROLE",
+            f"unsupported split_role={role}",
+            http_status=400,
+        )
+    window = payload.get(key)
+    if not window:
+        raise MarketSimError(
+            "SPLIT_WINDOW_MISSING",
+            f"manifest has no {role} window",
+            http_status=409,
+        )
+    return dict(window)
+
+
+def resolve_research_episode_binding(
+    manifest: DatasetSplitManifest | dict[str, Any],
+    *,
+    split_role: str,
+    strategy_id: str = "",
+    strategy_version: int = 0,
+    objective_hash: str = "",
+    run_fingerprint: str = "",
+    source_id: str = "",
+    require_frozen: bool = False,
+    caller_start_ts: str | None = None,
+    caller_end_ts: str | None = None,
+) -> ResearchEpisodeBinding:
+    """Derive an authoritative episode binding from a frozen split manifest.
+
+    Caller-supplied timestamps may only *narrow* the window, never expand it.
+    """
+    if isinstance(manifest, DatasetSplitManifest):
+        payload = manifest.public_dict()
+        frozen = bool(manifest.frozen)
+        embargo = int(manifest.embargo_bars)
+        dataset_id = manifest.dataset_id
+        dataset_version = manifest.dataset_version
+        manifest_id = manifest.manifest_id
+        dataset_content_hash = manifest.dataset_content_hash
+    else:
+        payload = dict(manifest)
+        frozen = bool(payload.get("frozen"))
+        embargo = int(payload.get("embargo_bars") or 0)
+        dataset_id = str(payload.get("dataset_id") or "")
+        dataset_version = str(payload.get("dataset_version") or "")
+        manifest_id = str(payload.get("manifest_id") or "")
+        dataset_content_hash = str(payload.get("dataset_content_hash") or "")
+
+    role = str(split_role or SplitRole.TRAIN).upper()
+    if role == SplitRole.SEALED or require_frozen:
+        if not frozen:
+            raise MarketSimError(
+                "SPLIT_NOT_FROZEN",
+                "research episode requires a frozen DatasetSplitManifest",
+                http_status=409,
+            )
+    if not dataset_id or not dataset_version or not manifest_id:
+        raise MarketSimError(
+            "SPLIT_BINDING_INCOMPLETE",
+            "dataset_id, dataset_version, and manifest_id are required",
+            http_status=400,
+        )
+
+    window = _window_from_manifest(payload, role)
+    start_ts = str(window["start_ts"])
+    end_ts = str(window["end_ts"])
+    start_index = int(window["start_index"])
+    end_index = int(window["end_index"])
+    bar_count = int(window["bar_count"])
+    window_hash = str(window.get("content_hash") or "")
+
+    # Caller may narrow, never expand.
+    if caller_start_ts:
+        if str(caller_start_ts) < start_ts:
+            raise MarketSimError(
+                "SPLIT_WINDOW_EXPANSION_FORBIDDEN",
+                "caller start_ts precedes manifest window",
+                http_status=400,
+            )
+        if str(caller_start_ts) > end_ts:
+            raise MarketSimError(
+                "SPLIT_WINDOW_INVALID",
+                "caller start_ts after manifest end_ts",
+                http_status=400,
+            )
+        start_ts = str(caller_start_ts)
+    if caller_end_ts:
+        if str(caller_end_ts) > end_ts:
+            raise MarketSimError(
+                "SPLIT_WINDOW_EXPANSION_FORBIDDEN",
+                "caller end_ts exceeds manifest window",
+                http_status=400,
+            )
+        if str(caller_end_ts) < start_ts:
+            raise MarketSimError(
+                "SPLIT_WINDOW_INVALID",
+                "caller end_ts before effective start_ts",
+                http_status=400,
+            )
+        end_ts = str(caller_end_ts)
+
+    purge = int(payload.get("metadata", {}).get("purge_bars") or 0) if isinstance(payload.get("metadata"), dict) else 0
+    return ResearchEpisodeBinding(
+        dataset_id=dataset_id,
+        dataset_version=dataset_version,
+        split_manifest_id=manifest_id,
+        split_manifest_hash=_manifest_integrity_hash(payload),
+        split_role=role,
+        start_ts=start_ts,
+        end_ts=end_ts,
+        start_index=start_index,
+        end_index=end_index,
+        bar_count=bar_count,
+        window_content_hash=window_hash,
+        dataset_content_hash=dataset_content_hash,
+        embargo_bars=embargo,
+        purge_bars=purge,
+        strategy_id=str(strategy_id or ""),
+        strategy_version=int(strategy_version or 0),
+        objective_hash=str(objective_hash or ""),
+        run_fingerprint=str(run_fingerprint or ""),
+        source_id=str(source_id or ""),
+    )
+
+
+def split_refs_from_manifest(
+    manifest: DatasetSplitManifest | dict[str, Any],
+    *,
+    source_id: str = "",
+    strategy_id: str = "",
+    strategy_version: int = 0,
+    objective_hash: str = "",
+) -> dict[str, dict[str, Any]]:
+    """Build TRAIN/VAL/SEALED split refs for a learning run from one manifest."""
+    refs: dict[str, dict[str, Any]] = {}
+    for role in (SplitRole.TRAIN, SplitRole.VAL, SplitRole.SEALED):
+        try:
+            binding = resolve_research_episode_binding(
+                manifest,
+                split_role=role,
+                source_id=source_id,
+                strategy_id=strategy_id,
+                strategy_version=strategy_version,
+                objective_hash=objective_hash,
+                require_frozen=(role == SplitRole.SEALED),
+            )
+        except MarketSimError as exc:
+            if exc.code in {"SPLIT_WINDOW_MISSING", "SPLIT_NOT_FROZEN"}:
+                continue
+            raise
+        refs[role] = binding.as_split_ref()
+    return refs
