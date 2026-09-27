@@ -69,16 +69,53 @@ class MarketDataAdapter:
             transport=transport,
             cancel_check=cancel_check,
         )
+        mode = str(payload.get("mode") or "").strip().lower()
+        include_bars = bool(payload.get("include_bars") or mode == "bars_only")
         try:
-            result = registry.import_to_csv(
-                provider_id,
-                symbol,
-                timeframe,
-                markets_root,
-                limit=limit,
-                start_ts=str(start_ts) if start_ts else None,
-                end_ts=str(end_ts) if end_ts else None,
-            )
+            if mode == "bars_only":
+                provider = registry.get(provider_id)
+                raw_bars = provider.fetch_historical(
+                    symbol,
+                    timeframe,
+                    limit=limit,
+                    start_ts=str(start_ts) if start_ts else None,
+                    end_ts=str(end_ts) if end_ts else None,
+                )
+                quote = None
+                try:
+                    quote = provider.fetch_quote(symbol)
+                except Exception:  # noqa: BLE001
+                    quote = None
+                result = {
+                    "symbol": symbol.upper().replace("/", "").replace("-", ""),
+                    "timeframe": timeframe,
+                    "bar_count": len(raw_bars),
+                    "bars": [b.public_dict() for b in raw_bars],
+                    "quote": quote,
+                    "provider_id": provider_id,
+                    "license_note": getattr(provider, "license_note", ""),
+                    "license_state": getattr(provider, "license_state", "PUBLIC_TERMS_APPLY"),
+                    "kind": "ohlcv",
+                    "pagination": provider_id == "binance_public",
+                }
+            else:
+                result = registry.import_to_csv(
+                    provider_id,
+                    symbol,
+                    timeframe,
+                    markets_root,
+                    limit=limit,
+                    start_ts=str(start_ts) if start_ts else None,
+                    end_ts=str(end_ts) if end_ts else None,
+                )
+                if include_bars and result.get("path"):
+                    from Data.modules.market_sim.ohlcv import load_ohlcv
+
+                    loaded = load_ohlcv(Path(str(result["path"])))
+                    result = {
+                        **result,
+                        "bars": [b.public_dict() for b in loaded[-limit:]],
+                    }
         except MarketSimError as exc:
             code = getattr(exc, "code", "")
             if code == "PROVIDER_RATE_LIMITED":
@@ -120,5 +157,6 @@ class MarketDataAdapter:
                 "pagination": bool(result.get("pagination")),
                 "bar_count": result.get("bar_count"),
                 "license_state": result.get("license_state"),
+                "mode": mode or "import",
             },
         )

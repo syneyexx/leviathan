@@ -119,6 +119,7 @@ import type {
   MarketSimStatusResponse,
   PaperPortfolio,
   PortfolioDashboard,
+  MarketBarsResponse,
   MarketDataSource,
   MarketStrategy,
   MarketStrategyVersion,
@@ -2543,6 +2544,15 @@ export const api = {
     });
   },
 
+  listPortfolioOrders(
+    portfolioId: string,
+    limit = 50,
+  ): Promise<{ orders: Array<Record<string, unknown>> }> {
+    return request(
+      `/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}/orders?limit=${limit}`,
+    );
+  },
+
   closePortfolioPosition(portfolioId: string, positionId: string): Promise<Record<string, unknown>> {
     return request(
       `/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}/positions/${encodeURIComponent(positionId)}/close`,
@@ -2558,6 +2568,28 @@ export const api = {
       `/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}/positions/close-selected`,
       { method: "POST", body: JSON.stringify({ positionIds }) },
     );
+  },
+
+  flattenPortfolio(portfolioId: string): Promise<Record<string, unknown>> {
+    return request(`/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}/flatten`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+
+  fetchMarketBars(params: {
+    symbol: string;
+    providerId?: string;
+    timeframe?: string;
+    limit?: number;
+  }): Promise<MarketBarsResponse> {
+    const q = new URLSearchParams({
+      symbol: params.symbol,
+      providerId: params.providerId || "binance_public",
+      timeframe: params.timeframe || "1h",
+      limit: String(params.limit ?? 200),
+    });
+    return request(`/api/market-sim/market/bars?${q}`);
   },
 
   savePortfolioAllocations(

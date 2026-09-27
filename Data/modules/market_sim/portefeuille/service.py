@@ -69,6 +69,20 @@ class PortfolioService:
             "decision_cadence_seconds": 60,
             "mark_refresh_seconds": 5,
             "benchmark_symbol": "BTCUSDT",
+            # Paper Trading operator / orchestrator surface (backend-authoritative).
+            "agent_mode": "autonomous",  # autonomous | assisted | manual
+            "capital_allocation": 100_000.0,
+            "position_sizing_pct": 2.0,
+            "default_stop_loss_pct": 1.5,
+            "default_take_profit_pct": 3.0,
+            "allow_new_positions": True,
+            "auto_rebalance": False,
+            "news_filter": False,
+            "use_trailing_stops": False,
+            "hedge_mode": False,
+            "multi_agent_coordination": True,
+            "watched_symbols": ["BTCUSDT", "ETHUSDT", "AAPL", "TSLA", "NVDA", "EURUSD", "GBPUSD", "XAUUSD"],
+            "chart_indicators": {"ma20": True, "ma50": True, "ma200": True, "volume": True},
         }
         if overrides:
             base.update(overrides)
@@ -842,6 +856,29 @@ class PortfolioService:
             except MarketSimError as exc:
                 results.append({"error": exc.public_dict(), "position_id": pid})
         return {"results": results, "portfolio": self.get_portfolio(portfolio_id)}
+
+    def flatten_all(self, portfolio_id: str) -> dict[str, Any]:
+        """Close every open paper position — Flatten All operator action."""
+        with self._lock(portfolio_id):
+            row = self._require(portfolio_id)
+            book = self._load_book(row)
+            marks, _ = self.fetch_marks(row)
+            open_ids = [
+                str(p["position_id"])
+                for p in book.open_positions_public(marks)
+                if p.get("position_id")
+            ]
+        if not open_ids:
+            return {
+                "results": [],
+                "flattened": 0,
+                "portfolio": self.get_portfolio(portfolio_id),
+                "truth": {"no_open_positions": True, "paper_only": True},
+            }
+        out = self.close_positions(portfolio_id, open_ids)
+        out["flattened"] = len(open_ids)
+        out["truth"] = {"paper_only": True, "not_live_money": True}
+        return out
 
     # --- Autonomous tick ---
 

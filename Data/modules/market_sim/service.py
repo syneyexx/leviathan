@@ -2519,6 +2519,131 @@ class MarketSimControlPlane:
         self._require_enabled()
         return self.portfolios.close_positions(portfolio_id, position_ids)
 
+    def portfolio_flatten_all(self, portfolio_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        return self.portfolios.flatten_all(portfolio_id)
+
+    def fetch_market_bars(
+        self,
+        *,
+        provider_id: str,
+        symbol: str,
+        timeframe: str = "1h",
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        """Read-path OHLCV for Paper Trading charts — never invents candles."""
+        self._require_enabled()
+        from Data.modules.provider_io.errors import ProviderError, ProviderErrorCode
+        from Data.modules.provider_io.facade import ProviderExecutionClient
+        from Data.modules.provider_io.readiness import provider_io_workers_ready
+
+        symbol_u = symbol.upper().replace("/", "").replace("-", "")
+        want = max(10, min(int(limit), 1000))
+        bars: list[dict[str, Any]] = []
+        quote: dict[str, Any] | None = None
+        executed_via = "control_plane_legacy_inline"
+        license_note = ""
+        license_state = "PUBLIC_TERMS_APPLY"
+        detail = ""
+
+        if not self._runners_externalized():
+            provider = self.providers.get(provider_id)
+            license_note = getattr(provider, "license_note", "") or ""
+            license_state = getattr(provider, "license_state", "PUBLIC_TERMS_APPLY")
+            try:
+                raw_bars = provider.fetch_historical(symbol_u, timeframe, limit=want)
+                bars = [b.public_dict() for b in raw_bars]
+                detail = f"{len(bars)} bars via {provider_id}"
+            except MarketSimError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                raise MarketSimError("PROVIDER_UNAVAILABLE", str(exc), http_status=502) from exc
+            try:
+                quote = provider.fetch_quote(symbol_u)
+            except Exception:  # noqa: BLE001
+                quote = None
+        else:
+            if self.job_runtime is None:
+                raise MarketSimError(
+                    ProviderErrorCode.PROVIDER_EXECUTION_UNAVAILABLE.value,
+                    "job_runtime not bound; refusing Control Plane market fetch fallback",
+                    http_status=503,
+                )
+            db_path = getattr(getattr(self.job_runtime, "store", None), "path", None)
+            if not provider_io_workers_ready(db_path):
+                raise MarketSimError(
+                    ProviderErrorCode.PROVIDER_EXECUTION_UNAVAILABLE.value,
+                    "provider_io workers unavailable; refusing Control Plane market fetch fallback",
+                    http_status=503,
+                )
+            client = ProviderExecutionClient(self.job_runtime)
+            try:
+                exec_result = client.submit_and_wait(
+                    provider=provider_id,
+                    capability="market.fetch",
+                    payload={
+                        "provider_id": provider_id,
+                        "symbol": symbol_u,
+                        "timeframe": timeframe,
+                        "limit": want,
+                        "markets_root": str(self.data.markets_root),
+                        "mode": "bars_only",
+                        "include_bars": True,
+                    },
+                    credential_ref="none",
+                    latency_class="interactive",
+                    requested_by="market_sim_paper_chart",
+                    deadline_seconds=60.0,
+                )
+            except ProviderError as exc:
+                raise MarketSimError(
+                    exc.code.value,
+                    str(exc),
+                    http_status=503 if exc.retryable else 502,
+                ) from exc
+            if exec_result.status != "succeeded" or not isinstance(exec_result.structured, dict):
+                err = (exec_result.error or {}).get("message") or "provider_io market bars failed"
+                code = (exec_result.error or {}).get("code") or "PROVIDER_UNAVAILABLE"
+                raise MarketSimError(str(code), str(err), http_status=502)
+            structured = dict(exec_result.structured)
+            bars = list(structured.get("bars") or [])
+            quote = structured.get("quote") if isinstance(structured.get("quote"), dict) else None
+            license_note = str(structured.get("license_note") or "")
+            license_state = str(structured.get("license_state") or "PUBLIC_TERMS_APPLY")
+            executed_via = "provider_io"
+            detail = f"{len(bars)} bars via provider_io/{provider_id}"
+
+        last = bars[-1] if bars else None
+        return {
+            "symbol": symbol_u,
+            "provider_id": provider_id,
+            "timeframe": timeframe,
+            "bars": bars,
+            "count": len(bars),
+            "quote": quote,
+            "ohlc": (
+                {
+                    "open": last.get("open"),
+                    "high": last.get("high"),
+                    "low": last.get("low"),
+                    "close": last.get("close"),
+                    "volume": last.get("volume"),
+                    "ts": last.get("ts"),
+                }
+                if last
+                else None
+            ),
+            "license_note": license_note,
+            "license_state": license_state,
+            "executed_via": executed_via,
+            "detail": detail,
+            "truth": {
+                "ohlcv_is_not_orderbook": True,
+                "not_fabricated": True,
+                "source": provider_id,
+            },
+        }
+
     def portfolio_performance(self, portfolio_id: str, *, range_key: str = "YTD") -> dict[str, Any]:
         self._require_enabled()
         return self.portfolios.performance(portfolio_id, range_key=range_key)
