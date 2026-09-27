@@ -142,6 +142,44 @@ class ExternalModulesSkillsRouteTests(unittest.TestCase):
             versions = client.get("/api/modules/fake-cli/versions")
             self.assertEqual(versions.status_code, 200)
 
+            started = client.post("/api/modules/fake-cli/start")
+            self.assertEqual(started.status_code, 200)
+
+            stopped = client.post("/api/modules/fake-cli/stop")
+            self.assertEqual(stopped.status_code, 200)
+
+            restarted = client.post("/api/modules/fake-cli/restart")
+            self.assertEqual(restarted.status_code, 200)
+
+            logs = client.get("/api/modules/fake-cli/logs")
+            self.assertEqual(logs.status_code, 200)
+            self.assertIn("lines", logs.json())
+
+            jobs = client.get("/api/modules/fake-cli/jobs")
+            self.assertEqual(jobs.status_code, 200)
+            self.assertIn("jobs", jobs.json())
+
+            check_update = client.get("/api/modules/fake-cli/check-update")
+            self.assertEqual(check_update.status_code, 200)
+
+            sweep = client.post("/api/modules/sweep-idle")
+            self.assertEqual(sweep.status_code, 200)
+            self.assertIn("stopped", sweep.json() or {})
+
+            # Version APIs (sync path — no JobRuntime wired on this TestClient).
+            install_ver = client.post(
+                "/api/modules/fake-cli/install-version",
+                json={"ref": None, "activate": True},
+            )
+            self.assertIn(install_ver.status_code, {200, 400})
+            activate_ver = client.post(
+                "/api/modules/fake-cli/activate-version",
+                json={"version_id": "missing-version"},
+            )
+            self.assertIn(activate_ver.status_code, {200, 400})
+            rollback_ver = client.post("/api/modules/fake-cli/rollback-version", json={})
+            self.assertIn(rollback_ver.status_code, {200, 400})
+
             skills = client.get("/api/skills", params={"query": "cinematic", "limit": 10})
             self.assertEqual(skills.status_code, 200)
             skill_body = skills.json()

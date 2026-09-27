@@ -2070,6 +2070,9 @@ class ExternalAssimilationAndScaleTests(unittest.TestCase):
             self.assertEqual(result.status.value, "COMPLETED", msg=result.error)
             names = [n for _, n, _ in hub.events]
             self.assertIn("external.invocations", names, msg=hub.events)
+            self.assertIn("external.bytes_output", names, msg=hub.events)
+            self.assertIn("external.modules.running", names, msg=hub.events)
+            self.assertIn("external.modules.discovered", names, msg=hub.events)
             self.assertTrue(
                 any(c == "external_capability" for c, _, _ in hub.events),
                 msg=hub.events,
@@ -2480,6 +2483,7 @@ class ExternalFabricDoDProofTests(unittest.TestCase):
         from Data.modules.module_manager.external.types import AssimilationMode
 
         enqueued: list[Any] = []
+        obs_events: list[str] = []
 
         class _Job:
             job_id = "job-assim-1"
@@ -2488,6 +2492,10 @@ class ExternalFabricDoDProofTests(unittest.TestCase):
             def enqueue(self, **kwargs):  # noqa: ANN003
                 enqueued.append(kwargs)
                 return _Job()
+
+        class _Obs:
+            def emit(self, category: str, name: str, **_: Any) -> None:
+                obs_events.append(name)
 
         out = queue_or_run_assimilation(
             mode=AssimilationMode.KNOWLEDGE_CANDIDATE,
@@ -2504,11 +2512,14 @@ class ExternalFabricDoDProofTests(unittest.TestCase):
             status="COMPLETED",
             job_runtime=_JR(),
             assimilation_service=None,
+            observability=_Obs(),
         )
         self.assertTrue(out.get("queued"))
         self.assertEqual(out.get("job_id"), "job-assim-1")
         self.assertEqual(len(enqueued), 1)
         self.assertEqual(enqueued[0]["capability_id"], "external.knowledge.assimilate")
+        self.assertIn("knowledge.assimilation_queued", obs_events)
+        self.assertIn("assimilation.queued", obs_events)
 
     def test_process_service_reconciles_dead_pid(self) -> None:
         port = _free_port()
@@ -3283,6 +3294,453 @@ class ExternalFabricRegressionGuardTests(unittest.TestCase):
             self.assertTrue(callable(build_host_liveness))
         except ModuleNotFoundError:
             pass
+
+
+class ExternalFabricClosableGapTests(unittest.TestCase):
+    """In-repo DoD gaps closable without LLM / UE5 / Instagram credentials."""
+
+    def test_declared_status_operation_beats_lifecycle_health(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "mods" / "status-cli"
+            root.mkdir(parents=True)
+            tool = Path(tmp) / "status_tool.py"
+            tool.write_text(
+                "import json\nprint(json.dumps({'marker':'DECLARED_STATUS_OP','ok':True}))\n",
+                encoding="utf-8",
+            )
+            manifest = {
+                "module_id": "status-cli",
+                "name": "Status CLI",
+                "version": "0.0.1",
+                "entrypoint": FACTORY,
+                "external": {
+                    "adapter": "CLI",
+                    "source_type": "path",
+                    "path": str(tmp),
+                    "install": {"strategy": "NONE"},
+                    "runtime": {
+                        "operations": [
+                            {
+                                "name": "status",
+                                "command": [sys.executable, str(tool)],
+                                "result_format": "json",
+                            }
+                        ]
+                    },
+                    "result": {"format": "json"},
+                },
+                "capabilities": [
+                    {
+                        "capability_id": "external.status_cli.status",
+                        "name": "Status",
+                        "external_name": "status",
+                        "side_effects": ["READ"],
+                    }
+                ],
+            }
+            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+            manager.discover()
+            manager.initialize(
+                "status-cli",
+                ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp),
+            )
+            result = manager.execute("status-cli", "status", {})
+            self.assertEqual(result.status, "COMPLETED", msg=result.error)
+            blob = json.dumps(result.output or {})
+            self.assertIn("DECLARED_STATUS_OP", blob)
+
+    def test_http_accept_statuses_allows_202(self) -> None:
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        class _Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_args: Any) -> None:  # noqa: ANN401
+                return
+
+            def do_POST(self) -> None:  # noqa: N802
+                n = int(self.headers.get("Content-Length") or 0)
+                _ = self.rfile.read(n)
+                body = b'{"jobId":"job-202","accepted":true}'
+                self.send_response(202)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self) -> None:  # noqa: N802
+                if self.path.startswith("/health"):
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(b"ok")
+                    return
+                self.send_response(404)
+                self.end_headers()
+
+        port = _free_port()
+        server = HTTPServer(("127.0.0.1", port), _Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            deadline = time.time() + 3
+            while time.time() < deadline:
+                try:
+                    with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.05)
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "mods" / "async-http"
+                root.mkdir(parents=True)
+                manifest = {
+                    "module_id": "async-http",
+                    "name": "Async HTTP",
+                    "version": "0.0.1",
+                    "entrypoint": FACTORY,
+                    "external": {
+                        "adapter": "HTTP_OPENAPI",
+                        "source_type": "none",
+                        "install": {"strategy": "NONE"},
+                        "runtime": {
+                            "base_url": f"http://127.0.0.1:{port}",
+                            "health_probe": {
+                                "kind": "http",
+                                "url": f"http://127.0.0.1:{port}/health",
+                                "expect_status": 200,
+                            },
+                            "operations": [
+                                {
+                                    "name": "generate",
+                                    "method": "POST",
+                                    "path": "/api/generate",
+                                    "body": "json",
+                                    "accept_statuses": [200, 201, 202],
+                                }
+                            ],
+                        },
+                        "result": {"format": "json"},
+                    },
+                    "capabilities": [
+                        {
+                            "capability_id": "external.async_http.generate",
+                            "name": "Generate",
+                            "external_name": "generate",
+                            "side_effects": ["NETWORK"],
+                        }
+                    ],
+                }
+                (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+                manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+                manager.discover()
+                manager.initialize(
+                    "async-http",
+                    ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp),
+                )
+                result = manager.execute("async-http", "generate", {"topic": "x"})
+                self.assertEqual(result.status, "COMPLETED", msg=result.error)
+                meta = ((result.output or {}).get("metadata") or {})
+                self.assertEqual(int(meta.get("http_status") or 0), 202)
+                structured = (result.output or {}).get("structured_data") or {}
+                self.assertEqual(structured.get("jobId"), "job-202")
+        finally:
+            server.shutdown()
+
+    def test_openmaic_style_job_poll_normalizes_failed_without_llm(self) -> None:
+        """202 generate + poll failed/done with 'No model could be resolved' — no LLM keys."""
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        class _Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_args: Any) -> None:  # noqa: ANN401
+                return
+
+            def do_POST(self) -> None:  # noqa: N802
+                n = int(self.headers.get("Content-Length") or 0)
+                _ = self.rfile.read(n)
+                if self.path.startswith("/api/generate-classroom"):
+                    body = b'{"jobId":"om-job-1"}'
+                    self.send_response(202)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                self.send_response(404)
+                self.end_headers()
+
+            def do_GET(self) -> None:  # noqa: N802
+                if self.path.startswith("/health") or self.path.startswith("/api/health"):
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(b'{"ok":true}')
+                    return
+                if self.path.startswith("/api/generate-classroom/"):
+                    body = json.dumps(
+                        {
+                            "jobId": "om-job-1",
+                            "status": "failed",
+                            "done": True,
+                            "error": "No model could be resolved",
+                        }
+                    ).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                self.send_response(404)
+                self.end_headers()
+
+        port = _free_port()
+        server = HTTPServer(("127.0.0.1", port), _Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            deadline = time.time() + 3
+            while time.time() < deadline:
+                try:
+                    with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.05)
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "mods" / "openmaic-mock"
+                root.mkdir(parents=True)
+                manifest = {
+                    "module_id": "openmaic-mock",
+                    "name": "OpenMAIC Mock",
+                    "version": "0.0.1",
+                    "entrypoint": FACTORY,
+                    "external": {
+                        "adapter": "HTTP_OPENAPI",
+                        "source_type": "none",
+                        "install": {"strategy": "NONE"},
+                        "runtime": {
+                            "base_url": f"http://127.0.0.1:{port}",
+                            "health_probe": {
+                                "kind": "http",
+                                "url": f"http://127.0.0.1:{port}/api/health",
+                                "expect_status": 200,
+                            },
+                            "operations": [
+                                {
+                                    "name": "generate_course",
+                                    "method": "POST",
+                                    "path": "/api/generate-classroom",
+                                    "body": "json",
+                                    "accept_statuses": [200, 201, 202],
+                                    "body_aliases": {"topic": "requirement"},
+                                },
+                                {
+                                    "name": "classroom_job_status",
+                                    "method": "GET",
+                                    "path": "/api/generate-classroom/{jobId}",
+                                    "path_params": ["jobId"],
+                                },
+                            ],
+                        },
+                        "result": {"format": "json"},
+                    },
+                    "capabilities": [
+                        {
+                            "capability_id": "external.openmaic_mock.generate_course",
+                            "name": "Generate",
+                            "external_name": "generate_course",
+                            "side_effects": ["NETWORK"],
+                        },
+                        {
+                            "capability_id": "external.openmaic_mock.classroom_job_status",
+                            "name": "Job Status",
+                            "external_name": "classroom_job_status",
+                            "side_effects": ["READ"],
+                        },
+                    ],
+                }
+                (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+                manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+                manager.discover()
+                manager.initialize(
+                    "openmaic-mock",
+                    ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp),
+                )
+                created = manager.execute(
+                    "openmaic-mock", "generate_course", {"topic": "quant finance"}
+                )
+                self.assertEqual(created.status, "COMPLETED", msg=created.error)
+                job_id = ((created.output or {}).get("structured_data") or {}).get("jobId")
+                self.assertEqual(job_id, "om-job-1")
+                polled = manager.execute(
+                    "openmaic-mock", "classroom_job_status", {"jobId": job_id}
+                )
+                self.assertEqual(polled.status, "COMPLETED", msg=polled.error)
+                structured = (polled.output or {}).get("structured_data") or {}
+                self.assertEqual(structured.get("status"), "failed")
+                self.assertTrue(structured.get("done"))
+                self.assertIn("No model could be resolved", str(structured.get("error") or ""))
+        finally:
+            server.shutdown()
+
+    def test_optional_module_register_failure_does_not_break_boot_loop(self) -> None:
+        """Mirrors main.py: register_external_module_capabilities failures are warnings only."""
+
+        class _Obs:
+            def __init__(self) -> None:
+                self.events: list[tuple[str, str]] = []
+
+            def emit(self, category: str, name: str, **_: Any) -> None:
+                self.events.append((category, name))
+
+        class _Broken:
+            class manifest:
+                module_id = "broken-ext"
+                metadata = {"external": {"adapter": "CLI"}}
+                capabilities = ()
+                name = "Broken"
+                side_effects = ()
+
+        catalog = CapabilityCatalog()
+        plugins = PluginRegistry(catalog)
+        obs = _Obs()
+        ready = [_Broken()]
+
+        def _raise(*_a: Any, **_k: Any) -> list[str]:
+            raise RuntimeError("simulated register failure")
+
+        original = register_external_module_capabilities
+        try:
+            import Data.modules.module_manager.external.catalog_register as cr
+
+            cr.register_external_module_capabilities = _raise  # type: ignore[assignment]
+            for managed in ready:
+                try:
+                    cr.register_external_module_capabilities(
+                        catalog=catalog, plugin_registry=plugins, managed=managed
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    obs.emit(
+                        "external_capability",
+                        "capability_register_failed",
+                        payload={"module_id": managed.manifest.module_id, "error": str(exc)},
+                        level="warning",
+                    )
+                else:
+                    obs.emit(
+                        "external_capability",
+                        "external.modules.discovered",
+                        payload={"module_id": managed.manifest.module_id},
+                    )
+        finally:
+            cr.register_external_module_capabilities = original  # type: ignore[assignment]
+
+        self.assertIn(("external_capability", "capability_register_failed"), obs.events)
+        # Core catalog remains usable.
+        register_external_control_capabilities(catalog)
+        self.assertIn("external.module.invoke", catalog)
+        main_py = Path(__file__).resolve().parents[1] / "main.py"
+        text = main_py.read_text(encoding="utf-8")
+        self.assertIn("optional modules must not break boot", text)
+
+    def test_executor_emits_external_failures_metric(self) -> None:
+        class _CaptureHub:
+            def __init__(self) -> None:
+                self.events: list[tuple[str, str, dict[str, Any]]] = []
+
+            def emit(self, category: str, name: str, *, payload: dict[str, Any] | None = None, **_: Any) -> None:
+                self.events.append((category, name, dict(payload or {})))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "mods" / "fail-cli"
+            root.mkdir(parents=True)
+            tool = Path(tmp) / "fail.py"
+            tool.write_text("import sys\nsys.exit(2)\n", encoding="utf-8")
+            manifest = {
+                "module_id": "fail-cli",
+                "name": "Fail CLI",
+                "version": "0.0.1",
+                "entrypoint": FACTORY,
+                "external": {
+                    "adapter": "CLI",
+                    "source_type": "path",
+                    "path": str(tmp),
+                    "install": {"strategy": "NONE"},
+                    "runtime": {
+                        "operations": [
+                            {
+                                "name": "run",
+                                "command": [sys.executable, str(tool)],
+                                "result_format": "text",
+                            }
+                        ]
+                    },
+                    "result": {"format": "TEXT"},
+                },
+                "capabilities": [
+                    {
+                        "capability_id": "external.fail_cli.run",
+                        "name": "Run",
+                        "external_name": "run",
+                        "side_effects": ["READ"],
+                    }
+                ],
+            }
+            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+            manager.discover()
+            manager.initialize(
+                "fail-cli",
+                ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp),
+            )
+            hub = _CaptureHub()
+            catalog = CapabilityCatalog()
+            plugins = PluginRegistry(catalog)
+            managed = manager.get("fail-cli")
+            assert managed is not None
+            register_external_module_capabilities(catalog=catalog, plugin_registry=plugins, managed=managed)
+            gateway = ExecutionGateway(
+                catalog=catalog,
+                module_executor=ExternalModuleExecutor(manager, observability=hub),
+            )
+            result = gateway.execute(
+                CapabilityRequest(
+                    capability_id="external.fail_cli.run",
+                    arguments={},
+                    requested_by="test",
+                )
+            )
+            self.assertNotEqual(result.status.value, "COMPLETED")
+            names = [n for _, n, _ in hub.events]
+            self.assertIn("external.failures", names, msg=hub.events)
+            self.assertIn("external.invocations", names, msg=hub.events)
+
+    def test_matrix_worktree_head_is_recent_git_ancestor(self) -> None:
+        """Ledger tip must be a real commit at/behind HEAD (avoids chicken-egg on sync commits)."""
+        matrix = Path(__file__).resolve().parent / "external_sources_acceptance_matrix.json"
+        data = json.loads(matrix.read_text(encoding="utf-8"))
+        recorded = str(data.get("worktree_head") or "").strip()
+        self.assertRegex(recorded, r"^[0-9a-f]{40}$")
+        repo = str(Path(__file__).resolve().parents[3])
+        ancestor = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", recorded, "HEAD"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if ancestor.returncode == 128:
+            self.skipTest("git history unavailable")
+        self.assertEqual(ancestor.returncode, 0, msg=f"{recorded} is not an ancestor of HEAD")
+        distance = subprocess.run(
+            ["git", "rev-list", "--count", f"{recorded}..HEAD"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if distance.returncode == 0 and distance.stdout.strip().isdigit():
+            self.assertLessEqual(
+                int(distance.stdout.strip()),
+                25,
+                msg=f"worktree_head is {distance.stdout.strip()} commits behind tip; sync the matrix",
+            )
 
 
 if __name__ == "__main__":

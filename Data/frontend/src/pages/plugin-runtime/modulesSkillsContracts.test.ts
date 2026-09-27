@@ -24,6 +24,22 @@ describe("ModulesPage external fabric lifecycle", () => {
     expect(modulesSrc).toContain("ensureReadyModule");
     expect(modulesSrc).not.toMatch(/status:\s*[\"']RUNNING[\"']/);
   });
+
+  it("wires versions/logs/jobs lifecycle actions to api clients", () => {
+    expect(modulesSrc).toContain("moduleVersions");
+    expect(modulesSrc).toContain("moduleCheckUpdate");
+    expect(modulesSrc).toContain("installModuleVersion");
+    expect(modulesSrc).toContain("activateModuleVersion");
+    expect(modulesSrc).toContain("rollbackModuleVersion");
+    expect(modulesSrc).toContain("moduleLogs");
+    expect(modulesSrc).toContain("moduleJobs");
+    expect(modulesSrc).toContain('"versions"');
+    expect(modulesSrc).toContain('"check-update"');
+    expect(modulesSrc).toContain('"install-version"');
+    expect(modulesSrc).toContain('"activate-version"');
+    expect(modulesSrc).toContain('"rollback"');
+    expect(modulesSrc).toContain('"jobs"');
+  });
 });
 
 describe("SkillsPage catalog bounds", () => {
