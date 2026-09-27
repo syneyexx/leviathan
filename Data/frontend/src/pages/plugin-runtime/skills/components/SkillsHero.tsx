@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { media } from "../../../../assets/media";
+import codingHero from "../../../../assets/coding-hero.jpg";
 import type { KpiModel } from "../viewModels";
 
 const KPI_ICONS: Record<string, ReactNode> = {
@@ -47,7 +47,7 @@ export function SkillsHero() {
   return (
     <section className="lv-sk-hero" aria-label="Skills">
       <div className="lv-sk-hero-media">
-        <img src={media.architectureBg} alt="" width={1400} height={380} />
+        <img src={codingHero} alt="" width={1280} height={720} />
       </div>
       <div className="lv-sk-hero-shade" />
       <div className="lv-sk-hero-content">
