@@ -217,6 +217,7 @@ Dedicated route modules live in `Data/backend/routes/` (Wave 0D — domain route
 | `evidence.py` | evidence store |
 | `flywheel.py` | post-training challengers / promotions / lineage |
 | `functions.py` | function registry / invoke |
+| `host_console.py` | read-only backend-host projections (`/api/host/overview`, `/api/host/source-ingestion`, `/api/host/native-operations`) |
 | `jobs.py` | job runtime |
 | `knowledge.py` | knowledge / atlas / deep-recall / why / ingest |
 | `market_sim.py` | market simulation, strategies, data, paper trading |
@@ -602,7 +603,8 @@ Architecture rule: the FastAPI/chat process is the **control plane**; long I/O/C
 - Dataset / source-ingestion runners = `external` (inprocess is TEST/LEGACY only)
 - Agents / Coding / Signal Fabric / Reasoning = ON
 - `network.allow_outbound` = ON (SSRF, private-network, and ExecutionGateway restrictions still apply)
-- Canonical launcher: `run_leviathan_workers.bat` → one consolidated supervisor terminal for **all** pools
+- Manual recovery launcher: `run_leviathan_workers.bat` → one consolidated supervisor terminal for **all** pools
+- Operator launcher: `run_leviathan.exe` (Tauri backend host) starts `leviathan.py` in one window and does not open that bat. The bat stays the advanced/manual recovery path.
 - Operator read-model: `GET /api/workers/dashboard` (+ `/api/workers/{id}`) — pools + workers + job join + progress + resources
 - Agents page → **Worker Fabric** monitor consumes that dashboard (never agentCount as “Active Workers”)
 - Process topology: API = control plane; WorkerSupervisor = spawn/lease/restart/drain; specialist workers = one OS process per slot; model serving remains a separate residency plane
@@ -1187,7 +1189,8 @@ Release/evaluation philosophy: missing measurements remain missing; they are not
 - `Data/functions/` — FunctionRuntime executables/cold-path helpers.
 - `scripts/` — launchers, worker helpers and verification harnesses.
 - `.env.example` — documented environment controls.
-- `leviathan.py`, `run_leviathan.bat`, `installer.bat` — startup/install entrypoints.
+- `leviathan.py`, `run_leviathan.bat`, `run_leviathan.exe`, `installer.bat` — startup/install entrypoints.
+- `Data/launcher/` — native backend host. It supervises `leviathan.py`; it is not a second API, Worker Fabric, or JobStore. See `Data/launcher/IMPLEMENTATION_NOTES.md`.
 
 ---
 
