@@ -1,6 +1,8 @@
-"""Live OS telemetry sampler — honest CPU/RAM/(optional) GPU utilization.
+"""Live OS telemetry sampler — honest CPU/RAM/disk/network/(optional) GPU utilization.
 
-Never fabricates percentages. Unavailable metrics remain unavailable (not 0%).
+Never fabricates percentages or rates. Unavailable metrics remain unavailable (not 0%).
+Disk reports filesystem capacity utilization for a configured data root (not disk I/O).
+Network reports system-wide bytes/sec from monotonic deltas of net_io_counters.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 
@@ -26,6 +29,15 @@ def _clamp_pct(value: float | None) -> float | None:
     if value in (float("inf"), float("-inf")):
         return None
     return max(0.0, min(100.0, float(value)))
+
+
+@dataclass(frozen=True)
+class NetIoCounters:
+    """Monotonic network byte counters at a point in time."""
+
+    bytes_sent: int
+    bytes_recv: int
+    at_ms: float
 
 
 @dataclass(frozen=True)
@@ -76,6 +88,16 @@ class SystemTelemetrySample:
     memory_utilization_pct: float | None
     gpu_available: bool
     gpu_devices: tuple[GpuDeviceSample, ...] = ()
+    disk_available: bool = False
+    disk_total_bytes: int | None = None
+    disk_used_bytes: int | None = None
+    disk_free_bytes: int | None = None
+    disk_utilization_pct: float | None = None
+    disk_path: str | None = None
+    network_available: bool = False
+    network_bytes_per_sec: float | None = None
+    network_bytes_sent_per_sec: float | None = None
+    network_bytes_recv_per_sec: float | None = None
     notes: tuple[str, ...] = ()
     measured: bool = True
     synthetic: bool = False
@@ -96,6 +118,21 @@ class SystemTelemetrySample:
                 "usedBytes": self.memory_used_bytes,
                 "availableBytes": self.memory_available_bytes,
                 "utilizationPct": self.memory_utilization_pct,
+            },
+            "disk": {
+                "available": self.disk_available,
+                "totalBytes": self.disk_total_bytes,
+                "usedBytes": self.disk_used_bytes,
+                "freeBytes": self.disk_free_bytes,
+                "utilizationPct": self.disk_utilization_pct,
+                "path": self.disk_path,
+                "metric": "capacity_utilization",
+            },
+            "network": {
+                "available": self.network_available,
+                "bytesPerSec": self.network_bytes_per_sec,
+                "bytesSentPerSec": self.network_bytes_sent_per_sec,
+                "bytesRecvPerSec": self.network_bytes_recv_per_sec,
             },
             "gpu": {
                 "available": self.gpu_available,
@@ -134,6 +171,7 @@ class SystemTelemetrySample:
             "ramPct": self.memory_utilization_pct if self.memory_available else None,
             "gpuPct": gpu_util,
             "vramPct": vram_util,
+            "diskPct": self.disk_utilization_pct if self.disk_available else None,
         }
 
 
@@ -261,13 +299,144 @@ def probe_nvidia_smi(
     return devices, notes
 
 
+def _resolve_disk_path(data_root: Path | str | None) -> Path | None:
+    if data_root is None:
+        return None
+    try:
+        path = Path(data_root)
+    except (TypeError, ValueError):
+        return None
+    # disk_usage needs an existing path; walk up to an existing ancestor.
+    candidate = path
+    try:
+        if not candidate.exists():
+            for parent in candidate.parents:
+                if parent.exists():
+                    candidate = parent
+                    break
+            else:
+                return None
+        return candidate
+    except OSError:
+        return None
+
+
+def probe_disk_capacity(
+    data_root: Path | str | None,
+    *,
+    disk_usage_fn: Callable[[str | Path], Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """Filesystem capacity utilization for the volume containing data_root.
+
+    Returns field dict + notes. On failure: available=False and nulls — never 0%.
+    """
+    notes: list[str] = []
+    empty = {
+        "available": False,
+        "total_bytes": None,
+        "used_bytes": None,
+        "free_bytes": None,
+        "utilization_pct": None,
+        "path": None,
+    }
+    resolved = _resolve_disk_path(data_root)
+    if resolved is None:
+        if data_root is not None:
+            notes.append("disk probe skipped — data_root path unresolved")
+        else:
+            notes.append("disk probe skipped — no data_root configured")
+        return empty, notes
+    usage_fn = disk_usage_fn or shutil.disk_usage
+    try:
+        usage = usage_fn(resolved)
+        total = int(usage.total)
+        used = int(usage.used)
+        free = int(usage.free)
+        if total <= 0:
+            notes.append("disk probe returned non-positive total capacity")
+            return empty, notes
+        pct = _clamp_pct((used / total) * 100.0)
+        return {
+            "available": pct is not None,
+            "total_bytes": total,
+            "used_bytes": used,
+            "free_bytes": free,
+            "utilization_pct": pct,
+            "path": str(resolved),
+        }, notes
+    except Exception as exc:  # noqa: BLE001
+        notes.append(f"disk probe failed: {exc}")
+        return empty, notes
+
+
+def probe_network_counters(
+    *,
+    psutil_module: Any | None = None,
+) -> tuple[NetIoCounters | None, list[str]]:
+    """Read system-wide net_io_counters. Failure → None (not zeros)."""
+    notes: list[str] = []
+    psutil = psutil_module
+    if psutil is None:
+        try:
+            import psutil as _psutil  # type: ignore[import-untyped]
+
+            psutil = _psutil
+        except ImportError:
+            notes.append("psutil not installed — network telemetry unavailable")
+            return None, notes
+    try:
+        counters = psutil.net_io_counters()
+        if counters is None:
+            notes.append("net_io_counters returned None")
+            return None, notes
+        sent = int(counters.bytes_sent)
+        recv = int(counters.bytes_recv)
+        return NetIoCounters(bytes_sent=sent, bytes_recv=recv, at_ms=time.time() * 1000), notes
+    except Exception as exc:  # noqa: BLE001
+        notes.append(f"network probe failed: {exc}")
+        return None, notes
+
+
+def network_rate_from_delta(
+    prev: NetIoCounters | None,
+    current: NetIoCounters | None,
+) -> tuple[float | None, float | None, float | None]:
+    """Compute bytes/sec from monotonic counter deltas.
+
+    Returns (total_bps, sent_bps, recv_bps).
+    First sample or counter reset → all None (UNMEASURED), never fabricated 0.
+    Idle with a valid interval → measured 0.
+    """
+    if prev is None or current is None:
+        return None, None, None
+    dt_ms = current.at_ms - prev.at_ms
+    if dt_ms <= 0:
+        return None, None, None
+    # Counter reset / wrap — do not invent a rate from a negative delta.
+    if current.bytes_sent < prev.bytes_sent or current.bytes_recv < prev.bytes_recv:
+        return None, None, None
+    dt_s = dt_ms / 1000.0
+    sent_bps = (current.bytes_sent - prev.bytes_sent) / dt_s
+    recv_bps = (current.bytes_recv - prev.bytes_recv) / dt_s
+    total_bps = sent_bps + recv_bps
+    return total_bps, sent_bps, recv_bps
+
+
 def collect_system_sample(
     *,
     psutil_module: Any | None = None,
     nvidia_probe: Callable[[], tuple[list[GpuDeviceSample], list[str]]] | None = None,
     include_gpu: bool = True,
-) -> SystemTelemetrySample:
-    """Collect one sample. Inject psutil_module / nvidia_probe for tests."""
+    data_root: Path | str | None = None,
+    prev_net_io: NetIoCounters | None = None,
+    disk_usage_fn: Callable[[str | Path], Any] | None = None,
+) -> tuple[SystemTelemetrySample, NetIoCounters | None]:
+    """Collect one sample. Inject psutil_module / nvidia_probe for tests.
+
+    Returns (sample, current_net_io_counters). Current counters are None when
+    the network probe failed. Rate may be UNMEASURED (null) on the first sample
+    even when counters were read successfully.
+    """
     notes: list[str] = []
     collected_at_ms = time.time() * 1000
     collected_at = utc_now_iso()
@@ -306,6 +475,15 @@ def collect_system_sample(
         except Exception as exc:  # noqa: BLE001
             notes.append(f"memory probe failed: {exc}")
 
+    disk_fields, disk_notes = probe_disk_capacity(data_root, disk_usage_fn=disk_usage_fn)
+    notes.extend(disk_notes)
+
+    current_net, net_notes = probe_network_counters(psutil_module=psutil)
+    notes.extend(net_notes)
+    total_bps, sent_bps, recv_bps = network_rate_from_delta(prev_net_io, current_net)
+    # Network is "available" when we successfully read counters; rate may still be null.
+    network_available = current_net is not None
+
     gpu_devices: list[GpuDeviceSample] = []
     gpu_available = False
     if include_gpu:
@@ -315,8 +493,15 @@ def collect_system_sample(
         gpu_devices = devices
         gpu_available = len(devices) > 0
 
-    measured = cpu_available or mem_available or gpu_available
-    return SystemTelemetrySample(
+    disk_available = bool(disk_fields["available"])
+    measured = (
+        cpu_available
+        or mem_available
+        or gpu_available
+        or disk_available
+        or network_available
+    )
+    sample = SystemTelemetrySample(
         collected_at=collected_at,
         collected_at_ms=collected_at_ms,
         cpu_available=cpu_available,
@@ -328,10 +513,65 @@ def collect_system_sample(
         memory_utilization_pct=mem_pct if mem_available else None,
         gpu_available=gpu_available,
         gpu_devices=tuple(gpu_devices),
+        disk_available=disk_available,
+        disk_total_bytes=disk_fields["total_bytes"] if disk_available else None,
+        disk_used_bytes=disk_fields["used_bytes"] if disk_available else None,
+        disk_free_bytes=disk_fields["free_bytes"] if disk_available else None,
+        disk_utilization_pct=disk_fields["utilization_pct"] if disk_available else None,
+        disk_path=disk_fields["path"] if disk_available else None,
+        network_available=network_available,
+        network_bytes_per_sec=total_bps if network_available else None,
+        network_bytes_sent_per_sec=sent_bps if network_available else None,
+        network_bytes_recv_per_sec=recv_bps if network_available else None,
         notes=tuple(notes),
         measured=measured,
         synthetic=False,
     )
+    return sample, current_net
+
+
+def _empty_public_shape(*, notes: list[str] | None = None) -> dict[str, Any]:
+    return {
+        "collectedAt": None,
+        "ageMs": None,
+        "cpu": {"available": False, "utilizationPct": None},
+        "memory": {
+            "available": False,
+            "totalBytes": None,
+            "usedBytes": None,
+            "availableBytes": None,
+            "utilizationPct": None,
+        },
+        "disk": {
+            "available": False,
+            "totalBytes": None,
+            "usedBytes": None,
+            "freeBytes": None,
+            "utilizationPct": None,
+            "path": None,
+            "metric": "capacity_utilization",
+        },
+        "network": {
+            "available": False,
+            "bytesPerSec": None,
+            "bytesSentPerSec": None,
+            "bytesRecvPerSec": None,
+        },
+        "gpu": {"available": False, "devices": []},
+        "notes": list(notes or ["sampler not started"]),
+        "truth": {
+            "measured": False,
+            "synthetic": False,
+            "unavailableIsNotZero": True,
+        },
+        "dashboard": {
+            "cpuPct": None,
+            "ramPct": None,
+            "gpuPct": None,
+            "vramPct": None,
+            "diskPct": None,
+        },
+    }
 
 
 @dataclass
@@ -340,6 +580,7 @@ class SystemTelemetrySampler:
 
     interval_s: float = 1.0
     gpu_interval_s: float = 2.0
+    data_root: Path | str | None = None
     _lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
     _thread: threading.Thread | None = field(default=None, init=False, repr=False)
     _stop: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
@@ -349,6 +590,7 @@ class SystemTelemetrySampler:
     _last_gpu_devices: tuple[GpuDeviceSample, ...] = field(default=(), init=False, repr=False)
     _last_gpu_available: bool = field(default=False, init=False, repr=False)
     _last_gpu_notes: tuple[str, ...] = field(default=(), init=False, repr=False)
+    _prev_net_io: NetIoCounters | None = field(default=None, init=False, repr=False)
 
     def start(self) -> None:
         with self._lock:
@@ -389,31 +631,7 @@ class SystemTelemetrySampler:
     def latest_public(self) -> dict[str, Any]:
         sample = self.latest()
         if sample is None:
-            return {
-                "collectedAt": None,
-                "ageMs": None,
-                "cpu": {"available": False, "utilizationPct": None},
-                "memory": {
-                    "available": False,
-                    "totalBytes": None,
-                    "usedBytes": None,
-                    "availableBytes": None,
-                    "utilizationPct": None,
-                },
-                "gpu": {"available": False, "devices": []},
-                "notes": ["sampler not started"],
-                "truth": {
-                    "measured": False,
-                    "synthetic": False,
-                    "unavailableIsNotZero": True,
-                },
-                "dashboard": {
-                    "cpuPct": None,
-                    "ramPct": None,
-                    "gpuPct": None,
-                    "vramPct": None,
-                },
-            }
+            return _empty_public_shape()
         return sample.public_dict()
 
     def _run(self) -> None:
@@ -426,17 +644,32 @@ class SystemTelemetrySampler:
     def _sample_once(self, *, force_gpu: bool) -> None:
         now = time.time()
         include_gpu = force_gpu or (now - self._last_gpu_at) >= self.gpu_interval_s
+        with self._lock:
+            prev_net = self._prev_net_io
+            data_root = self.data_root
         if include_gpu:
-            sample = collect_system_sample(include_gpu=True)
+            sample, current_net = collect_system_sample(
+                include_gpu=True,
+                data_root=data_root,
+                prev_net_io=prev_net,
+            )
             with self._lock:
                 self._last_gpu_at = now
                 self._last_gpu_devices = sample.gpu_devices
                 self._last_gpu_available = sample.gpu_available
-                self._last_gpu_notes = tuple(n for n in sample.notes if "nvidia" in n.lower() or "GPU" in n)
+                self._last_gpu_notes = tuple(
+                    n for n in sample.notes if "nvidia" in n.lower() or "GPU" in n
+                )
+                if current_net is not None:
+                    self._prev_net_io = current_net
                 self._latest = sample
             return
 
-        sample = collect_system_sample(include_gpu=False)
+        sample, current_net = collect_system_sample(
+            include_gpu=False,
+            data_root=data_root,
+            prev_net_io=prev_net,
+        )
         # Reattach last GPU snapshot so API stays stable between GPU probes.
         notes = list(sample.notes) + list(self._last_gpu_notes)
         merged = SystemTelemetrySample(
@@ -451,9 +684,21 @@ class SystemTelemetrySampler:
             memory_utilization_pct=sample.memory_utilization_pct,
             gpu_available=self._last_gpu_available,
             gpu_devices=self._last_gpu_devices,
+            disk_available=sample.disk_available,
+            disk_total_bytes=sample.disk_total_bytes,
+            disk_used_bytes=sample.disk_used_bytes,
+            disk_free_bytes=sample.disk_free_bytes,
+            disk_utilization_pct=sample.disk_utilization_pct,
+            disk_path=sample.disk_path,
+            network_available=sample.network_available,
+            network_bytes_per_sec=sample.network_bytes_per_sec,
+            network_bytes_sent_per_sec=sample.network_bytes_sent_per_sec,
+            network_bytes_recv_per_sec=sample.network_bytes_recv_per_sec,
             notes=tuple(notes),
             measured=sample.measured or self._last_gpu_available,
             synthetic=False,
         )
         with self._lock:
+            if current_net is not None:
+                self._prev_net_io = current_net
             self._latest = merged

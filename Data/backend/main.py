@@ -358,7 +358,11 @@ schedule_runner = ScheduleRunner(
     workflows=workflow_runtime,
 )
 observability = ObservabilityHub(capacity=2000, db_path=settings.database_path)
-system_telemetry_sampler = SystemTelemetrySampler(interval_s=1.0, gpu_interval_s=2.0)
+system_telemetry_sampler = SystemTelemetrySampler(
+    interval_s=1.0,
+    gpu_interval_s=2.0,
+    data_root=DATA_ROOT,
+)
 metrics = MetricsCollector()
 timeseries = TimeSeriesStore(max_points_per_series=3_600)
 deep_recall_service._emit = lambda name, payload: observability.emit(  # noqa: SLF001
@@ -2240,6 +2244,8 @@ app.include_router(
         component_health_fn=_component_health,
         database_path=settings.database_path,
         database_paths=settings.database_paths,
+        job_runtime=job_runtime,
+        job_store=job_store,
     )
 )
 app.include_router(build_brain_router(brain_facade))

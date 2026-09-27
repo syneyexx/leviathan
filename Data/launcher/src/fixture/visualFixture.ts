@@ -75,7 +75,7 @@ export function fixtureModel(): OperatorModel {
       card("done", "COMPLETED (24H)", "12,846", "green", bars(2.1, 80, 12), "bars"),
       card("cpu", "CPU USAGE", "34%", "cyan", line(0.4, 34, 8), "line", "8 cores"),
       card("mem", "MEMORY USAGE", "48%", "green", line(1.1, 48, 6), "line", "12.3 / 32 GB"),
-      card("disk", "DISK USAGE", "26%", "amber", line(2.2, 26, 3), "line", "248 / 1,000 GB"),
+      card("disk", "DISK CAPACITY", "26%", "amber", line(2.2, 26, 3), "line", "248 / 1,000 GB"),
       card("native", "EMBEDDINGS / SEC", "426.8", "green", line(0.6, 420, 40), "line"),
       card("docs", "DOCS / SEC", "12.6", "cyan", line(1.7, 12, 2), "line"),
       card("net", "NETWORK I/O", "12.4 MB/s", "violet", line(2.4, 12, 3), "line", "↑ 8.7 MB/s"),
