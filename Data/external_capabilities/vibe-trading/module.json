@@ -38,13 +38,22 @@
   },
   "capabilities": [
     {
-      "capability_id": "external.vibe_trading.analyze",
-      "name": "Vibe-Trading Analyze",
-      "description": "External trading research/analytics via Vibe-Trading (not MarketSim authority).",
-      "external_name": "status",
+      "capability_id": "external.vibe_trading.ensure_ready",
+      "name": "Vibe-Trading Ensure Ready",
+      "description": "Lazy-start Vibe-Trading MCP session and refresh tools into CapabilityCatalog. Individual MCP tools invoke via ExecutionGateway/McpBridge — not MarketSim authority.",
+      "external_name": "start",
       "side_effects": [
         "READ",
         "NETWORK"
+      ]
+    },
+    {
+      "capability_id": "external.vibe_trading.status",
+      "name": "Vibe-Trading Status",
+      "description": "Health/status of the Vibe-Trading MCP session (research only; real-money blocked).",
+      "external_name": "status",
+      "side_effects": [
+        "READ"
       ]
     }
   ],

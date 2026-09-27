@@ -117,6 +117,20 @@ def build_modules_router(*, module_manager: Any, observability: Any, job_runtime
         observability.emit("module_manager", "restart", payload={"module_id": module_id})
         return {"result": result, "module": module_manager.get(module_id).public_dict()}
 
+    @router.post("/api/modules/{module_id}/ensure-ready")
+    def ensure_ready_module(module_id: str) -> dict:
+        _require_enabled()
+        try:
+            result = module_manager.ensure_ready(module_id)
+        except ModuleManagerError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        observability.emit("module_manager", "ensure_ready", payload={"module_id": module_id})
+        managed = module_manager.get(module_id)
+        return {
+            "result": result,
+            "module": managed.public_dict() if managed is not None else None,
+        }
+
     @router.get("/api/modules/{module_id}/health")
     def module_health(module_id: str) -> dict:
         _require_enabled()

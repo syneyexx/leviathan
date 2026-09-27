@@ -374,6 +374,295 @@ class ExternalFabricUnitTests(unittest.TestCase):
             self.assertEqual(result.status, "CANCELLED")
 
 
+class ExternalAdapterFixtureE2ETests(unittest.TestCase):
+    """Fixture e2e for adapter kinds that must not depend on live third-party networks."""
+
+    def test_http_openapi_operations(self) -> None:
+        port = _free_port()
+        server = FIXTURES / "fake_http_service" / "server.py"
+        proc = subprocess.Popen(
+            [sys.executable, str(server), str(port)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                try:
+                    with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.05)
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "mods" / "fake-http"
+                root.mkdir(parents=True)
+                manifest = {
+                    "module_id": "fake-http",
+                    "name": "Fake HTTP",
+                    "version": "0.0.1",
+                    "entrypoint": FACTORY,
+                    "external": {
+                        "adapter": "HTTP_OPENAPI",
+                        "source_type": "none",
+                        "install": {"strategy": "NONE"},
+                        "runtime": {
+                            "base_url": f"http://127.0.0.1:{port}",
+                            "health_probe": {
+                                "kind": "http",
+                                "url": f"http://127.0.0.1:{port}/health",
+                                "expect_status": 200,
+                            },
+                            "operations": [
+                                {
+                                    "name": "echo",
+                                    "method": "POST",
+                                    "path": "/echo",
+                                    "body": "json",
+                                }
+                            ],
+                        },
+                        "result": {"format": "json"},
+                    },
+                    "capabilities": [
+                        {
+                            "capability_id": "external.fake_http.echo",
+                            "name": "Echo",
+                            "external_name": "echo",
+                            "side_effects": ["NETWORK"],
+                        }
+                    ],
+                }
+                (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+                manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+                manager.discover()
+                manager.initialize(
+                    "fake-http",
+                    ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp),
+                )
+                ready = manager.ensure_ready("fake-http")
+                self.assertTrue(ready.get("ready") or ready.get("status") in {"READY", "COMPLETED"})
+                result = manager.execute("fake-http", "echo", {"message": "hi"})
+                self.assertEqual(result.status, "COMPLETED")
+                structured = (result.output or {}).get("structured_data") or {}
+                self.assertTrue(structured.get("ok") or "echo" in structured or "parts" in (result.output or {}))
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=2)
+            except Exception:  # noqa: BLE001
+                proc.kill()
+
+    def test_script_package_runs(self) -> None:
+        script = FIXTURES / "fake_script" / "run.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "mods" / "fake-script"
+            root.mkdir(parents=True)
+            # Make a local copy executable via python for cross-platform CI.
+            runner = Path(tmp) / "run.py"
+            runner.write_text(
+                "import json\nprint(json.dumps({'summary':'script ok','files':['out.txt']}))\n"
+                "open('out.txt','w').write('hello')\n",
+                encoding="utf-8",
+            )
+            manifest = {
+                "module_id": "fake-script",
+                "name": "Fake Script",
+                "version": "0.0.1",
+                "entrypoint": FACTORY,
+                "external": {
+                    "adapter": "SCRIPT_PACKAGE",
+                    "source_type": "path",
+                    "path": str(tmp),
+                    "install": {"strategy": "NONE"},
+                    "runtime": {
+                        "command": [sys.executable, str(runner)],
+                        "cwd": str(tmp),
+                        "operations": [
+                            {"name": "build", "command": [sys.executable, str(runner)]}
+                        ],
+                    },
+                    "result": {"format": "json", "artifact_globs": ["out.txt"]},
+                },
+                "capabilities": [
+                    {
+                        "capability_id": "external.fake_script.build",
+                        "name": "Build",
+                        "external_name": "build",
+                        "side_effects": ["EXECUTE"],
+                    }
+                ],
+            }
+            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+            manager.discover()
+            manager.initialize(
+                "fake-script",
+                ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp),
+            )
+            result = manager.execute("fake-script", "build", {})
+            self.assertEqual(result.status, "COMPLETED")
+            self.assertTrue(script.exists())  # fixture present even if unused directly
+
+    def test_composite_skill_plus_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "mods" / "fake-composite"
+            root.mkdir(parents=True)
+            skill_src = FIXTURES / "fake_skill"
+            tool = FIXTURES / "fake_cli" / "tool.py"
+            # Copy skill tree into module root for SKILL_PACK child.
+            import shutil
+
+            shutil.copytree(skill_src, root / "skills_src")
+            manifest = {
+                "module_id": "fake-composite",
+                "name": "Fake Composite",
+                "version": "0.0.1",
+                "entrypoint": FACTORY,
+                "external": {
+                    "adapter": "COMPOSITE",
+                    "source_type": "path",
+                    "path": str(root / "skills_src"),
+                    "install": {"strategy": "NONE"},
+                    "children": ["SKILL_PACK", "CLI"],
+                    "skill_roots": ["skills"],
+                    "runtime": {
+                        "command": [sys.executable, str(tool), "{query}"],
+                        "operations": [
+                            {
+                                "name": "search",
+                                "command": [sys.executable, str(tool), "{query}"],
+                            }
+                        ],
+                    },
+                    "result": {"format": "json"},
+                },
+                "capabilities": [
+                    {
+                        "capability_id": "external.fake_composite.search",
+                        "name": "Search",
+                        "external_name": "search",
+                        "side_effects": ["READ"],
+                    },
+                    {
+                        "capability_id": "external.fake_composite.load",
+                        "name": "Load skill",
+                        "external_name": "load",
+                        "side_effects": ["READ"],
+                    },
+                ],
+            }
+            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+            manager.discover()
+            manager.initialize(
+                "fake-composite",
+                ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp),
+            )
+            manager.ensure_installed("fake-composite")
+            listed = manager.execute("fake-composite", "search", {"query": "cinematic"})
+            self.assertEqual(listed.status, "COMPLETED")
+
+    def test_catalog_materialize_enables_local_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "mods" / "fake-cat"
+            root.mkdir(parents=True)
+            import shutil
+
+            cat = FIXTURES / "fake_catalog"
+            shutil.copytree(cat, root / "catalog")
+            # Also drop a real SKILL.md so materialize can import instructions.
+            skill_dir = root / "catalog" / "skills" / "demo"
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            (skill_dir / "SKILL.md").write_text(
+                "---\nname: demo-materialize\ndescription: materialize me\n---\n# Demo\nDo the thing.\n",
+                encoding="utf-8",
+            )
+            manifest = {
+                "module_id": "fake-cat",
+                "name": "Fake Catalog",
+                "version": "0.0.1",
+                "entrypoint": FACTORY,
+                "external": {
+                    "adapter": "CATALOG_SOURCE",
+                    "source_type": "path",
+                    "path": str(root / "catalog"),
+                    "install": {"strategy": "NONE"},
+                    "skill_roots": ["."],
+                },
+                "capabilities": [
+                    {
+                        "capability_id": "external.fake_cat.search",
+                        "name": "Search",
+                        "external_name": "search",
+                        "side_effects": ["READ"],
+                    },
+                    {
+                        "capability_id": "external.fake_cat.materialize",
+                        "name": "Materialize",
+                        "external_name": "materialize",
+                        "side_effects": ["WRITE"],
+                    },
+                ],
+            }
+            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+            db = Path(tmp) / "c.db"
+            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+            manager.discover()
+            manager.initialize("fake-cat", ModuleContext(database_path=str(db), data_root=tmp))
+            manager.ensure_installed("fake-cat")
+            manager.execute("fake-cat", "refresh", {})
+            search = manager.execute("fake-cat", "search", {"query": "demo", "limit": 10})
+            self.assertEqual(search.status, "COMPLETED")
+            skills = (search.output or {}).get("structured_data", {}).get("skills") or []
+            self.assertGreaterEqual(len(skills), 1)
+            target = skills[0].get("skill_id") or skills[0].get("name")
+            mat = manager.execute("fake-cat", "materialize", {"skill_id": target})
+            self.assertEqual(mat.status, "COMPLETED")
+
+    def test_skill_shortlist_includes_skill_ids(self) -> None:
+        # Load broker module without pulling cognition package __init__ (heavy deps).
+        import importlib.util
+        import sys
+
+        broker_path = (
+            Path(__file__).resolve().parents[2]
+            / "modules"
+            / "cognition"
+            / "capability_broker.py"
+        )
+        name = "lev_cap_broker_under_test"
+        spec = importlib.util.spec_from_file_location(name, broker_path)
+        assert spec and spec.loader
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[name] = mod
+        spec.loader.exec_module(mod)
+        CapabilityBroker = mod.CapabilityBroker
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ExternalCapabilityStore(Path(tmp) / "c.db")
+            store.initialize()
+            store.upsert_skill(
+                {
+                    "skill_id": "scroll-demo",
+                    "name": "demo-scroll",
+                    "description": "Build a cinematic scrolling website",
+                    "source_repo": "test/fake",
+                    "content_hash": "abc",
+                    "enabled": True,
+                    "catalog_only": False,
+                    "trigger_description": "cinematic scroll website",
+                }
+            )
+            broker = CapabilityBroker(catalog=CapabilityCatalog())
+            short = broker.shortlist_for_task(
+                goal="Build a cinematic scrolling website",
+                skill_store=store,
+                limit=6,
+            )
+            self.assertTrue(any(str(cid).startswith("skill:") for cid in short.capability_ids))
+            self.assertIn("skill:scroll-demo", short.inspected)
+
+
 class ExternalAcceptanceMatrixTests(unittest.TestCase):
     def test_matrix_file_exists_and_covers_sources(self) -> None:
         matrix = Path(__file__).resolve().parent / "external_sources_acceptance_matrix.json"

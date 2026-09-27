@@ -28,6 +28,42 @@ class HttpOpenApiAdapter:
         return self._state
 
     def ensure_installed(self, *, progress: ProgressCb | None = None, cancel_check: CancelCheck | None = None) -> dict[str, Any]:
+        # Remote-only HTTP needs no local install. Git/path + venv packages still install.
+        strategies = [s.value if hasattr(s, "value") else str(s) for s in (self.config.install.strategies or [])]
+        needs_local = any(s not in {"NONE", ""} for s in strategies) or self.config.source.source_type in {
+            "git",
+            "path",
+        }
+        if needs_local and self.ctx.data_root:
+            from pathlib import Path
+
+            from ..install import InstallationService
+
+            service = InstallationService(Path(self.ctx.data_root))
+            result = service.ensure_installed(
+                module_id=self.ctx.module_id,
+                config=self.config,
+                progress=progress,
+                cancel_check=cancel_check,
+            )
+            self._state = ExternalRuntimeState.INSTALLED
+            if self.ctx.store is not None:
+                self.ctx.store.add_version(
+                    version_id=result.version_id,
+                    module_id=self.ctx.module_id,
+                    install_root=result.install_root,
+                    source_ref=result.source_ref,
+                    resolved_commit=result.resolved_commit,
+                    content_hash=result.content_hash,
+                    install_strategies=result.strategies,
+                    dependency_versions=result.dependency_versions,
+                    activate=True,
+                )
+                self.ctx.store.set_runtime_state(self.ctx.module_id, ExternalRuntimeState.INSTALLED.value)
+            # Resolve base_url from install root placeholders when configured.
+            if self._base_url and "$INSTALL_ROOT" in self._base_url and result.install_root:
+                self._base_url = self._base_url.replace("$INSTALL_ROOT", result.install_root)
+            return result.public_dict()
         self._state = ExternalRuntimeState.INSTALLED
         return {"status": "INSTALLED", "detail": "http_no_local_install"}
 

@@ -9,7 +9,7 @@
     "NOT_APPLICABLE",
     "FAILED"
   ],
-  "notes": "Live third-party installs/network invocations are BLOCKED_EXTERNAL in CI unless dependencies and network are available. Fixture adapters prove the generic fabric. Chat rich result cards + skills UI + assimilation path landed. No per-repository wrappers.",
+  "notes": "Live third-party installs/network invocations are BLOCKED_EXTERNAL in CI unless dependencies and network are available. Fixture adapters prove CLI/PROCESS_SERVICE/HTTP_OPENAPI/SKILL_PACK/CATALOG_SOURCE/SCRIPT_PACKAGE/COMPOSITE. MCP lifecycle is covered via McpAdapter unit paths; live MCP connect remains BLOCKED_EXTERNAL. Chat rich result cards + skills UI + assimilation + skill shortlist wired. No per-repository wrappers.",
   "sources": [
     {
       "source": "wonderwhy-er/DesktopCommanderMCP",
@@ -144,7 +144,7 @@
         "mcp entrypoint"
       ],
       "status": "PARTIAL",
-      "limitations": "MarketSim remains trading authority; real-money BLOCKED; results are research only."
+      "limitations": "MCP lifecycle via ensure_ready/status MODULE capabilities; individual MCP tools expand into CapabilityCatalog through McpBridge and invoke via ExecutionGateway. Not MarketSim authority. Live connect BLOCKED_EXTERNAL without network/deps."
     },
     {
       "source": "anthropics/financial-services",
@@ -475,5 +475,5 @@
     "COMPOSITE": "PASS",
     "MCP": "PARTIAL"
   },
-  "worktree_head": "4ac08a2e32ea1b0e35f4dad153ad68b5481fabe7"
+  "worktree_head": "2bb231010170362f5e5e97a1d097fc14378167a1"
 }

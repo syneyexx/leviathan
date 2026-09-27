@@ -528,6 +528,26 @@ export function ChatPage() {
           onDone: () => {
             doneOnce = true;
           },
+          onCapabilityEvent: (event, payload) => {
+            // Operational status only — surface as a pending assistant status line.
+            const cap = String(payload.capability_id || payload.module_id || event);
+            const status = String(payload.status || event);
+            setMessages((current) => {
+              const copy = [...current];
+              const last = copy[copy.length - 1];
+              if (last?.pending && last.role === "assistant") {
+                const prev = last.content === "Thinking…" ? "" : last.content;
+                const line = `[${event}] ${cap}${status && status !== event ? ` · ${status}` : ""}`;
+                // Keep the last status line short; don't accumulate private detail.
+                const withoutStatus = prev.replace(/\n?\[[^\]]+\].*$/s, "").trimEnd();
+                copy[copy.length - 1] = {
+                  ...last,
+                  content: withoutStatus ? `${withoutStatus}\n${line}` : line,
+                };
+              }
+              return copy;
+            });
+          },
         },
         { signal: abort.signal },
       );

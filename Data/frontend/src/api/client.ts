@@ -331,6 +331,8 @@ export const api = {
       onDone?: (data: ChatResponse) => void;
       onError?: (detail: string) => void;
       onCancelled?: (data: Record<string, unknown>) => void;
+      /** Operational capability/tool status — never private CoT. */
+      onCapabilityEvent?: (event: string, data: Record<string, unknown>) => void;
     },
     fetchInit?: { signal?: AbortSignal },
   ): Promise<ChatResponse> {
@@ -517,6 +519,19 @@ export const api = {
           typeof parsed.detail === "string" ? parsed.detail : "stream error";
         handlers.onError?.(detail);
         throw new ApiError(503, detail);
+      } else if (
+        eventName.startsWith("tool.") ||
+        eventName.startsWith("module.") ||
+        eventName.startsWith("job.") ||
+        eventName.startsWith("knowledge.") ||
+        eventName.startsWith("artifact.") ||
+        eventName.startsWith("source.") ||
+        eventName === "capability.discovered" ||
+        eventName === "capability_invoked" ||
+        eventName === "capability_searched"
+      ) {
+        // Operational status only — ignore unknown private event names.
+        handlers.onCapabilityEvent?.(eventName, parsed);
       }
       eventName = "message";
     };
@@ -843,6 +858,10 @@ export const api = {
 
   restartModule(moduleId: string): Promise<Record<string, unknown>> {
     return request(`/api/modules/${encodeURIComponent(moduleId)}/restart`, { method: "POST" });
+  },
+
+  ensureReadyModule(moduleId: string): Promise<Record<string, unknown>> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/ensure-ready`, { method: "POST" });
   },
 
   moduleHealth(moduleId: string): Promise<{ health: Record<string, unknown> }> {

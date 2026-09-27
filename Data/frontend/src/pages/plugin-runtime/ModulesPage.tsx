@@ -134,7 +134,9 @@ export function ModulesPage() {
     }
   }
 
-  async function onLifecycle(action: "install" | "start" | "stop" | "restart" | "logs") {
+  async function onLifecycle(
+    action: "install" | "start" | "stop" | "restart" | "ensure-ready" | "logs" | "health" | "jobs",
+  ) {
     if (!selected) return;
     const id = moduleId(selected);
     setLifecycleBusy(true);
@@ -151,6 +153,15 @@ export function ModulesPage() {
       } else if (action === "restart") {
         await api.restartModule(id);
         toast(`Restarted ${id}`);
+      } else if (action === "ensure-ready") {
+        const res = await api.ensureReadyModule(id);
+        toast(`Ensure ready: ${JSON.stringify(res.result ?? "ok")}`);
+      } else if (action === "health") {
+        const res = await api.moduleHealth(id);
+        toast(`Health: ${JSON.stringify(res.health?.status ?? res.health ?? "ok")}`);
+      } else if (action === "jobs") {
+        const res = await api.moduleJobs(id);
+        toast(`Active jobs: ${res.count ?? (res.jobs?.length ?? 0)}`);
       } else {
         const logs = await api.moduleLogs(id);
         setLogLines(logs.lines ?? []);
@@ -407,6 +418,20 @@ export function ModulesPage() {
                     </button>
                     <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("restart")}>
                       Restart
+                    </button>
+                    <button
+                      type="button"
+                      className="lv-pr-mcp-btn lv-pr-mcp-btn--gold"
+                      disabled={lifecycleBusy}
+                      onClick={() => void onLifecycle("ensure-ready")}
+                    >
+                      Ensure Ready
+                    </button>
+                    <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("health")}>
+                      Health
+                    </button>
+                    <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("jobs")}>
+                      Jobs
                     </button>
                     <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("logs")}>
                       Logs
