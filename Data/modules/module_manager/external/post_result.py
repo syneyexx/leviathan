@@ -53,6 +53,19 @@ def queue_or_run_assimilation(
     if request_id and not mark_assim_seen(idem_key):
         return {"queued": False, "mode": mode.value, "reason": "duplicate_skipped", "idempotency_key": idem_key}
 
+    out = dict(output or {})
+    sources = list(out.get("source_refs") or out.get("sources") or [])
+    # Prefer earliest source published_at when present — do not strip dynamic-content time.
+    published_candidates = []
+    available_candidates = []
+    for src in sources:
+        if isinstance(src, Mapping):
+            if src.get("published_at"):
+                published_candidates.append(str(src["published_at"]))
+            if src.get("available_at"):
+                available_candidates.append(str(src["available_at"]))
+    meta_out = dict(out.get("metadata") or {})
+    retrieved_at = str(meta_out.get("retrieved_at") or utc_now())
     payload = {
         "mode": mode.value,
         "capability_id": capability_id,
@@ -62,7 +75,11 @@ def queue_or_run_assimilation(
         "job_id": job_id,
         "observation_id": observation_id,
         "output": _bounded_output(output),
-        "retrieved_at": utc_now(),
+        "retrieved_at": retrieved_at,
+        "published_at": published_candidates[0] if published_candidates else meta_out.get("published_at"),
+        "available_at": available_candidates[0] if available_candidates else meta_out.get("available_at"),
+        "source_count": len(sources),
+        "provenance_retained": True,
     }
 
     # EVIDENCE-only: claim observation evidence inline (tiny CONTROL_WRITE).

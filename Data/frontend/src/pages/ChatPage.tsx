@@ -1331,7 +1331,7 @@ export function ChatPage() {
                 (lastTurn.telemetry?.tool_calls?.length
                   ? lastTurn.telemetry.tool_calls
                   : (lastTurn.telemetry?.tools_invoked ?? []).map(
-                      (id): import("../types/api").AssistantToolCallTelemetry => ({
+                      (id): AssistantToolCallTelemetry => ({
                         capability_id: id,
                         status: "INVOKED",
                         duration_ms: null,

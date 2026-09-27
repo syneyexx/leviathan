@@ -156,6 +156,7 @@ class CliAdapter:
             progress(0.05, "starting", " ".join(argv[:6]))
         self._state = ExternalRuntimeState.BUSY
         started = time.perf_counter()
+        last_progress_at = started
         try:
             with self._lock:
                 self._active_proc = subprocess.Popen(
@@ -183,6 +184,8 @@ class CliAdapter:
                         except Exception:  # noqa: BLE001
                             pass
                     self._state = ExternalRuntimeState.READY
+                    if progress:
+                        progress(1.0, "cancelled", ExternalFailureCode.CANCELLED.value)
                     return ModuleResult(
                         module_id=self.ctx.module_id,
                         operation=operation,
@@ -206,6 +209,13 @@ class CliAdapter:
                         output={"error": {"code": ExternalFailureCode.TIMEOUT.value}},
                         duration_ms=(time.perf_counter() - started) * 1000,
                     )
+                # Honest mid-run heartbeat — elapsed fraction of timeout, not invented work %.
+                now = time.perf_counter()
+                if progress and (now - last_progress_at) >= 0.4:
+                    elapsed = now - started
+                    frac = min(0.9, max(0.05, elapsed / max(timeout, 0.001)))
+                    progress(frac, "running", f"pid={proc.pid} elapsed={elapsed:.1f}s")
+                    last_progress_at = now
                 try:
                     stdout_b, stderr_b = proc.communicate(input=stdin_data, timeout=min(0.5, remaining))
                     stdin_data = None

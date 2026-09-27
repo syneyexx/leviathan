@@ -403,6 +403,97 @@ class ExternalFabricUnitTests(unittest.TestCase):
             result = adapter.invoke("run", {}, cancel_check=_cancel)
             self.assertEqual(result.status, "CANCELLED")
 
+    def test_gateway_cancel_and_progress_callback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "mods" / "slow"
+            root.mkdir(parents=True)
+            slow = Path(tmp) / "slow.py"
+            slow.write_text("import time\ntime.sleep(30)\nprint('late')\n", encoding="utf-8")
+            manifest = {
+                "module_id": "slow",
+                "name": "Slow",
+                "version": "0.0.1",
+                "entrypoint": FACTORY,
+                "external": {
+                    "adapter": "CLI",
+                    "source_type": "path",
+                    "path": str(tmp),
+                    "install": {"strategy": "NONE"},
+                    "runtime": {
+                        "command": [sys.executable, str(slow)],
+                        "timeout_seconds": 60,
+                        "operations": [{"name": "run", "command": [sys.executable, str(slow)]}],
+                    },
+                },
+                "capabilities": [
+                    {
+                        "capability_id": "external.slow.run",
+                        "name": "Run",
+                        "external_name": "run",
+                        "side_effects": ["READ"],
+                    }
+                ],
+            }
+            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+            manager.discover()
+            manager.initialize("slow", ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp))
+            catalog = CapabilityCatalog()
+            plugins = PluginRegistry(catalog)
+            managed = manager.get("slow")
+            assert managed is not None
+            register_external_module_capabilities(
+                catalog=catalog, plugin_registry=plugins, managed=managed
+            )
+            gateway = ExecutionGateway(catalog=catalog)
+            gateway.module_executor = ExternalModuleExecutor(manager, catalog=catalog)
+            events: list[tuple[float, str, str]] = []
+            cancel = {"flag": False}
+
+            def _progress(pct: float, phase: str, msg: str) -> None:
+                events.append((float(pct), str(phase), str(msg)))
+                if len(events) >= 2:
+                    cancel["flag"] = True
+
+            result = gateway.execute(
+                CapabilityRequest(
+                    capability_id="external.slow.run",
+                    arguments={
+                        "_progress_cb": _progress,
+                        "_cancel_check": lambda: cancel["flag"],
+                    },
+                    request_id="gw-cancel-1",
+                )
+            )
+            self.assertEqual(
+                result.status.value,
+                "CANCELLED",
+                msg=f"unexpected status={result.status.value} error={result.error} events={events}",
+            )
+            self.assertGreaterEqual(len(events), 1)
+            self.assertTrue(any(e[1] in {"starting", "running", "cancelled"} for e in events))
+
+    def test_source_freshness_fields_preserved(self) -> None:
+        from Data.modules.module_manager.external.results import normalize_osint_items
+
+        items = normalize_osint_items(
+            [
+                {
+                    "title": "News",
+                    "url": "https://example.com/n",
+                    "published_at": "2026-01-02T00:00:00+00:00",
+                    "available_at": "2026-01-02T01:00:00+00:00",
+                }
+            ],
+            query="x",
+            provider="agent-reach",
+            retrieved_at="2026-09-27T12:00:00+00:00",
+        )
+        self.assertEqual(items[0]["published_at"], "2026-01-02T00:00:00+00:00")
+        self.assertEqual(items[0]["available_at"], "2026-01-02T01:00:00+00:00")
+        self.assertEqual(items[0]["retrieved_at"], "2026-09-27T12:00:00+00:00")
+        self.assertNotEqual(items[0]["published_at"], items[0]["retrieved_at"])
+
 
 class ExternalAdapterFixtureE2ETests(unittest.TestCase):
     """Fixture e2e for adapter kinds that must not depend on live third-party networks."""

@@ -9,7 +9,7 @@
     "NOT_APPLICABLE",
     "FAILED"
   ],
-  "notes": "Live third-party installs/network invocations are BLOCKED_EXTERNAL in CI unless dependencies and network are available. Fixture adapters prove all adapter kinds. Source manifests refreshed from live GitHub surfaces 2026-09-27 across OSINT/research/finance/skills/catalogs. Source chat/artifact remain PARTIAL without per-source invoke proof. No per-repository wrappers.",
+  "notes": "Live third-party installs/network invocations are BLOCKED_EXTERNAL in CI unless dependencies and network are available. Fixture adapters prove all adapter kinds including cancel/progress and source time provenance. Skill pack skill_roots aligned to live layouts. Source chat/artifact remain PARTIAL without per-source invoke proof. No per-repository wrappers.",
   "sources": [
     {
       "source": "wonderwhy-er/DesktopCommanderMCP",
@@ -333,7 +333,8 @@
       "known_external_requirements": [
         "git"
       ],
-      "status": "PARTIAL"
+      "status": "PARTIAL",
+      "limitations": "Audited 2026-09-27: SKILL.md roots aligned to live repo layout; importer on-demand; live git materialization BLOCKED_EXTERNAL without network."
     },
     {
       "source": "DietrichGebert/ponytail",
@@ -353,7 +354,8 @@
       "known_external_requirements": [
         "git"
       ],
-      "status": "PARTIAL"
+      "status": "PARTIAL",
+      "limitations": "Audited 2026-09-27: SKILL.md roots aligned to live repo layout; importer on-demand; live git materialization BLOCKED_EXTERNAL without network."
     },
     {
       "source": "anthropics/skills",
@@ -373,7 +375,8 @@
       "known_external_requirements": [
         "git"
       ],
-      "status": "PARTIAL"
+      "status": "PARTIAL",
+      "limitations": "Audited 2026-09-27: SKILL.md roots aligned to live repo layout; importer on-demand; live git materialization BLOCKED_EXTERNAL without network."
     },
     {
       "source": "mattpocock/skills",
@@ -393,7 +396,8 @@
       "known_external_requirements": [
         "git"
       ],
-      "status": "PARTIAL"
+      "status": "PARTIAL",
+      "limitations": "Audited 2026-09-27: SKILL.md roots aligned to live repo layout; importer on-demand; live git materialization BLOCKED_EXTERNAL without network."
     },
     {
       "source": "obra/superpowers",
@@ -413,7 +417,8 @@
       "known_external_requirements": [
         "git"
       ],
-      "status": "PARTIAL"
+      "status": "PARTIAL",
+      "limitations": "Audited 2026-09-27: SKILL.md roots aligned to live repo layout; importer on-demand; live git materialization BLOCKED_EXTERNAL without network."
     },
     {
       "source": "cloudflare/security-audit-skill",
@@ -433,7 +438,8 @@
       "known_external_requirements": [
         "git"
       ],
-      "status": "PARTIAL"
+      "status": "PARTIAL",
+      "limitations": "Audited 2026-09-27: SKILL.md roots aligned to live repo layout; importer on-demand; live git materialization BLOCKED_EXTERNAL without network."
     },
     {
       "source": "tech-leads-club/agent-skills",
@@ -453,7 +459,8 @@
       "known_external_requirements": [
         "git"
       ],
-      "status": "PARTIAL"
+      "status": "PARTIAL",
+      "limitations": "Audited 2026-09-27: SKILL.md roots aligned to live repo layout; importer on-demand; live git materialization BLOCKED_EXTERNAL without network."
     },
     {
       "source": "VoltAgent/awesome-openclaw-skills",
