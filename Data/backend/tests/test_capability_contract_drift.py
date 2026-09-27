@@ -67,6 +67,21 @@ _EXCLUDED_ROLE_LABELS = frozenset(
         "coding.verify",
         "research.run",  # legacy alias; planner must use research.advance
         "coding.session",  # legacy alias; planner must use coding.advance
+        # Chat/cognition operational SSE event names (not ExecutionGateway capabilities).
+        "knowledge.assimilation_queued",
+        "knowledge.assimilated",
+        "tool.started",
+        "tool.progress",
+        "tool.completed",
+        "tool.failed",
+        "module.starting",
+        "module.ready",
+        "artifact.created",
+        "source.observed",
+        "job.started",
+        "job.progress",
+        "job.completed",
+        "capability.discovered",
     }
 )
 
