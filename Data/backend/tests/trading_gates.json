@@ -1326,12 +1326,22 @@
     "G49": {
       "title": "Observability trading category",
       "phase": "T4D",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "MarketSimControlPlane._emit_event category=trading subsystem=market_sim",
+        "bounded lifecycle ring list_lifecycle_events (max 500, payload_keys only)",
+        "Data/backend/tests/test_trading_observability_w18.py::TradingObservabilityTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_trading_observability_w18.py::TradingObservabilityTests::test_lifecycle_events_use_trading_category"
+      ],
+      "checks": [
+        "trading category on lifecycle events",
+        "bounded payloads (ids/hashes/keys)",
+        "scan/create/learning events visible"
+      ],
+      "notes": "Reconciled from executable observability emit + ring buffer tests."
     },
     "G50": {
       "title": "Backup/restore trading tables",

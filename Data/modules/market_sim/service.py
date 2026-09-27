@@ -331,11 +331,49 @@ class MarketSimControlPlane:
             )
 
     def _emit_event(self, name: str, payload: dict[str, Any]) -> None:
+        """Emit bounded trading lifecycle observability (category=trading/market_sim)."""
+        # Durable in-process ring for tests / local operators (bounded).
+        ring = getattr(self, "_lifecycle_events", None)
+        if ring is None:
+            self._lifecycle_events = []
+            ring = self._lifecycle_events
+        event = {
+            "category": "trading",
+            "subsystem": "market_sim",
+            "name": str(name),
+            "payload_keys": sorted(str(k) for k in dict(payload or {}).keys())[:32],
+            "refs": {
+                k: payload.get(k)
+                for k in (
+                    "run_id",
+                    "learning_run_id",
+                    "candidate_id",
+                    "sealed_attempt_id",
+                    "dataset_id",
+                    "strategy_id",
+                    "session_id",
+                )
+                if isinstance(payload, dict) and payload.get(k) is not None
+            },
+        }
+        ring.append(event)
+        if len(ring) > 500:
+            del ring[: len(ring) - 500]
         if self._emit:
             try:
-                self._emit("market_sim", name, payload=payload)
+                self._emit("trading", name, payload=payload, subsystem="market_sim")
+            except TypeError:
+                try:
+                    self._emit("market_sim", name, payload=payload)
+                except Exception:  # noqa: BLE001
+                    pass
             except Exception:  # noqa: BLE001
                 pass
+
+    def list_lifecycle_events(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        """Bounded trading lifecycle events for observability consumers/tests."""
+        ring = list(getattr(self, "_lifecycle_events", []) or [])
+        return ring[-max(1, int(limit)) :]
 
     def status(self) -> dict[str, Any]:
         health = self.data.health()
