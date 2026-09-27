@@ -568,6 +568,14 @@
       "assimilation_job_runtime_enqueue": "PASS",
       "process_service_dead_pid_reconcile": "PASS",
       "capability_result_cards_vitest": "PASS"
+    },
+    "http_routes": {
+      "modules_list_install_ensure_ready_health_caps_execute": "PASS",
+      "skills_search_enable_disable_catalog_bounded": "PASS"
+    },
+    "modules_page": {
+      "install_start_stop_restart_ensure_ready": "PASS_UI",
+      "versions_check_update_install_activate_rollback": "PASS_UI"
     }
   }
 }

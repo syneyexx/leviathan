@@ -68,6 +68,8 @@ export function ModulesPage() {
   const [lifecycleBusy, setLifecycleBusy] = useState(false);
   const [logLines, setLogLines] = useState<string[] | null>(null);
   const [versionsJson, setVersionsJson] = useState<string | null>(null);
+  const [versionRef, setVersionRef] = useState("");
+  const [versionId, setVersionId] = useState("");
 
   const applySnapshot = useCallback((next: ModuleSnapshot) => {
     setSnapshot(next);
@@ -147,6 +149,8 @@ export function ModulesPage() {
       | "jobs"
       | "versions"
       | "check-update"
+      | "install-version"
+      | "activate-version"
       | "rollback"
       | "capabilities",
   ) {
@@ -183,8 +187,22 @@ export function ModulesPage() {
         const res = await api.moduleCheckUpdate(id);
         setVersionsJson(JSON.stringify(res.result ?? {}, null, 2));
         toast(`Update available: ${String(res.result?.update_available ?? "?")}`);
+      } else if (action === "install-version") {
+        const ref = versionRef.trim() || undefined;
+        const res = await api.installModuleVersion(id, { ref, activate: false });
+        setVersionsJson(JSON.stringify(res, null, 2));
+        toast(`Install version: ${JSON.stringify(res.job_id ?? res.result ?? "ok")}`);
+      } else if (action === "activate-version") {
+        const vid = versionId.trim();
+        if (!vid) {
+          toast("version_id is required to activate");
+          return;
+        }
+        const res = await api.activateModuleVersion(id, vid);
+        setVersionsJson(JSON.stringify(res, null, 2));
+        toast(`Activate version: ${JSON.stringify(res.result ?? "ok")}`);
       } else if (action === "rollback") {
-        const res = await api.rollbackModuleVersion(id);
+        const res = await api.rollbackModuleVersion(id, versionId.trim() || undefined);
         toast(`Rollback: ${JSON.stringify(res.result ?? "ok")}`);
       } else if (action === "capabilities") {
         const res = await api.moduleCapabilities(id);
@@ -473,9 +491,46 @@ export function ModulesPage() {
                     <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("check-update")}>
                       Check Update
                     </button>
+                    <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("install-version")}>
+                      Install Version
+                    </button>
+                    <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("activate-version")}>
+                      Activate Version
+                    </button>
                     <button type="button" className="lv-pr-mcp-btn" disabled={lifecycleBusy} onClick={() => void onLifecycle("rollback")}>
                       Rollback
                     </button>
+                  </div>
+                ) : null}
+
+                {canLifecycle(selected) ? (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+                    <label className="lv-form-field" style={{ flex: "1 1 160px" }}>
+                      <span className="lv-muted" style={{ fontSize: 12 }}>
+                        Version ref (install)
+                      </span>
+                      <input
+                        className="lv-pr-mcp-input"
+                        value={versionRef}
+                        onChange={(e) => setVersionRef(e.target.value)}
+                        placeholder="e.g. main / v1.2.3"
+                        disabled={lifecycleBusy}
+                        style={{ width: "100%", marginTop: 4 }}
+                      />
+                    </label>
+                    <label className="lv-form-field" style={{ flex: "1 1 160px" }}>
+                      <span className="lv-muted" style={{ fontSize: 12 }}>
+                        version_id (activate/rollback)
+                      </span>
+                      <input
+                        className="lv-pr-mcp-input"
+                        value={versionId}
+                        onChange={(e) => setVersionId(e.target.value)}
+                        placeholder="from Versions list"
+                        disabled={lifecycleBusy}
+                        style={{ width: "100%", marginTop: 4 }}
+                      />
+                    </label>
                   </div>
                 ) : null}
 
