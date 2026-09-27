@@ -7,7 +7,8 @@ body {
 }
 button, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
-button:disabled { cursor: not-allowed; opacity: 0.42; }
+button:disabled { cursor: not-allowed; }
+button:disabled:not(.primary) { opacity: 0.72; }
 button:focus-visible {
   outline: 1px solid var(--gold-bright);
   outline-offset: 1px;
@@ -60,7 +61,6 @@ button:focus-visible {
   background:
     url("../assets/reference/banner-skyline.png") center / 1672px 108px no-repeat,
     #070b0d;
-  border-bottom: 1px solid var(--line);
   overflow: hidden;
 }
 .banner .art-hit { position: absolute; inset: 0; pointer-events: none; }
@@ -91,8 +91,8 @@ button:focus-visible {
 .runtime {
   position: absolute;
   left: var(--frame-x);
-  top: 142px;
-  width: 1656px;
+  top: 146px;
+  width: var(--frame-w);
   height: var(--runtime-h);
   display: grid;
   grid-template-columns: 196px auto minmax(180px, 1fr) auto;
@@ -133,7 +133,7 @@ button:focus-visible {
   box-shadow: inset 0 0 0 1px rgba(180, 255, 210, 0.18);
 }
 .btn.primary .icon { color: #e9fff3; }
-.btn.primary:disabled { filter: saturate(0.4); }
+.btn.primary:disabled { filter: none; opacity: 1; }
 .btn.danger {
   background: linear-gradient(180deg, #9a3030, #641818);
   border-color: #e05a5a;
@@ -158,10 +158,31 @@ button:focus-visible {
   position: absolute;
   left: var(--frame-x);
   top: 210px;
-  width: 1656px;
+  width: var(--frame-w);
   height: var(--health-h);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.health-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-height: 14px;
+}
+.health-head h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  color: var(--gold);
+  font-weight: 600;
+}
+.health-head span { color: var(--muted); font-size: 10px; letter-spacing: 0.04em; }
+.health-row {
+  flex: 1;
+  min-height: 0;
   display: grid;
-  grid-template-columns: repeat(9, minmax(0, 1fr));
   gap: 6px;
 }
 .health article {
@@ -193,7 +214,7 @@ button:focus-visible {
   position: absolute;
   left: var(--frame-x);
   top: 908px;
-  width: 1656px;
+  width: var(--frame-w);
   height: var(--status-h);
   display: grid;
   grid-template-columns: auto 1fr auto;
@@ -208,10 +229,11 @@ button:focus-visible {
 }
 .statusbar .left { display: flex; gap: 8px; white-space: nowrap; }
 .statusbar .center { text-align: center; color: #8d8474; letter-spacing: 0.12em; font-size: 10px; white-space: nowrap; overflow: hidden; }
-.statusbar .right { display: flex; gap: 12px; justify-content: flex-end; color: var(--ivory); white-space: nowrap; }
-.mid, .low { position: absolute; left: var(--frame-x); width: 1656px; display: grid; gap: var(--col-gap); min-height: 0; }
-.mid { top: 294px; height: var(--main-h); grid-template-columns: minmax(0, 666fr) minmax(0, 507fr) minmax(0, 456fr); }
-.low { top: 632px; height: var(--low-h); grid-template-columns: minmax(0, 551fr) minmax(0, 635fr) minmax(0, 442fr); }
+.statusbar .right { display: flex; gap: 12px; justify-content: flex-end; color: var(--ivory); white-space: nowrap; align-items: center; }
+.statusbar .dot { margin-right: 4px; }
+.mid, .low { position: absolute; left: var(--frame-x); width: var(--frame-w); display: grid; min-height: 0; }
+.mid { top: 293px; height: var(--main-h); grid-template-columns: 663px 508px 457px; column-gap: 11px; }
+.low { top: 632px; height: var(--low-h); grid-template-columns: 548px 636px 443px; column-gap: 11.5px; }
 .dialog-backdrop {
   position: fixed;
   inset: 0;

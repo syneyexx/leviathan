@@ -12,34 +12,32 @@ export function WorkersPanel({ rows, summary }: { rows: WorkerRowModel[]; summar
           <h2>WORKERS</h2>
           <span className="badge">{summary}</span>
         </div>
-        <span className="sub">Worker Fabric</span>
+        <span className="sub">Live worker processes and current tasks.</span>
       </header>
       <div className="toolbar">
-        <label className="sub" htmlFor="worker-filter">Filter</label>
         <select id="worker-filter" aria-label="Worker filter" value={pool} onChange={(event) => setPool(event.target.value)}>
-          {pools.map((item) => <option key={item}>{item}</option>)}
+          {pools.map((item) => <option key={item} value={item}>{item === "ALL" ? "All Workers" : item}</option>)}
         </select>
       </div>
       <div className="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>ID</th><th>STATE</th><th>CURRENT TASK</th><th>POOL</th><th>CPU</th><th>RAM</th><th>QUEUE</th><th>HEARTBEAT</th>
+              <th>ID</th><th>STATUS</th><th>CURRENT TASK</th><th>CPU</th><th>RAM</th><th>QUEUE</th><th>UPTIME</th>
             </tr>
           </thead>
           <tbody>
             {visible.length === 0 ? (
-              <tr><td colSpan={8} className="empty">{rows.length === 0 ? "No Worker Fabric rows. UNMEASURED until the dashboard responds." : "No workers match this filter."}</td></tr>
+              <tr><td colSpan={7} className="empty">{rows.length === 0 ? "No Worker Fabric rows. UNMEASURED until the dashboard responds." : "No workers match this filter."}</td></tr>
             ) : visible.map((row) => (
               <tr key={row.id}>
                 <td>{row.id}</td>
-                <td><span className={`dot ${row.state === "BUSY" || row.state === "READY" || row.state === "RUNNING" ? "ok" : row.state === "DEGRADED" ? "warn" : row.state === "FAILED" ? "bad" : ""}`} />{row.state}</td>
+                <td><span className={`dot ${liveState(row.state) ? "ok" : row.state === "DEGRADED" ? "warn" : row.state === "FAILED" ? "bad" : ""}`} />{row.state}</td>
                 <td className="task" title={row.task}>{row.task}</td>
-                <td>{row.pool}</td>
                 <td>{cpuBar(row.cpu)}{row.cpu}</td>
                 <td>{row.ram}</td>
                 <td>{row.queue}</td>
-                <td>{row.heartbeat}</td>
+                <td title="Worker heartbeat age">{row.heartbeat}</td>
               </tr>
             ))}
           </tbody>
@@ -47,6 +45,10 @@ export function WorkersPanel({ rows, summary }: { rows: WorkerRowModel[]; summar
       </div>
     </section>
   );
+}
+
+function liveState(state: string): boolean {
+  return ["BUSY", "READY", "RUNNING", "ACTIVE"].includes(state.toUpperCase());
 }
 
 function cpuBar(cpu: string) {

@@ -8,7 +8,10 @@ export function NativeRuntimeConsole({ model }: { model: NativeModel }) {
   return (
     <section className="panel" aria-label="Native data plane">
       <header>
-        <h2>RUST CONSOLE / NATIVE DATA PLANE</h2>
+        <div className="panel-head">
+          <h2>RUST CONSOLE / NATIVE RUNTIME</h2>
+          <span className="sub">Native pipeline output. Worker-owned accelerator, not a control plane.</span>
+        </div>
         <div className="native-tabs">
           {tabs.map((item) => (
             <button key={item} type="button" className={item === tab ? "on" : ""} onClick={() => setTab(item)}>{item}</button>
@@ -18,13 +21,11 @@ export function NativeRuntimeConsole({ model }: { model: NativeModel }) {
       <div className="native-body">
         {tab === "Runtime" && (
           <>
-            <div className="status-line">probe {model.status} · {model.version}</div>
-            <div>role: Worker Fabric accelerator, not a control plane</div>
-            <div>daemon: none</div>
-            <div>binary: {model.binaryPath || "BUILD MISSING"}</div>
-            <div>{model.detail || "No probe detail."}</div>
+            {model.status !== "AVAILABLE" && <div className="status-line">{model.status} · {model.version}</div>}
+            {(model.status === "BUILD_MISSING" || model.binaryPath == null) && <div>BUILD MISSING</div>}
+            {model.recent.length === 0 && <div>{model.detail || "No native runtime events."}</div>}
             {model.recent.map((row, index) => (
-              <div key={`${row.at}-${index}`}>{row.at} {row.operation} {row.message}</div>
+              <div key={`${row.at}-${index}`}><span className="ts">{row.at}</span> <span className="tag">[rust]</span> {row.message}</div>
             ))}
           </>
         )}
@@ -40,7 +41,14 @@ export function NativeRuntimeConsole({ model }: { model: NativeModel }) {
           </div>
         )}
         {tab === "Diagnostics" && (
-          <div>GPU/SIMD claims are omitted unless the probe reports them. Status {model.status} is the authority. A binary path is not availability.</div>
+          <div>
+            <div>role: Worker Fabric accelerator, not a control plane</div>
+            <div>daemon: none</div>
+            <div>binary: {model.binaryPath || "BUILD MISSING"}</div>
+            <div>probe: {model.status} · {model.version}</div>
+            <div>{model.detail || "No probe detail."}</div>
+            <div>GPU/SIMD claims are omitted unless the probe reports them. A binary path is not availability.</div>
+          </div>
         )}
       </div>
     </section>

@@ -26,6 +26,8 @@ export interface MetricCardModel {
   unit: string;
   samples: Array<number | null>;
   tone: "cyan" | "green" | "amber" | "violet" | "muted";
+  detail?: string;
+  chart?: "line" | "bars";
 }
 
 export interface LogRowModel {

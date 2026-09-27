@@ -28,21 +28,38 @@ REGIONS = {
 
 
 def capture(url: str, width: int, height: int, dest: Path) -> None:
+    """Headless Chrome sometimes writes a blank frame on the first paint. Retry until the bitmap has content."""
     dest.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [
-            CHROME,
-            "--headless=new",
-            "--disable-gpu",
-            "--hide-scrollbars",
-            "--force-device-scale-factor=1",
-            f"--window-size={width},{height}",
-            f"--screenshot={dest}",
-            url,
-        ],
-        check=True,
-        timeout=90,
-    )
+    last_error: Exception | None = None
+    for _ in range(4):
+        try:
+            subprocess.run(
+                [
+                    CHROME,
+                    "--headless=new",
+                    "--disable-gpu",
+                    "--hide-scrollbars",
+                    "--force-device-scale-factor=1",
+                    f"--window-size={width},{height}",
+                    f"--screenshot={dest}",
+                    url,
+                ],
+                check=True,
+                timeout=90,
+            )
+        except subprocess.CalledProcessError as error:
+            last_error = error
+            continue
+        if dest.stat().st_size > 80_000 and _has_content(dest):
+            return
+    if last_error:
+        raise last_error
+
+
+def _has_content(path: Path) -> bool:
+    image = Image.open(path).convert("RGB")
+    sample = image.getpixel((image.width // 2, min(100, image.height - 1)))
+    return sum(sample) > 40
 
 
 def channel_stats(diff: Image.Image) -> tuple[float, float]:

@@ -1,4 +1,4 @@
-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
 th {
   text-align: left;
   color: var(--gold-2);
@@ -10,5 +10,5 @@ th {
   background: #0c1113;
   height: 22px;
 }
-th, td { padding: 0 6px; border-bottom: 1px solid rgba(196, 160, 86, 0.12); white-space: nowrap; height: 20px; }
+th, td { padding: 0 5px; border-bottom: 1px solid rgba(196, 160, 86, 0.12); white-space: nowrap; height: 18px; }
 td.task { overflow: hidden; text-overflow: ellipsis; max-width: 180px; }

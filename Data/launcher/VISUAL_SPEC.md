@@ -15,11 +15,11 @@ REFERENCE_ASPECT = 1672 / 941
 | --- | ---: | ---: | ---: | ---: |
 | Titlebar | 0 | 0 | 1672 | 28 |
 | Banner | 0 | 28 | 1672 | 108 |
-| Runtime control | 8 | 142 | 1656 | 62 |
-| Service health | 8 | 210 | 1656 | 76 |
-| Main row | 8 | 294 | 1656 | 328 |
-| Lower row | 8 | 632 | 1656 | 269 |
-| Status bar | 8 | 908 | 1656 | 28 |
+| Runtime control | 11 | 146 | 1650 | 58 |
+| Service health | 11 | 210 | 1650 | 76 |
+| Main row | 11 | 293 | 1650 | 329 |
+| Lower row | 11 | 632 | 1650 | 269 |
+| Status bar | 11 | 908 | 1650 | 29 |
 
 Measured anchors:
 
@@ -39,7 +39,7 @@ Main row (vertical strokes in y=310–610):
 - Workers / overview split near x=1193–1204
 - Right stroke x=1661
 
-Track ratios used by the stage: `666 / 507 / 456`, gap 11px.
+Track sizes used by the stage: `663 / 508 / 457` px, gap 11px. Left content edge is x=11.
 
 Lower row (y=640–890):
 
@@ -47,7 +47,7 @@ Lower row (y=640–890):
 - Ingestion / native split x=1206–1218
 - Right stroke x=1660
 
-Track ratios: `551 / 635 / 442`, gap 11px.
+Track sizes: `548 / 636 / 443` px, gap 11.5px.
 
 ## Color (sampled)
 
@@ -65,5 +65,6 @@ Decorative only, under `src/assets/reference/`:
 - `panel-texture.png` — quiet dark tile, no live text
 - `corner-ornament-left.png`
 - `corner-ornament-right.png`
+- `console-seal.png` — decorative console seal and motto, no live values
 
 Buttons, tables, statuses, charts, and the clock are HTML.

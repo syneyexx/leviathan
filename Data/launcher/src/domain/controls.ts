@@ -81,7 +81,10 @@ export function controlGates(
 export function hostStatusLabel(host: HostSnapshot): { title: string; detail: string } {
   switch (host.state) {
     case "RUNNING":
-      return { title: "Backend Host Active", detail: host.safeModeActive ? "SAFE MODE" : "Owned runtime is healthy" };
+      return {
+        title: "Backend Host Active",
+        detail: host.safeModeActive ? "SAFE MODE" : host.message || "Owned runtime is healthy",
+      };
     case "DEGRADED":
       return { title: "Backend Host Degraded", detail: host.message };
     case "STARTING":

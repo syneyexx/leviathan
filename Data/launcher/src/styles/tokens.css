@@ -2,12 +2,12 @@
   --bg: #05080b;
   --bg-2: #0a1012;
   --panel: rgba(7, 12, 14, 0.94);
-  --gold-line: rgba(186, 146, 74, 0.72);
+  --gold-line: rgba(127, 90, 36, 0.95);
   --gold-bright: #e4c78a;
-  --line: rgba(186, 146, 74, 0.62);
-  --line-dim: rgba(186, 146, 74, 0.32);
-  --gold: #d7b56a;
-  --gold-2: #a68445;
+  --line: rgba(132, 96, 42, 0.82);
+  --line-dim: rgba(132, 96, 42, 0.38);
+  --gold: #d4b16a;
+  --gold-2: #a88848;
   --ivory: #e7e1d2;
   --muted: #9a917f;
   --emerald: #3dbe7a;

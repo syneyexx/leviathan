@@ -69,6 +69,10 @@ const serviceIcons: Record<string, (props: IconProps) => ReactNode> = {
   control: IconDatabase,
   knowledge: IconDatabase,
   market: IconDatabase,
+  vector: IconDatabase,
+  database: IconDatabase,
+  watcher: IconWatcher,
+  rust: IconNative,
   model: IconModel,
   queue: IconQueue,
 };

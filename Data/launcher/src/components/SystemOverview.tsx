@@ -14,14 +14,15 @@ export function SystemOverview({ metrics }: { metrics: MetricCardModel[] }) {
     <section className="panel" aria-label="System overview">
       <header>
         <h2>SYSTEM OVERVIEW</h2>
-        <span className="sub">Session samples · missing stays UNMEASURED</span>
+        <span className="sub">Real-time metrics and performance.</span>
       </header>
       <div className="metrics">
         {metrics.map((metric) => (
           <article className="metric" key={metric.id}>
             <div className="label">{metric.label}</div>
-            <div className={`value ${metric.value === "UNMEASURED" ? "muted" : metric.tone}`}>{metric.value} {metric.unit}</div>
-            <Sparkline samples={metric.samples} color={colors[metric.tone]} />
+            <div className={`value ${metric.value === "UNMEASURED" ? "muted" : metric.tone}`}>{metric.value}{metric.unit ? ` ${metric.unit}` : ""}</div>
+            {metric.detail ? <div className="metric-detail">{metric.detail}</div> : null}
+            <Sparkline samples={metric.samples} color={colors[metric.tone]} chart={metric.chart} />
           </article>
         ))}
       </div>

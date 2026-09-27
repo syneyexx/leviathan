@@ -63,6 +63,7 @@ def main() -> int:
     image.crop((324, 572, 388, 636)).save(OUT / "panel-texture.png")
     image.crop((6, 294, 28, 316)).save(OUT / "corner-ornament-left.png")
     image.crop((1640, 294, 1666, 316)).save(OUT / "corner-ornament-right.png")
+    image.crop((528, 468, 668, 612)).save(OUT / "console-seal.png")
     print(f"wrote decorative crops under {OUT}")
     return 0
 

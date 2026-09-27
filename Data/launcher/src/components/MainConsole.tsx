@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import geometry from "../assets/geometry.svg";
+import seal from "../assets/reference/console-seal.png";
 import type { ConsoleLine, PreflightCheck } from "../types/host";
 import { VirtualList } from "./VirtualList";
 
@@ -29,7 +29,7 @@ export function MainConsole({
     <section className="panel" aria-label="Main console">
       <header>
         <h2>MAIN CONSOLE</h2>
-        <span className="sub">Backend host sequence and captured output</span>
+        <span className="sub">Backend boot sequence and orchestration output.</span>
       </header>
       <div className="toolbar">
         <button className="btn" type="button" onClick={onPause}>{paused ? "Resume" : "Pause"}</button>
@@ -49,17 +49,16 @@ export function MainConsole({
           </ul>
         </div>
       )}
-      <img className="ornament" src={geometry} alt="" />
+      <img className="ornament" src={seal} alt="" />
       <VirtualList
         items={visible}
         rowHeight={16}
         stickToBottom={autoScroll && !paused}
         render={(line) => (
           <div className="row">
-            <span className="ts">{line.at.slice(11, 19)}</span>
-            <span className="src">{line.source}</span>
-            <span className={`lvl ${line.level}`}>{line.level}</span>
-            <span className="msg">{line.text}</span>
+            <span className="ts">({line.at.slice(11, 19)})</span>
+            <span className={`src ${line.source}`}>[{line.source}]</span>
+            <span className={`msg ${line.level}`}>{line.text}</span>
           </div>
         )}
       />
