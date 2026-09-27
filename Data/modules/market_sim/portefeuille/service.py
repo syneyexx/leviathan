@@ -24,19 +24,57 @@ from .metrics import (
 )
 from .recommendations import generate_recommendations, preview_rebalance
 from .risk import evaluate_portfolio_order
+from .risk_governance import (
+    PORTFOLIO_RISK_LOOSEN_CAPABILITY,
+    RiskMutationClass,
+    classify_risk_mutation,
+)
 from .types import PortfolioStatus
 
 
 class PortfolioService:
     """Owns Portefeuille lifecycle, accounting, dashboard read model."""
 
-    def __init__(self, store: Any, *, providers: Any = None, plane: Any = None) -> None:
+    def __init__(
+        self,
+        store: Any,
+        *,
+        providers: Any = None,
+        plane: Any = None,
+        approval_service: Any = None,
+    ) -> None:
         self.store = store
         self.providers = providers
         self.plane = plane
+        self.approval_service = approval_service
         self._locks: dict[str, threading.RLock] = {}
         self._locks_guard = threading.Lock()
         self._books: dict[str, PortfolioBook] = {}
+
+    def _approval_service(self) -> Any | None:
+        if self.approval_service is not None:
+            return self.approval_service
+        plane = self.plane
+        if plane is None:
+            return None
+        return getattr(plane, "approval_service", None) or getattr(plane, "approvals", None)
+
+    def _approval_ok(self, approval_id: str, *, capability_id: str) -> bool:
+        svc = self._approval_service()
+        if svc is None:
+            return False
+        try:
+            from Data.modules.execution.gateway import SideEffect
+
+            return bool(
+                svc.is_approved(
+                    approval_id,
+                    capability_id=capability_id,
+                    side_effects=(SideEffect.WRITE,),
+                )
+            )
+        except Exception:  # noqa: BLE001
+            return False
 
     def _lock(self, portfolio_id: str) -> threading.RLock:
         with self._locks_guard:
@@ -221,33 +259,109 @@ class PortfolioService:
         return self._public_portfolio(row)
 
     def patch_portfolio(self, portfolio_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+        """Atomically patch portfolio. Risk loosening requires prior approval.
+
+        load → construct proposed → classify → TIGHTENING/NEUTRAL allow →
+        LOOSENING requires valid ``market_sim.portfolio_risk.loosen`` approval →
+        persist only after gate → history only after commit. Mixed = all-or-none.
+        """
         with self._lock(portfolio_id):
             row = self.store.get_portfolio(portfolio_id)
             if row is None:
                 raise MarketSimError("PORTFOLIO_NOT_FOUND", portfolio_id, http_status=404)
+
+            approval_id = patch.get("approval_id") or patch.get("approvalId")
+            before_settings = dict(row.get("settings") or {})
+            settings_touched = False
+            assessment = None
+            proposed_settings: dict[str, Any] | None = None
+
             if "name" in patch and patch["name"]:
                 row["name"] = str(patch["name"]).strip()
             if "orchestra_id" in patch:
                 row["orchestra_id"] = patch["orchestra_id"]
             if "benchmark_symbol" in patch and patch["benchmark_symbol"]:
                 row["benchmark_symbol"] = str(patch["benchmark_symbol"]).upper()
+
             if "settings" in patch and isinstance(patch["settings"], dict):
-                cfg = dict(row.get("settings") or {})
+                cfg = dict(before_settings)
                 cfg.update(patch["settings"])
-                # Risk loosening may require approval — flag but still apply soft keys;
-                # hard widen of drawdown/leverage recorded for audit.
-                row["settings"] = self._default_settings(cfg)
-                row["shorting_enabled"] = bool(row["settings"].get("shorting_enabled"))
+                proposed_settings = self._default_settings(cfg)
+                normalized_before = self._default_settings(before_settings)
+
+                # No-op / concurrent duplicate of already-applied settings
+                if proposed_settings == normalized_before:
+                    meta = dict(row.get("metadata") or {})
+                    used = list(meta.get("used_risk_approvals") or [])
+                    if approval_id and approval_id in used:
+                        return self._public_portfolio(row)
+                    # Pure no-op without history noise
+                    if not any(
+                        k in patch and patch[k] is not None
+                        for k in ("name", "orchestra_id", "benchmark_symbol")
+                    ):
+                        return self._public_portfolio(row)
+                else:
+                    settings_touched = True
+                    assessment = classify_risk_mutation(before_settings, proposed_settings)
+                    if assessment.classification == RiskMutationClass.LOOSENING:
+                        if not approval_id:
+                            raise MarketSimError(
+                                "APPROVAL_REQUIRED",
+                                (
+                                    "Loosening portfolio risk requires an approval "
+                                    f"(capability {PORTFOLIO_RISK_LOOSEN_CAPABILITY}); "
+                                    f"axes={list(assessment.loosening_axes)}"
+                                ),
+                                http_status=403,
+                            )
+                        if not self._approval_ok(
+                            str(approval_id),
+                            capability_id=PORTFOLIO_RISK_LOOSEN_CAPABILITY,
+                        ):
+                            raise MarketSimError(
+                                "APPROVAL_INVALID",
+                                (
+                                    "approval is missing, denied, or does not match "
+                                    f"{PORTFOLIO_RISK_LOOSEN_CAPABILITY}"
+                                ),
+                                http_status=403,
+                            )
+
+            if settings_touched and proposed_settings is not None:
+                # Persist atomically only after approval gate passed
+                row["settings"] = proposed_settings
+                row["shorting_enabled"] = bool(proposed_settings.get("shorting_enabled"))
                 meta = dict(row.get("metadata") or {})
                 snaps = list(meta.get("settings_history") or [])
-                snaps.append({"at": utc_now(), "settings": dict(row["settings"])})
+                snaps.append(
+                    {
+                        "at": utc_now(),
+                        "settings": dict(row["settings"]),
+                        "classification": (
+                            assessment.classification.value if assessment else "NEUTRAL"
+                        ),
+                        "looseningAxes": list(assessment.loosening_axes) if assessment else [],
+                        "approvalId": approval_id,
+                    }
+                )
                 meta["settings_history"] = snaps[-20:]
+                if (
+                    assessment
+                    and assessment.classification == RiskMutationClass.LOOSENING
+                    and approval_id
+                ):
+                    used = list(meta.get("used_risk_approvals") or [])
+                    if str(approval_id) not in used:
+                        used.append(str(approval_id))
+                    meta["used_risk_approvals"] = used[-50:]
                 row["metadata"] = meta
+                book = self._load_book(row)
+                book.shorting_enabled = bool(row["shorting_enabled"])
+                self._persist_book(row, book)
+
             row["updated_at"] = utc_now()
             self.store.upsert_portfolio(row)
-            book = self._load_book(row)
-            book.shorting_enabled = bool(row["shorting_enabled"])
-            self._persist_book(row, book)
             return self._public_portfolio(row)
 
     def _public_portfolio(self, row: dict[str, Any]) -> dict[str, Any]:
@@ -326,6 +440,16 @@ class PortfolioService:
                         "No Trading Orchestra assigned — assign one or enable manual-only mode",
                         http_status=409,
                     )
+            # Explicit resume clears flatten-armed no-new-exposure state
+            meta = dict(row.get("metadata") or {})
+            if meta.get("flatten_armed") or meta.get("no_new_exposure_reason") == "flatten_all":
+                row["kill_switch"] = False
+                settings = dict(row.get("settings") or {})
+                settings["allow_new_positions"] = True
+                row["settings"] = settings
+                meta.pop("flatten_armed", None)
+                meta.pop("no_new_exposure_reason", None)
+                row["metadata"] = meta
             row["status"] = PortfolioStatus.RUNNING.value
             row["updated_at"] = utc_now()
             self.store.upsert_portfolio(row)
@@ -507,6 +631,54 @@ class PortfolioService:
             existing = self.store.get_portfolio_order_by_client(portfolio_id, client_order_id)
             if existing and existing.get("status") == "filled":
                 return {"order": existing, "idempotent_replay": True, "portfolio": self._public_portfolio(row)}
+
+            # Wave 20 — refuse exposure-increasing when paused / flatten-armed / no-new-exposure
+            action_u = str(side).upper()
+            meta_row = dict(row.get("metadata") or {})
+            settings_pre = dict(row.get("settings") or {})
+            no_new_exposure = bool(
+                meta_row.get("flatten_armed")
+                or meta_row.get("no_new_exposure_reason")
+                or not settings_pre.get("allow_new_positions", True)
+                or row.get("status") == PortfolioStatus.PAUSED.value
+            )
+            if no_new_exposure and action_u in ("BUY", "SHORT", "SELL"):
+                book_pre = self._load_book(row)
+                pos_pre = book_pre.positions.get(str(symbol).upper())
+                reducing = False
+                if action_u == "SELL" and pos_pre and pos_pre.side == "LONG" and pos_pre.qty > ZERO:
+                    reducing = True
+                if action_u == "COVER" and pos_pre and pos_pre.side == "SHORT":
+                    reducing = True
+                if action_u == "BUY" and pos_pre and pos_pre.side == "SHORT" and pos_pre.qty > ZERO:
+                    reducing = True
+                if action_u == "SHORT":
+                    reducing = False
+                if action_u == "BUY" and (not pos_pre or pos_pre.side != "SHORT"):
+                    reducing = False
+                if action_u == "SELL" and (not pos_pre or pos_pre.side != "LONG"):
+                    # Opening short while no-new-exposure → refuse
+                    reducing = False
+                if not reducing:
+                    order = self._record_order(
+                        row,
+                        symbol=symbol,
+                        side=side,
+                        qty=qty,
+                        client_order_id=client_order_id,
+                        status="blocked",
+                        reject_reason="no_new_exposure — portfolio paused/flatten-armed",
+                        agent_id=agent_id,
+                        orchestra_id=orchestra_id or row.get("orchestra_id"),
+                        strategy_id=strategy_id,
+                        strategy_version=strategy_version,
+                        decision_id=decision_id,
+                    )
+                    return {
+                        "order": order,
+                        "portfolio": self._public_portfolio(row),
+                        "code": "NO_NEW_EXPOSURE",
+                    }
 
             # Institutional pre-trade: resolve instrument + mandate gate (server-side)
             try:
@@ -858,27 +1030,127 @@ class PortfolioService:
         return {"results": results, "portfolio": self.get_portfolio(portfolio_id)}
 
     def flatten_all(self, portfolio_id: str) -> dict[str, Any]:
-        """Close every open paper position — Flatten All operator action."""
+        """Flatten All — lock → no-new-exposure → cancel increases → close → stay PAUSED."""
         with self._lock(portfolio_id):
+            row = self._require(portfolio_id)
+
+            # Enter no-new-exposure (PAUSED + kill-switch); explicit resume required
+            row["status"] = PortfolioStatus.PAUSED.value
+            row["kill_switch"] = True
+            settings = dict(row.get("settings") or {})
+            settings["allow_new_positions"] = False
+            row["settings"] = settings
+            meta = dict(row.get("metadata") or {})
+            meta["flatten_armed"] = True
+            meta["no_new_exposure_reason"] = "flatten_all"
+            row["metadata"] = meta
+            row["updated_at"] = utc_now()
+            self.store.upsert_portfolio(row)
+
+            # Cancel / refuse pending exposure-increasing orders
+            cancelled: list[dict[str, Any]] = []
+            try:
+                pending = self.store.list_portfolio_orders(portfolio_id, limit=500)
+            except Exception:  # noqa: BLE001
+                pending = []
+            for order in pending:
+                st = str(order.get("status") or "").lower()
+                side_o = str(order.get("side") or "").upper()
+                if st in {"pending", "working", "submitted", "open", "accepted"} and side_o in {
+                    "BUY",
+                    "SHORT",
+                }:
+                    order = dict(order)
+                    order["status"] = "cancelled"
+                    order["reject_reason"] = "flatten_all_no_new_exposure"
+                    order["updated_at"] = utc_now()
+                    try:
+                        self.store.upsert_portfolio_order(order)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    cancelled.append(order)
+
+            book = self._load_book(row)
+            marks, _ = self.fetch_marks(row)
+            open_positions = [
+                p for p in book.open_positions_public(marks) if p.get("position_id")
+            ]
+
+            results: list[dict[str, Any]] = []
+            failed_closes: list[dict[str, Any]] = []
+            flattened = 0
+
+            for pos in open_positions:
+                side = "SELL" if pos.get("side") == "LONG" else "COVER"
+                try:
+                    out = self.place_order(
+                        portfolio_id,
+                        symbol=str(pos["symbol"]),
+                        side=side,
+                        qty=float(pos["qty"]),
+                        client_order_id=f"flatten-{pos['position_id']}-{uuid.uuid4().hex[:8]}",
+                        strategy_id=pos.get("strategy_id"),
+                        strategy_version=pos.get("strategy_version"),
+                        agent_id=pos.get("agent_id"),
+                    )
+                    results.append(out)
+                    if out.get("order", {}).get("status") == "filled":
+                        flattened += 1
+                    else:
+                        failed_closes.append(
+                            {
+                                "position_id": pos.get("position_id"),
+                                "symbol": pos.get("symbol"),
+                                "order": out.get("order"),
+                                "code": out.get("code"),
+                            }
+                        )
+                except MarketSimError as exc:
+                    failed_closes.append(
+                        {
+                            "position_id": pos.get("position_id"),
+                            "error": exc.public_dict(),
+                        }
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    failed_closes.append(
+                        {
+                            "position_id": pos.get("position_id"),
+                            "error": str(exc),
+                        }
+                    )
+
+            # Persist + snapshot; remain PAUSED / kill-switched
             row = self._require(portfolio_id)
             book = self._load_book(row)
             marks, _ = self.fetch_marks(row)
-            open_ids = [
-                str(p["position_id"])
-                for p in book.open_positions_public(marks)
-                if p.get("position_id")
-            ]
-        if not open_ids:
+            book.mark(marks)
+            self._persist_book(row, book, marks)
+            self._sync_positions_table(row, book, marks)
+            self._maybe_snapshot(row, book, marks, reason="flatten_all")
+            row["status"] = PortfolioStatus.PAUSED.value
+            row["kill_switch"] = True
+            row["updated_at"] = utc_now()
+            self.store.upsert_portfolio(row)
+
+            remaining = book.open_positions_public(marks)
             return {
-                "results": [],
-                "flattened": 0,
-                "portfolio": self.get_portfolio(portfolio_id),
-                "truth": {"no_open_positions": True, "paper_only": True},
+                "results": results,
+                "flattened": flattened,
+                "failed_closes": failed_closes,
+                "remaining_positions": remaining,
+                "cancelled_orders": cancelled,
+                "portfolio": self._public_portfolio(row),
+                "final_status": row["status"],
+                "kill_switch": bool(row.get("kill_switch")),
+                "pause_state": PortfolioStatus.PAUSED.value,
+                "truth": {
+                    "paper_only": True,
+                    "not_live_money": True,
+                    "resume_required": True,
+                    "no_open_positions": len(remaining) == 0,
+                },
             }
-        out = self.close_positions(portfolio_id, open_ids)
-        out["flattened"] = len(open_ids)
-        out["truth"] = {"paper_only": True, "not_live_money": True}
-        return out
 
     # --- Autonomous tick ---
 
@@ -886,8 +1158,40 @@ class PortfolioService:
         """One autonomous paper cycle. Decision may be injected for tests."""
         with self._lock(portfolio_id):
             row = self._require(portfolio_id)
+            meta = dict(row.get("metadata") or {})
+            settings = dict(row.get("settings") or {})
+            flatten_armed = bool(
+                meta.get("flatten_armed")
+                or meta.get("no_new_exposure_reason")
+                or row.get("kill_switch")
+            )
             if row["status"] != PortfolioStatus.RUNNING.value:
-                return {"skipped": True, "reason": f"status={row['status']}", "portfolio": self._public_portfolio(row)}
+                # Wave 20 — PAUSED / flatten-armed ticks must report no_new_exposure
+                reason = f"status={row['status']}"
+                if (
+                    flatten_armed
+                    or row["status"] == PortfolioStatus.PAUSED.value
+                    or not settings.get("allow_new_positions", True)
+                ):
+                    reason = f"no_new_exposure status={row['status']}"
+                return {
+                    "skipped": True,
+                    "reason": reason,
+                    "kill_switch": bool(row.get("kill_switch")),
+                    "portfolio": self._public_portfolio(row),
+                    "truth": {"paper_only": True},
+                }
+            if (
+                flatten_armed
+                or not settings.get("allow_new_positions", True)
+            ):
+                return {
+                    "skipped": True,
+                    "reason": "no_new_exposure",
+                    "kill_switch": bool(row.get("kill_switch")),
+                    "portfolio": self._public_portfolio(row),
+                    "truth": {"paper_only": True},
+                }
             book = self._load_book(row)
             marks, mark_meta = self.fetch_marks(row)
             book.mark(marks)
@@ -903,6 +1207,24 @@ class PortfolioService:
                     "mark_meta": mark_meta,
                     "executed": False,
                 }
+
+            action = str(decision.get("action") or "HOLD").upper()
+            if action in ("BUY", "SHORT"):
+                # Double-check pause/kill before exposure-increasing orders
+                row2 = self._require(portfolio_id)
+                meta2 = dict(row2.get("metadata") or {})
+                if (
+                    row2.get("kill_switch")
+                    or meta2.get("flatten_armed")
+                    or row2.get("status") != PortfolioStatus.RUNNING.value
+                ):
+                    return {
+                        "skipped": True,
+                        "reason": "no_new_exposure_pre_order",
+                        "decision": decision,
+                        "portfolio": self._public_portfolio(row2),
+                        "executed": False,
+                    }
 
             result = self.place_order(
                 portfolio_id,

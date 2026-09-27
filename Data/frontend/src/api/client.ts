@@ -2577,6 +2577,62 @@ export const api = {
     });
   },
 
+  createQualificationRun(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return request(`/api/market-sim/qualification-runs`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  getQualificationRun(qualificationId: string): Promise<Record<string, unknown>> {
+    return request(`/api/market-sim/qualification-runs/${encodeURIComponent(qualificationId)}`);
+  },
+
+  getQualificationGates(qualificationId: string): Promise<Record<string, unknown>> {
+    return request(
+      `/api/market-sim/qualification-runs/${encodeURIComponent(qualificationId)}/gates`,
+    );
+  },
+
+  cancelQualificationRun(qualificationId: string): Promise<Record<string, unknown>> {
+    return request(
+      `/api/market-sim/qualification-runs/${encodeURIComponent(qualificationId)}/cancel`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
+  },
+
+  getDatasetCertification(
+    datasetId: string,
+    version?: string,
+  ): Promise<Record<string, unknown>> {
+    const q = version ? `?version=${encodeURIComponent(version)}` : "";
+    return request(
+      `/api/market-sim/datasets/${encodeURIComponent(datasetId)}/certification${q}`,
+    );
+  },
+
+  evaluateDatasetCertification(
+    datasetId: string,
+    body: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    return request(
+      `/api/market-sim/datasets/${encodeURIComponent(datasetId)}/certification/evaluate`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+  },
+
+  getPortfolioStrategyRisk(portfolioId: string): Promise<Record<string, unknown>> {
+    return request(
+      `/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}/strategy-risk`,
+    );
+  },
+
+  getPaperExecutionCalibration(deploymentId: string): Promise<Record<string, unknown>> {
+    return request(
+      `/api/market-sim/paper-deployments/${encodeURIComponent(deploymentId)}/execution-calibration`,
+    );
+  },
+
   fetchMarketBars(params: {
     symbol: string;
     providerId?: string;

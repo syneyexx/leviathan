@@ -4,6 +4,7 @@ import { tradingHeroes } from "../../assets/tradingAssets";
 import { ApiError, api } from "../../api/client";
 import { AppShell } from "../../layouts/AppShell";
 import { Panel, TradingHero } from "./shared";
+import { QualificationTruthStrip } from "./QualificationTruthStrip";
 
 type LabOverview = Record<string, unknown>;
 
@@ -141,12 +142,56 @@ export function ResearchLabPage() {
   const outcomes = (overview?.valid_lab_outcomes as string[]) || [];
   const learnerState = (learning?.learner_state as Record<string, unknown> | undefined) || {};
   const objective = (learning?.objective_spec as Record<string, unknown> | undefined) || {};
+  const qualification =
+    (overview?.qualification as Record<string, unknown> | undefined) || undefined;
+  const hasQualificationMeta =
+    overview != null &&
+    (qualification != null ||
+      overview.qualificationState != null ||
+      overview.qualified != null ||
+      overview.pitState != null ||
+      overview.sealedState != null);
 
   return (
     <AppShell layout="wide" pageClass="lv-app--trading">
       <TradingHero title="Research Lab" image={tradingHeroes.strategieen} />
       <div className="lv-tp-wrap">
         {error ? <p className="lv-tp-banner">{error}</p> : null}
+
+        {hasQualificationMeta ? (
+          <QualificationTruthStrip
+            qualificationState={
+              (qualification?.qualificationState as string | undefined) ||
+              (overview?.qualificationState as string | undefined) ||
+              null
+            }
+            qualified={
+              (qualification?.qualified as boolean | null | undefined) ??
+              (overview?.qualified as boolean | null | undefined) ??
+              null
+            }
+            blockers={
+              (qualification?.blockers as string[] | undefined) ||
+              (overview?.blockers as string[] | undefined) ||
+              []
+            }
+            pitState={
+              (qualification?.pitState as string | undefined) ||
+              (overview?.pitState as string | undefined) ||
+              null
+            }
+            sealedState={
+              (qualification?.sealedState as string | undefined) ||
+              (overview?.sealedState as string | undefined) ||
+              null
+            }
+            liveBlocked={
+              (qualification?.liveBlocked as boolean | undefined) ??
+              String(live.LIVE_TRADING_AVAILABLE ?? live.live_trading ?? "BLOCKED").toUpperCase() ===
+                "BLOCKED"
+            }
+          />
+        ) : null}
 
         <Panel title="Lab truth">
           <ul className="lv-tp-list">

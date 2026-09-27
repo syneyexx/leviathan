@@ -228,6 +228,63 @@ def _handle_learning_run(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
         return {"error": str(exc)}
 
 
+def _handle_qualification_run(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
+    """market_sim.qualification_run — durable/resumable QualificationAuthority on worker."""
+    from Data.modules.jobs.leases import fenced_transition
+    from Data.modules.jobs.states import JobState
+
+    args = dict(getattr(job, "arguments", None) or {})
+    qualification_id = str(args.get("qualification_id") or "")
+    try:
+        from Data.modules.market_sim.qualification import QualificationAuthority
+        from Data.modules.market_sim.service import MarketSimControlPlane
+
+        plane = MarketSimControlPlane.from_settings(ctx["settings"])
+        if ctx.get("job_runtime") is not None and hasattr(plane, "bind_job_runtime"):
+            plane.bind_job_runtime(ctx["job_runtime"])
+        if not qualification_id:
+            raise ValueError("qualification_id required for qualification_run")
+        print(
+            f"[WORKER:market_sim] Qualification '{qualification_id[:8]}' gestart",
+            flush=True,
+        )
+        auth = QualificationAuthority(plane=plane, store=plane.store)
+        # Resume/evaluate is idempotent for terminal runs.
+        decision = auth.resume(qualification_id)
+        result = decision.public_dict()
+        result["executed_via"] = "market_sim_worker"
+        result["idempotency_key"] = f"qualification:{qualification_id}"
+        print(
+            f"[WORKER:market_sim] Qualification '{qualification_id[:8]}' voltooid — "
+            f"state={result.get('state')} qualified={result.get('qualified')}",
+            flush=True,
+        )
+        fenced_transition(
+            ctx["job_store"],
+            job.job_id,
+            JobState.COMPLETED,
+            result=result,
+            worker_id=str(ctx.get("worker_id") or ""),
+            ctx=ctx,
+        )
+        return result
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[WORKER:market_sim] Qualification "
+            f"'{qualification_id[:8] if qualification_id else '?'}' MISLUKT — {exc}",
+            flush=True,
+        )
+        fenced_transition(
+            ctx["job_store"],
+            job.job_id,
+            JobState.FAILED,
+            error=str(exc)[:500],
+            worker_id=str(ctx.get("worker_id") or ""),
+            ctx=ctx,
+        )
+        return {"error": str(exc)}
+
+
 def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
     from Data.modules.jobs.leases import fenced_transition
     from Data.modules.jobs.states import JobState
@@ -242,6 +299,8 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
         return _handle_research_campaign(ctx, job)
     if cap == "market_sim.learning_run":
         return _handle_learning_run(ctx, job)
+    if cap == "market_sim.qualification_run":
+        return _handle_qualification_run(ctx, job)
     if cap == "market_sim.scan_batch":
         return _handle_scan_batch(ctx, job)
     if cap == "market_sim.portfolio_tick":

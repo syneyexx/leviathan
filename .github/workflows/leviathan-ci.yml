@@ -178,6 +178,8 @@ jobs:
               )
           print("release-gates-ok")
           PY
+      - name: Strict trading verifier (institutional release evidence)
+        run: python scripts/verify_trading_100.py --run-tests --strict
 
   # Explicitly document out-of-scope trees so a green CI is never
   # interpreted as HADES/editor certification.

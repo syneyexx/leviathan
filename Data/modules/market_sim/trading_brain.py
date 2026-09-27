@@ -404,8 +404,10 @@ class TradingBrainAdapter:
         for row in rows or []:
             if not isinstance(row, dict):
                 continue
-            # SEALED / non-adaptive evidence is an epistemic sink — never adaptive retrieval.
-            from .epistemic import is_adaptive_evidence
+            # SEALED / non-adaptive evidence is an epistemic sink — never adaptive
+            # discovery retrieval. Critic/risk/postmortem prefer_negative may still
+            # surface REJECTED non-sealed lessons as negative experience.
+            from .epistemic import EvidenceClass, is_adaptive_evidence
 
             meta_row = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
             applicability = row.get("applicability") if isinstance(row.get("applicability"), dict) else {}
@@ -415,13 +417,33 @@ class TradingBrainAdapter:
                 or meta_row.get("validation_stage")
                 or meta_row.get("split_role")
             )
-            if not is_adaptive_evidence(
-                evidence_class=str(evidence_class) if evidence_class is not None else None,
-                validation_stage=str(meta_row.get("validation_stage") or "") or None,
-                split_role=str(meta_row.get("split_role") or meta_row.get("validation_stage") or "") or None,
+            stage = str(meta_row.get("validation_stage") or "") or None
+            split = str(meta_row.get("split_role") or meta_row.get("validation_stage") or "") or None
+            ec_text = str(evidence_class) if evidence_class is not None else None
+            sealed_markers = {
+                EvidenceClass.SEALED_QUALIFICATION_EVIDENCE.value,
+                "SEALED",
+                "sealed",
+                "SEALED_TEST",
+                "sealed_test",
+                "SEALED_EVALUATION",
+            }
+            is_sealed = any(
+                (raw or "").strip().upper() in {m.upper() for m in sealed_markers}
+                for raw in (ec_text, stage, split)
+            )
+            adaptive_ok = is_adaptive_evidence(
+                evidence_class=ec_text,
+                validation_stage=stage,
+                split_role=split,
+            )
+            rejected_row = bool(row.get("rejected"))
+            if not adaptive_ok:
+                if not (prefer_negative and rejected_row and not is_sealed):
+                    continue
+            if applicability.get("adaptive") is False and not (
+                prefer_negative and rejected_row and not is_sealed
             ):
-                continue
-            if applicability.get("adaptive") is False:
                 continue
             hit = strategy_memory_to_hit(row, mode="strategy_memory")
             blob = " ".join(

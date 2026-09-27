@@ -196,6 +196,9 @@ class NextBarFillModel:
         "MARKET default TimeInForce=BAR — no implicit eternal market orders",
         "Intrabar stop+target ambiguity uses explicit IntrabarPathPolicy (default CONSERVATIVE)",
         "observed_execution=False — costs are modelled, not measured",
+        "Opening short requires supports_short + ShortMarginPolicy; signed qty accounting",
+        "BUY beyond flat short fails closed unless allow_position_reversal",
+        "Borrow fee unset ⇒ borrow_cost UNMEASURED/ASSUMED — never silent zero",
     )
 
     def __init__(
@@ -312,14 +315,34 @@ class NextBarFillModel:
             )
 
         tx_id = deterministic_id(intent.intent_id, fill_bar_index, intent.status, str(qty))
+        allow_reversal = bool(
+            (intent.metadata or {}).get("allow_position_reversal")
+            or getattr(wallet, "allow_position_reversal", False)
+        )
+        shorting_enabled = bool(
+            getattr(wallet, "shorting_enabled", False)
+            or (intent.metadata or {}).get("allow_short")
+            or (intent.metadata or {}).get("opening_short")
+            or (getattr(wallet, "short_margin_policy", None) is not None)
+        )
 
         try:
             if intent.side == OrderSide.BUY.value:
                 notional = money(qty * fill_price)
                 fee = money(notional * D(self.fee_bps) / D(10_000))
                 futures_vm = getattr(wallet, "valuation_mode", "spot") == "futures_vm"
+                covering_short = float(wallet.position_qty) < 0
                 total = fee if futures_vm else money(notional + fee)
-                if total > wallet.cash + money("0.00000001"):
+                if covering_short:
+                    cover_need = money(
+                        min(float(qty), abs(float(wallet.position_qty))) * float(fill_price)
+                        + float(fee)
+                    )
+                    if cover_need > wallet.cash + money("0.00000001") and not futures_vm:
+                        return self._reject(
+                            intent, fill_price, "insufficient cash to cover short", order_type, price_source
+                        )
+                elif total > wallet.cash + money("0.00000001"):
                     if futures_vm:
                         return self._reject(intent, fill_price, "insufficient cash for futures fee", order_type, price_source)
                     affordable = money(
@@ -335,20 +358,83 @@ class NextBarFillModel:
                     qty = affordable
                     notional = money(qty * fill_price)
                     fee = money(notional * D(self.fee_bps) / D(10_000))
+                if covering_short and not allow_reversal:
+                    max_cover = money(abs(wallet.position_qty))
+                    if qty > max_cover:
+                        if tif == TimeInForce.FOK.value and qty_requested > max_cover:
+                            return self._reject(
+                                intent,
+                                fill_price,
+                                "POSITION_REVERSAL_BLOCKED: BUY beyond short cover",
+                                order_type,
+                                price_source,
+                            )
+                        qty = max_cover
+                        notional = money(qty * fill_price)
+                        fee = money(notional * D(self.fee_bps) / D(10_000))
                 slip_cost = money(abs(fill_price - reference) * qty)
-                wallet.apply_buy(qty=qty, price=fill_price, fee=fee, tx_id=tx_id)
+                wallet.apply_buy(
+                    qty=qty,
+                    price=fill_price,
+                    fee=fee,
+                    tx_id=tx_id,
+                    meta={
+                        "allow_position_reversal": allow_reversal,
+                        **dict(intent.metadata or {}),
+                    },
+                )
             else:
-                if wallet.position_qty <= 0:
-                    return self._reject(intent, fill_price, "no position", order_type, price_source)
-                sell_qty = money(min(qty, wallet.position_qty))
-                if tif == TimeInForce.FOK.value and sell_qty < qty_requested:
-                    return self._reject(
-                        intent, fill_price, "FOK — full sell quantity unavailable", order_type, price_source
+                pos = float(wallet.position_qty)
+                opening_or_adding_short = pos <= 0
+                if opening_or_adding_short:
+                    if not shorting_enabled:
+                        return self._reject(intent, fill_price, "no position", order_type, price_source)
+                    sell_qty = money(qty)
+                    if tif == TimeInForce.FOK.value and sell_qty < qty_requested:
+                        return self._reject(
+                            intent, fill_price, "FOK — full sell quantity unavailable", order_type, price_source
+                        )
+                    fee = money(sell_qty * fill_price * D(self.fee_bps) / D(10_000))
+                    slip_cost = money(abs(fill_price - reference) * sell_qty)
+                    wallet.apply_sell(
+                        qty=sell_qty,
+                        price=fill_price,
+                        fee=fee,
+                        tx_id=tx_id,
+                        meta={
+                            "allow_short": True,
+                            "opening_short": True,
+                            "borrow": (intent.metadata or {}).get("borrow"),
+                            **dict(intent.metadata or {}),
+                        },
                     )
-                fee = money(sell_qty * fill_price * D(self.fee_bps) / D(10_000))
-                slip_cost = money(abs(fill_price - reference) * sell_qty)
-                wallet.apply_sell(qty=sell_qty, price=fill_price, fee=fee, tx_id=tx_id)
-                qty = sell_qty
+                    qty = sell_qty
+                else:
+                    if shorting_enabled:
+                        sell_qty = money(qty)
+                    else:
+                        sell_qty = money(min(qty, wallet.position_qty))
+                    if sell_qty <= 0:
+                        return self._reject(intent, fill_price, "no position", order_type, price_source)
+                    if tif == TimeInForce.FOK.value and sell_qty < qty_requested:
+                        return self._reject(
+                            intent, fill_price, "FOK — full sell quantity unavailable", order_type, price_source
+                        )
+                    fee = money(sell_qty * fill_price * D(self.fee_bps) / D(10_000))
+                    slip_cost = money(abs(fill_price - reference) * sell_qty)
+                    wallet.apply_sell(
+                        qty=sell_qty,
+                        price=fill_price,
+                        fee=fee,
+                        tx_id=tx_id,
+                        meta={
+                            "allow_short": shorting_enabled,
+                            "opening_short": shorting_enabled and float(sell_qty) > pos,
+                            "borrow": (intent.metadata or {}).get("borrow"),
+                            **dict(intent.metadata or {}),
+                        },
+                    )
+                    qty = sell_qty
 
             remaining = money(qty_requested - qty)
             if remaining < 0:
@@ -368,6 +454,7 @@ class NextBarFillModel:
             )
         except ValueError as exc:
             return self._reject(intent, fill_price, str(exc), order_type, price_source)
+
 
     def _resolve_trigger(
         self,

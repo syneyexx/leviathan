@@ -483,7 +483,11 @@
       "title": "Code strategy sandbox escape suite",
       "phase": "T3E/P2C",
       "status": "FEATURE_GATED",
-      "required": true,
+      "required": false,
+      "operating_envelope": {
+        "supported": false,
+        "reason": "Python IsolationSandbox escape suite incomplete; supported institutional path is DSL strategies only"
+      },
       "evidence": [
         "Data/modules/market_sim/code_strategy.py::python_strategy_capability / evaluate_python_strategy",
         "create_strategy / version_strategy call assert_not_python_strategy",
@@ -505,7 +509,7 @@
           "timeout_sec": 60
         }
       ],
-      "notes": "P2C: honest FEATURE_GATED / NOT_AVAILABLE. Do not claim PASS without escape suite.",
+      "notes": "P2C: honest FEATURE_GATED / NOT_AVAILABLE. Outside supported operating envelope (DSL-only). Do not claim PASS without escape suite.",
       "related_defects": []
     },
     "G17": {

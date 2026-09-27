@@ -743,9 +743,12 @@ class StrategyLifecycleW55Tests(unittest.TestCase):
             ts="t1",
             evidence_key="sealed_holdout",
             evidence_state=MeasurementState.PASS.value,
+            qualification_id="qual-1",
+            extra_evidence={"qualification_decision": "QUALIFIED"},
         )
         self.assertEqual(promoted.state, "PAPER")
         self.assertEqual(promoted.evidence["sealed_holdout"], MeasurementState.PASS.value)
+        self.assertEqual(promoted.evidence["qualification_decision"], "QUALIFIED")
 
 
 class EntitlementsW56Tests(unittest.TestCase):

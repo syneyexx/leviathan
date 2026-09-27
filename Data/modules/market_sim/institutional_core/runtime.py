@@ -1083,8 +1083,21 @@ class InstitutionalRuntime:
             exceptions=exc_body,
             audit=audit_body,
             feature_enabled=feature_enabled,
+            store=getattr(self, "_market_store", None) or self._resolve_market_store(),
         )
         return snap.public_dict()
+
+    def _resolve_market_store(self) -> Any | None:
+        """Lazy MarketSimStore for control-room projections (same DB path)."""
+        try:
+            from Data.modules.market_sim.store import MarketSimStore
+
+            store = MarketSimStore(self.db_path)
+            store.initialize()
+            self._market_store = store
+            return store
+        except Exception:  # noqa: BLE001
+            return None
 
     # ------------------------------------------------------------------
     # Portfolio construction / what-if

@@ -295,3 +295,230 @@ def governance_rollup(reports: Sequence[GovernanceReport]) -> dict[str, Any]:
             "empty_rollup_is_EMPTY": len(reports) == 0,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Wave 8 — Data certification (derived from persisted evidence, not caller bools)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class DataCertificationPolicy:
+    require_pit: bool = True
+    require_historical_universe: bool = False
+    require_revision_lineage: bool = False
+    require_corporate_actions: bool = False
+    require_license_known: bool = True
+    max_gap_ratio: float | None = 0.05
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "requirePit": self.require_pit,
+            "requireHistoricalUniverse": self.require_historical_universe,
+            "requireRevisionLineage": self.require_revision_lineage,
+            "requireCorporateActions": self.require_corporate_actions,
+            "requireLicenseKnown": self.require_license_known,
+            "maxGapRatio": self.max_gap_ratio,
+        }
+
+
+@dataclass
+class DataCertification:
+    certification_id: str
+    dataset_id: str
+    dataset_version_id: str
+    dataset_hash: str
+    certification_state: str
+    pit_state: str
+    survivorship_state: str
+    revision_state: str
+    corporate_action_state: str
+    license_state: str
+    evidence: dict[str, Any] = field(default_factory=dict)
+    blockers: list[str] = field(default_factory=list)
+    source_id: str = ""
+    data_type: str = "ohlcv"
+    certification_hash: str = ""
+    certified_at: str = ""
+    certified_by: str = ""
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "certificationId": self.certification_id,
+            "datasetId": self.dataset_id,
+            "datasetVersionId": self.dataset_version_id,
+            "datasetHash": self.dataset_hash,
+            "certificationState": self.certification_state,
+            "pitState": self.pit_state,
+            "survivorshipState": self.survivorship_state,
+            "revisionState": self.revision_state,
+            "corporateActionState": self.corporate_action_state,
+            "licenseState": self.license_state,
+            "evidence": dict(self.evidence),
+            "blockers": list(self.blockers),
+            "sourceId": self.source_id,
+            "dataType": self.data_type,
+            "certificationHash": self.certification_hash,
+            "certifiedAt": self.certified_at,
+            "certifiedBy": self.certified_by,
+            "truth": {
+                **DEFAULT_TRUTH.public_dict(),
+                "caller_boolean_not_certification": True,
+                "legacy_datasets_unmeasured_until_evaluated": True,
+            },
+        }
+
+
+def certify_dataset_from_evidence(
+    *,
+    dataset_id: str,
+    dataset_version_id: str,
+    dataset_hash: str,
+    evidence: Mapping[str, Any],
+    policy: DataCertificationPolicy | None = None,
+    source_id: str = "",
+    data_type: str = "ohlcv",
+    certified_by: str = "data_governance",
+    certification_id: str | None = None,
+) -> DataCertification:
+    """Derive certification from persisted metadata/manifests — never caller certified=true."""
+    import hashlib
+    import json
+    from datetime import datetime, timezone
+
+    policy = policy or DataCertificationPolicy()
+    if evidence.get("certified") is True and len(evidence) <= 2:
+        # Explicit caller boolean alone is insufficient.
+        return DataCertification(
+            certification_id=certification_id or f"cert_{dataset_hash[:12]}",
+            dataset_id=dataset_id,
+            dataset_version_id=dataset_version_id,
+            dataset_hash=dataset_hash,
+            certification_state=MeasurementState.UNMEASURED.value,
+            pit_state=MeasurementState.UNMEASURED.value,
+            survivorship_state=MeasurementState.UNMEASURED.value,
+            revision_state=MeasurementState.UNMEASURED.value,
+            corporate_action_state=MeasurementState.UNMEASURED.value,
+            license_state=str(evidence.get("license_state") or "UNKNOWN"),
+            evidence=dict(evidence),
+            blockers=["CALLER_BOOLEAN_NOT_CERTIFICATION"],
+            source_id=source_id,
+            data_type=data_type,
+            certified_by=certified_by,
+        )
+
+    blockers: list[str] = []
+    pit = MeasurementState.UNMEASURED.value
+    surv = MeasurementState.UNMEASURED.value
+    rev = MeasurementState.UNMEASURED.value
+    corp = MeasurementState.UNMEASURED.value
+    license_state = str(evidence.get("license_state") or evidence.get("license") or "UNKNOWN")
+
+    # Bar/OHLCV evidence
+    if data_type.lower() in {"ohlcv", "bar", "bars"}:
+        required_bar_keys = (
+            "content_hash",
+            "source_id",
+            "timestamp_normalized",
+            "ordering_ok",
+            "duplicate_handling",
+            "gap_report",
+            "ohlc_invariants_ok",
+        )
+        missing = [k for k in required_bar_keys if k not in evidence]
+        if missing:
+            blockers.append("BAR_EVIDENCE_INCOMPLETE")
+            pit = MeasurementState.UNMEASURED.value
+        else:
+            gap = evidence.get("gap_report") or {}
+            gap_ratio = gap.get("gap_ratio") if isinstance(gap, dict) else None
+            if policy.max_gap_ratio is not None and gap_ratio is not None and float(gap_ratio) > float(policy.max_gap_ratio):
+                blockers.append("GAP_RATIO_EXCEEDED")
+                pit = MeasurementState.FAIL.value
+            elif evidence.get("pit_certified") or evidence.get("available_at_semantics"):
+                pit = MeasurementState.PASS.value
+            else:
+                pit = MeasurementState.OBSERVED.value
+
+    if policy.require_historical_universe:
+        univ = evidence.get("universe") or evidence.get("historical_universe") or {}
+        if not univ or univ.get("today_symbol_list_only"):
+            surv = MeasurementState.UNMEASURED.value
+            blockers.append("SURVIVORSHIP_UNMEASURED")
+        elif univ.get("listing_events") and univ.get("delisting_events") is not None:
+            surv = MeasurementState.PASS.value
+        else:
+            surv = MeasurementState.UNMEASURED.value
+            blockers.append("SURVIVORSHIP_UNMEASURED")
+    else:
+        surv = MeasurementState.NOT_IMPLEMENTED.value if "universe" not in evidence else MeasurementState.OBSERVED.value
+
+    if policy.require_revision_lineage:
+        rev_ev = evidence.get("revisions") or {}
+        if not (rev_ev.get("available_at") and rev_ev.get("event_time") and rev_ev.get("revision_id")):
+            rev = MeasurementState.UNMEASURED.value
+            blockers.append("REVISION_LINEAGE_UNMEASURED")
+        else:
+            rev = MeasurementState.PASS.value
+    else:
+        rev = MeasurementState.UNMEASURED.value
+
+    if policy.require_corporate_actions:
+        ca = evidence.get("corporate_actions")
+        if not ca:
+            corp = MeasurementState.UNMEASURED.value
+            blockers.append("CORPORATE_ACTIONS_UNMEASURED")
+        else:
+            corp = MeasurementState.PASS.value
+    else:
+        corp = MeasurementState.UNMEASURED.value
+
+    if policy.require_license_known and license_state in {"", "UNKNOWN", "UNMEASURED"}:
+        blockers.append("LICENSE_UNKNOWN")
+
+    if policy.require_pit and pit not in {
+        MeasurementState.PASS.value,
+        MeasurementState.MEASURED.value,
+        MeasurementState.OBSERVED.value,
+    }:
+        blockers.append("DATA_PIT_NOT_CERTIFIED")
+
+    if blockers:
+        cert_state = MeasurementState.FAIL.value if any(
+            b in blockers for b in ("DATA_PIT_NOT_CERTIFIED", "GAP_RATIO_EXCEEDED", "BAR_EVIDENCE_INCOMPLETE")
+        ) else MeasurementState.UNMEASURED.value
+    else:
+        cert_state = MeasurementState.PASS.value
+
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    body = {
+        "dataset_id": dataset_id,
+        "dataset_version_id": dataset_version_id,
+        "dataset_hash": dataset_hash,
+        "pit": pit,
+        "surv": surv,
+        "rev": rev,
+        "corp": corp,
+        "license": license_state,
+        "evidence": dict(evidence),
+    }
+    chash = hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()
+    return DataCertification(
+        certification_id=certification_id or f"cert_{chash[:16]}",
+        dataset_id=dataset_id,
+        dataset_version_id=dataset_version_id,
+        dataset_hash=dataset_hash,
+        certification_state=cert_state,
+        pit_state=pit,
+        survivorship_state=surv,
+        revision_state=rev,
+        corporate_action_state=corp,
+        license_state=license_state,
+        evidence=dict(evidence),
+        blockers=blockers,
+        source_id=source_id or str(evidence.get("source_id") or ""),
+        data_type=data_type,
+        certification_hash=chash,
+        certified_at=now,
+        certified_by=certified_by,
+    )
