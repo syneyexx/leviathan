@@ -788,6 +788,40 @@ class ModelDownloadExecutor:
                 http_status=500,
             )
 
+        # Bounded format verification (header only) — owned by model_download.
+        try:
+            from Data.modules.model_download.artifact_verify import (
+                validate_gguf_header,
+                validate_safetensors_header,
+            )
+
+            if primary_path.suffix.lower() == ".gguf":
+                header = validate_gguf_header(
+                    primary_path, cancel_check=lambda: False
+                )
+                if not header.get("ok"):
+                    raise ModelDownloadError(
+                        ModelDownloadErrorCode.MODEL_DOWNLOAD_VERIFICATION_FAILED,
+                        f"GGUF header validation failed: {header.get('error')}",
+                        http_status=500,
+                        details=header,
+                    )
+            elif primary_path.suffix.lower() == ".safetensors":
+                header = validate_safetensors_header(
+                    primary_path, cancel_check=lambda: False
+                )
+                if not header.get("ok"):
+                    raise ModelDownloadError(
+                        ModelDownloadErrorCode.MODEL_DOWNLOAD_VERIFICATION_FAILED,
+                        f"safetensors header validation failed: {header.get('error')}",
+                        http_status=500,
+                        details=header,
+                    )
+        except ModelDownloadError:
+            raise
+        except Exception:  # noqa: BLE001 — header verify is best-effort enrichment
+            pass
+
         is_multi = len(files_to_fetch) > 1
         local_path = str(dest_dir if is_multi else primary_path)
         fmt = None

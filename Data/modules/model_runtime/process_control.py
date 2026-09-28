@@ -9,15 +9,34 @@ import time
 from typing import Any
 
 
+def _windows_kill_tree(pid: int, *, force: bool = False) -> None:
+    """Terminate a Windows process tree without shell=True command injection."""
+    args = ["taskkill", "/PID", str(int(pid)), "/T"]
+    if force:
+        args.append("/F")
+    try:
+        subprocess.run(
+            args,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+            shell=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
 def terminate_owned_process(
     proc: subprocess.Popen[Any],
     *,
     graceful_timeout_seconds: float = 5.0,
     force_timeout_seconds: float = 3.0,
 ) -> dict[str, Any]:
-    """Gracefully stop a LEVIATHAN-owned subprocess, then force-kill if needed.
+    """Gracefully stop a LEVIATHAN-owned subprocess tree, then force-kill if needed.
 
     Never targets an arbitrary PID — only the Popen we own.
+    Windows-safe: uses CREATE_NEW_PROCESS_GROUP at spawn + taskkill /T.
     """
     if proc.poll() is not None:
         return {
@@ -29,7 +48,14 @@ def terminate_owned_process(
     forced = False
     try:
         if os.name == "nt":
-            proc.terminate()
+            # Graceful: CTRL_BREAK to process group when available; else terminate.
+            try:
+                proc.send_signal(signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
+            except (AttributeError, OSError, ValueError):
+                try:
+                    _windows_kill_tree(proc.pid, force=False)
+                except Exception:  # noqa: BLE001
+                    proc.terminate()
         else:
             try:
                 os.killpg(proc.pid, signal.SIGTERM)
@@ -49,7 +75,11 @@ def terminate_owned_process(
 
     try:
         if os.name == "nt":
-            proc.kill()
+            _windows_kill_tree(proc.pid, force=True)
+            try:
+                proc.kill()
+            except Exception:  # noqa: BLE001
+                pass
         else:
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
@@ -61,7 +91,6 @@ def terminate_owned_process(
     try:
         proc.wait(timeout=max(0.1, float(force_timeout_seconds)))
     except subprocess.TimeoutExpired:
-        # Process still alive — report honestly.
         return {
             "alreadyExited": False,
             "returncode": None,
@@ -74,6 +103,32 @@ def terminate_owned_process(
         "forced": forced,
         "stillAlive": False,
     }
+
+
+def spawn_owned_process(
+    command: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    cwd: str | None = None,
+) -> subprocess.Popen[Any]:
+    """Spawn a managed serving child with argv array (never shell=True)."""
+    if not command:
+        raise ValueError("empty command")
+    kwargs: dict[str, Any] = {
+        "args": list(command),
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.PIPE,
+        "env": env,
+        "cwd": cwd,
+        "shell": False,
+    }
+    if os.name == "nt":
+        # New process group for CTRL_BREAK / tree kill.
+        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        kwargs["creationflags"] = creationflags
+    else:
+        kwargs["start_new_session"] = True
+    return subprocess.Popen(**kwargs)
 
 
 def drain_pipe_bounded(pipe: Any, *, max_bytes: int = 64_000) -> str:

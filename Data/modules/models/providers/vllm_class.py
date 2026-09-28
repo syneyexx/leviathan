@@ -29,9 +29,11 @@ class VllmClassAdapter:
         mode: str = "inproc",
         command: list[str] | None = None,
     ) -> None:
+        from Data.modules.model_runtime.execution_gate import inline_execution_explicitly_allowed
         from Data.modules.model_runtime.managed_adapter import ManagedLocalServingAdapter
 
         self.provider_id = provider_id
+        allow_inproc = bool(mode == "inproc" and not command and inline_execution_explicitly_allowed())
         self._inner = ManagedLocalServingAdapter(
             provider_id=provider_id,
             backend_kind="vllm_class",
@@ -40,7 +42,7 @@ class VllmClassAdapter:
             timeout_seconds=timeout_seconds,
             mode=mode if command else "inproc",
             command=command,
-            allow_inproc_fixture=(mode == "inproc" and not command),
+            allow_inproc_fixture=allow_inproc,
         )
 
     def capabilities(self) -> RuntimeCapabilities:

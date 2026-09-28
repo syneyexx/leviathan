@@ -34,8 +34,17 @@ def _managed_adapter(
         timeout_seconds=timeout_seconds,
         mode=mode if command else "inproc",
         command=command,
-        allow_inproc_fixture=True,  # called only when managed path explicitly chooses inproc
+        # Production never silently falls back to inproc when binary missing.
+        # Tests must pass allow_inproc_fixture=True explicitly via managed mode
+        # only when LEVIATHAN_MODEL_RUNTIME_ALLOW_INLINE_TEST / pytest gate is on.
+        allow_inproc_fixture=_allow_inproc_fixture(),
     )
+
+
+def _allow_inproc_fixture() -> bool:
+    from Data.modules.model_runtime.execution_gate import inline_execution_explicitly_allowed
+
+    return bool(inline_execution_explicitly_allowed())
 
 
 class LlamaCppAdapter:

@@ -140,11 +140,38 @@ class ModelControlPlane:
         )
         self._adapters: dict[str, Any] = {}
         self._llm: Any | None = None
+        self._job_runtime: Any | None = None
+        self._model_runtime_client: Any | None = None
 
     def bind_job_runtime(self, job_runtime: Any | None) -> None:
-        """Attach Job Kernel so model downloads/imports enqueue to model_download workers."""
+        """Attach Job Kernel for downloads/imports + model_runtime lifecycle enqueue."""
+        self._job_runtime = job_runtime
         self.downloads.bind_job_runtime(job_runtime)
         self.imports.bind_job_runtime(job_runtime)
+        self._model_runtime_client = None
+        if job_runtime is not None:
+            try:
+                from Data.modules.model_runtime.facade import get_model_runtime_client
+
+                self._model_runtime_client = get_model_runtime_client(job_runtime)
+            except Exception:  # noqa: BLE001
+                self._model_runtime_client = None
+
+    def model_runtime_client(self) -> Any | None:
+        return self._model_runtime_client
+
+    def _externalize_runtime(self) -> bool:
+        """True when THIS process must enqueue rather than own serving processes."""
+        from Data.modules.execution.workload import running_in_worker_process
+        from Data.modules.model_runtime.execution_gate import (
+            allow_process_ownership,
+            production_requires_external,
+        )
+
+        # Authorized owner process executes locally.
+        if allow_process_ownership() and running_in_worker_process():
+            return False
+        return bool(production_requires_external(self.settings) and self._job_runtime is not None)
 
     def bind_llm(self, llm: Any) -> None:
         """Attach shared OpenAICompatibleLLM transport for inference sessions."""
@@ -1111,6 +1138,59 @@ class ModelControlPlane:
         *,
         confirm_oom: bool = False,
     ) -> dict[str, Any]:
+        if self._externalize_runtime():
+            client = self.model_runtime_client()
+            if client is None:
+                from Data.modules.models.errors import MODEL_RUNTIME_UNAVAILABLE
+
+                raise ModelControlError(
+                    code=MODEL_RUNTIME_UNAVAILABLE,
+                    message="model_runtime client unbound; cannot enqueue load",
+                    model_id=model_id,
+                    retryable=True,
+                    http_status=503,
+                )
+            if options is not None:
+                opt_payload = options.as_provider_payload(
+                    (
+                        "contextLength",
+                        "gpuOffloadLayers",
+                        "gpuMemoryLimitBytes",
+                        "cpuThreads",
+                        "batchSize",
+                        "flashAttention",
+                        "preferredDeviceIds",
+                        "pinnedDeviceIds",
+                        "excludedDeviceIds",
+                        "tensorSplit",
+                        "mainGpuOrdinal",
+                        "tensorParallelSize",
+                        "allowMultiGpu",
+                        "allowCpuOffload",
+                        "shardingMode",
+                    )
+                )
+            else:
+                opt_payload = {}
+            job = client.submit_load(
+                model_id=model_id,
+                options=opt_payload or {},
+                confirm_oom=confirm_oom,
+            )
+            return {
+                "queued": True,
+                "job": {
+                    "jobId": getattr(job, "job_id", None),
+                    "state": getattr(getattr(job, "state", None), "value", None)
+                    or str(getattr(job, "state", "")),
+                    "capabilityId": "model_runtime.load",
+                },
+                "modelId": model_id,
+                "truth": {
+                    "fastapi_does_not_spawn": True,
+                    "execution_owner": "model_runtime",
+                },
+            }
         binding = self.get_runtime_binding(model_id)
         return await self.residency.manual_load(
             model_id,
@@ -1121,6 +1201,42 @@ class ModelControlPlane:
         )
 
     async def unload_model(self, model_id: str) -> dict[str, Any]:
+        if self._externalize_runtime():
+            client = self.model_runtime_client()
+            if client is None:
+                from Data.modules.models.errors import MODEL_RUNTIME_UNAVAILABLE
+
+                raise ModelControlError(
+                    code=MODEL_RUNTIME_UNAVAILABLE,
+                    message="model_runtime client unbound; cannot enqueue unload",
+                    model_id=model_id,
+                    retryable=True,
+                    http_status=503,
+                )
+            generation = None
+            try:
+                snap = self.residency.snapshot(model_id)
+                generation = int(getattr(snap, "runtime_generation", 0) or 0) or None
+            except Exception:  # noqa: BLE001
+                generation = None
+            job = client.submit_unload(
+                model_id=model_id, serving_generation=generation
+            )
+            return {
+                "queued": True,
+                "job": {
+                    "jobId": getattr(job, "job_id", None),
+                    "state": getattr(getattr(job, "state", None), "value", None)
+                    or str(getattr(job, "state", "")),
+                    "capabilityId": "model_runtime.unload",
+                },
+                "modelId": model_id,
+                "servingGeneration": generation,
+                "truth": {
+                    "fastapi_does_not_stop": True,
+                    "execution_owner": "model_runtime",
+                },
+            }
         result = await self.residency.manual_unload(model_id)
         # Invalidate live runtime prefix/KV affinity — tokenizer caches may remain.
         try:
@@ -1165,6 +1281,33 @@ class ModelControlPlane:
         return measured.public_dict()
 
     def list_serving_workers(self) -> list[dict[str, Any]]:
+        # Fast status read: prefer store projection when API does not own processes.
+        if self._externalize_runtime():
+            rows = self.store.list_serving_workers()
+            out: list[dict[str, Any]] = []
+            for row in rows:
+                out.append(
+                    {
+                        "worker_id": row.get("worker_id"),
+                        "provider_id": row.get("provider_id"),
+                        "model_id": row.get("model_id"),
+                        "backend_kind": row.get("backend_kind"),
+                        "endpoint": row.get("endpoint"),
+                        "state": row.get("state"),
+                        "pid": row.get("pid"),
+                        "started_at": row.get("started_at"),
+                        "last_health_at": row.get("last_health_at"),
+                        "last_error": row.get("last_error"),
+                        "health_score": row.get("health_score"),
+                        "revision_id": row.get("revision_id"),
+                        "metadata": row.get("metadata") or {},
+                        "truth": {
+                            "dead_is_not_ready": row.get("state") != "READY",
+                            "status_is_projection": True,
+                        },
+                    }
+                )
+            return out
         workers = [w.public_dict() for w in self.serving.list_workers()]
         for worker in workers:
             self.store.upsert_serving_worker(
@@ -1187,7 +1330,36 @@ class ModelControlPlane:
         return workers
 
     def reconcile_serving_workers(self) -> dict[str, Any]:
-        """Honest recovery: killed workers → DEAD; registry loaded flags cleared."""
+        """Honest recovery: killed workers → DEAD; registry loaded flags cleared.
+
+        When externalized in the API process, enqueue model_runtime.reconcile
+        instead of mutating process state from FastAPI.
+        """
+        if self._externalize_runtime():
+            client = self.model_runtime_client()
+            if client is None:
+                from Data.modules.models.errors import MODEL_RUNTIME_UNAVAILABLE
+
+                raise ModelControlError(
+                    code=MODEL_RUNTIME_UNAVAILABLE,
+                    message="model_runtime client unbound; cannot enqueue reconcile",
+                    retryable=True,
+                    http_status=503,
+                )
+            job = client.submit_reconcile()
+            return {
+                "queued": True,
+                "job": {
+                    "jobId": getattr(job, "job_id", None),
+                    "state": getattr(getattr(job, "state", None), "value", None)
+                    or str(getattr(job, "state", "")),
+                    "capabilityId": "model_runtime.reconcile",
+                },
+                "truth": {
+                    "fastapi_does_not_reconcile_pids": True,
+                    "execution_owner": "model_runtime",
+                },
+            }
         changed = self.serving.reconcile()
         adapter_changes: list[dict[str, Any]] = []
         for provider in self.list_providers():

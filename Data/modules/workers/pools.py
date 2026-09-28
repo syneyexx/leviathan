@@ -151,6 +151,27 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
         ),
         max_count=2,
     ),
+    "model_runtime": PoolDefinition(
+        pool_id="model_runtime",
+        entrypoint="Data.modules.workers.entrypoints.model_runtime",
+        default_count=1,
+        job_kinds=(
+            "model_runtime.",
+            "model_runtime.load",
+            "model_runtime.unload",
+            "model_runtime.reconcile",
+            "model_runtime.benchmark",
+            "model_runtime.probe",
+            "model_runtime.inference_test",
+        ),
+        resource_classes=("CPU_LIGHT", "MODEL_INFERENCE", "GPU_SHARED"),
+        description=(
+            "Singleton managed model-serving lifecycle owner — start/stop/"
+            "reconcile ServingSupervisor children, benchmarks, inference probes. "
+            "Not Model Control Plane registry; not model_download acquisition."
+        ),
+        max_count=1,
+    ),
     "mcp_execution": PoolDefinition(
         pool_id="mcp_execution",
         entrypoint="Data.modules.workers.entrypoints.mcp_execution",
