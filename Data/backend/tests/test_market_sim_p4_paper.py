@@ -53,7 +53,8 @@ class P4APaperIsolationTests(unittest.TestCase):
             store.initialize()
             data = MarketDataStore(store, markets)
             plane = MarketSimControlPlane(store=store, data=data, enabled=True)
-            # Mock provider quote so orders can proceed
+            # Unit tests use mocked providers inline — not provider_io workers.
+            plane._runners_externalized = staticmethod(lambda: False)  # type: ignore[method-assign]
             provider = MagicMock()
             provider.status.return_value = MagicMock(reachable=True, latency_ms=1)
             provider.fetch_quote.return_value = {"price": 100.0, "symbol": "BTCUSDT"}
@@ -87,6 +88,7 @@ class P4APaperIsolationTests(unittest.TestCase):
             store.initialize()
             data = MarketDataStore(store, markets)
             plane = MarketSimControlPlane(store=store, data=data, enabled=True)
+            plane._runners_externalized = staticmethod(lambda: False)  # type: ignore[method-assign]
             provider = MagicMock()
             provider.status.return_value = MagicMock(reachable=True, latency_ms=1)
             provider.fetch_quote.return_value = {"price": 100.0, "symbol": "BTCUSDT"}

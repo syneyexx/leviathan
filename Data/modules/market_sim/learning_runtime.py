@@ -781,16 +781,18 @@ def run_learning_on_worker(
     learner = AdaptiveEvolutionaryLearner(run)
     factory = _version_factory(plane)
     generations_this_job = 0
+    # Only slice when the worker explicitly requests a per-job bound.
+    # Inline/control-plane callers (max_generations_this_job=None) run to
+    # natural completion — do not treat generation_budget as a yield point.
     slice_limit = (
-        int(max_generations_this_job)
+        max(1, int(max_generations_this_job))
         if max_generations_this_job is not None
-        else max(1, int(run.generation_budget or 1))
+        else None
     )
-    slice_limit = max(1, slice_limit)
 
     # Resume: continue from current_generation (completed gens are checkpointed)
     while True:
-        if generations_this_job >= slice_limit:
+        if slice_limit is not None and generations_this_job >= slice_limit:
             run.status = LearningRunStatus.RUNNING.value
             run.updated_at = utc_now()
             persist_learning_run(plane.store, run)

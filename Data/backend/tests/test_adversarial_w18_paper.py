@@ -145,6 +145,7 @@ class PaperRestartReuseTests(unittest.TestCase):
             store.initialize()
             data = MarketDataStore(store, markets)
             plane = MarketSimControlPlane(store=store, data=data, enabled=True)
+            plane._runners_externalized = staticmethod(lambda: False)  # type: ignore[method-assign]
             provider = MagicMock()
             provider.status.return_value = MagicMock(reachable=True, latency_ms=1.0)
             provider.fetch_quote.return_value = {"price": 25.0, "symbol": "AAPL"}
@@ -187,6 +188,7 @@ class PaperRestartReuseTests(unittest.TestCase):
             store.initialize()
             data = MarketDataStore(store, markets)
             plane = MarketSimControlPlane(store=store, data=data, enabled=True)
+            plane._runners_externalized = staticmethod(lambda: False)  # type: ignore[method-assign]
             provider = MagicMock()
             provider.status.return_value = MagicMock(reachable=True, latency_ms=1.0)
             provider.fetch_quote.return_value = {"price": 40.0, "symbol": "AAPL"}

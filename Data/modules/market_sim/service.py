@@ -4570,15 +4570,16 @@ class MarketSimControlPlane:
         last_run_metrics: dict[str, Any] = dict((campaign.metadata or {}).get("last_run_metrics") or {})
         last_run_id: str | None = (campaign.metadata or {}).get("last_run_id")
         iterations_this_job = 0
+        # Only slice when the worker explicitly requests a per-job bound.
+        # Inline callers (max_iterations_this_job=None) run to completion.
         slice_limit = (
-            int(max_iterations_this_job)
+            max(1, int(max_iterations_this_job))
             if max_iterations_this_job is not None
-            else campaign.max_iterations
+            else None
         )
-        slice_limit = max(1, slice_limit)
 
         while campaign.checkpoint_iteration < campaign.max_iterations:
-            if iterations_this_job >= slice_limit:
+            if slice_limit is not None and iterations_this_job >= slice_limit:
                 campaign.status = "RUNNING"
                 campaign.updated_at = utc_now()
                 campaign.metadata = {

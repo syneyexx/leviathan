@@ -36,6 +36,8 @@ def _plane(tmp: str) -> tuple[MarketSimControlPlane, list[dict]]:
 
 def _plane_with_providers(tmp: str) -> tuple[MarketSimControlPlane, list[dict]]:
     plane, sources = _plane(tmp)
+    # Unit tests use mocked providers inline — not provider_io workers.
+    plane._runners_externalized = staticmethod(lambda: False)  # type: ignore[method-assign]
     provider = MagicMock()
     provider.status.return_value = MagicMock(reachable=True, latency_ms=1.0)
     provider.fetch_quote.return_value = {"price": 100.0, "symbol": "BTCUSDT"}
