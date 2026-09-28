@@ -523,6 +523,41 @@ class PortfolioService:
         syms = symbols or list(book.positions.keys())
         if not syms and row.get("benchmark_symbol"):
             syms = [row["benchmark_symbol"]]
+
+        plane = self.plane
+        externalized = bool(
+            plane is not None and getattr(plane, "_runners_externalized", lambda: False)()
+        )
+        if externalized and plane is not None and getattr(plane, "job_runtime", None) is not None:
+            meta["source"] = "provider_io"
+            for sym in syms:
+                try:
+                    quote, feed_status, _latency = plane._fetch_paper_quote(
+                        provider_id=str(row.get("provider_id") or "binance_public"),
+                        symbol=str(sym),
+                    )
+                    px = 0.0
+                    if isinstance(quote, dict):
+                        px = float(quote.get("price") or quote.get("last") or 0)
+                    if px > 0:
+                        marks[sym.upper()] = px
+                        if feed_status != "live":
+                            meta["stale"] = True
+                        continue
+                    pos = book.positions.get(sym.upper())
+                    if pos:
+                        marks[sym.upper()] = float(pos.avg_entry)
+                        meta["stale"] = True
+                except Exception as exc:  # noqa: BLE001
+                    meta["errors"].append(f"{sym}:{exc}")
+                    meta["stale"] = True
+                    pos = book.positions.get(sym.upper())
+                    if pos:
+                        marks[sym.upper()] = float(pos.avg_entry)
+            if not marks:
+                meta["stale"] = True
+            return marks, meta
+
         provider = None
         registry = self._provider_registry()
         if registry is not None:

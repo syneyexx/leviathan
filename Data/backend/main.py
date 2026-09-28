@@ -579,11 +579,16 @@ except Exception:  # noqa: BLE001
 neuro_soak = NeuroSoakHarness(long_soak_enabled=settings.features.neuro_soak_long)
 browser_worker = BrowserWorker(
     artifact_store=artifacts,
-    backend_kind="local_dom",
+    backend_kind=str(getattr(getattr(settings, "browser", None), "backend", None) or "local_dom"),
     filesystem_root=str(PROJECT_ROOT),
     allow_network=True,  # localhost QA crawler probes; public crawl still host-scoped
+    session_ttl_seconds=float(
+        getattr(getattr(settings, "browser", None), "session_ttl_seconds", 900.0) or 900.0
+    ),
 )
 # Shared GI9/GI10 journey crawler — JobRuntime owns durable cancel/checkpoint/resume.
+# Live crawler execution belongs to the browser worker pool; API keeps a projection
+# handle for tests/dev only and must not call crawler.run() in production routes.
 from Data.modules.browser import BrowserJourneyCrawler, CrawlBudget  # noqa: E402
 
 _qa_hosts = tuple(
@@ -594,10 +599,13 @@ _qa_hosts = tuple(
 browser_qa_crawler = BrowserJourneyCrawler(
     browser_worker=BrowserWorker(
         artifact_store=artifacts,
-        backend_kind="local_dom",
+        backend_kind=str(getattr(getattr(settings, "browser", None), "backend", None) or "local_dom"),
         filesystem_root=str(PROJECT_ROOT),
         allow_network=True,
         qa_crawler=False,  # type: ignore[arg-type]
+        session_ttl_seconds=float(
+            getattr(getattr(settings, "browser", None), "session_ttl_seconds", 900.0) or 900.0
+        ),
     ),
     artifact_store=artifacts,
     allowed_hosts=_qa_hosts or ("localhost", "127.0.0.1", "::1"),
@@ -609,18 +617,31 @@ browser_qa_crawler = BrowserJourneyCrawler(
         getattr(settings.browser_qa, "allow_destructive_test_actions", False)
     ),
     observability=observability,
+    slice_max_actions=int(getattr(settings.browser_qa, "slice_max_actions", 12) or 12),
+    slice_max_seconds=float(getattr(settings.browser_qa, "slice_max_seconds", 12.0) or 12.0),
 )
 browser_worker._qa_crawler = browser_qa_crawler
 browser_stub = BrowserAutomationStub()  # honesty path when capability_world disabled
-if settings.features.capability_world:
+# Bind executors only for developer mode (EXTERNALIZE_API=false). Production FastAPI
+# must enqueue to the browser/media pools — never own Playwright/FFmpeg.
+from Data.modules.execution.workload import externalize_api_enabled  # noqa: E402
+
+if settings.features.capability_world and not externalize_api_enabled():
     execution_gateway.browser_executor = browser_worker
-media_service = MediaService(artifact_store=artifacts)
+media_service = MediaService(
+    artifact_store=artifacts,
+    backend_mode="fixture",  # API process never hosts production media work
+    allow_fixture_in_production=False,
+)
 media_stub = MediaAutomationStub()
 voice_service = RealtimeVoiceService()
 voice_stub = VoiceRuntimeStub()
 multimodal_sessions = MultimodalSessionRegistry()
-if settings.features.multimodal_realtime:
+if settings.features.multimodal_realtime and not externalize_api_enabled():
     execution_gateway.media_executor = media_service
+    execution_gateway.voice_executor = voice_service
+elif settings.features.multimodal_realtime:
+    # Voice remains unchanged by this wave — keep voice executor binding.
     execution_gateway.voice_executor = voice_service
 
 
@@ -1623,12 +1644,16 @@ def _assess_product_truth_report():
     elif browser_kind_val == "local_dom":
         browser_capable = True
     elif browser_kind_val == "playwright":
-        # Package alone is not READY — probe Chromium launch/navigate/observe.
-        readiness = getattr(browser_worker.backend, "readiness", None)
-        if callable(readiness):
-            info = readiness()
-            browser_capable = bool(info.get("ready"))
-        else:
+        # Cached readiness only — FastAPI must never launch Chromium here.
+        try:
+            from Data.modules.browser.readiness import global_browser_readiness_cache
+
+            snap = global_browser_readiness_cache().read()
+            if snap.measured_at > 0:
+                browser_capable = bool(snap.production_capable and snap.chromium_launched)
+            else:
+                browser_capable = False  # unmeasured; not READY
+        except Exception:  # noqa: BLE001
             browser_capable = False
 
     try:
@@ -2474,7 +2499,13 @@ app.include_router(build_research_command_router(research_command_service))
 app.include_router(build_cognition_router(cognition_runtime))
 app.include_router(build_team_router(team_orchestrator))
 app.include_router(build_tasks_router(task_service))
-app.include_router(build_browser_qa_router(browser_worker))
+app.include_router(
+    build_browser_qa_router(
+        browser_worker,
+        job_runtime=job_runtime,
+        settings=settings,
+    )
+)
 app.include_router(build_settings_router(settings_plane))
 app.include_router(build_behavior_router(behavior_store, observability=observability))
 app.include_router(build_efficiency_router())

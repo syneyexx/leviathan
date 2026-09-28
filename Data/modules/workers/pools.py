@@ -321,6 +321,32 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
         resource_classes=("GPU_SHARED", "CPU_HEAVY"),
         description="Specialist reranking (disabled until backend configured)",
     ),
+    "browser": PoolDefinition(
+        pool_id="browser",
+        entrypoint="Data.modules.workers.entrypoints.browser",
+        default_count=1,
+        job_kinds=("browser.",),
+        resource_classes=("NETWORK_BOUND", "CPU_HEAVY", "MEMORY_HEAVY"),
+        description=(
+            "Singleton browser automation / Playwright / Chromium / QA crawl owner. "
+            "max_count=1 until session affinity/sharding exists — session state "
+            "(cookies, pages, JS) must not split across workers."
+        ),
+        max_count=1,
+    ),
+    "media": PoolDefinition(
+        pool_id="media",
+        entrypoint="Data.modules.workers.entrypoints.media",
+        default_count=1,
+        job_kinds=("media.",),
+        resource_classes=("IO_HEAVY", "CPU_HEAVY", "MEMORY_HEAVY"),
+        description=(
+            "Deterministic media transforms (FFmpeg/FFprobe/image) and media "
+            "orchestration for generation/vision via Model Control Plane. "
+            "Not Voice ASR/TTS; not Document AI OCR; not a second model runtime."
+        ),
+        max_count=2,
+    ),
     "document_ai": PoolDefinition(
         pool_id="document_ai",
         entrypoint="Data.modules.workers.entrypoints.document_ai",
@@ -342,8 +368,8 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
         entrypoint="Data.modules.workers.entrypoints.training_control",
         default_count=1,
         job_kinds=("training.",),
-        resource_classes=("GPU_EXCLUSIVE", "BATCH"),
-        description="Training-control ownership of trainer subprocess",
+        resource_classes=("GPU_EXCLUSIVE", "BATCH", "IO_HEAVY", "CPU_HEAVY"),
+        description="Training-control ownership of trainer subprocess + integrity/hash",
         max_count=1,
     ),
     "market_sim": PoolDefinition(

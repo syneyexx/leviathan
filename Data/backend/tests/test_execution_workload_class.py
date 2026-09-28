@@ -85,10 +85,18 @@ class ClassifyCapabilityTests(unittest.TestCase):
                     ExecutionWorkloadClass.INLINE_SAFE,
                 )
 
-    def test_browser_preferred(self) -> None:
+    def test_browser_external_required(self) -> None:
         self.assertEqual(
             classify_capability("browser.navigate"),
-            ExecutionWorkloadClass.EXTERNAL_PREFERRED,
+            ExecutionWorkloadClass.EXTERNAL_REQUIRED,
+        )
+        self.assertEqual(
+            classify_capability("media.probe"),
+            ExecutionWorkloadClass.EXTERNAL_REQUIRED,
+        )
+        self.assertEqual(
+            classify_capability("browser.qa.status"),
+            ExecutionWorkloadClass.INLINE_SAFE,
         )
 
     def test_normalize_metadata_sets_execution_class(self) -> None:

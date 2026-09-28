@@ -621,6 +621,34 @@ class BrowserQaSettings:
     max_pages: int = 50
     max_actions: int = 200
     allow_destructive_test_actions: bool = False
+    slice_max_actions: int = 12
+    slice_max_seconds: float = 12.0
+
+
+@dataclass(frozen=True)
+class BrowserSettings:
+    """Browser worker / Playwright policy."""
+
+    backend: str = "local_dom"
+    headless: bool = True
+    session_ttl_seconds: float = 900.0
+    max_wait_seconds: float = 30.0
+    navigation_timeout_seconds: float = 30.0
+    allow_private_network: bool = False
+
+
+@dataclass(frozen=True)
+class MediaSettings:
+    """Media worker / FFmpeg policy."""
+
+    backend: str = "ffmpeg"
+    ffmpeg_path: str | None = None
+    ffprobe_path: str | None = None
+    max_batch_size: int = 32
+    default_threads: int = 2
+    max_duration_seconds: float = 7200.0
+    max_pixels: int = 40_000_000
+    temp_reserve_bytes: int = 512 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -664,7 +692,9 @@ class Settings:
     research_integration: ResearchIntegrationSettings
     native_compute: NativeComputeSettings
     assistant: AssistantSettings
+    browser: BrowserSettings
     browser_qa: BrowserQaSettings
+    media: MediaSettings
     managed_serving: ManagedServingSettings
     database_paths: DatabasePaths
     database_path: Path  # Control Plane path (compat alias)
@@ -1616,6 +1646,50 @@ class Settings:
                 ),
                 allow_destructive_test_actions=_env_bool(
                     "LEVIATHAN_BROWSER_QA_ALLOW_DESTRUCTIVE", False
+                ),
+                slice_max_actions=_env_int(
+                    "LEVIATHAN_BROWSER_QA_SLICE_MAX_ACTIONS", 12, minimum=1, maximum=200
+                ),
+                slice_max_seconds=_env_float(
+                    "LEVIATHAN_BROWSER_QA_SLICE_MAX_SECONDS", 12.0, minimum=0.5, maximum=300.0
+                ),
+            ),
+            browser=BrowserSettings(
+                backend=(
+                    _env_raw("LEVIATHAN_BROWSER_BACKEND", "local_dom") or "local_dom"
+                ).strip().lower(),
+                headless=_env_bool("LEVIATHAN_BROWSER_HEADLESS", True),
+                session_ttl_seconds=_env_float(
+                    "LEVIATHAN_BROWSER_SESSION_TTL_SECONDS", 900.0, minimum=30.0, maximum=86400.0
+                ),
+                max_wait_seconds=_env_float(
+                    "LEVIATHAN_BROWSER_MAX_WAIT_SECONDS", 30.0, minimum=0.1, maximum=300.0
+                ),
+                navigation_timeout_seconds=_env_float(
+                    "LEVIATHAN_BROWSER_NAVIGATION_TIMEOUT_SECONDS",
+                    30.0,
+                    minimum=1.0,
+                    maximum=300.0,
+                ),
+                allow_private_network=_env_bool("LEVIATHAN_BROWSER_ALLOW_PRIVATE_NETWORK", False),
+            ),
+            media=MediaSettings(
+                backend=(_env_raw("LEVIATHAN_MEDIA_BACKEND", "ffmpeg") or "ffmpeg").strip().lower(),
+                ffmpeg_path=_env_raw("LEVIATHAN_FFMPEG_PATH", None),
+                ffprobe_path=_env_raw("LEVIATHAN_FFPROBE_PATH", None),
+                max_batch_size=_env_int("LEVIATHAN_MEDIA_MAX_BATCH_SIZE", 32, minimum=1, maximum=256),
+                default_threads=_env_int("LEVIATHAN_MEDIA_FFMPEG_THREADS", 2, minimum=1, maximum=16),
+                max_duration_seconds=_env_float(
+                    "LEVIATHAN_MEDIA_MAX_DURATION_SECONDS", 7200.0, minimum=1.0, maximum=86400.0
+                ),
+                max_pixels=_env_int(
+                    "LEVIATHAN_MEDIA_MAX_PIXELS", 40_000_000, minimum=1_000_000, maximum=200_000_000
+                ),
+                temp_reserve_bytes=_env_int(
+                    "LEVIATHAN_MEDIA_TEMP_RESERVE_BYTES",
+                    512 * 1024 * 1024,
+                    minimum=16 * 1024 * 1024,
+                    maximum=64 * 1024 * 1024 * 1024,
                 ),
             ),
             database_paths=database_paths,

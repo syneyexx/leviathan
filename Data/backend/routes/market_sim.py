@@ -841,8 +841,8 @@ def build_market_sim_router(
     @router.post("/api/market-sim/paper/deployments/{deployment_id}/autonomous-step")
     def autonomous_step(deployment_id: str, payload: AutonomousPaperStepRequest) -> dict:
         try:
-            return service.autonomous_paper_step(
-                deployment_id, side=payload.side, qty=payload.qty
+            return service.request_autonomous_step(
+                deployment_id, side=payload.side, qty=payload.qty, requested_by="api.autonomous_step"
             )
         except MarketSimError as exc:
             raise_market_sim_error(exc)

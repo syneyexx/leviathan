@@ -1,4 +1,9 @@
-"""Browser request + legacy Browser QA journey HTTP routes."""
+"""Browser request + legacy Browser QA journey HTTP routes.
+
+Production topology:
+  FastAPI (control plane) → JobRuntime enqueue → browser worker singleton
+Never: process_next(), BrowserWorker.execute(), crawler.run(), Playwright launch.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +13,12 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from Data.modules.browser import BrowserAction
-from Data.modules.execution import CapabilityRequest, CapabilityStatus
+from Data.modules.execution.browser_dispatch import (
+    DEFAULT_INTERACTIVE_WAIT_SECONDS,
+    DEFAULT_QA_WAIT_SECONDS,
+    enqueue_and_maybe_await_browser,
+)
+from Data.modules.jobs.states import JobState
 
 
 class BrowserRequest(BaseModel):
@@ -24,7 +34,9 @@ class BrowserRequest(BaseModel):
     approval_id: str | None = None
     run_id: str | None = None
     trace_id: str | None = None
+    # Compatibility only — ignored for execution topology (always external).
     via_job: bool = False
+    wait_seconds: float | None = Field(default=None, ge=0, le=60)
 
 
 class BrowserQaCrawlRequest(BaseModel):
@@ -41,6 +53,7 @@ class BrowserQaCrawlRequest(BaseModel):
     trace_id: str | None = None
     approval_id: str | None = None
     via_job: bool = False
+    wait_seconds: float | None = Field(default=None, ge=0, le=60)
 
 
 class BrowserQaJourneyRef(BaseModel):
@@ -50,6 +63,7 @@ class BrowserQaJourneyRef(BaseModel):
     run_id: str | None = None
     trace_id: str | None = None
     via_job: bool = False
+    wait_seconds: float | None = Field(default=None, ge=0, le=60)
 
 
 _BROWSER_ACTION_TO_CAPABILITY = {
@@ -68,6 +82,25 @@ _BROWSER_ACTION_TO_CAPABILITY = {
 }
 
 
+def _job_http_status(payload: dict[str, Any]) -> int:
+    state = str(payload.get("state") or "").upper()
+    job = payload.get("job") or {}
+    error = str(job.get("error") or "")
+    if state == "FAILED":
+        if "UNAVAILABLE" in error.upper():
+            return 503
+        if "BLOCKED" in error.upper() or "DENIED" in error.upper():
+            return 403
+        if "TIMEOUT" in error.upper():
+            return 408
+        return 422
+    if state == "CANCELLED":
+        return 409
+    if payload.get("queued"):
+        return 202
+    return 200
+
+
 def build_browser_router(
     *,
     settings: Any,
@@ -76,76 +109,39 @@ def build_browser_router(
     execution_gateway: Any,
     job_runtime: Any,
     observability: Any,
+    browser_status_reader: Any | None = None,
 ) -> APIRouter:
     """Legacy `/api/browser/request` + `/api/browser/qa/{journey_id}/*` surfaces.
 
-    Newer crawl control-plane routes live in ``browser_qa.py``
-    (``/api/browser/qa/crawls``).
+    ``browser_qa_crawler`` is retained for signature compatibility but must not
+    be invoked for live crawl/replay from these production routes.
     """
     router = APIRouter(tags=["browser"])
+    _ = (execution_gateway, browser_qa_crawler)  # control-plane authority / unused live
 
-    def _browser_qa_via_gateway(
-        *,
-        capability_id: str,
-        arguments: dict,
-        approval_id: str | None,
-        run_id: str | None,
-        trace_id: str | None,
-        via_job: bool,
-    ) -> dict:
-        if not settings.features.capability_world:
-            raise HTTPException(status_code=501, detail="capability_world disabled")
-        if via_job:
-            job = job_runtime.enqueue(
-                capability_id=capability_id,
-                arguments=arguments,
-                run_id=run_id,
-                approval_id=approval_id,
-                requested_by="api.browser.qa",
-                trace_id=trace_id,
-                metadata={"browser_qa": capability_id},
-            )
+    @router.get("/api/browser/status")
+    def browser_status() -> dict:
+        """Cached readiness / worker projection — never launches Chromium."""
+        if browser_status_reader is not None and callable(browser_status_reader):
+            snap = browser_status_reader()
+            return snap if isinstance(snap, dict) else {"truth": {"cached_only": True}}
+        try:
+            from Data.modules.browser.readiness import global_browser_readiness_cache
+
+            return global_browser_readiness_cache().read().public_dict()
+        except Exception:  # noqa: BLE001
             return {
-                "job": job.public_dict(),
-                "capability_id": capability_id,
+                "worker": "UNAVAILABLE",
+                "backend": "UNKNOWN",
+                "chromium": "UNAVAILABLE",
                 "truth": {
-                    "requires_capability_gateway": True,
-                    "job_runtime_cancel_checkpoint_resume": "EXTERNAL_REQUIRED",
-                    "routed_via_job": True,
+                    "cached_status_does_not_launch_chromium": True,
+                    "stale": True,
                 },
             }
-        result = execution_gateway.execute(
-            CapabilityRequest(
-                capability_id=capability_id,
-                arguments=arguments,
-                approval_id=approval_id,
-                run_id=run_id,
-                requested_by="api.browser.qa",
-                trace_id=trace_id,
-            )
-        )
-        status_code = 200
-        if result.status == CapabilityStatus.REJECTED:
-            reason = (result.telemetry or {}).get("reason")
-            status_code = 403 if reason in {"approval_required", "approval_denied"} else 422
-        elif result.status == CapabilityStatus.FAILED:
-            status_code = 500
-        if status_code != 200:
-            raise HTTPException(status_code=status_code, detail=result.public_dict())
-        return {
-            "result": result.public_dict(),
-            "capability_id": capability_id,
-            "truth": {
-                "requires_capability_gateway": True,
-                "job_runtime_cancel_checkpoint_resume": "EXTERNAL_REQUIRED",
-                "localhost_scoped_by_default": True,
-                "no_stealth_anti_bot": True,
-            },
-        }
 
     @router.post("/api/browser/request")
     def browser_request(payload: BrowserRequest) -> dict:
-        """Browser actions go through ExecutionGateway (no private bypass)."""
         try:
             action = BrowserAction(payload.action.upper())
         except ValueError as exc:
@@ -180,67 +176,49 @@ def build_browser_router(
         if payload.contains_text is not None:
             arguments["contains_text"] = payload.contains_text
 
-        if payload.via_job:
-            job = job_runtime.enqueue(
-                capability_id=capability_id,
-                arguments=arguments,
-                run_id=payload.run_id,
-                approval_id=payload.approval_id,
-                requested_by="api.browser",
-                trace_id=payload.trace_id,
-                metadata={"browser_action": action.value},
-            )
-            processed = job_runtime.process_next()
-            final = job_runtime.get(job.job_id) or processed or job
-            return {
-                "job": final.public_dict(),
-                "capability_id": capability_id,
-                "truth": {
-                    "requires_capability_gateway": True,
-                    "no_private_browser_bypass": True,
-                    "routed_via_job": True,
-                },
-            }
-
-        result = execution_gateway.execute(
-            CapabilityRequest(
-                capability_id=capability_id,
-                arguments=arguments,
-                approval_id=payload.approval_id,
-                run_id=payload.run_id,
-                requested_by="api.browser",
-                trace_id=payload.trace_id,
-            )
+        wait = (
+            float(payload.wait_seconds)
+            if payload.wait_seconds is not None
+            else DEFAULT_INTERACTIVE_WAIT_SECONDS
+        )
+        # via_job is ignored — production always externalizes.
+        result = enqueue_and_maybe_await_browser(
+            job_runtime,
+            capability_id=capability_id,
+            arguments=arguments,
+            approval_id=payload.approval_id,
+            requested_by="api.browser",
+            run_id=payload.run_id,
+            trace_id=payload.trace_id,
+            metadata={"browser_action": action.value, "via_job_compat": bool(payload.via_job)},
+            wait_seconds=wait,
         )
         observability.emit(
             "browser",
             "request",
             payload={
                 "capability_id": capability_id,
-                "status": result.status.value,
-                "request_id": result.request_id,
+                "job_id": result.get("job_id"),
+                "state": result.get("state"),
+                "queued": result.get("queued"),
                 "run_id": payload.run_id,
                 "trace_id": payload.trace_id,
             },
-            level="info" if result.status.value == "COMPLETED" else "warn",
+            level="info",
         )
-        status_code = 200
-        if result.status == CapabilityStatus.REJECTED:
-            reason = (result.telemetry or {}).get("reason")
-            status_code = 403 if reason in {"approval_required", "approval_denied"} else 422
-        elif result.status == CapabilityStatus.FAILED:
-            status_code = 500
-        if status_code != 200:
-            raise HTTPException(status_code=status_code, detail=result.public_dict())
-        return {
-            "result": result.public_dict(),
-            "capability_id": capability_id,
+        http = _job_http_status(result)
+        body = {
+            **result,
+            "result": result.get("job"),
             "truth": {
-                "requires_capability_gateway": True,
-                "no_private_browser_bypass": True,
+                **(result.get("truth") or {}),
                 "fixture_is_not_chromium": True,
+                "via_job_ignored_for_topology": True,
             },
         }
+        if http >= 400:
+            raise HTTPException(status_code=http, detail=body)
+        return body
 
     @router.post("/api/browser/qa/crawl")
     def browser_qa_crawl(payload: BrowserQaCrawlRequest) -> dict:
@@ -262,72 +240,85 @@ def build_browser_router(
             arguments["auth_lease_id"] = payload.auth_lease_id
         if payload.journey_id is not None:
             arguments["journey_id"] = payload.journey_id
-        if payload.via_job:
-            return _browser_qa_via_gateway(
-                capability_id="browser.qa.crawl",
-                arguments=arguments,
-                approval_id=payload.approval_id,
-                run_id=payload.run_id,
-                trace_id=payload.trace_id,
-                via_job=True,
-            )
-        # Direct control-plane path for local/dev (worker path remains via_job=True).
-        from Data.modules.browser import JourneyPersona
 
-        persona_raw = str(payload.persona or "DESKTOP_MOUSE")
-        try:
-            persona = JourneyPersona(persona_raw.upper())
-        except ValueError:
-            persona = JourneyPersona.DESKTOP_MOUSE
-        if payload.allowed_hosts:
-            browser_qa_crawler.allowed_hosts = tuple(str(h).lower() for h in payload.allowed_hosts)
-        if payload.budgets:
-            from Data.modules.browser import CrawlBudget
-
-            b = payload.budgets
-            browser_qa_crawler.budget = CrawlBudget(
-                max_pages=int(b.get("max_pages", browser_qa_crawler.budget.max_pages)),
-                max_actions=int(b.get("max_actions", browser_qa_crawler.budget.max_actions)),
-                max_wall_time_seconds=float(
-                    b.get(
-                        "max_wall_time_seconds",
-                        b.get("max_wall_time_s", browser_qa_crawler.budget.max_wall_time_seconds),
-                    )
-                ),
-            )
-        browser_qa_crawler.allow_destructive = bool(payload.allow_destructive_test_actions)
-        report = browser_qa_crawler.run(
-            start_url=payload.seed_url,
-            persona=persona,
-            seed=int(payload.seed),
-            run_id=payload.run_id,
+        wait = (
+            float(payload.wait_seconds)
+            if payload.wait_seconds is not None
+            else DEFAULT_QA_WAIT_SECONDS
         )
-        return {
-            "report": report.public_dict(),
-            "capability_id": "browser.qa.crawl",
+        result = enqueue_and_maybe_await_browser(
+            job_runtime,
+            capability_id="browser.qa.crawl",
+            arguments=arguments,
+            approval_id=payload.approval_id,
+            requested_by="api.browser.qa",
+            run_id=payload.run_id,
+            trace_id=payload.trace_id,
+            metadata={"browser_qa": "browser.qa.crawl", "via_job_compat": bool(payload.via_job)},
+            wait_seconds=wait,
+            timeout_seconds=300.0,
+            domain_entity_type="browser_qa",
+            domain_entity_id=payload.journey_id or payload.run_id,
+        )
+        http = _job_http_status(result)
+        body = {
+            **result,
             "truth": {
-                "requires_capability_gateway": False,
-                "direct_crawler_control_plane": True,
-                "job_runtime_cancel_checkpoint_resume": "EXTERNAL_REQUIRED",
+                **(result.get("truth") or {}),
                 "localhost_scoped_by_default": True,
                 "no_stealth_anti_bot": True,
+                "direct_crawler_control_plane": False,
+                "job_runtime_cancel_checkpoint_resume": "EXTERNAL_REQUIRED",
             },
         }
+        if http >= 400:
+            raise HTTPException(status_code=http, detail=body)
+        return body
 
     @router.get("/api/browser/qa/{journey_id}/status")
     def browser_qa_status(journey_id: str) -> dict:
+        """Read JobRuntime / projection — never invokes crawler/browser."""
         if not bool(getattr(settings.browser_qa, "enabled", True)):
             raise HTTPException(status_code=503, detail="browser.qa disabled")
+        # Prefer durable JobRuntime projection by domain entity.
+        jobs = []
         try:
-            report = browser_qa_crawler.status(journey_id)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=f"Unknown QA journey: {journey_id}") from exc
+            store = getattr(job_runtime, "store", None)
+            if store is not None and hasattr(store, "list"):
+                for job in store.list(limit=50):
+                    if (
+                        getattr(job, "domain_entity_id", None) == journey_id
+                        or getattr(job, "domain_entity_type", None) == "browser_qa"
+                        and str(getattr(job, "domain_entity_id", "") or "") == journey_id
+                    ):
+                        jobs.append(job)
+                    elif journey_id in {
+                        str((getattr(job, "arguments", None) or {}).get("journey_id") or ""),
+                        str(getattr(job, "job_id", "") or ""),
+                        str(getattr(job, "run_id", "") or ""),
+                    }:
+                        jobs.append(job)
+        except Exception:  # noqa: BLE001
+            jobs = []
+        if not jobs and hasattr(job_runtime, "get"):
+            # Fallback: treat journey_id as job_id.
+            one = job_runtime.get(journey_id)
+            if one is not None:
+                jobs = [one]
+        if not jobs:
+            raise HTTPException(status_code=404, detail=f"Unknown QA journey: {journey_id}")
+        latest = jobs[0]
+        public = latest.public_dict() if hasattr(latest, "public_dict") else {"job_id": getattr(latest, "job_id", None)}
+        result_payload = getattr(latest, "result", None) or public.get("result") or {}
+        report = result_payload.get("report") if isinstance(result_payload, dict) else None
         return {
             "journey_id": journey_id,
-            "report": report.public_dict(),
+            "job": public,
+            "report": report,
             "truth": {
                 "job_runtime_cancel_checkpoint_resume": "EXTERNAL_REQUIRED",
-                "direct_crawler_control_plane": True,
+                "direct_crawler_control_plane": False,
+                "status_does_not_invoke_browser": True,
             },
         }
 
@@ -336,21 +327,36 @@ def build_browser_router(
         if not bool(getattr(settings.browser_qa, "enabled", True)):
             raise HTTPException(status_code=503, detail="browser.qa disabled")
         body = payload or BrowserQaJourneyRef(journey_id=journey_id)
-        if body.via_job and body.run_id:
-            try:
-                job_runtime.request_cancel(body.run_id, reason="browser.qa.cancel")
-            except Exception:  # noqa: BLE001
-                pass
+        cancelled = []
+        # Cancel by explicit run/job id first.
+        targets = [body.run_id] if body.run_id else []
         try:
-            report = browser_qa_crawler.cancel(journey_id)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=f"Unknown QA journey: {journey_id}") from exc
+            store = getattr(job_runtime, "store", None)
+            if store is not None and hasattr(store, "list"):
+                for job in store.list(limit=50):
+                    if getattr(job, "domain_entity_id", None) == journey_id or journey_id in {
+                        str((getattr(job, "arguments", None) or {}).get("journey_id") or ""),
+                        str(getattr(job, "job_id", "") or ""),
+                    }:
+                        targets.append(getattr(job, "job_id", None))
+        except Exception:  # noqa: BLE001
+            pass
+        targets.append(journey_id)
+        for job_id in {t for t in targets if t}:
+            try:
+                job_runtime.request_cancel(str(job_id), reason="browser.qa.cancel")
+                cancelled.append(str(job_id))
+            except Exception:  # noqa: BLE001
+                continue
+        if not cancelled:
+            raise HTTPException(status_code=404, detail=f"Unknown QA journey: {journey_id}")
         return {
             "journey_id": journey_id,
-            "report": report.public_dict(),
+            "cancelled_job_ids": cancelled,
             "truth": {
                 "cancelled_is_not_success": True,
                 "job_runtime_cancel_checkpoint_resume": "EXTERNAL_REQUIRED",
+                "durable_cancel": True,
             },
         }
 
@@ -360,27 +366,73 @@ def build_browser_router(
         arguments: dict = {"journey_id": journey_id}
         if body.seed is not None:
             arguments["seed"] = body.seed
-        return _browser_qa_via_gateway(
+        wait = (
+            float(body.wait_seconds)
+            if body.wait_seconds is not None
+            else DEFAULT_QA_WAIT_SECONDS
+        )
+        result = enqueue_and_maybe_await_browser(
+            job_runtime,
             capability_id="browser.qa.replay",
             arguments=arguments,
             approval_id=body.approval_id,
+            requested_by="api.browser.qa",
             run_id=body.run_id,
             trace_id=body.trace_id,
-            via_job=body.via_job,
+            metadata={"browser_qa": "browser.qa.replay", "via_job_compat": bool(body.via_job)},
+            wait_seconds=wait,
+            timeout_seconds=300.0,
+            domain_entity_type="browser_qa",
+            domain_entity_id=journey_id,
         )
+        http = _job_http_status(result)
+        if http >= 400:
+            raise HTTPException(status_code=http, detail=result)
+        return result
 
     @router.get("/api/browser/qa/{journey_id}/report")
     def browser_qa_report(journey_id: str) -> dict:
         if not bool(getattr(settings.browser_qa, "enabled", True)):
             raise HTTPException(status_code=503, detail="browser.qa disabled")
+        # Read completed job result / artifact refs — no crawler invoke.
+        jobs = []
         try:
-            payload = browser_qa_crawler.report_artifact(journey_id)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=f"Unknown QA journey: {journey_id}") from exc
+            store = getattr(job_runtime, "store", None)
+            if store is not None and hasattr(store, "list"):
+                for job in store.list(limit=50):
+                    if getattr(job, "domain_entity_id", None) == journey_id or journey_id in {
+                        str((getattr(job, "arguments", None) or {}).get("journey_id") or ""),
+                        str(getattr(job, "job_id", "") or ""),
+                    }:
+                        jobs.append(job)
+        except Exception:  # noqa: BLE001
+            jobs = []
+        completed = None
+        for job in jobs:
+            state = getattr(job, "state", None)
+            if state == JobState.COMPLETED or str(state).upper() == "COMPLETED":
+                completed = job
+                break
+        if completed is None and jobs:
+            completed = jobs[0]
+        if completed is None:
+            raise HTTPException(status_code=404, detail=f"Unknown QA journey: {journey_id}")
+        result_payload = getattr(completed, "result", None) or {}
+        report = result_payload.get("report") if isinstance(result_payload, dict) else None
+        artifact_id = None
+        if isinstance(result_payload, dict):
+            artifact_id = result_payload.get("report_artifact_id") or (
+                (result_payload.get("artifact_refs") or [None])[0]
+            )
         return {
             "journey_id": journey_id,
-            **payload,
-            "truth": {"direct_crawler_control_plane": True},
+            "json": report,
+            "artifact_id": artifact_id,
+            "job": completed.public_dict() if hasattr(completed, "public_dict") else {},
+            "truth": {
+                "direct_crawler_control_plane": False,
+                "report_from_jobruntime_artifact": True,
+            },
         }
 
     return router

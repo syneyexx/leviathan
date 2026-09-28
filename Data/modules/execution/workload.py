@@ -89,6 +89,8 @@ _EXTERNAL_REQUIRED_PREFIXES: tuple[str, ...] = (
     "mcp.call",
     "document_ai.",
     "ocr.",
+    "browser.",
+    "media.",
     "voice.",
 )
 
@@ -106,13 +108,16 @@ KNOWN_INLINE_SAFE: frozenset[str] = frozenset(
         "workspace.list",
         "git.status",
         "git.diff",
+        # Cached browser/media status projections — no process/Chromium/FFmpeg work.
+        "browser.qa.status",
+        "browser.qa.cancel",
+        "browser.qa.report",
+        "browser.status",
+        "media.status",
     }
 )
 
-_EXTERNAL_PREFERRED_PREFIXES: tuple[str, ...] = (
-    "browser.",
-    "media.",
-)
+_EXTERNAL_PREFERRED_PREFIXES: tuple[str, ...] = ()
 
 
 def parse_execution_class(value: Any) -> ExecutionWorkloadClass | None:
@@ -173,10 +178,11 @@ def classify_capability(
         return explicit
 
     known_required = _external_worker_capabilities() | KNOWN_EXTERNAL_REQUIRED_EXTRA
-    if cap in known_required:
-        return ExecutionWorkloadClass.EXTERNAL_REQUIRED
+    # Cheap control-plane reads win over prefix EXTERNAL_REQUIRED (e.g. browser.qa.status).
     if cap in KNOWN_INLINE_SAFE:
         return ExecutionWorkloadClass.INLINE_SAFE
+    if cap in known_required:
+        return ExecutionWorkloadClass.EXTERNAL_REQUIRED
 
     for prefix in _EXTERNAL_REQUIRED_PREFIXES:
         if cap == prefix.rstrip(".") or cap.startswith(prefix):
@@ -219,6 +225,8 @@ def classify_capability(
             "module_runtime",
             "agent_signals",
             "scheduler",
+            "browser",
+            "media",
             "voice",
         }
         if worker_kind in heavy_kinds:

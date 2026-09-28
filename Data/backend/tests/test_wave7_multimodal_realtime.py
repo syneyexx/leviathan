@@ -6,6 +6,7 @@ tools via ExecutionGateway, and keeps a single context/run history.
 
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -145,6 +146,9 @@ class Wave7ExitGateTests(unittest.TestCase):
     """One session: text+image+audio → tools → single ContextPack/run history."""
 
     def setUp(self) -> None:
+        # Explicit test composition: allow gateway-owned media executor inline.
+        self._prev_worker = os.environ.get("LEVIATHAN_WORKER_ID")
+        os.environ["LEVIATHAN_WORKER_ID"] = "media-test-worker"
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.db = self.root / "wave7.db"
@@ -177,6 +181,10 @@ class Wave7ExitGateTests(unittest.TestCase):
         self.reasoner = ReasoningEngine()
 
     def tearDown(self) -> None:
+        if self._prev_worker is None:
+            os.environ.pop("LEVIATHAN_WORKER_ID", None)
+        else:
+            os.environ["LEVIATHAN_WORKER_ID"] = self._prev_worker
         self.fn.shutdown()
         self.tmp.cleanup()
 

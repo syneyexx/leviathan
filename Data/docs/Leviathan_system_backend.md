@@ -605,7 +605,7 @@ Important invariants:
 
 ## 12.2 Worker Fabric
 
-`Data/modules/workers/` is the external execution plane. Domain entrypoints include agents, coding, research, memory, brain_compute, datasets/documents, embeddings/reranking, evaluation/training, market simulation, MCP, model downloads, **model_runtime** (singleton managed serving lifecycle / probes / benchmarks), provider I/O, source ingestion, **file_io** (generic heavy filesystem reads/writes/copies/hashes/CSV/Parquet/scans), scheduler/workflows, maintenance/backup, telemetry and DB commit.
+`Data/modules/workers/` is the external execution plane. Domain entrypoints include agents, coding, research, memory, brain_compute, datasets/documents, embeddings/reranking, evaluation/training, market simulation, MCP, model downloads, **model_runtime** (singleton managed serving lifecycle / probes / benchmarks), provider I/O, source ingestion, **file_io** (generic heavy filesystem reads/writes/copies/hashes/CSV/Parquet/scans), **browser** (singleton Playwright/Chromium/QA), **media** (FFmpeg/transforms/generation orchestration), scheduler/workflows, maintenance/backup, telemetry and DB commit.
 
 Generic heavy filesystem jobs (`file.read` when oversized, `file.write` when oversized, `file.copy`, `file.hash`, `file.parse_csv`, `file.profile_csv`, `file.process_parquet`, `filesystem.scan`, recursive `workspace.list`) enqueue with `worker_pool=file_io`. API-local JobRuntime only claims `general`/unassigned jobs and cannot steal specialist file_io work. Small interactive file operations remain INLINE_SAFE in the control plane.
 
@@ -893,7 +893,48 @@ HTTP: `Data/backend/routes/datasets.py`. Knowledge ingestion: `Data/backend/rout
 
 ## Training
 
-`Data/modules/training/` owns durable recipes/jobs/training control/post-training data. `Data/backend/routes/training.py` exposes operations. A recipe definition is not proof a GPU training run completed.
+`Data/modules/training/` owns durable recipes/jobs/TrainingStore domain truth and post-training data. `Data/backend/routes/training.py` exposes bounded Control Plane operations (create/plan/preflight/start/cancel/resume/status). A recipe definition is not proof a GPU training run completed.
+
+### training_control ownership
+
+The Worker Fabric **`training_control` singleton pool** (`default_count=1`, `max_count=1`) is the trainer lifecycle authority:
+
+```text
+FastAPI
+  -> validate / plan / create durable TrainingStore job
+  -> JobRuntime enqueue training.control (GPU_EXCLUSIVE)
+  -> training_control worker
+       -> ResourceAdmission GPU_EXCLUSIVE
+       -> spawn trainer subprocess (scrubbed env)
+       -> supervise FULL lifetime (heartbeat lease)
+       -> observe cancel / crash
+       -> wait for trainer terminal state
+       -> then JobRuntime COMPLETED/FAILED/CANCELLED
+       -> release GPU reservation
+```
+
+Invariants:
+
+- FastAPI never `Popen`s a production trainer (`execution_gate.py`).
+- `training.control` does **not** complete merely because spawn succeeded.
+- GPU_EXCLUSIVE covers the entire actual trainer lifetime.
+- Trainer children receive an allow-listed env (`env_policy.py`) — no API/provider/broker secrets.
+- Offline/local asset preference (`HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE`) for production training.
+- Process generation + PID fingerprint fence stale cancel/reconcile.
+- Windows-safe process-tree termination on cancel.
+
+### Non-GPU training work
+
+Pool ownership is `training_control`, but resource class is job-specific:
+
+| Capability | Resource class |
+|---|---|
+| `training.control` (start/resume) | `GPU_EXCLUSIVE` + `BATCH` |
+| `training.integrity.verify` | `IO_HEAVY` / `CPU_HEAVY` |
+| `training.checkpoint.verify` | `IO_HEAVY` |
+| `training.dataset.hash` | `IO_HEAVY` / `CPU_HEAVY` |
+
+Heavy integrity scans, checkpoint verification and large dataset hashing are **external** — API reconcile only enqueues or performs bounded PID liveness. Model Registry publish requires integrity PASS. Partial/staging checkpoints are never resumable. Resume uses verified compatible checkpoint directories (not ambiguous parent paths).
 
 ## Flywheel
 
@@ -901,7 +942,7 @@ HTTP: `Data/backend/routes/datasets.py`. Knowledge ingestion: `Data/backend/rout
 
 ## Evaluation
 
-`Data/modules/evaluation/` owns benchmark/evaluation harnesses, ablations, scorecards/platform state. Missing model/provider measurements remain unavailable/unmeasured.
+`Data/modules/evaluation/` owns benchmark/evaluation harnesses, ablations, scorecards/platform state. Missing model/provider measurements remain unavailable/unmeasured. Training may emit small validation metrics; full release evaluation remains evaluation-owned.
 
 ## Verification/quality
 
@@ -992,14 +1033,90 @@ MCP tools still enter the same capability/approval/observation architecture. MCP
 
 # 19. Browser, media, voice and provider I/O
 
-- `Data/modules/browser/` + `Data/backend/routes/browser.py`, `browser_qa.py` — browser capability/QA boundaries;
-- `Data/modules/media/` + `Data/backend/routes/media.py` — media capability boundary; disconnected platforms stay NOT CONNECTED/UNAVAILABLE;
+## 19.1 Browser (singleton external worker)
+
+Production topology:
+
+```
+FastAPI (validate / authorize / enqueue / status)
+    -> JobRuntime
+    -> browser specialist pool (default_count=1, max_count=1)
+    -> BrowserWorker + Playwright/Chromium (or local_dom)
+    -> ArtifactStore observations/screenshots/downloads
+```
+
+- Live capabilities (`browser.navigate` … `browser.keypress`, `browser.qa.crawl` /
+  `browser.qa.advance` / `browser.qa.replay`) are **EXTERNAL_REQUIRED**.
+- FastAPI never starts Playwright, never launches Chromium, never calls
+  `JobRuntime.process_next()`, and never invokes `BrowserWorker.execute()` /
+  `crawler.run()` on the control plane.
+- Session affinity: singleton pool until explicit session sharding exists.
+  Cross-run session reuse is denied; idle sessions expire (configurable TTL);
+  worker restart reports `BROWSER_SESSION_LOST`.
+- Cached `/api/browser/status` reads measured readiness written by the browser
+  worker — status endpoints do not launch Chromium.
+- Fixture browser remains test-only; package presence alone is not READY.
+- QA crawls remain localhost/allowlist scoped by default, use bounded
+  continuation slices (`browser.qa.advance`) with checkpoints, durable
+  JobRuntime cancellation, and ArtifactStore reports. Replay divergence is
+  reported honestly (`BROWSER_QA_RESUME_DIVERGED` / `BROWSER_REPLAY_DIVERGED`).
+- URL/SSRF policy is centralized in `Data/modules/browser/url_policy.py`.
+- Windows-safe Chromium/Playwright driver process-tree cleanup is owned by the
+  browser worker shutdown path (shared process-control primitives).
+
+## 19.2 Media (specialist external worker)
+
+Production topology:
+
+```
+FastAPI -> JobRuntime -> media pool (default_count=1, max_count=2)
+    -> typed media operation
+    -> FFprobe / FFmpeg / deterministic image transforms
+    -> verify -> ArtifactStore
+
+Generation / vision:
+media worker -> Model Control Plane / provider_io -> Artifact (provenanced)
+```
+
+- Live `media.*` capabilities are **EXTERNAL_REQUIRED**. Routes enqueue only —
+  no `process_next()`, no inline FastAPI FFmpeg/MediaService heavy work.
+- Production transcoding uses configured FFmpeg/FFprobe (argv-safe, `-nostdin`,
+  local-file protocols only, codec/container allowlists). Missing binaries
+  report `MEDIA_FFMPEG_UNAVAILABLE` / `MEDIA_FFPROBE_UNAVAILABLE` — never
+  auto-install.
+- Fixture MediaService SVG output is test-only and must not claim production
+  generation/thumbnail/vision capability.
+- Image generation / edit / vision require a configured Model Control Plane or
+  provider backend; otherwise `MEDIA_GENERATION_UNAVAILABLE` /
+  `MEDIA_VISION_UNAVAILABLE`. Media does not own a second model runtime.
+- ASR/TTS remain Voice-owned; OCR remains DocumentAI-owned.
+- Cross-modal search stays a worker-local caption cache — not a second vector
+  stack; durable retrieval uses embedding / Knowledge when required.
+- Large media never uses whole-file `read_bytes()` into JobStore; outputs use
+  staging + verification + ArtifactStore path ingestion with lineage.
+
+## 19.3 Voice (singleton external worker) and provider I/O
+
+Production topology:
+
+```
+FastAPI (validate / authorize / enqueue / status)
+    -> JobRuntime
+    -> voice specialist pool (default_count=1, max_count=1)
+    -> RealtimeVoiceService + measured ASR/TTS backends
+    -> existing conversation / CognitiveRuntime (not a parallel assistant)
+```
+
 - `Data/modules/voice/` + `Data/backend/routes/voice.py` — **realtime voice transport**;
-- `Data/modules/workers/entrypoints/voice.py` — singleton `voice` Worker Fabric pool (`default_count=1`, `max_count=1`);
-- `voice.*` production capabilities are `EXTERNAL_REQUIRED` → `voice` (no general fallback, no FastAPI ASR/TTS);
-- production ASR/TTS backends are measured/configured only; fixture backends are test/dev-only and never claim `PRODUCTION_CAPABLE` / READY;
-- Voice remains transport: audio → ASR → existing conversation / CognitiveRuntime → TTS. No parallel voice memory/assistant;
-- remote voice network I/O belongs to `provider_io`; local model inference to Model Control Plane;
+- `Data/modules/workers/entrypoints/voice.py` — singleton `voice` Worker Fabric pool;
+- `voice.*` production capabilities are `EXTERNAL_REQUIRED` → `voice` (no general
+  fallback, no FastAPI ASR/TTS, no `JobRuntime.process_next()` on the control plane);
+- production ASR/TTS backends are measured/configured only; fixture backends are
+  test/dev-only and never claim `PRODUCTION_CAPABLE` / READY;
+- Voice remains transport: audio → ASR → existing conversation / CognitiveRuntime → TTS.
+  No parallel voice memory/assistant;
+- remote voice network I/O belongs to `provider_io`; local model inference to Model
+  Control Plane;
 - `Data/modules/provider_io/` — controlled remote HTTP/provider/market-data/chat I/O, credentials, readiness and streams;
 - `Data/modules/model_download/` — model-download worker boundary;
 - `Data/modules/isolation/` — sandbox/isolation guard;
@@ -1088,13 +1205,15 @@ Numeric market truth remains primary. Research perception uses causal bars/featu
 
 ```text
 as-of bounded OHLCV
- -> deterministic chart snapshot
- -> artifact/reference
+ -> deterministic chart snapshot (chart_perception / chart_batch)
+ -> ArtifactStore
  -> model selected through Model Control Plane
  -> only if VisionCapabilityProfile.charts == SUPPORTED
  -> schema-validated ChartObservation
  -> optional numeric-vs-visual conflict evidence
 ```
+
+Market chart batches use capability `market_sim.chart.render_batch` on the **market_sim** pool (bounded slices + continuation). There is **no ChartWorker**. Future bars are a hard refusal. Chart vision remains Model Control Plane inference; visual interpretation is advisory evidence only — never an order authority.
 
 No chart-capable model means honest UNAVAILABLE while numeric research continues. A VLM cannot place an order or override RiskGuard/qualification.
 
@@ -1172,7 +1291,25 @@ Key files:
 
 Progression is qualification-governed. Shadow is observe-only; autonomous paper uses simulated capital and RiskGuard. Kill-switch state is durable. Paper sessions restore wallet/orders on restart and client-order/event replay is idempotent.
 
-Forward evidence requires meaningful history; a few lucky observations do not become PASS. Drift can create a continual-research ticket but does not automatically promote a replacement or enable live execution.
+**One canonical paper step (no forever loops):**
+
+```text
+scheduler / market event / operator step
+  -> market_sim.autonomous_step | market_sim.portfolio_tick | market_sim.paper_forward_step
+  -> market_sim worker (one bounded step)
+  -> RiskGuard + kill switch
+  -> paper broker (LocalPaperBroker or provider.alpaca.paper → provider_io)
+  -> durable state + next due time
+  -> exit
+```
+
+API start/stop changes durable state / enqueues work — it does **not** start a Python `while/sleep` loop. Remote quotes/marks/market REST use `provider.market.fetch` → `provider_io`. Long-lived feeds remain `market_feed`. Alpaca paper remote HTTP is exclusively `provider.alpaca.paper` → `provider_io`. Uncertain broker writes reconcile before resubmit. **Live money remains BLOCKED.**
+
+Forward evidence requires meaningful history; a few lucky observations do not become PASS. Drift can create a continual-research ticket but does not automatically promote a replacement or enable live execution. Paper-forward evidence stays separate from sealed qualification evidence.
+
+### Trading news
+
+`market_sim.news.poll` remains market_sim-owned. Semantics/parsing/dedup/causal `published_at` / `fetched_at` / `available_at` stay in MarketSim; remote HTTP is `provider.http` → `provider_io`. Scheduler may cadence-enqueue polls (`ensure_news_poll_schedule`) — never a FastAPI poll daemon. Simulation may only observe news when `available_at <= as_of`.
 
 ## 20.9 Closed continual-research loop
 
