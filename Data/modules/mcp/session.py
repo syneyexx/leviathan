@@ -222,13 +222,27 @@ class McpServerSession:
             content = result.get("content") if isinstance(result, dict) else None
             is_error = bool(result.get("isError")) if isinstance(result, dict) else False
             truncated = False
+            artifact_ref = None
             if content is not None:
                 import json
 
                 raw = json.dumps(content, ensure_ascii=False).encode("utf-8")
                 if len(raw) > self.limits.max_tool_result_bytes:
                     truncated = True
-                    content = [{"type": "text", "text": "[truncated MCP tool result]"}]
+                    artifact_ref = self._spill_tool_result(raw)
+                    preview = raw[: min(4096, self.limits.max_tool_result_bytes // 8)].decode(
+                        "utf-8", errors="ignore"
+                    )
+                    content = [
+                        {
+                            "type": "text",
+                            "text": (
+                                f"[MCP tool result spilled to artifact; preview]\n{preview}"
+                                if artifact_ref
+                                else "[truncated MCP tool result]"
+                            ),
+                        }
+                    ]
             status = McpCallStatus.FAILED if is_error else McpCallStatus.COMPLETED
             return McpCallResult(
                 status=status,
@@ -238,6 +252,7 @@ class McpServerSession:
                 error_message="Tool reported isError=true" if is_error else None,
                 duration_ms=(time.perf_counter() - started) * 1000,
                 truncated=truncated,
+                artifact_ref=artifact_ref,
             )
         except McpError as exc:
             status = {
@@ -258,6 +273,37 @@ class McpServerSession:
 
     def invalidate_tools_cache(self) -> None:
         self._tools_cache = None
+
+    def _spill_tool_result(self, raw: bytes) -> str | None:
+        """Spill oversized MCP tool JSON to ArtifactStore; return artifact id or None."""
+        try:
+            from Data.modules.artifacts.store import ArtifactStore
+            from pathlib import Path
+            import tempfile
+
+            # Prefer CONTROL artifact root when available via env; else temp.
+            root = Path(
+                __import__("os").environ.get("LEVIATHAN_ARTIFACT_ROOT")
+                or tempfile.gettempdir()
+            ) / "mcp_tool_results"
+            root.mkdir(parents=True, exist_ok=True)
+            db = root / "artifacts.db"
+            store = ArtifactStore(db, root)
+            store.initialize()
+            record = store.create_from_bytes(
+                data=raw,
+                artifact_type="mcp_tool_result",
+                producer=f"mcp:{self.config.server_id}",
+                filename="tool_result.json",
+                metadata={
+                    "server_id": self.config.server_id,
+                    "spilled": True,
+                    "original_bytes": len(raw),
+                },
+            )
+            return getattr(record, "artifact_id", None) or str(record)
+        except Exception:  # noqa: BLE001 — spill failure keeps truncated preview
+            return None
 
     def health(self) -> McpServerRuntime:
         # PID alone is not health — require READY/BUSY/DEGRADED after successful initialize.

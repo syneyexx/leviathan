@@ -2023,6 +2023,16 @@ def build_default_catalog() -> CapabilityCatalog:
     except Exception:  # noqa: BLE001
         # Catalog build must not fail closed on optional research chat surface.
         pass
+    try:
+        from Data.modules.module_manager.external.catalog_register import (
+            register_external_control_capabilities,
+        )
+
+        register_external_control_capabilities(catalog)
+    except Exception:  # noqa: BLE001
+        # External control caps are also registered at FastAPI startup; catalog
+        # build must still include them for EXTERNAL_WORKER_CAPABILITIES drift.
+        pass
     return catalog
 
 
@@ -3692,4 +3702,125 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         tags=["mcp", "tool", "execution"],
         domains=["mcp"],
         extra_meta={"idempotent": False},
+    )
+    _ext(
+        cap_id="mcp.connect",
+        name="MCP Connect",
+        description="Live MCP connect/handshake (stdio spawn or HTTP) in mcp_execution workers.",
+        side_effects=(SideEffect.NETWORK, SideEffect.EXECUTE),
+        worker_kind="mcp_execution",
+        required_args=["server_id"],
+        properties={
+            "server_id": {"type": "string"},
+            "expand_tools": {"type": "boolean"},
+        },
+        permissions=("process.execute", "network.outbound"),
+        tags=["mcp", "connect"],
+        domains=["mcp"],
+        extra_meta={"idempotent": True},
+    )
+    _ext(
+        cap_id="mcp.list_tools",
+        name="MCP List Tools",
+        description="Live MCP tools/list requiring transport — mcp_execution owned.",
+        side_effects=(SideEffect.NETWORK, SideEffect.EXECUTE),
+        worker_kind="mcp_execution",
+        required_args=["server_id"],
+        properties={
+            "server_id": {"type": "string"},
+            "force_refresh": {"type": "boolean"},
+        },
+        permissions=("process.execute", "network.outbound"),
+        tags=["mcp", "list"],
+        domains=["mcp"],
+        extra_meta={"idempotent": True},
+    )
+    _ext(
+        cap_id="model.serving.start",
+        name="Model Serving Start",
+        description="Start a LEVIATHAN-managed model server (llama.cpp/vLLM) via model_runtime.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="model_runtime",
+        required_args=["model_id", "command"],
+        properties={
+            "model_id": {"type": "string"},
+            "provider_id": {"type": "string"},
+            "backend_kind": {"type": "string"},
+            "command": {"type": "array"},
+            "endpoint": {"type": "string"},
+            "revision_id": {"type": "string"},
+            "env": {"type": "object"},
+            "ready_timeout_seconds": {"type": "number"},
+            "managed_by_leviathan": {"type": "boolean"},
+            "reservation_id": {"type": "string"},
+        },
+        permissions=("process.execute",),
+        tags=["model", "serving", "start"],
+        domains=["model_runtime", "models"],
+        extra_meta={"idempotent": False},
+    )
+    _ext(
+        cap_id="model.serving.stop",
+        name="Model Serving Stop",
+        description="Stop a LEVIATHAN-managed model server via model_runtime (never operator-owned).",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="model_runtime",
+        properties={
+            "worker_id": {"type": "string"},
+            "model_id": {"type": "string"},
+            "launch_generation": {"type": "integer"},
+            "drain": {"type": "boolean"},
+            "managed_by_leviathan": {"type": "boolean"},
+        },
+        permissions=("process.execute",),
+        tags=["model", "serving", "stop"],
+        domains=["model_runtime", "models"],
+        extra_meta={"idempotent": True},
+    )
+    _ext(
+        cap_id="model.serving.reconcile",
+        name="Model Serving Reconcile",
+        description="Reconcile managed serving process identity via model_runtime.",
+        side_effects=(SideEffect.READ, SideEffect.EXECUTE),
+        worker_kind="model_runtime",
+        properties={},
+        permissions=("process.execute",),
+        tags=["model", "serving", "reconcile"],
+        domains=["model_runtime", "models"],
+        extra_meta={"idempotent": True},
+    )
+    _ext(
+        cap_id="model_runtime.start",
+        name="Model Runtime Start (alias)",
+        description="Alias for managed serving start — routes to model_runtime.load/serving.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="model_runtime",
+        required_args=["model_id"],
+        properties={
+            "model_id": {"type": "string"},
+            "command": {"type": "array"},
+            "endpoint": {"type": "string"},
+            "managed_by_leviathan": {"type": "boolean"},
+        },
+        permissions=("process.execute",),
+        tags=["model", "runtime", "start"],
+        domains=["model_runtime", "models"],
+        extra_meta={"idempotent": False},
+    )
+    _ext(
+        cap_id="model_runtime.stop",
+        name="Model Runtime Stop (alias)",
+        description="Alias for managed serving stop — never kills operator-owned servers.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="model_runtime",
+        properties={
+            "model_id": {"type": "string"},
+            "worker_id": {"type": "string"},
+            "launch_generation": {"type": "integer"},
+            "managed_by_leviathan": {"type": "boolean"},
+        },
+        permissions=("process.execute",),
+        tags=["model", "runtime", "stop"],
+        domains=["model_runtime", "models"],
+        extra_meta={"idempotent": True},
     )

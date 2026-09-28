@@ -508,12 +508,19 @@ FastAPI Model Control Plane
 - `inference_contract.py` — tool/schema/context contract and repair/fail-closed logic;
 - `streaming.py` — separated content/reasoning/tool frames;
 - `serving.py` — ServingSupervisor (STARTING/READY/DRAINING/UNHEALTHY/DEAD/STOPPED/
-  UNAVAILABLE); process ownership lives in `model_runtime`, not FastAPI;
+  UNAVAILABLE) with `managed_by_leviathan`, serving/launch generation, crash-loop
+  detection, and PID fingerprint ownership; process ownership lives in
+  `model_runtime`, not FastAPI. Operator-owned Ollama / LM Studio daemons are
+  discover/health/route only — never killed unless ownership was explicitly
+  configured (`managed_by_leviathan=true`);
 - `managed_adapter.py`, `launch_strategy.py`, `process_control.py`, `env_policy.py`,
   `port_allocator.py`, `llama_cpp_command.py` — managed process boundaries
-  (argv arrays only, bounded env, Windows-safe process-tree terminate);
+  (argv arrays only, bounded env, Windows-safe process-tree terminate via
+  `Data/modules/common/process_control.py`);
 - `facade.py` / `executor.py` / `execution_gate.py` / `readiness.py` — JobRuntime
-  enqueue façade + singleton worker executor;
+  enqueue façade + singleton worker executor (`model_runtime.load` /
+  `unload` / `reconcile` / `benchmark` / `probe` / `inference_test`, plus wave
+  aliases `model.serving.start` / `stop` / `reconcile`);
 - `durable_requests.py`, `latency.py` — durable request/latency support.
 
 Specialist pools (`embedding`, `rerank`, `document_ai`, singleton `voice`) retain
@@ -526,6 +533,16 @@ local model inference — they are not absorbed into `model_runtime`.
 Capability truth: DECLARED CONFIG ≠ VERIFIED SUPPORT. Inference-based probes and
 benchmarks enqueue `model_runtime.probe` / `model_runtime.benchmark` and report
 measured evidence only (no fabricated scores / tokens-per-second).
+
+Inference path remains:
+
+```
+domain/API → Model Control Plane → managed model server → GPU/model compute
+```
+
+ResourceAdmission (`GPU_SHARED` / `GPU_EXCLUSIVE`) remains the single physical GPU
+admission authority for embedding / rerank / document_ai / training / module GPU
+requests. There is no separate model_runtime GPU lock.
 
 Cognition uses `Data/modules/cognition/model_adapter.py`; trading agents use
 `Data/modules/market_sim/orchestra/model_adapter.py`. Neither should instantiate
@@ -1052,19 +1069,39 @@ plan install
 Primary install authority is `Data/modules/module_manager/external/install.py`; dependency/package-manager helpers and adapters live beside it under `Data/modules/module_manager/external/`. Lifecycle composition remains in `Data/modules/module_manager/manager.py`; routes are `Data/backend/routes/modules.py`.
 
 Privileged system dependency approval is bound to request arguments/plan hash.
-Production classifies `external.module.install` as **EXTERNAL_REQUIRED** and routes
-it exclusively to the Worker Fabric `module_runtime` pool (venv/pip/npm/build/
-staging/promotion). FastAPI may plan/approve/enqueue only — never run pip/npm
-inline. Synchronous install fallback is mechanically gated to explicit
-`inprocess_test` allow (`LEVIATHAN_MODULE_ALLOW_SYNC_INSTALL_TEST`) and is
-unreachable in production. Installation state/receipts are persisted in CONTROL
-domain migration v6.
+Production classifies external module lifecycle as **EXTERNAL_REQUIRED** and routes
+to specialist pools:
+
+| Concern | Owner pool | Production rule |
+|---------|------------|-----------------|
+| Module install / update / upgrade | `module_runtime` (`max_count=1`) | staged install lifecycle only; Git/venv/pip/npm external |
+| Module CLI / script / process-service / HTTP invoke | `module_runtime` | EXTERNAL_REQUIRED; no FastAPI subprocess/network fallback |
+| Module MCP tools/call | `mcp_execution` | live stdio/HTTP owned by mcp_execution |
+| Live MCP connect / list / call | `mcp_execution` | never spawn/network inside FastAPI |
+| External Knowledge assimilation | `knowledge_prepare` → `db_commit` | no production sync assimilation fallback |
+| Managed model-server start/stop | `model_runtime` (`max_count=1`) | operator-owned Ollama/LM Studio never killed |
+| Native/Rust heavy compute | semantic owner + `native_compute` substrate | no generic native pool |
+| Sandboxed arbitrary code | unavailable unless measured OS sandbox backend exists | probes in `isolation/sandbox.py` are evidence, not execution authority |
+
+FastAPI may plan/approve/enqueue only — never run pip/npm/CLI/MCP stdio/managed
+serving spawn inline. Synchronous install/invoke/assimilation fallbacks are
+mechanically gated to explicit `inprocess_test` allow and unreachable in production.
+Installation state/receipts are persisted in CONTROL domain migration v6.
+
+`native_compute` (`Data/modules/workers/native_compute.py`) is a shared low-level
+allowlisted substrate (argv-only, receipt-validated, soft RSS). Domain workers
+(dataset / market_sim / …) remain the semantic owners — there is no speculative
+`native_compute` pool.
 
 ## 18.2b Agent / Signal / Workflow / Scheduler ownership (externalization wave)
 
 | Concern | Owner pool | Production rule |
 |---------|------------|-----------------|
-| Module dependency install | `module_runtime` | EXTERNAL_REQUIRED; staged install only |
+| Module dependency install/update/upgrade | `module_runtime` | EXTERNAL_REQUIRED; staged install only; max_count=1 |
+| Module invoke / process-service lifecycle | `module_runtime` | EXTERNAL_REQUIRED; no FastAPI spawn |
+| MCP connect / list / tools/call | `mcp_execution` | EXTERNAL_REQUIRED; ephemeral sessions |
+| External Knowledge assimilation | `knowledge_prepare` | EXTERNAL_REQUIRED; bulk write via `db_commit` |
+| Managed model serving lifecycle | `model_runtime` | EXTERNAL_REQUIRED; compute stays in server process |
 | Long-running agent missions / multi-agent | `agents` | `agent.advance` units; durable children; no ThreadPoolExecutor wait; no `jobs.process_next()` |
 | Signal delivery / retry / housekeeping | `agent_signals` | enqueue deliver; handlers create/enqueue missions — never run mission bodies |
 | Workflow continuation | `workflow` | one `workflow.advance` unit; EXTERNAL_REQUIRED steps become specialist child jobs; no busy-wait |

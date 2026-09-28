@@ -14,6 +14,8 @@ from Data.modules.models.providers.openai_compatible import OpenAICompatibleAdap
 
 class LMStudioAdapter(OpenAICompatibleAdapter):
     provider_type = "lm_studio"
+    # Operator/external managed by default — LEVIATHAN must not kill/restart.
+    managed_by_leviathan: bool = False
 
     def __init__(
         self,

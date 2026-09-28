@@ -533,7 +533,7 @@ class ModuleManager:
         except Exception as exc:
             self._fail_lifecycle(managed, exc, module_id=module_id, action="start", previous=previous)
 
-    def stop(self, module_id: str) -> dict[str, Any]:
+    def stop(self, module_id: str, *, expected_generation: int | None = None) -> dict[str, Any]:
         managed = self._ensure_instance(module_id)
         assert managed.instance is not None
         previous = managed.status
@@ -541,11 +541,20 @@ class ModuleManager:
         managed.desired_state = "STOPPED"
         try:
             if hasattr(managed.instance, "stop"):
-                result = managed.instance.stop()
+                try:
+                    result = managed.instance.stop(expected_generation=expected_generation)
+                except TypeError:
+                    result = managed.instance.stop()
             else:
                 result = {"status": "STOPPED", "detail": "stop_noop"}
             if not isinstance(result, dict):
                 result = {"status": "STOPPED", "result": result}
+            if result.get("refused") == "STALE_GENERATION":
+                # Do not mark STOPPED when a stale stop was refused — newer generation lives.
+                managed.status = previous
+                managed.desired_state = "RUNNING"
+                managed.error = None
+                return result
             self._raise_if_result_failed(result, module_id=module_id, action="stop")
             managed.status = ModuleStatus.STOPPED
             managed.error = None

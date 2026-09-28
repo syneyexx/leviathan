@@ -41,8 +41,9 @@ class ModuleRuntimeRoutingTests(unittest.TestCase):
         self.assertIn("module_runtime", POOL_CATALOG)
         defn = POOL_CATALOG["module_runtime"]
         self.assertIn("external.module.install", defn.job_kinds)
+        self.assertIn("external.module.invoke", defn.job_kinds)
         self.assertEqual(defn.default_count, 1)
-        self.assertEqual(defn.max_count, 2)
+        self.assertEqual(defn.max_count, 1)
 
     def test_install_routes_to_module_runtime(self) -> None:
         self.assertEqual(pool_for_capability("external.module.install"), "module_runtime")

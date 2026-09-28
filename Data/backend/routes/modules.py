@@ -193,46 +193,58 @@ def build_modules_router(
     @router.post("/api/modules/{module_id}/start")
     def start_module(module_id: str) -> dict:
         _require_enabled()
-        try:
-            result = module_manager.start(module_id)
-        except ModuleManagerError as exc:
-            _raise_lifecycle(exc)
-        observability.emit("module_manager", "start", payload={"module_id": module_id})
-        return {"result": result, "module": module_manager.get(module_id).public_dict()}
+        return _queue_module_lifecycle(
+            job_runtime=job_runtime,
+            module_id=module_id,
+            capability_id="external.module.start",
+            action="start",
+            emit=_emit,
+            raise_lifecycle=_raise_lifecycle,
+            module_manager=module_manager,
+            allow_sync_fallback=allow_sync_install_fallback,
+        )
 
     @router.post("/api/modules/{module_id}/stop")
     def stop_module(module_id: str) -> dict:
         _require_enabled()
-        try:
-            result = module_manager.stop(module_id)
-        except ModuleManagerError as exc:
-            _raise_lifecycle(exc)
-        observability.emit("module_manager", "stop", payload={"module_id": module_id})
-        return {"result": result, "module": module_manager.get(module_id).public_dict()}
+        return _queue_module_lifecycle(
+            job_runtime=job_runtime,
+            module_id=module_id,
+            capability_id="external.module.stop",
+            action="stop",
+            emit=_emit,
+            raise_lifecycle=_raise_lifecycle,
+            module_manager=module_manager,
+            allow_sync_fallback=allow_sync_install_fallback,
+        )
 
     @router.post("/api/modules/{module_id}/restart")
     def restart_module(module_id: str) -> dict:
         _require_enabled()
-        try:
-            result = module_manager.restart(module_id)
-        except ModuleManagerError as exc:
-            _raise_lifecycle(exc)
-        observability.emit("module_manager", "restart", payload={"module_id": module_id})
-        return {"result": result, "module": module_manager.get(module_id).public_dict()}
+        return _queue_module_lifecycle(
+            job_runtime=job_runtime,
+            module_id=module_id,
+            capability_id="external.module.restart",
+            action="restart",
+            emit=_emit,
+            raise_lifecycle=_raise_lifecycle,
+            module_manager=module_manager,
+            allow_sync_fallback=allow_sync_install_fallback,
+        )
 
     @router.post("/api/modules/{module_id}/ensure-ready")
     def ensure_ready_module(module_id: str) -> dict:
         _require_enabled()
-        try:
-            result = module_manager.ensure_ready(module_id)
-        except ModuleManagerError as exc:
-            _raise_lifecycle(exc)
-        observability.emit("module_manager", "ensure_ready", payload={"module_id": module_id})
-        managed = module_manager.get(module_id)
-        return {
-            "result": result,
-            "module": managed.public_dict() if managed is not None else None,
-        }
+        return _queue_module_lifecycle(
+            job_runtime=job_runtime,
+            module_id=module_id,
+            capability_id="external.module.ensure_ready",
+            action="ensure_ready",
+            emit=_emit,
+            raise_lifecycle=_raise_lifecycle,
+            module_manager=module_manager,
+            allow_sync_fallback=allow_sync_install_fallback,
+        )
 
     @router.get("/api/modules/{module_id}/health")
     def module_health(module_id: str) -> dict:
@@ -362,6 +374,56 @@ def build_modules_router(
     @router.post("/api/modules/{module_id}/execute")
     def execute_managed_module(module_id: str, payload: ModuleExecuteRequest) -> dict:
         _require_enabled()
+        from Data.modules.module_manager.external.install_gate import allow_sync_install_for_tests
+
+        arguments = {
+            "module_id": module_id,
+            "operation": payload.operation,
+            "arguments": dict(payload.arguments or {}),
+        }
+        if job_runtime is not None and hasattr(job_runtime, "enqueue"):
+            try:
+                job = job_runtime.enqueue(
+                    capability_id="external.module.invoke",
+                    arguments=arguments,
+                    requested_by="api.modules.execute",
+                    idempotency_key=None,
+                    worker_pool="module_runtime",
+                    latency_class="interactive",
+                    domain="external_capability",
+                    consumer="api.modules",
+                    metadata={"worker_kind": "module_runtime", "execution_class": "EXTERNAL_REQUIRED"},
+                )
+                observability.emit(
+                    "module_manager",
+                    "execute_queued",
+                    payload={"module_id": module_id, "operation": payload.operation, "job_id": getattr(job, "job_id", None)},
+                )
+                return {
+                    "queued": True,
+                    "job_id": getattr(job, "job_id", None),
+                    "capability_id": "external.module.invoke",
+                    "worker_pool": "module_runtime",
+                    "truth": {"fastapi_does_not_spawn_module_subprocess": True},
+                }
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "code": "MODULE_RUNTIME_UNAVAILABLE",
+                        "message": scrub_error_text(str(exc), limit=300),
+                        "module_id": module_id,
+                    },
+                ) from exc
+        if not (allow_sync_install_fallback and allow_sync_install_for_tests()):
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "MODULE_RUNTIME_UNAVAILABLE",
+                    "message": "JobRuntime unavailable for module invoke",
+                    "module_id": module_id,
+                },
+            )
         try:
             result = module_manager.execute(module_id, payload.operation, payload.arguments)
         except ModuleManagerError as exc:
@@ -371,7 +433,7 @@ def build_modules_router(
             "execute",
             payload={"module_id": module_id, "operation": payload.operation, "status": result.status},
         )
-        return {"result": result.public_dict()}
+        return {"result": result.public_dict(), "queued": False, "inprocess_test": True}
 
     return router
 
@@ -596,6 +658,82 @@ def _http_install_unavailable(code: str, message: str, *, module_id: str, action
             "action": action,
         },
     )
+
+
+def _queue_module_lifecycle(
+    *,
+    job_runtime: Any,
+    module_id: str,
+    capability_id: str,
+    action: str,
+    emit: Any,
+    raise_lifecycle: Any,
+    module_manager: Any,
+    allow_sync_fallback: bool = False,
+) -> dict[str, Any]:
+    """Queue process lifecycle (start/stop/restart/ensure_ready) onto module_runtime."""
+    from Data.modules.module_manager.external.install_gate import allow_sync_install_for_tests
+
+    if job_runtime is not None and hasattr(job_runtime, "enqueue"):
+        try:
+            job = job_runtime.enqueue(
+                capability_id=capability_id,
+                arguments={"module_id": module_id, "action": action},
+                requested_by=f"api.modules.{action}",
+                worker_pool="module_runtime",
+                latency_class="interactive",
+                domain="external_capability",
+                consumer="api.modules",
+                metadata={"worker_kind": "module_runtime", "execution_class": "EXTERNAL_REQUIRED"},
+            )
+            emit(
+                f"{action}_queued",
+                {"module_id": module_id, "job_id": getattr(job, "job_id", None)},
+            )
+            return {
+                "queued": True,
+                "job_id": getattr(job, "job_id", None),
+                "capability_id": capability_id,
+                "worker_pool": "module_runtime",
+                "module": (
+                    module_manager.get(module_id).public_dict()
+                    if module_manager.get(module_id) is not None
+                    else None
+                ),
+                "truth": {"fastapi_does_not_spawn_module_subprocess": True},
+            }
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "MODULE_RUNTIME_UNAVAILABLE",
+                    "message": scrub_error_text(str(exc), limit=300),
+                    "module_id": module_id,
+                    "action": action,
+                },
+            ) from exc
+    if not (allow_sync_fallback and allow_sync_install_for_tests()):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "MODULE_RUNTIME_UNAVAILABLE",
+                "message": f"JobRuntime unavailable for module {action}",
+                "module_id": module_id,
+                "action": action,
+            },
+        )
+    try:
+        result = getattr(module_manager, action)(module_id)
+    except ModuleManagerError as exc:
+        raise_lifecycle(exc)
+    emit(action, {"module_id": module_id, "inprocess_test": True})
+    managed = module_manager.get(module_id)
+    return {
+        "queued": False,
+        "inprocess_test": True,
+        "result": result,
+        "module": managed.public_dict() if managed is not None else None,
+    }
 
 
 def _queue_install(

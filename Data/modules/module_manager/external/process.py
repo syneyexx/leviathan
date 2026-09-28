@@ -23,7 +23,9 @@ def utc_now() -> str:
 
 def process_fingerprint(pid: int, command: list[str], cwd: str | None) -> str:
     """Platform-assisted identity for PID-reuse safety."""
-    parts = [str(pid), "|".join(command), cwd or ""]
+    from Data.modules.common.process import pid_fingerprint
+
+    parts = [str(pid), "|".join(command), cwd or "", pid_fingerprint(pid)]
     try:
         # Prefer create time when available (Linux /proc).
         stat_path = Path(f"/proc/{pid}")
@@ -95,6 +97,7 @@ class OwnedProcess:
     started_at: str | None = None
     exit_code: int | None = None
     restart_count: int = 0
+    launch_generation: int = 0
     proc: subprocess.Popen[bytes] | None = field(default=None, repr=False)
     stdout_buf: BoundedLogBuffer = field(default_factory=BoundedLogBuffer)
     stderr_buf: BoundedLogBuffer = field(default_factory=BoundedLogBuffer)
@@ -105,8 +108,19 @@ class OwnedProcess:
         with self._lock:
             if self.proc is not None and self.proc.poll() is None:
                 return int(self.proc.pid)
-            env = os.environ.copy()
-            env.update(self.env)
+            from Data.modules.common.process_control import (
+                owned_child_popen_kwargs,
+                scrub_child_environment,
+            )
+
+            # Never inherit ambient API secrets into external module processes.
+            # Explicit module env is applied as extras; secret-shaped keys still
+            # require an explicit permit list (none by default).
+            env = scrub_child_environment(
+                extras=dict(self.env or {}),
+                permit_secret_extras=False,
+            )
+            popen_kwargs = owned_child_popen_kwargs()
             self.proc = subprocess.Popen(
                 self.command,
                 cwd=self.cwd,
@@ -115,10 +129,13 @@ class OwnedProcess:
                 stderr=subprocess.PIPE,
                 stdin=subprocess.DEVNULL,
                 shell=False,
+                **popen_kwargs,
             )
             self.pid = int(self.proc.pid)
             self.started_at = utc_now()
             self.exit_code = None
+            if self.launch_generation <= 0:
+                self.launch_generation = 1
             self.fingerprint = process_fingerprint(self.pid, self.command, self.cwd)
             self._start_drainers()
             return self.pid
@@ -169,41 +186,37 @@ class OwnedProcess:
             return False
 
     def stop(self, *, grace_seconds: float = 5.0, force: bool = True) -> int | None:
+        from Data.modules.common.process import pid_fingerprint
+        from Data.modules.common.process_control import (
+            kill_process_tree,
+            terminate_owned_pid,
+            terminate_owned_process,
+        )
+
         with self._lock:
             if self.proc is None:
                 # Reconcile orphaned PID only when fingerprint matches.
                 if self.pid and pid_matches_fingerprint(self.pid, self.fingerprint, self.command, self.cwd):
-                    try:
-                        os.kill(self.pid, signal.SIGTERM)
-                    except OSError:
-                        pass
-                    deadline = time.monotonic() + grace_seconds
-                    while time.monotonic() < deadline and _pid_alive(self.pid):
-                        time.sleep(0.1)
-                    if force and _pid_alive(self.pid) and pid_matches_fingerprint(
-                        self.pid, self.fingerprint, self.command, self.cwd
-                    ):
-                        try:
-                            os.kill(self.pid, signal.SIGKILL)
-                        except OSError:
-                            pass
+                    expected = pid_fingerprint(self.pid)
+                    result = terminate_owned_pid(
+                        int(self.pid),
+                        expected_fingerprint=expected,
+                        grace_seconds=grace_seconds,
+                        force=force,
+                    )
+                    if result.get("code") == "OWNERSHIP_UNPROVEN":
+                        return self.exit_code
                 return self.exit_code
             if self.proc.poll() is not None:
                 self.exit_code = int(self.proc.returncode)
                 return self.exit_code
-            try:
-                self.proc.send_signal(signal.SIGTERM)
-            except OSError:
-                pass
-            try:
-                self.proc.wait(timeout=grace_seconds)
-            except subprocess.TimeoutExpired:
-                if force:
-                    try:
-                        self.proc.kill()
-                        self.proc.wait(timeout=3)
-                    except Exception:  # noqa: BLE001
-                        pass
+            outcome = terminate_owned_process(
+                self.proc,
+                graceful_timeout_seconds=grace_seconds,
+                force_timeout_seconds=3.0 if force else 0.1,
+            )
+            if force and outcome.get("stillAlive"):
+                kill_process_tree(self.proc, grace_seconds=0.1)
             self.exit_code = int(self.proc.returncode) if self.proc.returncode is not None else None
             return self.exit_code
 
@@ -217,6 +230,7 @@ class OwnedProcess:
             "started_at": self.started_at,
             "exit_code": self.exit_code,
             "restart_count": self.restart_count,
+            "launch_generation": self.launch_generation,
             "alive": self.is_alive(),
             "stdout_tail": self.stdout_buf.snapshot(50),
             "stderr_tail": self.stderr_buf.snapshot(50),

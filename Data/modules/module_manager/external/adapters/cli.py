@@ -169,8 +169,8 @@ class CliAdapter:
             )
 
         cwd = self._resolve_cwd()
-        env = os.environ.copy()
-        env.update(self.config.runtime.env)
+        from Data.modules.common.process_control import scrub_child_environment
+        env = scrub_child_environment(extras=dict(self.config.runtime.env or {}))
         install_root = self._install_root or ""
         env = {k: v.replace("$INSTALL_ROOT", install_root) for k, v in env.items()}
 
@@ -195,6 +195,8 @@ class CliAdapter:
         last_progress_at = started
         try:
             with self._lock:
+                from Data.modules.common.process_control import owned_child_popen_kwargs
+
                 self._active_proc = subprocess.Popen(
                     argv,
                     cwd=cwd,
@@ -203,6 +205,7 @@ class CliAdapter:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     shell=False,
+                    **owned_child_popen_kwargs(),
                 )
                 proc = self._active_proc
 
@@ -211,14 +214,12 @@ class CliAdapter:
             stderr_b = b""
             while True:
                 if cancel_check and cancel_check():
+                    from Data.modules.common.process_control import terminate_owned_process
+
                     try:
-                        proc.send_signal(signal.SIGTERM)
-                        proc.wait(timeout=3)
+                        terminate_owned_process(proc, graceful_timeout_seconds=3.0)
                     except Exception:  # noqa: BLE001
-                        try:
-                            proc.kill()
-                        except Exception:  # noqa: BLE001
-                            pass
+                        pass
                     self._state = ExternalRuntimeState.READY
                     if progress:
                         progress(1.0, "cancelled", ExternalFailureCode.CANCELLED.value)
@@ -232,8 +233,10 @@ class CliAdapter:
                     )
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
+                    from Data.modules.common.process_control import kill_process_tree
+
                     try:
-                        proc.kill()
+                        kill_process_tree(proc, grace_seconds=0.1)
                     except Exception:  # noqa: BLE001
                         pass
                     self._state = ExternalRuntimeState.READY

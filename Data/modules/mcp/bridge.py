@@ -94,15 +94,13 @@ class McpBridge:
     def initialize(self) -> None:
         self.store.initialize()
         # Startup reconciliation: persisted READY is not runtime truth.
+        # Never spawn MCP stdio/HTTP from FastAPI startup — even for eager_connect.
         for config in self.store.list_servers():
             state = McpServerState.DISABLED if not config.enabled else McpServerState.DISCONNECTED
             self.store.update_runtime_state(config.server_id, state=state)
             self.sync.mark_unavailable(config)
-            if self.enabled and config.enabled and config.eager_connect:
-                try:
-                    self.connect(config.server_id)
-                except McpError:
-                    pass
+            # Eager connect is deferred to mcp_execution when workers are externalized.
+            # Cached metadata remains Control Plane; live spawn/network is not.
 
     def shutdown(self) -> None:
         with self._lock:

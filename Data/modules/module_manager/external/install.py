@@ -754,7 +754,8 @@ class InstallationService:
         if not ctx.config.install.post_install:
             return
         self._emit(ctx, InstallPhase.POST_INSTALL, "running post_install hooks")
-        post_env = os.environ.copy()
+        from Data.modules.common.process_control import scrub_child_environment
+        post_env = scrub_child_environment()
         node_dir = _preferred_node_bin_dir()
         if node_dir:
             post_env["PATH"] = f"{node_dir}{os.pathsep}{post_env.get('PATH', '')}"
@@ -816,7 +817,8 @@ class InstallationService:
             tool = "pnpm" if InstallStrategy.NODE_PNPM.value in applied else "npm"
             tool_path = _resolve_node_tool(tool)
             if tool_path and (root / (ctx.config.install.package_json or "package.json")).exists():
-                env = os.environ.copy()
+                from Data.modules.common.process_control import scrub_child_environment
+                env = scrub_child_environment()
                 node_dir = _preferred_node_bin_dir()
                 if node_dir:
                     env["PATH"] = f"{node_dir}{os.pathsep}{env.get('PATH', '')}"
@@ -1327,7 +1329,8 @@ class InstallationService:
         cmd = [tool_path, "install"]
         if config.install.npm_packages:
             cmd = [tool_path, "install", *config.install.npm_packages]
-        env = os.environ.copy()
+        from Data.modules.common.process_control import scrub_child_environment
+        env = scrub_child_environment()
         node_dir = _preferred_node_bin_dir()
         if node_dir:
             env["PATH"] = f"{node_dir}{os.pathsep}{env.get('PATH', '')}"

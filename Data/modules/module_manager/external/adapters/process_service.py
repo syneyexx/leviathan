@@ -133,24 +133,37 @@ class ProcessServiceAdapter:
             command[0] = exe
         env = {k: v.replace("$INSTALL_ROOT", root or "") for k, v in self.config.runtime.env.items()}
         # Prefer install-root venv on PATH for module-local binaries (uvicorn, etc.).
+        # Never merge full os.environ — that leaks API/DB secrets into module processes.
         if root:
             import os as _os
             from pathlib import Path as _Path
 
+            from Data.modules.common.process_control import scrub_child_environment
+
             venv_path = _Path(root) / ".venv" / ("Scripts" if _os.name == "nt" else "bin")
+            host_path = _os.environ.get("PATH", "")
             if venv_path.is_dir():
-                env = {**_os.environ, **env, "PATH": f"{venv_path}{_os.pathsep}{_os.environ.get('PATH', '')}"}
+                env["PATH"] = f"{venv_path}{_os.pathsep}{host_path}"
+            # Rebuild from scrubbed host allowlist + explicit module env only.
+            env = scrub_child_environment(extras=env)
         if (self.config.runtime.cwd or "").find("$INSTALL_ROOT") >= 0 and not root:
             raise InstallError(
                 ExternalFailureCode.START_FAILED,
                 "process service $INSTALL_ROOT unresolved; install/activate a version before start",
             )
+        prior_generation = int(getattr(self._owned, "launch_generation", 0) or 0) if self._owned else 0
+        if self.ctx.store is not None and prior_generation <= 0:
+            rec = self.ctx.store.get_process(self.ctx.module_id)
+            if rec:
+                prior_generation = int((rec.get("metadata") or {}).get("launch_generation") or 0)
+        next_generation = prior_generation + 1
         self._owned = OwnedProcess(
             module_id=self.ctx.module_id,
             command=command,
             cwd=cwd,
             env=env,
             restart_count=(self._owned.restart_count + 1) if self._owned else 0,
+            launch_generation=next_generation,
         )
         try:
             pid = self._owned.start()
@@ -180,18 +193,28 @@ class ProcessServiceAdapter:
                 started_at=self._owned.started_at,
                 restart_count=self._owned.restart_count,
                 health="OK",
+                metadata={"launch_generation": next_generation},
             )
             self.ctx.store.set_runtime_state(
                 self.ctx.module_id,
                 ExternalRuntimeState.RUNNING.value,
                 desired_state="RUNNING",
             )
-        return {"status": "RUNNING", "pid": pid, "ready": detail}
+        return {"status": "RUNNING", "pid": pid, "ready": detail, "launch_generation": next_generation}
 
-    def stop(self) -> dict[str, Any]:
+    def stop(self, *, expected_generation: int | None = None) -> dict[str, Any]:
         self._state = ExternalRuntimeState.STOPPING
         code = None
         if self._owned:
+            if expected_generation is not None and int(self._owned.launch_generation) != int(expected_generation):
+                self._state = ExternalRuntimeState.RUNNING if self._owned.is_alive() else ExternalRuntimeState.STOPPED
+                return {
+                    "status": self._state.value,
+                    "refused": "STALE_GENERATION",
+                    "code": "MODULE_PROCESS_OWNERSHIP_UNPROVEN",
+                    "current_generation": self._owned.launch_generation,
+                    "expected_generation": expected_generation,
+                }
             code = self._owned.stop()
         elif self.ctx.store is not None:
             # Reconcile persisted PID — only kill if fingerprint matches.
@@ -199,6 +222,16 @@ class ProcessServiceAdapter:
 
             rec = self.ctx.store.get_process(self.ctx.module_id)
             if rec and rec.get("pid"):
+                persisted_gen = int((rec.get("metadata") or {}).get("launch_generation") or 0)
+                if expected_generation is not None and persisted_gen and int(expected_generation) != persisted_gen:
+                    self._state = ExternalRuntimeState.RUNNING
+                    return {
+                        "status": "RUNNING",
+                        "refused": "STALE_GENERATION",
+                        "code": "MODULE_PROCESS_OWNERSHIP_UNPROVEN",
+                        "current_generation": persisted_gen,
+                        "expected_generation": expected_generation,
+                    }
                 orphan = OP(
                     module_id=self.ctx.module_id,
                     command=list(rec.get("command") or []),
@@ -208,6 +241,7 @@ class ProcessServiceAdapter:
                     fingerprint=rec.get("fingerprint"),
                     started_at=rec.get("started_at"),
                     restart_count=int(rec.get("restart_count") or 0),
+                    launch_generation=persisted_gen,
                 )
                 code = orphan.stop()
         self._state = ExternalRuntimeState.STOPPED

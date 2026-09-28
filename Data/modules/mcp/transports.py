@@ -152,19 +152,16 @@ class StdioTransport:
         proc = self._proc
         if proc is None:
             return
+        from Data.modules.common.process_control import kill_process_tree
+
+        # Canonical Windows taskkill /T + POSIX killpg — child/grandchild cleanup.
         if os.name == "posix" and self._pgid is not None:
             try:
                 os.killpg(self._pgid, signal.SIGKILL)
-            except OSError:
-                try:
-                    proc.kill()
-                except OSError:
-                    pass
-        else:
-            try:
-                proc.kill()
+                return
             except OSError:
                 pass
+        kill_process_tree(proc, grace_seconds=0.1)
 
     def _read_stdout(self) -> None:
         assert self._proc is not None and self._proc.stdout is not None
@@ -245,8 +242,28 @@ class HttpTransport:
                 "Outbound HTTP MCP blocked by network policy",
                 details={"host": host},
             )
-        # Basic SSRF guard for non-loopback when outbound is allowed — still refuse metadata IPs.
-        if host in {"169.254.169.254", "metadata.google.internal"}:
+        # SSRF: reuse research URL policy. Configured loopback MCP is allowed only
+        # when outbound is disabled (typical local trusted endpoint) or host is
+        # explicitly loopback. Non-loopback must pass private/link-local/metadata checks.
+        if not loopback:
+            try:
+                from Data.modules.research.ssrf import validate_url_for_fetch
+
+                decision = validate_url_for_fetch(self.url, resolve_dns=True)
+                if not decision.allowed:
+                    raise McpError(
+                        MCP_NETWORK_BLOCKED,
+                        f"MCP HTTP SSRF blocked: {decision.reason}",
+                        details=decision.public_dict(),
+                    )
+            except McpError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                raise McpError(
+                    MCP_NETWORK_BLOCKED,
+                    f"MCP HTTP SSRF validation failed: {exc}",
+                ) from exc
+        elif host in {"169.254.169.254", "metadata.google.internal"}:
             raise McpError(MCP_NETWORK_BLOCKED, "Metadata endpoint blocked for MCP HTTP")
         self._client = _httpx().Client(
             timeout=self.timeout_seconds,

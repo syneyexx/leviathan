@@ -129,6 +129,78 @@ class ManagedLocalServingAdapter:
             runtime_metrics=True,
             load_options=load_opts,
         )
+        self.job_runtime: Any | None = None
+        self.managed_by_leviathan = True
+
+    def bind_job_runtime(self, job_runtime: Any | None) -> None:
+        self.job_runtime = job_runtime
+
+    def _externalize_serving(self) -> bool:
+        from Data.modules.model_runtime.execution_gate import (
+            allow_inline_serving_for_tests,
+            runners_externalized,
+        )
+
+        if not runners_externalized():
+            return False
+        # When JobRuntime is bound, always externalize managed lifecycle.
+        if self.job_runtime is not None:
+            return True
+        # Pytest / inproc fixtures may exercise ServingSupervisor locally.
+        if allow_inline_serving_for_tests():
+            return False
+        # Production without JobRuntime: still claim external ownership so load
+        # fails closed at enqueue (MODEL_RUNTIME_UNAVAILABLE) rather than Popen.
+        return True
+
+    def _enqueue_serving_job(self, capability_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self.job_runtime is None or not hasattr(self.job_runtime, "enqueue"):
+            raise ModelControlError(
+                code=CAPABILITY_NOT_SUPPORTED,
+                message="MODEL_RUNTIME_UNAVAILABLE — JobRuntime required for managed serving lifecycle",
+                provider_id=self.provider_id,
+                model_id=str(arguments.get("model_id") or ""),
+                http_status=503,
+                details={"code": "MODEL_RUNTIME_UNAVAILABLE"},
+            )
+        job = self.job_runtime.enqueue(
+            capability_id=capability_id,
+            arguments=arguments,
+            requested_by="model_runtime.managed_adapter",
+            worker_pool="model_runtime",
+            latency_class="interactive",
+            domain="models",
+            consumer="model_runtime",
+            metadata={"worker_kind": "model_runtime", "execution_class": "EXTERNAL_REQUIRED"},
+        )
+        # Bounded wait for lifecycle (start/stop) — API never process_next().
+        deadline = time.monotonic() + float(arguments.get("ready_timeout_seconds") or 60.0) + 5.0
+        store = getattr(self.job_runtime, "store", None)
+        while time.monotonic() < deadline:
+            current = store.get(job.job_id) if store is not None else None
+            if current is None:
+                break
+            state = str(getattr(getattr(current, "state", None), "value", current.state) or "")
+            if state in {"COMPLETED", "FAILED", "CANCELLED"}:
+                result = dict(getattr(current, "result", None) or {})
+                if state != "COMPLETED":
+                    raise ModelControlError(
+                        code=MODEL_LOAD_FAILED if "start" in capability_id else CAPABILITY_NOT_SUPPORTED,
+                        message=str((result.get("error") or {}).get("message") or current.error or state),
+                        provider_id=self.provider_id,
+                        model_id=str(arguments.get("model_id") or ""),
+                        http_status=503,
+                        details=result,
+                    )
+                return result
+            time.sleep(0.1)
+        raise ModelControlError(
+            code=MODEL_LOAD_FAILED,
+            message="MODEL_RUNTIME timeout waiting for serving lifecycle job",
+            provider_id=self.provider_id,
+            model_id=str(arguments.get("model_id") or ""),
+            http_status=504,
+        )
 
     def capabilities(self) -> RuntimeCapabilities:
         return self._capabilities
@@ -247,6 +319,39 @@ class ManagedLocalServingAdapter:
                 strategy.base_command = list(self.command)
             launch = strategy.build(plan=plan, options=opts, endpoint=self.endpoint)
             self._last_launch_meta[model_id] = launch.public_dict()
+            if self._externalize_serving():
+                job_result = await asyncio.to_thread(
+                    self._enqueue_serving_job,
+                    "model.serving.start",
+                    {
+                        "provider_id": self.provider_id,
+                        "model_id": model_id,
+                        "backend_kind": self.backend_kind,
+                        "command": list(launch.argv),
+                        "endpoint": self.endpoint,
+                        "revision_id": f"{self.backend_kind}:{model_id}",
+                        "env": dict(launch.env) if launch.env else {},
+                        "ready_timeout_seconds": 30.0,
+                        "managed_by_leviathan": True,
+                    },
+                )
+                worker_dict = dict(job_result.get("worker") or {})
+                worker_id = str(worker_dict.get("worker_id") or "")
+                if worker_id:
+                    self._model_to_worker[model_id] = worker_id
+                return {
+                    "worker": worker_dict,
+                    "alreadyLoaded": False,
+                    "launch": self._last_launch_meta.get(model_id),
+                    "deploymentPlanId": plan.plan_id if plan else None,
+                    "jobResult": job_result,
+                    "truth": {
+                        "managed_serving": True,
+                        "dead_is_not_ready": True,
+                        "loadOptionsApplied": True,
+                        "model_runtime_owned": True,
+                    },
+                }
             worker = await asyncio.to_thread(
                 self.supervisor.start_subprocess,
                 provider_id=self.provider_id,
@@ -256,6 +361,7 @@ class ManagedLocalServingAdapter:
                 endpoint=self.endpoint,
                 revision_id=f"{self.backend_kind}:{model_id}",
                 env=dict(launch.env) if launch.env else None,
+                managed_by_leviathan=True,
             )
 
         self._model_to_worker[model_id] = worker.worker_id
@@ -296,15 +402,40 @@ class ManagedLocalServingAdapter:
 
     async def unload(self, model_id: str) -> dict[str, Any]:
         worker_id = self._model_to_worker.pop(model_id, None)
+        generation = None
         if worker_id is None:
             # Best-effort: find by model
             for worker in self.supervisor.workers_for_model(model_id):
                 if worker.provider_id == self.provider_id:
                     worker_id = worker.worker_id
+                    generation = worker.launch_generation
                     break
+        else:
+            existing = self.supervisor.get_worker(worker_id)
+            if existing is not None:
+                generation = existing.launch_generation
+        if worker_id is None and not self._externalize_serving():
+            return {"unloaded": False, "detail": "no worker for model"}
+        if self._externalize_serving() and self.mode != "inproc":
+            result = await asyncio.to_thread(
+                self._enqueue_serving_job,
+                "model.serving.stop",
+                {
+                    "worker_id": worker_id,
+                    "model_id": model_id,
+                    "launch_generation": generation,
+                    "drain": True,
+                    "managed_by_leviathan": True,
+                },
+            )
+            return {
+                "unloaded": bool(result.get("unloaded", True)),
+                "worker": result.get("worker"),
+                "truth": {"model_runtime_owned": True},
+            }
         if worker_id is None:
             return {"unloaded": False, "detail": "no worker for model"}
-        worker = self.supervisor.stop(worker_id, drain=True)
+        worker = self.supervisor.stop(worker_id, drain=True, expected_generation=generation)
         return {"unloaded": True, "worker": worker.public_dict()}
 
     async def remove(self, model_id: str) -> None:

@@ -5,6 +5,7 @@ Deterministic end-to-end. Mocks only external LLM/network.
 
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -133,6 +134,12 @@ class _PaperPortfolio:
 
 class LearningLoopW135Tests(unittest.TestCase):
     def setUp(self) -> None:
+        self._prev_externalize = os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API")
+        self._prev_agents_runner = os.environ.get("LEVIATHAN_AGENTS_RUNNER")
+        self._prev_agents_allow = os.environ.get("LEVIATHAN_AGENTS_ALLOW_INPROCESS_TEST")
+        os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = "0"
+        os.environ["LEVIATHAN_AGENTS_RUNNER"] = "inprocess_test"
+        os.environ["LEVIATHAN_AGENTS_ALLOW_INPROCESS_TEST"] = "1"
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.db = self.root / "lev.db"
@@ -170,6 +177,14 @@ class LearningLoopW135Tests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+        def _restore(key: str, prev: str | None) -> None:
+            if prev is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = prev
+        _restore("LEVIATHAN_WORKERS_EXTERNALIZE_API", self._prev_externalize)
+        _restore("LEVIATHAN_AGENTS_RUNNER", self._prev_agents_runner)
+        _restore("LEVIATHAN_AGENTS_ALLOW_INPROCESS_TEST", self._prev_agents_allow)
 
     def test_w135_negative_memory_to_orchestra_paper_postmortem_loop(self) -> None:
         # --- C) Sim experiment bad regime → durable StrategyMemory (negative) ---

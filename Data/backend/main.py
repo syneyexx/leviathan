@@ -2485,7 +2485,7 @@ app.include_router(
     )
 )
 app.include_router(build_brain_router(brain_facade, job_runtime=job_runtime))
-app.include_router(build_mcp_router(mcp_bridge, execution_gateway))
+app.include_router(build_mcp_router(mcp_bridge, execution_gateway, job_runtime=job_runtime))
 app.include_router(
     build_market_sim_router(
         market_sim_service,

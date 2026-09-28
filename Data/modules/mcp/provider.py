@@ -16,10 +16,9 @@ from .types import McpCallStatus
 class McpProvider:
     """Dispatches authorized capability invokes to McpBridge or mcp_execution workers.
 
-    Long tools/call execution prefers the ``mcp_execution`` worker pool when the
-    fabric is externalized. Connect / handshake / list remain on McpBridge
-    (Control Plane control traffic). Stdio session lifecycle may still be owned
-    by the bridge for eager-connected servers; worker path uses ephemeral sessions.
+    Live connect / handshake / tools/list / tools/call that touch network or
+    spawn stdio processes execute via ``mcp_execution``. Cached server/tool
+    metadata remains Control Plane.
     """
 
     def __init__(self, bridge: McpBridge, *, job_runtime: Any | None = None) -> None:
