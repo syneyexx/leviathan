@@ -269,6 +269,10 @@ class AutonomousResearchClosedLoopE2ETests(unittest.TestCase):
                 row["metadata"] = meta
             plane.store.upsert_paper_deployment(row)
 
+            # Need sample_size >= min_sample_size (5) or drift stays UNMEASURED
+            for _ in range(5):
+                plane.autonomous_paper_step(dep_id, side="HOLD")
+
             drift = plane.review_deployment_drift(
                 dep_id,
                 baseline_metrics={"total_return_pct": 12.0, "max_drawdown_pct": 4.0},
