@@ -12,6 +12,8 @@ from ..settings import SourceIngestionSettings
 from ..types import (
     ContentRef,
     DetectionResult,
+    ERROR_OCR_REQUIRED,
+    ERROR_OCR_UNAVAILABLE,
     MemberOutcome,
     NormalizedArtifact,
     PARSER_VERSION,
@@ -142,11 +144,21 @@ class DocumentHandler:
                 parser_version=PARSER_VERSION,
                 content_hash=extraction.content_sha256 or _hash_file(path)[0],
                 content=ContentRef(text=""),
+                # Honest: text extraction found nothing — OCR required, not "understood".
                 outcome=MemberOutcome.FAILED,
-                error_code="PDF_NO_EXTRACTABLE_TEXT",
-                skip_reason="PDF has no extractable text (OCR unavailable)",
+                error_code=ERROR_OCR_REQUIRED,
+                skip_reason="PDF has no extractable text; OCR/document_ai required",
                 unsupported_features=list(extraction.unsupported or ["ocr"]),
-                provenance={"relative_path": relative_path, "page_count": len(pages_out)},
+                provenance={
+                    "relative_path": relative_path,
+                    "page_count": len(pages_out),
+                    "pdf_class": "scanned_or_image_only",
+                    "text_extraction": "empty",
+                    "ocr_status": "required",
+                    # Compat alias retained for existing clients/tests.
+                    "legacy_error_code": "PDF_NO_EXTRACTABLE_TEXT",
+                },
+                retryable=False,
             )
         return NormalizedArtifact(
             source_kind=SourceKind.DOCUMENT,

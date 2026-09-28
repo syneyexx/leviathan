@@ -11,6 +11,8 @@ from ..settings import SourceIngestionSettings
 from ..types import (
     ContentRef,
     DetectionResult,
+    ERROR_OCR_REQUIRED,
+    ERROR_OCR_UNAVAILABLE,
     MemberOutcome,
     NormalizedArtifact,
     PARSER_VERSION,
@@ -134,9 +136,14 @@ class ImageHandler:
             content_hash=digest.hexdigest(),
             content=ContentRef(text=""),
             structured_metadata={"size_bytes": path.stat().st_size},
-            provenance={"relative_path": relative_path},
+            provenance={
+                "relative_path": relative_path,
+                "ocr_status": "required",
+                "text_extraction": "not_applicable",
+            },
             outcome=MemberOutcome.SKIPPED,
             skip_reason="ocr_unavailable",
+            error_code=ERROR_OCR_REQUIRED,
             unsupported_features=["ocr", "vision"],
         )
 

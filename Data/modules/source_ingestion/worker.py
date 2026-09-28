@@ -29,32 +29,34 @@ def resolve_runner_mode(settings: Any | None = None) -> str:
     Canonical values:
       fabric            — Worker Fabric source_ingestion pool (production)
       standalone_legacy — scripts/source_ingestion_worker.py (dev/diagnostics)
-      inprocess_test    — API-thread runner (tests / explicit legacy)
+      inprocess_test    — API-thread runner (tests / explicit allow gate ONLY)
       disabled          — no executor
 
     Backward-compat mappings:
       external / worker / process → fabric
       standalone / legacy_external → standalone_legacy
-      inprocess / in-process / internal / thread → inprocess_test
+      inprocess_test → inprocess_test
+      inprocess / thread / internal → inprocess_test ONLY when allow gate open;
+        otherwise fail closed to fabric (no silent inline reactivation)
       none / off / disabled → disabled
     """
+    from .execution_gate import normalize_runner_value
+
     raw = (os.environ.get(RUNNER_ENV) or "").strip().lower()
     if not raw and settings is not None:
         ri = getattr(settings, "research_integration", None)
         raw = str(getattr(ri, "source_ingestion_runner", "") or "").strip().lower()
-    if raw in {"inprocess", "in-process", "internal", "thread", "inprocess_test"}:
-        return "inprocess_test"
-    if raw in {"standalone", "standalone_legacy", "legacy_external", "legacy"}:
-        return "standalone_legacy"
-    if raw in {"fabric", "external", "worker", "process"}:
-        return "fabric"
-    if raw in {"none", "off", "disabled"}:
-        return "disabled"
-    return "fabric"
+        if not raw:
+            raw = str(getattr(settings, "runner", "") or "").strip().lower()
+    return normalize_runner_value(raw)
 
 
 def should_start_inprocess_runner(settings: Any | None = None) -> bool:
-    return resolve_runner_mode(settings) == "inprocess_test"
+    from .execution_gate import allow_inprocess_execution
+
+    return resolve_runner_mode(settings) == "inprocess_test" and allow_inprocess_execution(
+        settings
+    )
 
 
 def fabric_owns_source_ingestion(settings: Any | None = None) -> bool:

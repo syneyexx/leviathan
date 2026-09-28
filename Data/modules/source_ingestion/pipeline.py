@@ -36,6 +36,8 @@ from .skip_policy import should_skip_path
 from .store import IngestionStore
 from .types import (
     ArchiveManifest,
+    ERROR_OCR_REQUIRED,
+    ERROR_OCR_UNAVAILABLE,
     IngestionError,
     IngestionPhase,
     IngestionProgress,
@@ -48,6 +50,7 @@ from .types import (
 
 
 EmitFn = Callable[[str, str, dict[str, Any]], None]
+OcrEnqueueFn = Callable[..., dict[str, Any]]
 
 
 class SourceIngestionPipeline:
@@ -64,6 +67,9 @@ class SourceIngestionPipeline:
         staging_root: Path,
         dataset_service: Any | None = None,
         emit: EmitFn | None = None,
+        enqueue_ocr: OcrEnqueueFn | None = None,
+        parent_job_id: str | None = None,
+        root_job_id: str | None = None,
     ) -> None:
         self.research = research_store
         self.ingestion = ingestion_store
@@ -73,6 +79,9 @@ class SourceIngestionPipeline:
         self.staging_root = ensure_dir(Path(staging_root))
         self.dataset_service = dataset_service
         self.emit = emit
+        self.enqueue_ocr = enqueue_ocr
+        self.parent_job_id = parent_job_id
+        self.root_job_id = root_job_id
         self.registry = get_default_registry()
 
     def _event(self, name: str, message: str, payload: dict[str, Any]) -> None:
@@ -235,6 +244,27 @@ class SourceIngestionPipeline:
             return self.get_progress(container_source_id or source.source_id)
 
         if artifact.outcome in {MemberOutcome.SKIPPED, MemberOutcome.QUARANTINED, MemberOutcome.FAILED}:
+            # When OCR is genuinely required, enqueue durable document_ai child (never inline).
+            ocr_receipt = self._maybe_enqueue_ocr(source, artifact)
+            if ocr_receipt:
+                artifact.provenance = dict(artifact.provenance or {})
+                artifact.provenance["ocr_job"] = {
+                    "job_id": ocr_receipt.get("job_id"),
+                    "queued": ocr_receipt.get("queued"),
+                    "status": ocr_receipt.get("status"),
+                    "error_code": ocr_receipt.get("error_code") or ERROR_OCR_UNAVAILABLE,
+                }
+                # No backend → explicit unavailable (do not fabricate text).
+                if not ocr_receipt.get("queued"):
+                    artifact.error_code = artifact.error_code or ERROR_OCR_UNAVAILABLE
+                    artifact.skip_reason = (
+                        artifact.skip_reason
+                        or ocr_receipt.get("reason")
+                        or "OCR backend unavailable"
+                    )
+                elif artifact.error_code == ERROR_OCR_REQUIRED:
+                    # Child job enqueued; keep OCR_REQUIRED and record lineage.
+                    artifact.provenance["ocr_status"] = "delegated_document_ai"
             status = (
                 ParseStatus.FAILED
                 if artifact.outcome == MemberOutcome.FAILED
@@ -678,6 +708,19 @@ class SourceIngestionPipeline:
             return
 
         if artifact.outcome != MemberOutcome.SUCCESS:
+            ocr_receipt = self._maybe_enqueue_ocr(child, artifact)
+            if ocr_receipt:
+                artifact.provenance = dict(artifact.provenance or {})
+                artifact.provenance["ocr_job"] = {
+                    "job_id": ocr_receipt.get("job_id"),
+                    "queued": ocr_receipt.get("queued"),
+                    "status": ocr_receipt.get("status"),
+                    "error_code": ocr_receipt.get("error_code") or ERROR_OCR_UNAVAILABLE,
+                }
+                if not ocr_receipt.get("queued"):
+                    artifact.error_code = artifact.error_code or ERROR_OCR_UNAVAILABLE
+                elif artifact.error_code == ERROR_OCR_REQUIRED:
+                    artifact.provenance["ocr_status"] = "delegated_document_ai"
             member.outcome = artifact.outcome
             member.skip_reason = artifact.skip_reason
             member.error_code = artifact.error_code
@@ -906,12 +949,37 @@ class SourceIngestionPipeline:
             self.ingestion.upsert_member(member)
             return
         if artifact.outcome != MemberOutcome.SUCCESS:
+            ocr_receipt = self._maybe_enqueue_ocr(child, artifact)
+            if ocr_receipt:
+                artifact.provenance = dict(artifact.provenance or {})
+                artifact.provenance["ocr_job"] = {
+                    "job_id": ocr_receipt.get("job_id"),
+                    "queued": ocr_receipt.get("queued"),
+                    "status": ocr_receipt.get("status"),
+                    "error_code": ocr_receipt.get("error_code") or ERROR_OCR_UNAVAILABLE,
+                }
+                if not ocr_receipt.get("queued"):
+                    artifact.error_code = artifact.error_code or ERROR_OCR_UNAVAILABLE
+                elif artifact.error_code == ERROR_OCR_REQUIRED:
+                    artifact.provenance["ocr_status"] = "delegated_document_ai"
             member.outcome = artifact.outcome
             member.skip_reason = artifact.skip_reason
             member.error_code = artifact.error_code
             member.parse_status = "failed" if artifact.outcome == MemberOutcome.FAILED else "skipped"
             member.child_source_id = child.source_id
             self.ingestion.upsert_member(member)
+            self._save_source_state(
+                child,
+                parse_status=ParseStatus.FAILED if artifact.outcome == MemberOutcome.FAILED else ParseStatus.SKIPPED,
+                brain_status=BrainStatus.SKIPPED,
+                parser=artifact.parser,
+                text="",
+                detection=detection,
+                artifact=artifact,
+                archive_filename=parent.title,
+                parent_source_id=parent.source_id,
+                container_source_id=parent.source_id,
+            )
             return
         text = artifact.content.read_text()
         snap = self._write_snapshot(parent.project_id, child.source_id, text)
@@ -936,6 +1004,51 @@ class SourceIngestionPipeline:
         member.brain_document_id = synced.brain_document_id
         member.child_source_id = synced.source_id
         self.ingestion.upsert_member(member)
+
+    def _maybe_enqueue_ocr(
+        self,
+        source: ResearchSource,
+        artifact: NormalizedArtifact,
+    ) -> dict[str, Any] | None:
+        """Enqueue document_ai/ocr child when OCR is required. Never runs OCR inline."""
+        needs = (
+            artifact.error_code in {ERROR_OCR_REQUIRED, "PDF_NO_EXTRACTABLE_TEXT"}
+            or "ocr" in (artifact.unsupported_features or [])
+            or str(artifact.skip_reason or "") == "ocr_unavailable"
+            or (artifact.provenance or {}).get("ocr_status") == "required"
+        )
+        if not needs:
+            return None
+        if self.enqueue_ocr is None:
+            return {
+                "queued": False,
+                "job_id": None,
+                "status": ERROR_OCR_UNAVAILABLE,
+                "error_code": ERROR_OCR_UNAVAILABLE,
+                "reason": "OCR enqueue hook not bound (document_ai unavailable)",
+                "truth": {"ocr_backend": "missing", "executed_inline": False},
+            }
+        raw_path = str((source.provenance or {}).get("raw_path") or "")
+        try:
+            return self.enqueue_ocr(
+                source_id=source.source_id,
+                project_id=source.project_id,
+                path=raw_path,
+                relative_path=artifact.relative_path or source.title,
+                parent_job_id=self.parent_job_id,
+                root_job_id=self.root_job_id,
+                mime_type=artifact.mime_type,
+                reason=str(artifact.error_code or ERROR_OCR_REQUIRED),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "queued": False,
+                "job_id": None,
+                "status": ERROR_OCR_UNAVAILABLE,
+                "error_code": ERROR_OCR_UNAVAILABLE,
+                "reason": str(exc)[:300],
+                "truth": {"ocr_backend": "missing", "executed_inline": False},
+            }
 
     def _finalize_container(self, container_source_id: str) -> IngestionProgress:
         manifest = self.ingestion.build_manifest(container_source_id)
