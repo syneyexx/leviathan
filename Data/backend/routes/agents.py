@@ -97,14 +97,38 @@ def build_agents_router(
 
         @router.post("/api/agents/execute")
         def execute_agent(payload: AgentExecuteRequest) -> dict:
+            """Plan/validate only on the control plane — mission body runs on agents workers.
+
+            For a durable execution, prefer POST /api/agents/{id}/missions which
+            enqueues ``agent.advance``. Direct execute is retained for INLINE_SAFE
+            planning helpers under the inprocess_test allow gate only.
+            """
+            from Data.modules.agents.execution_gate import allow_inprocess_mission_execution
+
             try:
                 kind = AgentKind(payload.kind.upper())
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=f"Invalid agent kind: {payload.kind}") from exc
+            if not allow_inprocess_mission_execution():
+                # Production: refuse synchronous mission body on FastAPI.
+                plan = agent_runtime.plan_structured(payload.request, kind=kind)
+                return {
+                    "agent": {
+                        "status": "QUEUED_REQUIRED",
+                        "agent_kind": kind.value,
+                        "plan": plan.public_dict() if hasattr(plan, "public_dict") else {"steps": [s.public_dict() for s in plan.steps]},
+                        "message": (
+                            "Heavy agent execution is external-only. "
+                            "Create a fleet mission to enqueue agent.advance."
+                        ),
+                        "error": "MISSION_WORKER_UNAVAILABLE",
+                    },
+                    "mode": "plan_only",
+                }
             result = agent_runtime.execute(
                 payload.request,
                 kind=kind,
-                use_jobs=payload.use_jobs,
+                use_jobs=False,  # never process_next from API
                 conversation_id=payload.conversation_id,
                 capability_overrides=payload.capability_overrides or None,
             )
@@ -116,12 +140,25 @@ def build_agents_router(
 
         @router.post("/api/agents/multi")
         def execute_multi_agent(payload: MultiAgentRequest) -> dict:
+            from Data.modules.agents.execution_gate import allow_inprocess_mission_execution
+
             kinds: list[AgentKind] = []
             for raw in payload.kinds:
                 try:
                     kinds.append(AgentKind(raw.upper()))
                 except ValueError as exc:
                     raise HTTPException(status_code=422, detail=f"Invalid agent kind: {raw}") from exc
+            if not allow_inprocess_mission_execution():
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "code": "MISSION_WORKER_UNAVAILABLE",
+                        "message": (
+                            "Multi-agent DAG execution is external-only. "
+                            "Use fleet orchestrator missions (agent.advance)."
+                        ),
+                    },
+                )
             result = multi_agents.run(
                 payload.request,
                 kinds=kinds,

@@ -140,7 +140,35 @@ class AgentRuntime:
                     continue
 
                 tools_used += 1
-                if use_jobs and self.jobs is not None:
+                # Classify: EXTERNAL_REQUIRED tools become durable child jobs.
+                # INLINE_SAFE tools may execute via gateway inside the agents worker.
+                # NEVER call JobRuntime.process_next() — that steals arbitrary work.
+                from Data.modules.execution.workload import (
+                    ExecutionWorkloadClass,
+                    classify_capability,
+                    is_external_required,
+                )
+
+                cap_meta = None
+                try:
+                    definition = self.gateway.catalog.get(step.capability_id)
+                    cap_meta = getattr(definition, "metadata", None) if definition else None
+                except Exception:  # noqa: BLE001
+                    cap_meta = None
+                workload = classify_capability(
+                    step.capability_id,
+                    metadata=cap_meta if isinstance(cap_meta, dict) else None,
+                )
+                must_delegate = workload == ExecutionWorkloadClass.EXTERNAL_REQUIRED or is_external_required(
+                    step.capability_id,
+                    metadata=cap_meta if isinstance(cap_meta, dict) else None,
+                )
+                if must_delegate and self.jobs is not None:
+                    child_key = (
+                        f"{idempotency_key}:{step.capability_id}:{tools_used}"
+                        if idempotency_key
+                        else f"agent-tool:{created_run_id}:{step.capability_id}:{tools_used}"
+                    )
                     job = self.jobs.enqueue(
                         capability_id=step.capability_id,
                         arguments=args,
@@ -148,38 +176,39 @@ class AgentRuntime:
                         run_id=created_run_id,
                         requested_by=f"agent:{kind.value.lower()}",
                         trace_id=trace_id,
-                        idempotency_key=(
-                            f"{idempotency_key}:{step.capability_id}" if idempotency_key else None
-                        ),
+                        idempotency_key=child_key,
                     )
-                    done = self.jobs.process_next()
                     result.job_ids.append(job.job_id)
                     step_record["job_id"] = job.job_id
-                    step_record["status"] = (done.state.value if done else JobState.QUEUED.value)
-                    if done and done.result:
-                        step_record["result"] = done.result
-                    if done and done.error:
-                        step_record["error"] = done.error
-                else:
-                    cap = self.gateway.execute(
-                        CapabilityRequest(
-                            capability_id=step.capability_id,
-                            arguments=args,
-                            approval_id=step.approval_id,
-                            run_id=created_run_id,
-                            requested_by=f"agent:{kind.value.lower()}",
-                            trace_id=trace_id,
-                            idempotency_key=(
-                                f"{idempotency_key}:{step.capability_id}"
-                                if idempotency_key
-                                else None
-                            ),
-                        )
+                    step_record["status"] = JobState.QUEUED.value
+                    step_record["delegated"] = True
+                    result.steps.append(step_record)
+                    # Yield: durable continuation must resume after child completes.
+                    result.status = "WAITING_CHILD"
+                    result.output = (
+                        f"{kind.value} agent waiting on child job {job.job_id}"
                     )
-                    step_record["status"] = cap.status.value
-                    step_record["result"] = cap.public_dict()
-                    if cap.status != CapabilityStatus.COMPLETED:
-                        step_record["error"] = cap.error
+                    return result
+                # INLINE_SAFE (or no JobRuntime): execute through gateway in this worker.
+                cap = self.gateway.execute(
+                    CapabilityRequest(
+                        capability_id=step.capability_id,
+                        arguments=args,
+                        approval_id=step.approval_id,
+                        run_id=created_run_id,
+                        requested_by=f"agent:{kind.value.lower()}",
+                        trace_id=trace_id,
+                        idempotency_key=(
+                            f"{idempotency_key}:{step.capability_id}"
+                            if idempotency_key
+                            else None
+                        ),
+                    )
+                )
+                step_record["status"] = cap.status.value
+                step_record["result"] = cap.public_dict()
+                if cap.status != CapabilityStatus.COMPLETED:
+                    step_record["error"] = cap.error
             else:
                 step_record["status"] = "OK"
             result.steps.append(step_record)

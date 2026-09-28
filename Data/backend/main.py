@@ -2603,6 +2603,8 @@ app.include_router(
         observability=observability,
         job_runtime=job_runtime,
         approval_service=approval_service,
+        # Production: sync install fallback is unreachable. Feature flag alone is
+        # insufficient — routes also require the mechanical test allow gate.
         allow_sync_install_fallback=bool(
             getattr(settings.features, "module_manager_allow_sync_install_fallback", False)
         ),

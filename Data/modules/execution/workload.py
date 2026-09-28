@@ -56,6 +56,7 @@ def _external_worker_capabilities() -> frozenset[str]:
 KNOWN_EXTERNAL_REQUIRED_EXTRA: frozenset[str] = frozenset(
     {
         "file.parse_pdf",
+        "external.module.install",
         *FILE_IO_ALWAYS_EXTERNAL,
     }
 )
@@ -212,6 +213,9 @@ def classify_capability(
             "market_sim",
             "document_ai",
             "file_io",
+            "module_runtime",
+            "agent_signals",
+            "scheduler",
         }
         if worker_kind in heavy_kinds:
             return ExecutionWorkloadClass.EXTERNAL_REQUIRED

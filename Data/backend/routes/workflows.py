@@ -57,34 +57,31 @@ def build_workflows_router(
 
     @router.post("/api/workflows/{workflow_id}/run")
     def run_workflow(workflow_id: str) -> dict:
-        """Start a workflow. When workers are externalized, enqueue workflow.advance
-        instead of blocking the API on the full step sequence.
-        """
+        """Start a workflow by enqueueing workflow.advance (never blocks on full run)."""
+        if getattr(workflow_runtime, "job_runtime", None) is None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "WORKFLOW_WORKER_UNAVAILABLE",
+                    "message": "job_runtime not bound; cannot enqueue workflow.advance",
+                },
+            )
         try:
-            from Data.modules.workers.settings import load_worker_settings
-
-            externalize = bool(load_worker_settings().externalize_api_runners)
-        except Exception:  # noqa: BLE001
-            externalize = False
-        try:
-            if externalize and getattr(workflow_runtime, "job_runtime", None) is not None:
-                job = workflow_runtime.enqueue_advance(workflow_id, requested_by="api")
-                record = workflow_store.get(workflow_id)
-                if record is None:
-                    raise KeyError(workflow_id)
-                return {
-                    "workflow": record.public_dict(),
-                    "job": job.public_dict(),
-                    "mode": "enqueued",
-                }
-            record = workflow_runtime.run(workflow_id)
+            job = workflow_runtime.enqueue_advance(workflow_id, requested_by="api")
+            record = workflow_store.get(workflow_id)
+            if record is None:
+                raise KeyError(workflow_id)
+            return {
+                "workflow": record.public_dict(),
+                "job": job.public_dict(),
+                "mode": "enqueued",
+            }
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Workflow not found") from exc
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        return {"workflow": record.public_dict(), "mode": "foreground"}
 
     @router.post("/api/workflows/{workflow_id}/cancel")
     def cancel_workflow(workflow_id: str) -> dict:
