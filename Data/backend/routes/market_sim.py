@@ -1548,6 +1548,8 @@ def build_market_sim_router(
                         else None
                     )
                 ),
+                research_scope=payload.get("researchScope") or payload.get("research_scope"),
+                dataset_bundle=payload.get("datasetBundle") or payload.get("dataset_bundle"),
             )
             return {"lab": lab}
         except MarketSimError as exc:
@@ -1641,6 +1643,13 @@ def build_market_sim_router(
     def lab_candidates(lab_id: str) -> dict:
         try:
             return service.get_lab_candidates(lab_id)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/lab/runs/{lab_id}/candidates/{candidate_id}/explain")
+    def lab_candidate_explain(lab_id: str, candidate_id: str) -> dict:
+        try:
+            return service.explain_lab_candidate(lab_id, candidate_id)
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 

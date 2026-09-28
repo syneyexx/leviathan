@@ -150,13 +150,62 @@ export type ResearchCommandSnapshot = {
     labId: string | null;
     name: string | null;
     status: string | null;
+    runMode?: string | null;
+    stage?: string | null;
     rows: EvolutionRow[];
     currentGeneration: Measured<number>;
     hypothesis: string | null;
+    activeHypothesisCount?: number;
+    activeHypothesisIds?: string[];
+    bestCandidate?: {
+      present?: boolean;
+      candidateId?: string | null;
+      strategyId?: string | null;
+      strategyVersion?: number | null;
+      generation?: number | null;
+      status?: string | null;
+      proposalMethod?: string | null;
+      hypothesis?: string | null;
+      validationFitness?: Measured;
+      role?: string | null;
+      measurement?: Measurement;
+      note?: string | null;
+    } | null;
+    qualification?: {
+      status?: string | null;
+      institutionalQualified?: boolean | null;
+      qualificationRequired?: boolean | null;
+      readyForShadow?: boolean | null;
+      labFinalist?: string | null;
+      qualificationId?: string | null;
+      note?: string | null;
+      authority?: string | null;
+      liveTrading?: "BLOCKED";
+    } | null;
     bestValidation: Measured;
     canStart: boolean;
     owner: string;
     paperPnl?: Measured;
+    liveTrading?: "BLOCKED";
+  };
+  paperForward?: {
+    bound: boolean;
+    portfolioId?: string | null;
+    deployments: Array<{
+      deploymentId?: string | null;
+      status?: string | null;
+      mode?: string | null;
+      driftStatus?: string | null;
+    }>;
+    driftTickets: Array<{
+      ticketId?: string | null;
+      reason?: string | null;
+      deploymentId?: string | null;
+      status?: string | null;
+      researchQuestion?: string | null;
+    }>;
+    liveTrading: "BLOCKED";
+    note?: string | null;
   };
   guardrails: {
     paperTradingOnly: boolean;
@@ -212,6 +261,8 @@ export type ResearchCommandSnapshot = {
     publicReasoningOnly: boolean;
     privateChainOfThought: "NOT_EXPOSED";
     readModel: boolean;
+    compositionOnly?: boolean;
+    doesNotAdvanceGenerations?: boolean;
     riskAuthority: string | null;
     asOf: string | null;
     errors: string[];

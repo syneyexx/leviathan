@@ -462,6 +462,11 @@ class ResearchCommandService:
         dashboard = self._dashboard(str(selected_portfolio), errors) if selected_portfolio else None
         portfolio_view = self._project_portfolio(portfolio_row, dashboard)
         evolution = self._evolution(str(selected_lab) if selected_lab else None, errors)
+        paper_forward = self._paper_forward(
+            portfolio_id=str(selected_portfolio) if selected_portfolio and portfolio_row else None,
+            session=session,
+            errors=errors,
+        )
         runtime = self._runtime(errors)
         team = self._team(orchestra, missions, decisions)
         thesis = self._thesis(decisions, evolution)
@@ -509,6 +514,7 @@ class ResearchCommandService:
                 "openCount": open_count,
             },
             "strategyEvolution": evolution,
+            "paperForward": paper_forward,
             "guardrails": guardrails,
             "missions": missions[:20],
             "catalogs": catalogs,
@@ -528,6 +534,8 @@ class ResearchCommandService:
                 "publicReasoningOnly": True,
                 "privateChainOfThought": "NOT_EXPOSED",
                 "readModel": True,
+                "compositionOnly": True,
+                "doesNotAdvanceGenerations": True,
                 "riskAuthority": (orchestra or {}).get("truth", {}).get("risk_authority")
                 if orchestra
                 else None,
@@ -1168,12 +1176,19 @@ class ResearchCommandService:
             "labId": lab_id,
             "name": None,
             "status": None,
+            "runMode": None,
+            "stage": None,
             "rows": [],
             "currentGeneration": unmeasured("no_lab"),
             "hypothesis": None,
+            "activeHypothesisCount": 0,
+            "activeHypothesisIds": [],
+            "bestCandidate": None,
+            "qualification": None,
             "bestValidation": unmeasured("no_lab"),
             "canStart": False,
             "owner": "AdaptiveEvolutionaryLearner",
+            "liveTrading": "BLOCKED",
         }
         if not lab_id:
             return base
@@ -1182,8 +1197,11 @@ class ResearchCommandService:
             errors.append(f"lab:not_found:{lab_id}")
             base["status"] = None
             return base
+        meta = dict(lab.get("metadata") or {})
+        learning = lab.get("learning") if isinstance(lab.get("learning"), dict) else None
         summaries: list[dict[str, Any]] = []
         candidates: list[dict[str, Any]] = []
+        candidate_payload: dict[str, Any] = {}
         current = None
         if self.plane is not None and hasattr(self.plane, "get_lab_generations"):
             try:
@@ -1194,13 +1212,18 @@ class ResearchCommandService:
                 errors.append(f"generations:{exc}")
         if self.plane is not None and hasattr(self.plane, "get_lab_candidates"):
             try:
-                payload = self.plane.get_lab_candidates(lab_id) or {}
-                candidates = list(payload.get("candidates") or [])
+                candidate_payload = self.plane.get_lab_candidates(lab_id) or {}
+                candidates = list(candidate_payload.get("candidates") or [])
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"candidates:{exc}")
         if not candidates:
             raw = lab.get("candidates") or []
             candidates = [c for c in raw if isinstance(c, dict)]
+        if learning is None and self.plane is not None and hasattr(self.plane, "get_lab_learning"):
+            try:
+                learning = (self.plane.get_lab_learning(lab_id) or {}).get("learning")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"learning:{exc}")
         rows = _evolution_rows(candidates, summaries)
         hypothesis = None
         for candidate in candidates:
@@ -1214,19 +1237,122 @@ class ResearchCommandService:
             if score.get("measurement") == "MEASURED":
                 best_validation = score
                 break
+        active_ids, active_count = _active_hypotheses(self.plane, lab_id, lab=lab, errors=errors)
+        best_candidate = _best_candidate_summary(
+            candidates=candidates,
+            learning=learning,
+            payload=candidate_payload,
+        )
+        qualification = _qualification_projection(learning=learning, lab=lab)
         status = lab.get("status")
+        run_mode = lab.get("run_mode") or meta.get("run_mode")
+        stage = None
+        if learning and learning.get("stage"):
+            stage = learning.get("stage")
+        elif meta.get("stage"):
+            stage = meta.get("stage")
+        if current is None and learning and isinstance(learning.get("current_generation"), int):
+            current = learning.get("current_generation")
         return {
             "bound": True,
             "labId": lab_id,
             "name": lab.get("name"),
             "status": status,
+            "runMode": run_mode,
+            "stage": stage,
             "rows": rows[:12],
             "currentGeneration": measured(current) if isinstance(current, int) else unmeasured("not_recorded"),
             "hypothesis": hypothesis,
+            "activeHypothesisCount": active_count,
+            "activeHypothesisIds": active_ids,
+            "bestCandidate": best_candidate,
+            "qualification": qualification,
             "bestValidation": best_validation,
             "canStart": str(status or "") in _EVOLVE_STATUSES,
             "owner": "AdaptiveEvolutionaryLearner",
             "paperPnl": unmeasured("learner_does_not_record_paper_pnl"),
+            "liveTrading": "BLOCKED",
+        }
+
+    def _paper_forward(
+        self,
+        *,
+        portfolio_id: str | None,
+        session: dict[str, Any] | None,
+        errors: list[str],
+    ) -> dict[str, Any]:
+        base = {
+            "bound": False,
+            "portfolioId": portfolio_id,
+            "deployments": [],
+            "driftTickets": [],
+            "liveTrading": "BLOCKED",
+            "note": "no_paper_portfolio",
+        }
+        if not portfolio_id:
+            return base
+        if self.plane is None or not hasattr(self.plane, "list_paper_deployments"):
+            return {
+                **base,
+                "note": "paper_deployments_unavailable",
+            }
+        try:
+            rows = list(self.plane.list_paper_deployments(limit=30) or [])
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"paper_deployments:{exc}")
+            return {**base, "note": "paper_deployments_error"}
+        paper_session = session.get("paper_session_id") if session else None
+        matched: list[dict[str, Any]] = []
+        tickets: list[dict[str, Any]] = []
+        for dep in rows:
+            if not isinstance(dep, dict):
+                continue
+            meta = dict(dep.get("metadata") or dep.get("metadata_json") or {})
+            payload = dict(dep.get("payload") or dep.get("payload_json") or {})
+            loop = dict(dep.get("loop") or dep.get("loop_state_json") or {})
+            refs = {
+                str(meta.get("portfolio_id") or ""),
+                str(payload.get("portfolio_id") or ""),
+                str(loop.get("portfolio_id") or ""),
+            }
+            session_refs = {
+                str(dep.get("session_id") or ""),
+                str(meta.get("session_id") or ""),
+                str(payload.get("session_id") or ""),
+            }
+            linked = portfolio_id in refs or (paper_session and paper_session in session_refs)
+            if not linked and not (refs - {""} or (paper_session and session_refs - {""})):
+                # Honest: when no linkage fields exist, do not invent ownership.
+                continue
+            if not linked:
+                continue
+            drift = loop.get("drift_review") if isinstance(loop.get("drift_review"), dict) else None
+            ticket = (drift or {}).get("continualResearch") if drift else None
+            matched.append(
+                {
+                    "deploymentId": dep.get("deployment_id"),
+                    "status": dep.get("status"),
+                    "mode": dep.get("mode"),
+                    "driftStatus": (drift or {}).get("status") if drift else None,
+                }
+            )
+            if isinstance(ticket, dict) and ticket.get("ticketId"):
+                tickets.append(
+                    {
+                        "ticketId": ticket.get("ticketId"),
+                        "reason": ticket.get("reason"),
+                        "deploymentId": dep.get("deployment_id"),
+                        "status": (drift or {}).get("status"),
+                        "researchQuestion": ticket.get("researchQuestion"),
+                    }
+                )
+        return {
+            "bound": True,
+            "portfolioId": portfolio_id,
+            "deployments": matched[:20],
+            "driftTickets": tickets[:20],
+            "liveTrading": "BLOCKED",
+            "note": None if matched else "no_linked_paper_deployments",
         }
 
     def _lab(self, lab_id: str) -> dict[str, Any] | None:
@@ -1649,3 +1775,140 @@ def _evolution_rows(candidates: list[dict[str, Any]], summaries: list[dict[str, 
             }
         )
     return rows
+
+
+_ACTIVE_HYPOTHESIS_STATUSES = frozenset({"PROPOSED", "TESTING", "UNDER_TEST", "FRAGILE"})
+
+
+def _active_hypotheses(
+    plane: Any,
+    lab_id: str,
+    *,
+    lab: dict[str, Any],
+    errors: list[str],
+) -> tuple[list[str], int]:
+    ids: list[str] = []
+    if plane is not None and hasattr(plane, "list_lab_hypotheses"):
+        try:
+            payload = plane.list_lab_hypotheses(lab_id, limit=50) or {}
+            for hyp in payload.get("hypotheses") or []:
+                if not isinstance(hyp, dict):
+                    continue
+                if str(hyp.get("status") or "").upper() not in _ACTIVE_HYPOTHESIS_STATUSES:
+                    continue
+                hid = hyp.get("hypothesis_id")
+                if hid:
+                    ids.append(str(hid))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"hypotheses:{exc}")
+    if not ids:
+        meta = dict(lab.get("metadata") or {})
+        hid = meta.get("hypothesis_id")
+        if hid:
+            ids = [str(hid)]
+    # Preserve order, unique
+    seen: set[str] = set()
+    unique: list[str] = []
+    for hid in ids:
+        if hid in seen:
+            continue
+        seen.add(hid)
+        unique.append(hid)
+    return unique[:20], len(unique)
+
+
+def _best_candidate_summary(
+    *,
+    candidates: list[dict[str, Any]],
+    learning: dict[str, Any] | None,
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not learning and not payload and not candidates:
+        return None
+    by_id = {
+        str(c.get("candidate_id")): c
+        for c in candidates
+        if isinstance(c, dict) and c.get("candidate_id")
+    }
+    best_id = (
+        (payload or {}).get("qualified_candidate")
+        or (learning or {}).get("qualified_candidate")
+        or (payload or {}).get("best_validation_candidate")
+        or (learning or {}).get("best_validation_candidate")
+        or (payload or {}).get("best_train_candidate")
+        or (learning or {}).get("best_train_candidate")
+    )
+    if not best_id:
+        return {
+            "present": False,
+            "candidateId": None,
+            "note": "no_best_candidate_recorded",
+            "measurement": "EMPTY",
+        }
+    cand = by_id.get(str(best_id))
+    if cand is None:
+        return {
+            "present": True,
+            "candidateId": str(best_id),
+            "role": "ref_only",
+            "measurement": "MEASURED",
+            "note": "candidate_ref_without_row",
+        }
+    stages = ((cand.get("metadata") or {}).get("stage_results") or {})
+    val = stages.get("VAL") if isinstance(stages.get("VAL"), dict) else {}
+    role = "qualified"
+    if best_id == ((learning or {}).get("qualified_candidate") or (payload or {}).get("qualified_candidate")):
+        role = "qualified"
+    elif best_id == (
+        (learning or {}).get("best_validation_candidate") or (payload or {}).get("best_validation_candidate")
+    ):
+        role = "best_validation"
+    else:
+        role = "best_train"
+    return {
+        "present": True,
+        "candidateId": cand.get("candidate_id"),
+        "strategyId": cand.get("strategy_id"),
+        "strategyVersion": cand.get("strategy_version"),
+        "generation": cand.get("generation"),
+        "status": cand.get("status"),
+        "proposalMethod": cand.get("proposal_method"),
+        "hypothesis": cand.get("hypothesis"),
+        "validationFitness": measured(val.get("fitness_score"), note="lab_val_fitness")
+        if val.get("fitness_score") is not None
+        else unmeasured("not_recorded"),
+        "role": role,
+        "measurement": "MEASURED",
+    }
+
+
+def _qualification_projection(
+    *,
+    learning: dict[str, Any] | None,
+    lab: dict[str, Any],
+) -> dict[str, Any] | None:
+    meta = dict((learning or {}).get("metadata") or {})
+    lab_meta = dict(lab.get("metadata") or {})
+    if not learning and "qualification_required" not in lab_meta and "institutional_qualified" not in lab_meta:
+        return None
+    source = meta if meta else lab_meta
+    status = None
+    if source.get("institutional_qualified") is True:
+        status = "INSTITUTIONAL_QUALIFIED"
+    elif source.get("qualification_required"):
+        status = "QUALIFICATION_REQUIRED"
+    elif (learning or {}).get("qualified_candidate"):
+        status = "LAB_FINALIST"
+    elif (learning or {}).get("stage"):
+        status = str((learning or {}).get("stage"))
+    return {
+        "status": status,
+        "institutionalQualified": source.get("institutional_qualified"),
+        "qualificationRequired": source.get("qualification_required"),
+        "readyForShadow": source.get("ready_for_shadow"),
+        "labFinalist": source.get("lab_finalist") or (learning or {}).get("qualified_candidate"),
+        "qualificationId": source.get("qualification_id"),
+        "note": source.get("note"),
+        "authority": "Q01–Q11 QualificationAuthority",
+        "liveTrading": "BLOCKED",
+    }

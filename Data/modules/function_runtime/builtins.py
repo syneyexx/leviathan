@@ -404,6 +404,68 @@ def register_builtin_functions(registry: FunctionRegistry) -> FunctionRegistry:
             ram_expectation_mb=128,
         )
     )
+    # MarketSim chat READ surface (INLINE_SAFE; never enables live trading).
+    for fn_id, name, entry, required, props in (
+        (
+            "market_sim_lab_status",
+            "MarketSim Lab Status",
+            "Data.functions.market_sim_lab_status:run",
+            ["lab_id"],
+            {"lab_id": {"type": "string"}},
+        ),
+        (
+            "market_sim_lab_best_candidate",
+            "MarketSim Lab Best Candidate",
+            "Data.functions.market_sim_lab_best_candidate:run",
+            ["lab_id"],
+            {"lab_id": {"type": "string"}},
+        ),
+        (
+            "market_sim_lab_hypotheses",
+            "MarketSim Lab Hypotheses",
+            "Data.functions.market_sim_lab_hypotheses:run",
+            ["lab_id"],
+            {"lab_id": {"type": "string"}, "limit": {"type": "integer"}},
+        ),
+        (
+            "market_sim_lessons_summary",
+            "MarketSim Lessons Summary",
+            "Data.functions.market_sim_lessons_summary:run",
+            ["lab_id"],
+            {"lab_id": {"type": "string"}},
+        ),
+        (
+            "market_sim_paper_drift",
+            "MarketSim Paper Drift",
+            "Data.functions.market_sim_paper_drift:run",
+            [],
+            {
+                "deployment_id": {"type": "string"},
+                "portfolio_id": {"type": "string"},
+                "limit": {"type": "integer"},
+            },
+        ),
+    ):
+        registry.register(
+            FunctionDefinition(
+                id=fn_id,
+                name=name,
+                version="1.0.0",
+                description=f"{name} (READ-only chat; live trading BLOCKED).",
+                entrypoint=entry,
+                input_schema={
+                    "type": "object",
+                    "required": list(required),
+                    "properties": props,
+                },
+                output_schema={"type": "object"},
+                lifecycle_mode=LifecycleMode.ON_DEMAND,
+                side_effects=(SideEffect.READ,),
+                filesystem_requirement=False,
+                timeout_seconds=15.0,
+                ram_expectation_mb=64,
+            )
+        )
     return registry
 
 

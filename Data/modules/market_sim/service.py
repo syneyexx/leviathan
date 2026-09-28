@@ -4357,6 +4357,8 @@ class MarketSimControlPlane:
         enable_chart_vision: bool = False,
         model_budget: int = 6,
         agent_proposal_rate: float | None = None,
+        research_scope: dict[str, Any] | None = None,
+        dataset_bundle: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create a durable lab bound to a research campaign + optional Strategy Learning Run.
 
@@ -4364,6 +4366,9 @@ class MarketSimControlPlane:
         MODE B ``AUTONOMOUS_DISCOVERY``: create a research-lineage Strategy (hold root —
         identity for versioning only, never used as elite seed) and bootstrap a
         ResearchHypothesis from ``research_objective`` / ``hypothesis``.
+
+        Optional ``research_scope`` / ``dataset_bundle`` (Wave 5) reference additional
+        source_ids without duplicating data; single-source path remains default.
         """
         self._require_enabled()
         from .agent_lab import AcceptanceCriteria, LabOutcome, new_agent_lab
@@ -4372,6 +4377,11 @@ class MarketSimControlPlane:
         from .learning_runtime import persist_learning_run
         from .learning_types import LearningObjectiveSpec, ResearchRunMode
         from .research_hypothesis import hypothesis_from_objective_brief
+        from .research_scope import (
+            objective_universe_from_scope,
+            parse_research_scope,
+            schedule_episodes_per_source,
+        )
 
         mode = str(run_mode or ResearchRunMode.SEED_EXISTING_STRATEGY.value).upper().strip()
         if mode not in {
@@ -4439,6 +4449,31 @@ class MarketSimControlPlane:
             seed=int(seed),
         )
         objective_text = str(research_objective or hypothesis or "").strip()
+        # Wave 5 — optional multi-asset/timeframe scope (references only)
+        try:
+            parsed_scope = parse_research_scope(
+                research_scope=research_scope,
+                dataset_bundle=dataset_bundle,
+                metadata=metadata,
+            )
+        except ValueError as exc:
+            raise MarketSimError("INVALID_RESEARCH_SCOPE", str(exc), http_status=400) from exc
+        scope_public = parsed_scope.public_dict() if parsed_scope else None
+        episode_schedule = []
+        if parsed_scope and parsed_scope.dataset_bundle:
+            try:
+                available_ids = {s.source_id for s in self.data.list_sources(limit=5000)}
+            except Exception:  # noqa: BLE001
+                available_ids = {source_id}
+            # Primary create source must remain available even if list fails partially
+            available_ids.add(source_id)
+            episode_schedule = [
+                ep.public_dict()
+                for ep in schedule_episodes_per_source(
+                    parsed_scope.dataset_bundle,
+                    available_source_ids=available_ids,
+                )
+            ]
         research_meta = {
             "lab_id": lab.lab_id,
             "run_mode": mode,
@@ -4449,6 +4484,9 @@ class MarketSimControlPlane:
             "enable_research_cycle": True,
             **dict(metadata or {}),
         }
+        if scope_public:
+            research_meta["research_scope"] = scope_public
+            research_meta["episode_schedule"] = episode_schedule
         campaign = self.create_research_campaign(
             name=name or f"lab-{lab.lab_id[:8]}",
             strategy_id=sid,
@@ -4493,9 +4531,20 @@ class MarketSimControlPlane:
                 "agent_proposal_rate": rate,
                 "enable_research_cycle": True,
                 **dict(metadata or {}),
+                **({"research_scope": scope_public, "episode_schedule": episode_schedule} if scope_public else {}),
             },
         }
         self.store.upsert_agent_lab(payload)
+        if scope_public:
+            self._emit_event(
+                "research.scope.bound",
+                {
+                    "lab_id": lab.lab_id,
+                    "edge_scope": scope_public.get("edge_scope"),
+                    "source_ids": (scope_public.get("dataset_bundle") or {}).get("source_ids") or [source_id],
+                    "episode_count": len(episode_schedule),
+                },
+            )
 
         # Bootstrap research hypothesis (Wave 2) — persisted before outcomes known
         hypothesis_id = None
@@ -4548,13 +4597,29 @@ class MarketSimControlPlane:
                 "mutation_rate": float(learning_cfg.get("mutation_rate", 0.35)),
                 "crossover_rate": float(learning_cfg.get("crossover_rate", 0.25)),
                 "max_episode_bars": learning_cfg.get("max_episode_bars"),
-                "universe": list(learning_cfg.get("universe") or []),
+                "universe": list(
+                    learning_cfg.get("universe")
+                    or objective_universe_from_scope(
+                        parsed_scope,
+                        fallback=list((metadata or {}).get("universe") or []),
+                    )
+                ),
                 "metadata": {
                     "agent_proposal_rate": rate,
                     "run_mode": mode,
                     "enable_chart_vision": bool(enable_chart_vision),
                     "model_budget": int(model_budget),
                     "enable_research_cycle": True,
+                    **(
+                        {
+                            "research_scope": scope_public,
+                            "dataset_bundle": (scope_public or {}).get("dataset_bundle"),
+                            "episode_schedule": episode_schedule,
+                            "edge_scope": (scope_public or {}).get("edge_scope"),
+                        }
+                        if scope_public
+                        else {}
+                    ),
                 },
             }
             # Merge fitness weights if provided
@@ -5000,6 +5065,34 @@ class MarketSimControlPlane:
             "qualified_candidate": learning.get("qualified_candidate"),
             "best_train_candidate": learning.get("best_train_candidate"),
             "best_validation_candidate": learning.get("best_validation_candidate"),
+        }
+
+    def explain_lab_candidate(self, lab_id: str, candidate_id: str) -> dict[str, Any]:
+        """Structured evidence-only explainability for one lab candidate (Wave 27)."""
+        self._require_enabled()
+        from .candidate_explainability import explain_candidate
+
+        lab = self.get_agent_lab(lab_id)
+        learning = lab.get("learning")
+        learning_run_id = lab.get("learning_run_id") or (lab.get("metadata") or {}).get("learning_run_id")
+        if learning is None and learning_run_id:
+            learning = self.store.get_learning_run(str(learning_run_id))
+        explanation = explain_candidate(
+            self.store,
+            candidate_id=str(candidate_id),
+            learning_run=learning if isinstance(learning, dict) else None,
+            learning_run_id=str(learning_run_id) if learning_run_id else None,
+        )
+        return {
+            "lab_id": lab_id,
+            "candidate_id": candidate_id,
+            "explanation": explanation,
+            "liveTrading": "BLOCKED",
+            "truth": {
+                "evidence_only": True,
+                "no_llm_storytelling": True,
+                "live_trading": "BLOCKED",
+            },
         }
 
     def get_lab_lessons(self, lab_id: str) -> dict[str, Any]:

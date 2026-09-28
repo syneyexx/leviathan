@@ -577,6 +577,12 @@ market_sim_service = MarketSimControlPlane.from_settings(
 # brain_access is constructed later — rebound when available (see below).
 if hasattr(market_sim_service, "bind_job_runtime"):
     market_sim_service.bind_job_runtime(job_runtime)
+try:
+    from Data.modules.market_sim.chat_capabilities import bind_market_sim_plane
+
+    bind_market_sim_plane(market_sim_service)
+except Exception:  # noqa: BLE001
+    pass
 neuro_soak = NeuroSoakHarness(long_soak_enabled=settings.features.neuro_soak_long)
 browser_worker = BrowserWorker(
     artifact_store=artifacts,

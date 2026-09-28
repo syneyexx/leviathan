@@ -662,6 +662,19 @@ Machine reasoning gates remain at `Data/backend/tests/frontier_reasoning_gates.j
 
 `/trading/lab` (`ResearchLabPage`) binds to typed `/api/market-sim/lab/*` endpoints (overview, cost-pack, feed-health, trials, runs lifecycle, learning/generations/candidates/lessons). Shows real Learning Run status/stage/generation/budgets, family probabilities, candidate lineage, and evidence-linked lessons. Labels use TRAIN LEADER / VALIDATION PASSED / SEALED PASSED / QUALIFIED / UNMEASURED / NOT RUN — never fake profitability claims. Live broker remains explicitly blocked. No mock KPIs.
 
+### Autonomous Research Lab + Research Command (CURRENT)
+
+- **Autonomous Discovery vs Seed Existing:** create modal exposes `AUTONOMOUS_DISCOVERY` (research objective) and `SEED_EXISTING_STRATEGY` (existing strategy id). UI must not invent seed elites for discovery runs.
+- **Hypothesis lifecycle:** lab detail / RC evolution card show active hypothesis ids/count from API — public statements only.
+- **Hybrid agent + evolution:** candidate tables show proposal method / generation; no fabricated rankings.
+- **Numeric + chart perception:** advisory panels only when backend returns measured perception; never order controls.
+- **Qualification authority Q01–Q11:** UI may show lab finalist / qualification-required status; never claim institutional PASS without QualificationAuthority fields.
+- **Paper-forward continual research:** Research Command may surface linked deployment drift tickets when a paper portfolio is bound.
+- **Live money BLOCKED:** Research Command / Lab chrome keep live trading blocked; chat READ tools never unlock broker.
+- **Historical profitability ≠ future guarantee:** no mock equity curves or success badges from TRAIN fitness alone.
+
+Explain route: `GET /api/market-sim/lab/runs/{labId}/candidates/{candidateId}/explain` (structured evidence for drawers — no LLM prose).
+
 ### Institutional Control Room (W68 / W98)
 
 `/trading/control-room` (`InstitutionalControlRoomPage`) consumes `GET /api/market-sim/institutional/control-room`. Panels show live-trading blocked status, open reconciliation breaks, open exceptions, and audit-chain verification from `InstitutionalRuntime` — UNMEASURED/EMPTY only when genuinely unmeasured. Frontend does not invent green health.
