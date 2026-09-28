@@ -4258,6 +4258,32 @@ def _m58_research_command_sessions(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m59_coding_semantic_map_cache_ext(conn: sqlite3.Connection) -> None:
+    """Extend coding_semantic_map_cache for artifact spill + generation fingerprint."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS coding_semantic_map_cache (
+            workspace_root TEXT PRIMARY KEY,
+            generated_at TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """
+    )
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(coding_semantic_map_cache)").fetchall()}
+    for name, decl in (
+        ("status", "TEXT NOT NULL DEFAULT 'ready'"),
+        ("generation_fingerprint", "TEXT"),
+        ("artifact_id", "TEXT"),
+        ("summary_json", "TEXT NOT NULL DEFAULT '{}'"),
+        ("indexed_files", "INTEGER NOT NULL DEFAULT 0"),
+        ("discovered_files", "INTEGER NOT NULL DEFAULT 0"),
+        ("truncated", "INTEGER NOT NULL DEFAULT 0"),
+    ):
+        if name not in cols:
+            conn.execute(f"ALTER TABLE coding_semantic_map_cache ADD COLUMN {name} {decl}")
+
+
 def _m55_institutional_core(conn: sqlite3.Connection) -> None:
     """Institutional core additive tables (instruments, breaks, audit, exceptions)."""
     conn.execute(
@@ -4513,6 +4539,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=58,
         name="research_command_sessions",
         apply=_m58_research_command_sessions,
+    ),
+    Migration(
+        version=59,
+        name="coding_semantic_map_cache_ext",
+        apply=_m59_coding_semantic_map_cache_ext,
     ),
 )
 

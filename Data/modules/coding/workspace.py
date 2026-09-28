@@ -445,6 +445,8 @@ def search_files(
         "scannedFiles": scanned,
         "skippedFiles": skipped,
         "bytesScanned": bytes_scanned,
+        "scanned_files": scanned,
+        "scanned_bytes": bytes_scanned,
         "limitsReached": limits_reached,
     }
 

@@ -680,11 +680,43 @@ Worker pool: `agent_signals`; job families include `agent_signal.deliver`, retry
 
 # 14. Coding specialist
 
-`Data/modules/coding/` is a specialist control plane, not a second general assistant. Important files include `service.py`, `loop.py`, `worker.py`, `planner.py`, `cognition.py`, `llm_adapter.py`, `parser.py`, `prompts.py`, `workspace.py`, `tools.py`, `patch.py`, stores/types and test/verification bridges.
+`Data/modules/coding/` is a specialist control plane, not a second general assistant. Important files include `service.py`, `loop.py`, `worker.py`, `worker_context.py`, `execution_gate.py`, `process.py`, `verify_ops.py`, `git_ops.py`, `semantic_map.py`, `map_cache.py`, `planner.py`, `cognition.py`, `llm_adapter.py`, `parser.py`, `prompts.py`, `workspace.py`, `tools.py`, `patch.py`, stores/types and test/verification bridges.
+
+## Control plane vs execution plane
+
+```text
+FastAPI Coding routes
+  -> CodingControlPlane (session/control/status/approval/enqueue)
+  -> JobRuntime
+  -> coding pool worker
+       -> CodingLoop rounds
+       -> semantic repository analysis / semantic-map build
+       -> typed verify (test/lint/typecheck/build)
+       -> coding-domain Git (clone/fetch/update/checkout)
+       -> bounded subprocess supervisor (process.py)
+```
+
+FastAPI never runs heavy CodingLoop rounds, repository indexing, builds/tests, or remote/mutating Git inline in production. Approval resume persists the approval binding and enqueues `coding.advance`; the worker executes the resumed round.
+
+Production Coding background threads and `CodingStore.claim_next_runnable()` dual-claim paths are gated behind an `inprocess_test` mechanical allow (same standard as Source Ingestion). The coding fabric entrypoint executes the already-claimed JobRuntime job via `process_coding_job` — it does not re-claim.
+
+## Semantic map
+
+Cached semantic-map **reads** remain fast (CONTROL `coding_semantic_map_cache`, with ArtifactStore spill for large payloads). **Build/refresh** is `coding.semantic_map.build` on the coding pool. GET `/api/coding/semantic-map` returns cache + optional `refresh.queued` without blocking generation.
+
+## Workspace / file_io boundary
+
+Generic recursive/large workspace listing and search escalate to the `file_io` pool (request-aware classification). Coding semantic analysis remains coding-owned. Inside an already-running coding worker, bounded streaming search utilities may run locally without microjob chatter. Python search fallback never whole-file `read_bytes()` on arbitrary files.
+
+## Subprocess / Git
+
+All Coding tool subprocesses use typed argv lists (no `shell=True` by default), env allowlists, timeouts, cancellation, and process-tree termination (POSIX killpg / Windows `taskkill /T`). Success requires exit code authority and verification receipts bound to workspace generation fingerprints.
+
+Coding-domain Git (`coding.git.*`) is external-only. ModuleManager install/update Git lifecycle remains ModuleManager/module_runtime ownership — Coding does not absorb it.
 
 Coding mutations remain subject to workspace boundaries, approvals and ExecutionGateway/function receipts. Test claims require real test receipts; model prose is not evidence that a patch or test ran.
 
-HTTP: `Data/backend/routes/coding.py`. Heavy coding work is worker-capable via the canonical jobs/workers architecture.
+HTTP: `Data/backend/routes/coding.py`. Heavy coding work is owned by the `coding` Worker Fabric pool.
 
 ---
 

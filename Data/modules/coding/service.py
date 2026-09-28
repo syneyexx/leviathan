@@ -74,7 +74,9 @@ class CodingControlPlane:
             brain_access=brain_access,
             behavior_store=behavior_store,
         )
-        self.worker = worker or CodingWorker(store, self.loop, job_runtime=job_runtime)
+        self.worker = worker or CodingWorker(
+            store, self.loop, job_runtime=job_runtime, settings=settings
+        )
 
     def bind_intelligence(
         self,
@@ -142,10 +144,60 @@ class CodingControlPlane:
     # --- lifecycle ----------------------------------------------------------
 
     def start_background(self) -> None:
+        """Production: never start API daemon threads when workers are externalized.
+
+        Heavy Coding execution is owned by the coding pool. Inprocess threads
+        require the mechanical test allow gate (see execution_gate).
+        """
+        from .execution_gate import allow_inprocess_execution, runners_externalized
+
+        if runners_externalized() and not allow_inprocess_execution(self.settings):
+            return
+        if not allow_inprocess_execution(self.settings):
+            return
         self.worker.start_background()
 
     def stop_background(self) -> None:
         self.worker.stop_background()
+
+    def enqueue_advance(
+        self,
+        session_id: str,
+        *,
+        approval_id: str | None = None,
+        reason: str = "advance",
+    ) -> Any:
+        """Enqueue durable coding.advance — fail closed when JobRuntime missing in production."""
+        from .execution_gate import allow_inprocess_execution, refuse_inline_coding, runners_externalized
+
+        session = self.get_session(session_id)
+        if self.job_runtime is None:
+            if runners_externalized() and not allow_inprocess_execution(self.settings):
+                refuse_inline_coding(reason="job_runtime_unavailable")
+            # Test-only: wake inprocess worker / session claim.
+            self.worker.wake()
+            return None
+        pending = session.pending_capability or {}
+        phase = str((session.metadata or {}).get("phase") or reason or "advance")
+        approval_gen = approval_id or pending.get("approval_id") or "none"
+        args: dict[str, Any] = {"session_id": session_id}
+        if approval_id:
+            args["approval_id"] = approval_id
+        return self.job_runtime.enqueue(
+            capability_id="coding.advance",
+            arguments=args,
+            run_id=session.run_id,
+            requested_by="coding",
+            idempotency_key=(
+                f"coding.advance:{session_id}:{session.round_count}:{phase}:{approval_gen}"
+            ),
+            worker_pool="coding",
+            resource_class="CPU_HEAVY",
+            domain="coding",
+            domain_entity_type="session",
+            domain_entity_id=session_id,
+            metadata={"session_id": session_id, "reason": reason},
+        )
 
     # --- status -------------------------------------------------------------
 
@@ -275,7 +327,7 @@ class CodingControlPlane:
                 error="Coding disabled",
             )
 
-        # Approval resume path.
+        # Approval resume path — persist binding + enqueue; never run_round inline.
         if approval_id and session.status == SessionStatus.WAITING_APPROVAL:
             pending = dict(session.pending_capability or {})
             if capability_id and pending.get("capability_id") not in {None, capability_id}:
@@ -285,7 +337,11 @@ class CodingControlPlane:
                     http_status=409,
                 )
             pending["approval_id"] = approval_id
-            self.store.update_session(session_id, pending_capability=pending)
+            self.store.update_session(
+                session_id,
+                pending_capability=pending,
+                status=SessionStatus.WAITING_APPROVAL,
+            )
             self._resume_with_approval(session_id, approval_id)
             return self.get_session(session_id)
 
@@ -310,28 +366,33 @@ class CodingControlPlane:
             cancel_requested=False,
             error=None,
         )
-        # Prefer shared JobRuntime substrate when bound; CodingWorker executes leases.
-        if self.job_runtime is not None:
-            try:
-                self.job_runtime.enqueue(
-                    capability_id="coding.advance",
-                    arguments={"session_id": session_id},
-                    run_id=session.run_id,
-                    requested_by="coding",
-                    idempotency_key=f"coding.advance:{session_id}:{session.round_count}:start",
-                    metadata={"session_id": session_id},
-                )
-            except Exception:  # noqa: BLE001
-                pass
+        job = self.enqueue_advance(session_id, reason="start")
+        if job is not None:
+            meta = dict(session.metadata or {})
+            meta["kernel_job_id"] = getattr(job, "job_id", None)
+            self.store.update_session(session_id, metadata=meta)
         self.worker.wake()
-        return session
+        return self.get_session(session_id)
 
     def _resume_with_approval(self, session_id: str, approval_id: str) -> None:
-        """Resume pending capability; non-blocking relative to HTTP (sync but fast path)."""
-        # Keep WAITING_APPROVAL so run_round takes the resume branch.
+        """Persist approval binding and enqueue coding.advance — never run_round in API."""
+        from .execution_gate import allow_inprocess_execution, refuse_inline_coding, runners_externalized
+
         self.store.update_session(session_id, status=SessionStatus.WAITING_APPROVAL)
+        if self.job_runtime is not None:
+            job = self.enqueue_advance(session_id, approval_id=approval_id, reason="approval_resume")
+            if job is not None:
+                session = self.store.get_session(session_id)
+                if session is not None:
+                    meta = dict(session.metadata or {})
+                    meta["kernel_job_id"] = getattr(job, "job_id", None)
+                    self.store.update_session(session_id, metadata=meta)
+            self.worker.wake()
+            return
+        if runners_externalized() and not allow_inprocess_execution(self.settings):
+            refuse_inline_coding(reason="approval_resume_requires_worker")
+        # Explicit test-only inline path.
         self.loop.run_round(session_id, approval_ids=[approval_id])
-        # If still runnable after resume, wake worker for subsequent rounds.
         session = self.store.get_session(session_id)
         if session and session.status == SessionStatus.RUNNING:
             self.worker.wake()
@@ -340,6 +401,7 @@ class CodingControlPlane:
         session = self.get_session(session_id)
         if session.status in {SessionStatus.COMPLETED, SessionStatus.CANCELLED, SessionStatus.DISABLED}:
             return session
+        kernel_job_id = (session.metadata or {}).get("kernel_job_id")
         session = self.store.update_session(
             session_id,
             cancel_requested=True,
@@ -348,6 +410,16 @@ class CodingControlPlane:
             worker_pid=None,
             pending_capability=None,
         )
+        # Propagate cancel to JobRuntime / active worker subprocesses.
+        if kernel_job_id and self.job_runtime is not None:
+            try:
+                cancel = getattr(self.job_runtime, "request_cancel", None) or getattr(
+                    self.job_runtime, "cancel", None
+                )
+                if callable(cancel):
+                    cancel(str(kernel_job_id))
+            except Exception:  # noqa: BLE001
+                pass
         self.worker.wake()
         return session
 
@@ -364,6 +436,42 @@ class CodingControlPlane:
             root = Path(session.workspace_root)
         else:
             root = resolve_root(self.settings)
+
+        # Request-aware: recursive/large trees → file_io; small non-recursive stays inline.
+        arguments = {
+            "path": path or ".",
+            "recursive": bool(recursive),
+            "max_entries": int(max_entries),
+            "workspace_root": str(root),
+        }
+        if recursive or max_entries > 200:
+            from Data.modules.execution.file_io_dispatch import classify_and_maybe_enqueue
+            from Data.modules.execution.workload import ExecutionWorkloadClass
+
+            decision = classify_and_maybe_enqueue(
+                capability_id="workspace.list",
+                arguments=arguments,
+                job_runtime=self.job_runtime,
+                filesystem_root=root,
+                requested_by="api.coding.workspace_tree",
+            )
+            if decision.get("queued"):
+                job = decision.get("job")
+                return {
+                    "root": str(root),
+                    "entries": [],
+                    "path": path or ".",
+                    "queued": True,
+                    "job_id": getattr(job, "job_id", None) if job is not None else None,
+                    "execution_class": decision.get("execution_class"),
+                    "refresh": {"queued": True, "job_id": getattr(job, "job_id", None) if job else None},
+                }
+            if decision.get("execution_class") == ExecutionWorkloadClass.EXTERNAL_REQUIRED.value:
+                from .execution_gate import allow_inprocess_execution, refuse_inline_coding, runners_externalized
+
+                if runners_externalized() and not allow_inprocess_execution(self.settings):
+                    refuse_inline_coding(reason="workspace_tree_requires_file_io")
+
         try:
             entries = list_entries(root, path=path, recursive=recursive, max_entries=max_entries)
         except PathEscapeError as exc:
@@ -374,7 +482,7 @@ class CodingControlPlane:
                 str(exc),
                 http_status=503,
             ) from exc
-        return {"root": str(root), "entries": entries, "path": path or "."}
+        return {"root": str(root), "entries": entries, "path": path or ".", "queued": False}
 
     def request_approval_for_pending(self, session_id: str) -> dict[str, Any]:
         """Thin wrapper: ensure a PENDING approval exists for the pending capability."""
@@ -418,12 +526,96 @@ class CodingControlPlane:
         workspace_root: str | None = None,
         session_id: str | None = None,
         previous: Any | None = None,
+        force_refresh: bool = False,
     ) -> dict[str, Any]:
-        from .semantic_map import SemanticMapBuilder
+        """Return cached map when fresh; enqueue rebuild when missing/stale.
+
+        Never blocks the API on full repository indexing in production.
+        """
+        from .execution_gate import allow_inprocess_execution, runners_externalized
+        from .map_cache import get_cached_map
+        from .workspace_gen import capture_workspace_generation
 
         root = self._resolve_workspace(workspace_root=workspace_root, session_id=session_id)
+        root_key = str(root.resolve()) if root.exists() else str(root)
+        cached = get_cached_map(self.store.db_path, root_key)
+        gen = capture_workspace_generation(root)
+        fresh = (
+            cached is not None
+            and cached.status == "ready"
+            and cached.generation_fingerprint == gen.fingerprint
+            and not force_refresh
+        )
+        if fresh and cached is not None:
+            out: dict[str, Any] = {
+                "map": cached.payload or cached.summary,
+                "summary": cached.summary,
+                "status": "ready",
+                "cached": True,
+                "artifact_id": cached.artifact_id,
+                "refresh": {"queued": False, "job_id": None},
+            }
+            return out
+
+        refresh: dict[str, Any] = {"queued": False, "job_id": None}
+        if self.job_runtime is not None and (runners_externalized() or force_refresh or cached is None):
+            try:
+                from .map_cache import mark_cache_status
+
+                if cached is not None:
+                    mark_cache_status(self.store.db_path, root_key, "building")
+                job = self.job_runtime.enqueue(
+                    capability_id="coding.semantic_map.build",
+                    arguments={
+                        "workspace_root": root_key,
+                        "session_id": session_id,
+                        "action": "semantic_map_build",
+                    },
+                    requested_by="api.coding.semantic_map",
+                    idempotency_key=f"coding.semantic_map.build:{root_key}:{gen.fingerprint}",
+                    worker_pool="coding",
+                    resource_class="CPU_HEAVY",
+                    domain="coding",
+                    metadata={"workspace_root": root_key},
+                )
+                refresh = {"queued": True, "job_id": getattr(job, "job_id", None)}
+            except Exception:  # noqa: BLE001
+                refresh = {"queued": False, "job_id": None, "error": "enqueue_failed"}
+
+        if cached is not None:
+            return {
+                "map": cached.payload or cached.summary,
+                "summary": cached.summary,
+                "status": "stale" if cached.generation_fingerprint != gen.fingerprint else cached.status,
+                "cached": True,
+                "artifact_id": cached.artifact_id,
+                "refresh": refresh,
+            }
+
+        # No cache: production returns queued state; tests may build inline.
+        if runners_externalized() and not allow_inprocess_execution(self.settings):
+            return {
+                "map": None,
+                "summary": None,
+                "status": "queued" if refresh.get("queued") else "unavailable",
+                "cached": False,
+                "refresh": refresh,
+            }
+
+        # Explicit inprocess_test / developer path.
+        from .semantic_map import SemanticMapBuilder
+
         smap = SemanticMapBuilder(root).build(previous=previous)
-        return smap.public_dict()
+        return {
+            "map": smap.public_dict(),
+            "summary": {
+                "file_count": len(smap.files),
+                "symbol_count": sum(len(f.symbols) for f in smap.files.values()),
+            },
+            "status": "ready",
+            "cached": False,
+            "refresh": refresh,
+        }
 
     def build_change_plan(
         self,
@@ -503,9 +695,12 @@ class CodingControlPlane:
         session_id: str | None = None,
         plan_payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        from .semantic_map import SemanticMapBuilder
+        from .map_cache import get_cached_map, map_summary
+        from .semantic_map import SemanticMapBuilder, map_from_public_dict
         from .transaction import ChangePlan, ChangeRisk, FileChange
         from .verify import select_adaptive_verification
+        from .workspace_gen import capture_workspace_generation
+        from .execution_gate import allow_inprocess_execution, runners_externalized
 
         root = self._resolve_workspace(workspace_root=workspace_root, session_id=session_id)
         plan = None
@@ -527,7 +722,42 @@ class CodingControlPlane:
                 expected_tests=list(plan_payload.get("expected_tests") or []),
                 risk=ChangeRisk(str(plan_payload.get("risk") or "low")),
             )
-        smap = SemanticMapBuilder(root).build()
+
+        # Prefer cached semantic map; do not synchronously rebuild huge maps on API.
+        root_key = str(root.resolve()) if root.exists() else str(root)
+        cached = get_cached_map(self.store.db_path, root_key)
+        smap = None
+        if cached and cached.payload:
+            try:
+                smap = map_from_public_dict(cached.payload)
+            except Exception:  # noqa: BLE001
+                smap = None
+        if smap is None:
+            gen = capture_workspace_generation(root)
+            if self.job_runtime is not None and runners_externalized():
+                try:
+                    self.job_runtime.enqueue(
+                        capability_id="coding.semantic_map.build",
+                        arguments={"workspace_root": root_key, "action": "semantic_map_build"},
+                        requested_by="api.coding.adaptive_verification",
+                        idempotency_key=f"coding.semantic_map.build:{root_key}:{gen.fingerprint}",
+                        worker_pool="coding",
+                        resource_class="CPU_HEAVY",
+                        domain="coding",
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            if allow_inprocess_execution(self.settings) or not runners_externalized():
+                smap = SemanticMapBuilder(root, max_files=80).build()
+            else:
+                # Planning without full map — still return adaptive selection with empty map.
+                from .semantic_map import RepoSemanticMap
+
+                smap = RepoSemanticMap(workspace_root=root_key, generated_at="")
+                if cached:
+                    # Use summary counts only.
+                    _ = map_summary(cached.summary)
+
         return select_adaptive_verification(root, plan=plan, semantic_map=smap).public_dict()
 
     def review_diff(

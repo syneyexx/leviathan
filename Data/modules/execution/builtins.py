@@ -381,6 +381,11 @@ def build_default_catalog() -> CapabilityCatalog:
             },
             output_schema={"type": "object"},
             required_permissions=("process.execute",),
+            metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
+                "worker_kind": "coding",
+                "tags": ["coding", "tests"],
+            },
         )
     )
     catalog.register(
@@ -406,7 +411,12 @@ def build_default_catalog() -> CapabilityCatalog:
             },
             output_schema={"type": "object"},
             required_permissions=("process.execute",),
-            metadata={"alias_of": "coding.run_tests", "tags": ["coding", "tests"]},
+            metadata={
+                "alias_of": "coding.run_tests",
+                "tags": ["coding", "tests"],
+                "execution_class": "EXTERNAL_REQUIRED",
+                "worker_kind": "coding",
+            },
         )
     )
     catalog.register(
@@ -415,7 +425,7 @@ def build_default_catalog() -> CapabilityCatalog:
             name="Advance Coding Session",
             description=(
                 "Advance one Coding Cognition round for a session. "
-                "Owned by JobRuntime substrate; executed by CodingWorker (external-style)."
+                "Owned by JobRuntime substrate; executed by coding pool worker."
             ),
             side_effects=(SideEffect.EXECUTE,),
             provider_kind=CapabilityProviderKind.FUNCTION,
@@ -430,6 +440,188 @@ def build_default_catalog() -> CapabilityCatalog:
             },
             output_schema={"type": "object"},
             required_permissions=("process.execute",),
+            metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
+                "worker_kind": "coding",
+                "tags": ["coding"],
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="coding.semantic_map.build",
+            name="Build Coding Semantic Map",
+            description=(
+                "Build or refresh a repository semantic map on the coding worker. "
+                "Cached reads remain inline; generation is EXTERNAL_REQUIRED."
+            ),
+            side_effects=(SideEffect.EXECUTE,),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="coding_semantic_map_build",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {
+                    "workspace_root": {"type": "string"},
+                    "session_id": {"type": "string"},
+                    "max_files": {"type": "integer"},
+                    "action": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("filesystem.read",),
+            metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
+                "worker_kind": "coding",
+                "resource_classes": ["CPU_HEAVY", "IO_HEAVY", "MEMORY_HEAVY"],
+                "tags": ["coding", "index"],
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="coding.verify",
+            name="Coding Verify",
+            description=(
+                "Run typed coding verification (test/lint/typecheck/build) on the coding worker."
+            ),
+            side_effects=(SideEffect.EXECUTE,),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="coding_verify",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {
+                    "phase": {"type": "string"},
+                    "selector": {"type": "string"},
+                    "tool": {"type": "string"},
+                    "timeout_seconds": {"type": "integer"},
+                    "cwd": {"type": "string"},
+                    "workspace_root": {"type": "string"},
+                    "session_id": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("process.execute",),
+            metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
+                "worker_kind": "coding",
+                "tags": ["coding", "verify"],
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="coding.git.clone",
+            name="Coding Git Clone",
+            description="Clone a remote Git repository into a coding workspace (coding worker).",
+            side_effects=(SideEffect.EXECUTE, SideEffect.WRITE, SideEffect.NETWORK),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="coding_git_clone",
+            input_schema={
+                "type": "object",
+                "required": ["remote", "destination"],
+                "properties": {
+                    "remote": {"type": "string"},
+                    "destination": {"type": "string"},
+                    "workspace_root": {"type": "string"},
+                    "depth": {"type": "integer"},
+                    "overwrite": {"type": "boolean"},
+                    "timeout_seconds": {"type": "number"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("process.execute", "filesystem.write", "network.outbound"),
+            metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
+                "worker_kind": "coding",
+                "resource_classes": ["NETWORK_BOUND", "IO_HEAVY"],
+                "tags": ["coding", "git"],
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="coding.git.fetch",
+            name="Coding Git Fetch",
+            description="Fetch from a remote into an existing coding repository (coding worker).",
+            side_effects=(SideEffect.EXECUTE, SideEffect.WRITE, SideEffect.NETWORK),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="coding_git_fetch",
+            input_schema={
+                "type": "object",
+                "required": ["repository"],
+                "properties": {
+                    "repository": {"type": "string"},
+                    "remote": {"type": "string"},
+                    "refs": {"type": "array", "items": {"type": "string"}},
+                    "timeout_seconds": {"type": "number"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("process.execute", "filesystem.write", "network.outbound"),
+            metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
+                "worker_kind": "coding",
+                "resource_classes": ["NETWORK_BOUND", "IO_HEAVY"],
+                "tags": ["coding", "git"],
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="coding.git.update",
+            name="Coding Git Update",
+            description="Deterministic fast-forward update of a coding repository (coding worker).",
+            side_effects=(SideEffect.EXECUTE, SideEffect.WRITE, SideEffect.NETWORK),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="coding_git_update",
+            input_schema={
+                "type": "object",
+                "required": ["repository"],
+                "properties": {
+                    "repository": {"type": "string"},
+                    "remote": {"type": "string"},
+                    "ref": {"type": "string"},
+                    "timeout_seconds": {"type": "number"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("process.execute", "filesystem.write", "network.outbound"),
+            metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
+                "worker_kind": "coding",
+                "resource_classes": ["NETWORK_BOUND", "IO_HEAVY"],
+                "tags": ["coding", "git"],
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="coding.git.checkout",
+            name="Coding Git Checkout",
+            description="Checkout a validated ref in a coding repository (coding worker).",
+            side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="coding_git_checkout",
+            input_schema={
+                "type": "object",
+                "required": ["repository", "ref"],
+                "properties": {
+                    "repository": {"type": "string"},
+                    "ref": {"type": "string"},
+                    "allow_dirty": {"type": "boolean"},
+                    "timeout_seconds": {"type": "number"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("process.execute", "filesystem.write"),
+            metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
+                "worker_kind": "coding",
+                "resource_classes": ["IO_HEAVY"],
+                "tags": ["coding", "git"],
+            },
         )
     )
     catalog.register(
@@ -447,6 +639,7 @@ def build_default_catalog() -> CapabilityCatalog:
             },
             output_schema={"type": "object"},
             required_permissions=("filesystem.read",),
+            metadata={"execution_class": "INLINE_SAFE", "tags": ["git"]},
         )
     )
     catalog.register(
@@ -467,6 +660,37 @@ def build_default_catalog() -> CapabilityCatalog:
             },
             output_schema={"type": "object"},
             required_permissions=("filesystem.read",),
+            metadata={"execution_class": "INLINE_SAFE", "tags": ["git"]},
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="coding.repo.analyze",
+            name="Coding Repository Analyze",
+            description=(
+                "Repository structure/symbol/dependency analysis on the coding worker "
+                "(alias path into semantic-map build)."
+            ),
+            side_effects=(SideEffect.EXECUTE,),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="coding_repo_analyze",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {
+                    "workspace_root": {"type": "string"},
+                    "session_id": {"type": "string"},
+                    "max_files": {"type": "integer"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("filesystem.read",),
+            metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
+                "worker_kind": "coding",
+                "alias_of": "coding.semantic_map.build",
+                "tags": ["coding", "index"],
+            },
         )
     )
     catalog.register(

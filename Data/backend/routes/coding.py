@@ -148,9 +148,14 @@ def build_coding_router(service: CodingControlPlane) -> APIRouter:
     def semantic_map(
         workspace_root: str | None = None,
         session_id: str | None = None,
+        force_refresh: bool = False,
     ) -> dict:
         try:
-            return {"map": service.semantic_map(workspace_root=workspace_root, session_id=session_id)}
+            return service.semantic_map(
+                workspace_root=workspace_root,
+                session_id=session_id,
+                force_refresh=force_refresh,
+            )
         except CodingError as exc:
             raise_coding_error(exc)
 
