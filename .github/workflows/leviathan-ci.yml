@@ -93,9 +93,31 @@ jobs:
           path: Data/frontend/dist
           if-no-files-found: error
 
+  launcher:
+    name: Launcher typecheck + test + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Data/launcher
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: Data/launcher/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm run test
+      - name: Production build
+        run: npm run build
+
   release-gates:
     name: Release gates under CI profile
-    needs: [backend, frontend]
+    needs: [backend, frontend, launcher]
     runs-on: ubuntu-latest
     env:
       LEVIATHAN_CI_RELEASE: "1"
@@ -138,7 +160,6 @@ jobs:
           assert not measurement_is_pass(MeasurementState.NOT_APPLICABLE)
           assert not measurement_counts_as_success(GateMeasurement.NOT_APPLICABLE)
 
-          # Soft WARN fail must not ship under CI.
           soft = ReleaseGateRunner(
               checks=[
                   lambda: GateCheck(
@@ -151,10 +172,9 @@ jobs:
                   )
               ]
           ).run()
-          assert soft.ready  # WARN does not flip ready
+          assert soft.ready
           assert not is_shipable(soft, ci_release=True)
 
-          # Artifact unknown type: unmeasured ≠ validated ok.
           result = validate_artifact_bytes(b"raw-bytes", artifact_type="blob", filename="x.bin")
           assert result["ok"] is False
           assert result["measurement"] == "UNMEASURED"
@@ -164,12 +184,11 @@ jobs:
           report = release_gates.run()
           frontend = next(c for c in report.checks if c.gate_id == "frontend_dist")
           assert frontend.measurement == GateMeasurement.PASS, frontend
-          assert frontend.severity == GateSeverity.BLOCK  # CI profile
+          assert frontend.severity == GateSeverity.BLOCK
           eval_g = next(c for c in report.checks if c.gate_id == "evaluation_relevance")
           assert not measurement_counts_as_success(eval_g.measurement)
           ship = is_shipable(report)
           print("ready", report.ready, "shipable", ship, "eval", eval_g.measurement.value)
-          # May be False while foundation is UNMEASURED — that is honest, not a soft PASS.
           if ship:
               assert all(
                   c.measurement in {GateMeasurement.PASS, GateMeasurement.NOT_APPLICABLE, GateMeasurement.UNMEASURED}
@@ -196,11 +215,9 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           assert Path("Data").is_dir()
-          # Exclusion path is Data/HADES/ (not a sibling HADES/). Do not scan it.
           hades = Path("Data/HADES")
           print("Data/HADES present:", hades.exists(), "— NOT_APPLICABLE in LEVIATHAN CI")
           print("editor present:", Path("editor").exists(), "— NOT_APPLICABLE in LEVIATHAN CI")
-          # Wrong sibling path must not be treated as the exclusion authority.
-          assert not Path("HADES").is_dir() or True  # may or may not exist; never required
+          assert not Path("HADES").is_dir() or True
           print("scope-ok: exclude Data/HADES/ and editor/")
           PY

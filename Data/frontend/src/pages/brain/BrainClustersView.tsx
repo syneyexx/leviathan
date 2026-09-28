@@ -1,6 +1,18 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
+} from "react";
 import { buildClusters, type LiveBrainEdge, type LiveBrainNode } from "./brain-live";
 import { Donut, Heatmap, Panel } from "./brain-shared";
+import {
+  centeredViewBox,
+  clientPointToMeetViewBox,
+  zoomCenteredViewBoxAt,
+} from "./brain-geometry";
 
 function formatCount(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
@@ -14,7 +26,7 @@ function pretty(value: string): string {
 
 function hash(value: string): number {
   let result = 0;
-  for (let i = 0; i < value.length; i += 1) result = Math.imul(31, result) + value.charCodeAt(i) | 0;
+  for (let i = 0; i < value.length; i += 1) result = (Math.imul(31, result) + value.charCodeAt(i)) | 0;
   return Math.abs(result);
 }
 
@@ -29,6 +41,22 @@ function ClusterGlyph({ kind }: { kind: string }) {
   return <g {...shared}><circle r="11" /><path d="M-15 0H15 M0 -15V15" /></g>;
 }
 
+type DragState = {
+  pointerId: number;
+  id: string | null;
+  baseX: number;
+  baseY: number;
+  startWorldX: number;
+  startWorldY: number;
+  startClientX: number;
+  startClientY: number;
+  worldPerPixel: number;
+  moved: boolean;
+};
+
+const MAP_WIDTH = 900;
+const MAP_HEIGHT = 410;
+
 export function BrainClustersView({ nodes, edges, onToast }: { nodes: LiveBrainNode[]; edges: LiveBrainEdge[]; onToast?: (msg: string) => void }) {
   const clusters = useMemo(() => buildClusters(nodes, edges), [nodes, edges]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -38,12 +66,22 @@ export function BrainClustersView({ nodes, edges, onToast }: { nodes: LiveBrainN
   const [mapOffset, setMapOffset] = useState({ x: 0, y: 0 });
   const [draggedPositions, setDraggedPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
   const mapRef = useRef<SVGSVGElement>(null);
-  const dragRef = useRef<{ pointerId: number; id: string | null; x: number; y: number; startX: number; startY: number; moved: boolean } | null>(null);
+  const dragRef = useRef<DragState | null>(null);
   const frameRef = useRef<number | null>(null);
   const pendingRef = useRef<{ id: string | null; x: number; y: number } | null>(null);
   const suppressClickRef = useRef(false);
-  useEffect(() => () => { if (frameRef.current !== null) cancelAnimationFrame(frameRef.current); }, []);
   const [showAllConcepts, setShowAllConcepts] = useState(false);
+
+  useEffect(() => () => {
+    if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (selectedId && !clusters.some((cluster) => cluster.id === selectedId)) {
+      setSelectedId(clusters[0]?.id ?? null);
+      setShowAllConcepts(false);
+    }
+  }, [clusters, selectedId]);
 
   const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const degreeById = useMemo(() => {
@@ -78,6 +116,7 @@ export function BrainClustersView({ nodes, edges, onToast }: { nodes: LiveBrainN
     }
     return counts;
   }, [edges, nodeById]);
+  const maxRelationship = useMemo(() => Math.max(1, ...relationshipCounts.values()), [relationshipCounts]);
 
   const related = useMemo(() => {
     if (!selected) return [];
@@ -98,91 +137,133 @@ export function BrainClustersView({ nodes, edges, onToast }: { nodes: LiveBrainN
       .filter((node) => node.type === selected.id)
       .sort((a, b) => (degreeById.get(b.id) ?? 0) - (degreeById.get(a.id) ?? 0) || a.label.localeCompare(b.label));
   }, [degreeById, nodes, selected]);
-
   const visibleConcepts = showAllConcepts ? selectedMembers : selectedMembers.slice(0, 5);
-  const visualClusters = useMemo(() => clusters.slice(0, 10), [clusters]);
+
+  // Keep the map bounded to ten cluster bodies, but never hide the cluster the operator selected.
+  const visualClusters = useMemo(() => {
+    const top = clusters.slice(0, 10);
+    if (!selected || top.some((cluster) => cluster.id === selected.id)) return top;
+    return [...top.slice(0, 9), selected];
+  }, [clusters, selected]);
+
+  // Layout is independent of selection: clicking a cluster must not reshuffle the universe.
   const positions = useMemo(() => {
     const map = new Map<string, { x: number; y: number }>();
-    if (visualClusters.length === 0) return map;
-    const focusId = selected?.id ?? visualClusters[0].id;
-    map.set(focusId, { x: visualClusters.length <= 3 ? 450 : 450, y: 205 });
-    const others = visualClusters.filter((cluster) => cluster.id !== focusId);
+    if (!visualClusters.length) return map;
+    const anchor = visualClusters[0];
+    map.set(anchor.id, { x: 450, y: 205 });
+    const others = visualClusters.slice(1);
     others.forEach((cluster, index) => {
-      const angle = others.length === 2 ? (index === 0 ? Math.PI : 0) : (index / Math.max(others.length, 1)) * Math.PI * 2 - Math.PI / 2;
-      map.set(cluster.id, { x: 450 + Math.cos(angle) * 300, y: 205 + Math.sin(angle) * 145 });
+      const angle = (index / Math.max(1, others.length)) * Math.PI * 2 - Math.PI / 2;
+      const ring = others.length > 7 && index >= 5 ? 1 : 0;
+      const xRadius = ring ? 230 : 315;
+      const yRadius = ring ? 112 : 150;
+      const phase = ring ? Math.PI / Math.max(1, others.length) : 0;
+      map.set(cluster.id, {
+        x: 450 + Math.cos(angle + phase) * xRadius,
+        y: 205 + Math.sin(angle + phase) * yRadius,
+      });
     });
     return map;
-  }, [selected?.id, visualClusters]);
+  }, [visualClusters]);
 
-  const mapViewBox = useMemo(() => {
-    const width = 900 / mapScale;
-    const height = 410 / mapScale;
-    return `${(900 - width) / 2 + mapOffset.x} ${(410 - height) / 2 + mapOffset.y} ${width} ${height}`;
-  }, [mapScale, mapOffset]);
+  const viewBox = useMemo(() => centeredViewBox(MAP_WIDTH, MAP_HEIGHT, mapScale, mapOffset), [mapScale, mapOffset]);
+  const mapViewBox = `${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`;
   const positionFor = (id: string) => draggedPositions.get(id) ?? positions.get(id);
-  const mapPoint = (event: ReactPointerEvent<SVGSVGElement>) => {
+
+  const mapPoint = (clientX: number, clientY: number) => {
     const rect = mapRef.current?.getBoundingClientRect();
-    if (!rect) return { x: 0, y: 0 };
-    // SVG's meet scaling leaves unused space when the panel has a different aspect ratio.
-    const viewWidth = 900 / mapScale;
-    const viewHeight = 410 / mapScale;
-    const factor = Math.min(rect.width / viewWidth, rect.height / viewHeight);
-    return { x: (event.clientX - rect.left - (rect.width - viewWidth * factor) / 2) / factor,
-      y: (event.clientY - rect.top - (rect.height - viewHeight * factor) / 2) / factor };
+    if (!rect) return null;
+    return clientPointToMeetViewBox(clientX, clientY, rect, viewBox);
   };
+
   const startDrag = (event: ReactPointerEvent<SVGSVGElement>, id: string | null) => {
     if (event.button !== 0) return;
-    suppressClickRef.current = false;
-    const point = mapPoint(event);
+    const rect = mapRef.current?.getBoundingClientRect();
+    const world = mapPoint(event.clientX, event.clientY);
+    if (!rect || !world) return;
+    const factor = Math.min(rect.width / viewBox.width, rect.height / viewBox.height);
     const current = id ? positionFor(id) : mapOffset;
-    dragRef.current = { pointerId: event.pointerId, id, x: current?.x ?? 0, y: current?.y ?? 0, startX: point.x, startY: point.y, moved: false };
+    suppressClickRef.current = false;
+    dragRef.current = {
+      pointerId: event.pointerId,
+      id,
+      baseX: current?.x ?? 0,
+      baseY: current?.y ?? 0,
+      startWorldX: world.x,
+      startWorldY: world.y,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      worldPerPixel: factor > 0 ? 1 / factor : 1,
+      moved: false,
+    };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
+
+  const flushPending = () => {
+    const pending = pendingRef.current;
+    frameRef.current = null;
+    if (!pending) return;
+    if (pending.id) {
+      setDraggedPositions((previous) => new Map(previous).set(pending.id!, { x: pending.x, y: pending.y }));
+    } else {
+      setMapOffset({ x: pending.x, y: pending.y });
+    }
+  };
+
   const moveDrag = (event: ReactPointerEvent<SVGSVGElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
-    const point = mapPoint(event);
-    const dx = point.x - drag.startX;
-    const dy = point.y - drag.startY;
-    if (Math.hypot(dx, dy) > 3) drag.moved = true;
-    // Increasing viewBox origin moves content in the opposite direction.
-    pendingRef.current = { id: drag.id, x: drag.x + (drag.id ? dx : -dx), y: drag.y + (drag.id ? dy : -dy) };
-    if (frameRef.current === null) frameRef.current = requestAnimationFrame(() => {
-      const pending = pendingRef.current;
-      frameRef.current = null;
-      if (!pending) return;
-      if (pending.id) setDraggedPositions((previous) => new Map(previous).set(pending.id!, { x: pending.x, y: pending.y }));
-      else setMapOffset({ x: pending.x, y: pending.y });
-    });
-  };
-  const finishDrag = (event: ReactPointerEvent<SVGSVGElement>) => {
-    if (dragRef.current?.pointerId === event.pointerId) {
-      suppressClickRef.current = dragRef.current.moved;
-      if (frameRef.current !== null) { cancelAnimationFrame(frameRef.current); frameRef.current = null; }
-      const pending = pendingRef.current;
-      if (pending) {
-        if (pending.id) setDraggedPositions((previous) => new Map(previous).set(pending.id!, { x: pending.x, y: pending.y }));
-        else setMapOffset({ x: pending.x, y: pending.y });
-      }
-      pendingRef.current = null;
-      dragRef.current = null;
+    let dx: number;
+    let dy: number;
+    if (drag.id) {
+      const world = mapPoint(event.clientX, event.clientY);
+      if (!world) return;
+      dx = world.x - drag.startWorldX;
+      dy = world.y - drag.startWorldY;
+    } else {
+      dx = (event.clientX - drag.startClientX) * drag.worldPerPixel;
+      dy = (event.clientY - drag.startClientY) * drag.worldPerPixel;
     }
+    if (Math.hypot(dx, dy) > 3) drag.moved = true;
+    pendingRef.current = {
+      id: drag.id,
+      x: drag.baseX + (drag.id ? dx : -dx),
+      y: drag.baseY + (drag.id ? dy : -dy),
+    };
+    if (frameRef.current === null) frameRef.current = requestAnimationFrame(flushPending);
   };
+
+  const finishDrag = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    suppressClickRef.current = dragRef.current.moved;
+    if (frameRef.current !== null) {
+      cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+      flushPending();
+    }
+    pendingRef.current = null;
+    dragRef.current = null;
+  };
+
+  const setZoom = (nextScale: number, anchor?: { x: number; y: number }) => {
+    const safe = Math.max(0.6, Math.min(2.8, Number(nextScale.toFixed(2))));
+    if (safe === mapScale) return;
+    if (anchor) setMapOffset(zoomCenteredViewBoxAt(MAP_WIDTH, MAP_HEIGHT, mapScale, safe, mapOffset, anchor));
+    setMapScale(safe);
+  };
+
   const wheelZoom = (event: ReactWheelEvent<SVGSVGElement>) => {
     event.preventDefault();
-    const nextScale = Math.max(0.6, Math.min(2.8, Number((mapScale * (event.deltaY > 0 ? 0.9 : 1.1)).toFixed(2))));
-    const rect = mapRef.current?.getBoundingClientRect();
-    if (rect && nextScale !== mapScale) {
-      const oldWidth = 900 / mapScale;
-      const oldHeight = 410 / mapScale;
-      const factor = Math.min(rect.width / oldWidth, rect.height / oldHeight);
-      const ratioX = (event.clientX - rect.left - (rect.width - oldWidth * factor) / 2) / (factor * oldWidth);
-      const ratioY = (event.clientY - rect.top - (rect.height - oldHeight * factor) / 2) / (factor * oldHeight);
-      setMapOffset((previous) => ({ x: previous.x + (oldWidth - 900 / nextScale) * (ratioX - .5), y: previous.y + (oldHeight - 410 / nextScale) * (ratioY - .5) }));
-    }
-    setMapScale(nextScale);
+    const anchor = mapPoint(event.clientX, event.clientY);
+    setZoom(mapScale * (event.deltaY > 0 ? 0.9 : 1.1), anchor ?? undefined);
   };
-  const stars = useMemo(() => Array.from({ length: 140 }, (_, index) => ({ x: hash(`star-x-${index}`) % 900, y: hash(`star-y-${index}`) % 410, r: index % 12 === 0 ? 1.5 : 0.6 })), []);
+
+  const stars = useMemo(() => Array.from({ length: 140 }, (_, index) => ({
+    x: hash(`star-x-${index}`) % 900,
+    y: hash(`star-y-${index}`) % 410,
+    r: index % 12 === 0 ? 1.5 : 0.6,
+  })), []);
 
   const matrixClusters = clusters.slice(0, 6);
   const relationshipMatrix = useMemo(() => {
@@ -200,9 +281,11 @@ export function BrainClustersView({ nodes, edges, onToast }: { nodes: LiveBrainN
     ? `${formatCount(selected.nodes)} live Brain projection nodes grouped by ${pretty(selected.label)}. Relationships and concepts below are derived from the current /api/brain/graph projection.`
     : "No clusters available in the current Brain projection.";
 
-  const zoomOut = () => setMapScale((value) => Math.max(0.6, Number((value - 0.1).toFixed(2))));
-  const zoomIn = () => setMapScale((value) => Math.min(2.8, Number((value + 0.1).toFixed(2))));
-  const resetZoom = () => { setMapScale(1); setMapOffset({ x: 0, y: 0 }); setDraggedPositions(new Map()); };
+  const resetZoom = () => {
+    setMapScale(1);
+    setMapOffset({ x: 0, y: 0 });
+    setDraggedPositions(new Map());
+  };
   const exploreStrongestRelationship = () => {
     const strongest = related[0];
     if (!strongest) {
@@ -227,34 +310,45 @@ export function BrainClustersView({ nodes, edges, onToast }: { nodes: LiveBrainN
             <label className="lv-bc-search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search clusters..." aria-label="Search clusters" /></label>
             <select className="lv-br-select" value={sort} onChange={(event) => setSort(event.target.value as "size" | "name")}><option value="size">Sort by Size</option><option value="name">Sort by Name</option></select>
           </div>
-          {list.length === 0 ? <p className="lv-br-muted">No clusters in the current projection.</p> : (
-            <ul className="lv-bc-list">
-              {list.map((cluster) => (
-                <li key={cluster.id}><button type="button" className={`lv-bc-item${selected?.id === cluster.id ? " is-active" : ""}`} onClick={() => { setSelectedId(cluster.id); setShowAllConcepts(false); }}><svg className="lv-bc-type-icon" viewBox="-18 -18 36 36" style={{ color: cluster.color }} aria-hidden="true"><ClusterGlyph kind={cluster.id} /></svg><span>{pretty(cluster.label)}</span><em>{formatCount(cluster.nodes)} nodes</em></button></li>
-              ))}
-            </ul>
-          )}
+          {list.length === 0 ? <p className="lv-br-muted">No clusters in the current projection.</p> : <ul className="lv-bc-list">
+            {list.map((cluster) => <li key={cluster.id}><button type="button" className={`lv-bc-item${selected?.id === cluster.id ? " is-active" : ""}`} onClick={() => { setSelectedId(cluster.id); setShowAllConcepts(false); }}><svg className="lv-bc-type-icon" viewBox="-18 -18 36 36" style={{ color: cluster.color }} aria-hidden="true"><ClusterGlyph kind={cluster.id} /></svg><span>{pretty(cluster.label)}</span><em>{formatCount(cluster.nodes)} nodes</em></button></li>)}
+          </ul>}
         </Panel>
 
         <div className="lv-bc-center">
-          <Panel title="Cluster Visualization" className="lv-bc-viz" action={<span className="lv-bc-viz-subtitle">Knowledge organized into semantic clusters and their relationships</span>}>
+          <Panel title="Cluster Visualization" className="lv-bc-viz" action={<span className="lv-bc-viz-subtitle">Stable semantic cluster map · drag, pan and zoom</span>}>
             <div className="lv-bc-map">
               <div className="lv-bc-legend"><span><i />Strong Relationship</span><span><i className="is-moderate" />Moderate Relationship</span><span><i className="is-weak" />Weak Relationship</span></div>
-              <svg ref={mapRef} className="lv-bc-links" viewBox={mapViewBox} preserveAspectRatio="xMidYMid meet" aria-label="Interactive cluster relationship network" onPointerDown={(event) => startDrag(event, (event.target as Element).closest("[data-cluster-id]")?.getAttribute("data-cluster-id") ?? null)} onPointerMove={moveDrag} onPointerUp={finishDrag} onPointerCancel={finishDrag} onWheel={wheelZoom}>
-                <defs>{visualClusters.map((cluster) => <filter key={cluster.id} id={`cluster-glow-${hash(cluster.id)}`} x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="7" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>)}<radialGradient id="lv-bc-stellar-haze"><stop stopColor="#ac7e49" stopOpacity=".17" /><stop offset=".5" stopColor="#316387" stopOpacity=".07" /><stop offset="1" stopColor="#020608" stopOpacity="0" /></radialGradient></defs>
+              <svg
+                ref={mapRef}
+                className="lv-bc-links"
+                viewBox={mapViewBox}
+                preserveAspectRatio="xMidYMid meet"
+                aria-label="Interactive cluster relationship network"
+                onPointerDown={(event) => startDrag(event, (event.target as Element).closest("[data-cluster-id]")?.getAttribute("data-cluster-id") ?? null)}
+                onPointerMove={moveDrag}
+                onPointerUp={finishDrag}
+                onPointerCancel={finishDrag}
+                onWheel={wheelZoom}
+              >
+                <defs>
+                  {visualClusters.map((cluster) => <filter key={cluster.id} id={`cluster-glow-${hash(cluster.id)}`} x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="7" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>)}
+                  <radialGradient id="lv-bc-stellar-haze"><stop stopColor="#ac7e49" stopOpacity=".17" /><stop offset=".5" stopColor="#316387" stopOpacity=".07" /><stop offset="1" stopColor="#020608" stopOpacity="0" /></radialGradient>
+                </defs>
                 <ellipse cx="450" cy="205" rx="480" ry="270" fill="url(#lv-bc-stellar-haze)" pointerEvents="none" />
                 <g pointerEvents="none">{stars.map((star, index) => <circle key={index} cx={star.x} cy={star.y} r={star.r} fill={index % 3 === 0 ? "#e7ba72" : "#99d2ed"} opacity={index % 11 === 0 ? ".55" : ".22"} />)}</g>
                 {visualClusters.flatMap((source, sourceIndex) => visualClusters.slice(sourceIndex + 1).map((target) => {
                   const count = relationshipCounts.get([source.id, target.id].sort().join("\u0000")) ?? 0;
                   if (!count) return null;
-                  const a = positionFor(source.id); const b = positionFor(target.id);
+                  const a = positionFor(source.id);
+                  const b = positionFor(target.id);
                   if (!a || !b) return null;
-                  const maxRelationship = Math.max(1, ...relationshipCounts.values());
                   const ratio = count / maxRelationship;
                   return <line key={`${source.id}:${target.id}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="rgba(177,188,207,.48)" strokeWidth={0.6 + ratio * 2} strokeDasharray={ratio < 0.35 ? "2 7" : ratio < 0.7 ? "6 5" : undefined} />;
                 }))}
                 {visualClusters.map((cluster) => {
-                  const point = positionFor(cluster.id); if (!point) return null;
+                  const point = positionFor(cluster.id);
+                  if (!point) return null;
                   const active = selected?.id === cluster.id;
                   const radius = active ? 62 : 51 + Math.min(8, Math.sqrt(cluster.nodes) * 1.5);
                   const particles = Array.from({ length: Math.min(45, Math.max(14, Math.round(Math.sqrt(cluster.nodes) * 4))) }, (_, index) => {
@@ -263,7 +357,22 @@ export function BrainClustersView({ nodes, edges, onToast }: { nodes: LiveBrainN
                     const distance = radius + 18 + (seed % 54);
                     return { x: Math.cos(angle) * distance, y: Math.sin(angle) * distance * 0.82, r: 1.5 + seed % 3 };
                   });
-                  return <g key={cluster.id} data-cluster-id={cluster.id} className={`lv-bc-orbit${active ? " is-active" : ""}`} transform={`translate(${point.x} ${point.y})`} onClick={() => { if (suppressClickRef.current) { suppressClickRef.current = false; return; } setSelectedId(cluster.id); setShowAllConcepts(false); }} style={{ cursor: "grab" }}>
+                  return <g
+                    key={cluster.id}
+                    data-cluster-id={cluster.id}
+                    className={`lv-bc-orbit${active ? " is-active" : ""}`}
+                    transform={`translate(${point.x} ${point.y})`}
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`${pretty(cluster.label)}, ${cluster.nodes} nodes`}
+                    onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedId(cluster.id); setShowAllConcepts(false); } }}
+                    onClick={() => {
+                      if (suppressClickRef.current) { suppressClickRef.current = false; return; }
+                      setSelectedId(cluster.id);
+                      setShowAllConcepts(false);
+                    }}
+                    style={{ cursor: "grab" }}
+                  >
                     {particles.map((particle, index) => <g key={index} pointerEvents="none"><line x1={0} y1={0} x2={particle.x} y2={particle.y} stroke={cluster.color} strokeOpacity=".14" strokeWidth=".45" /><circle cx={particle.x} cy={particle.y} r={particle.r} fill={cluster.color} opacity={0.44 + (index % 4) * 0.12} /></g>)}
                     <circle r={radius + 19} fill={cluster.color} opacity=".025" stroke={cluster.color} strokeOpacity=".2" strokeDasharray="2 6" />
                     <circle r={radius} fill="rgba(4,8,12,.92)" stroke={cluster.color} strokeWidth={active ? 2.2 : 1.5} filter={`url(#cluster-glow-${hash(cluster.id)})`} />
@@ -272,7 +381,12 @@ export function BrainClustersView({ nodes, edges, onToast }: { nodes: LiveBrainN
                   </g>;
                 })}
               </svg>
-              <div className="lv-bc-map-controls" aria-label="Cluster map zoom controls"><button type="button" onClick={zoomOut} aria-label="Zoom out">−</button><span>{Math.round(mapScale * 100)}%</span><button type="button" onClick={zoomIn} aria-label="Zoom in">＋</button><button type="button" onClick={resetZoom} aria-label="Reset zoom">⌗</button></div>
+              <div className="lv-bc-map-controls" aria-label="Cluster map zoom controls">
+                <button type="button" onClick={() => setZoom(mapScale - 0.1)} aria-label="Zoom out">−</button>
+                <span>{Math.round(mapScale * 100)}%</span>
+                <button type="button" onClick={() => setZoom(mapScale + 0.1)} aria-label="Zoom in">＋</button>
+                <button type="button" onClick={resetZoom} aria-label="Fit cluster map">Fit</button>
+              </div>
             </div>
           </Panel>
 

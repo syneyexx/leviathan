@@ -4,6 +4,12 @@ function count(value: number | null): string {
   return value == null ? "UNMEASURED" : String(value);
 }
 
+function pct(value: number | null, estimated = false): string {
+  if (value == null) return "UNMEASURED";
+  const rendered = Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, "");
+  return `${estimated ? "~" : ""}${rendered}%`;
+}
+
 export function SourceIngestionPanel({ model }: { model: IngestionModel }) {
   return (
     <section className="panel" aria-label="Source ingestion">
@@ -16,8 +22,8 @@ export function SourceIngestionPanel({ model }: { model: IngestionModel }) {
         <div><b>{count(model.processing)}</b><span>Processing</span></div>
         <div><b>{count(model.completed)}</b><span>Completed</span></div>
         <div><b className={model.failed ? "bad" : ""}>{count(model.failed)}</b><span>Failed</span></div>
-        <div className="progress-total">
-          <div className="sub">Overall Progress <b>{model.overallProgressPct == null ? "UNMEASURED" : `${model.overallProgressPct}%`}</b></div>
+        <div className="progress-total" title={model.overallProgressEstimated ? "Approximate progress derived from the current ingestion phase." : undefined}>
+          <div className="sub">Overall Progress <b>{pct(model.overallProgressPct, model.overallProgressEstimated)}</b></div>
           <div className="bar"><span style={{ width: `${Math.max(0, Math.min(100, model.overallProgressPct ?? 0))}%` }} /></div>
         </div>
       </div>
@@ -34,10 +40,10 @@ export function SourceIngestionPanel({ model }: { model: IngestionModel }) {
                 <td>{job.id}</td>
                 <td className="task">{job.source}</td>
                 <td>{job.type}</td>
-                <td><span className={`dot ${job.state === "Completed" || job.state === "completed" ? "ok" : job.state === "Processing" || job.state === "processing" || job.state === "parsing" ? "info" : job.state === "failed" || job.state === "Failed" ? "bad" : ""}`} />{job.state}</td>
-                <td>
+                <td><span className={`dot ${job.state === "Completed" || job.state === "completed" ? "ok" : job.state === "Processing" || job.state === "processing" || job.state === "parsing" || job.state === "RUNNING" ? "info" : job.state === "failed" || job.state === "Failed" || job.state === "FAILED" ? "bad" : ""}`} />{job.state}</td>
+                <td title={job.progressEstimated ? "Approximate progress derived from the current ingestion phase." : job.progressPct == null ? "No progress measurement is available." : "Measured progress reported by the backend."}>
                   {job.progressPct == null ? "UNMEASURED" : (
-                    <><span className="mini-bar"><span style={{ width: `${Math.max(0, Math.min(100, job.progressPct))}%` }} /></span>{job.progressPct}%</>
+                    <><span className="mini-bar"><span style={{ width: `${Math.max(0, Math.min(100, job.progressPct))}%` }} /></span>{pct(job.progressPct, job.progressEstimated)}</>
                   )}
                 </td>
                 <td>{job.elapsed}</td>
