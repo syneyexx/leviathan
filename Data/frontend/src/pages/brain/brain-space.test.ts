@@ -345,8 +345,11 @@ describe("createBrainSpaceAnimationLoop", () => {
     expect(loop.getSimTime()).toBe(beforePause);
 
     loop.setPaused(false);
+    // First frame after resume re-baselines (delta 0); the next frame advances smoothly.
     step(16);
-    expect(loop.getSimTime()).toBeGreaterThan(beforePause);
+    expect(loop.getSimTime()).toBe(beforePause);
+    step(16);
+    expect(loop.getSimTime()).toBe(beforePause + 16);
     loop.stop();
   });
 

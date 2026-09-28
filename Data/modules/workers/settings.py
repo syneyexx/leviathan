@@ -58,6 +58,16 @@ class WorkerSettings:
     vram_headroom_mb: float = 256.0
     terminal_summary_seconds: float = 30.0
 
+    # Wave 12 — 16GB RAM + 16GB/6GB VRAM host profile for ResourceAdmission.
+    host_ram_mb: float = 16_384.0
+    vram_primary_mb: float = 16_384.0
+    vram_secondary_mb: float = 6_144.0
+    # Lazy startup / scale-to-zero: pools with default_count=0 stay cold until
+    # demand. Do NOT scale browser/playwright pools to zero while sticky session
+    # affinity is required — keep at least one warm worker for affinity.
+    scale_to_zero_enabled: bool = True
+    scale_to_zero_exempt_pools: tuple[str, ...] = ("browser", "playwright")
+
     pool_counts: dict[str, int] = field(default_factory=default_pool_counts)
 
     def public_dict(self) -> dict[str, Any]:
@@ -79,6 +89,12 @@ class WorkerSettings:
             "resource": {
                 "ram_headroom_mb": self.ram_headroom_mb,
                 "vram_headroom_mb": self.vram_headroom_mb,
+                "host_ram_mb": self.host_ram_mb,
+                "vram_primary_mb": self.vram_primary_mb,
+                "vram_secondary_mb": self.vram_secondary_mb,
+                "scale_to_zero_enabled": self.scale_to_zero_enabled,
+                "scale_to_zero_exempt_pools": list(self.scale_to_zero_exempt_pools),
+                "pressure_profile": "16GB_RAM_16_6_VRAM",
             },
             "pools": dict(self.pool_counts),
         }

@@ -178,7 +178,7 @@
 .lv-gv-node { cursor: grab; transition: opacity .14s ease; }
 .lv-gv-node:active { cursor: grabbing; }
 .lv-gv-node.is-depth-dimmed { opacity: .18; }
-.lv-gv-node.is-selected > circle:nth-last-of-type(2) { filter: drop-shadow(0 0 7px currentColor); }
+.lv-gv-node.is-selected > circle:not(.lv-gv-selection-marker):last-of-type { filter: drop-shadow(0 0 7px currentColor); }
 .lv-gv-label { fill: rgba(234,232,223,.78); font-family: var(--lv-font-ui); font-size: 8.2px; paint-order: stroke; stroke: rgba(2,5,6,.95); stroke-width: 2.8px; stroke-linejoin: round; pointer-events: none; }
 .lv-gv-label.is-core { fill: #f4d477; font-family: var(--lv-font-display); font-size: 13px; letter-spacing: .09em; }
 .lv-gv-hover-card {
@@ -197,8 +197,10 @@
   pointer-events: none;
   transform: translate(-50%, calc(-100% - 16px));
 }
-.lv-gv-hover-card strong, .lv-gv-hover-card span { display: block; }
+.lv-gv-hover-card strong, .lv-gv-hover-card span, .lv-gv-hover-card em { display: block; }
 .lv-gv-hover-card span { margin-top: 3px; color: #d0a960; font-size: 9px; text-transform: uppercase; letter-spacing: .12em; }
+.lv-gv-hover-card em { margin-top: 2px; color: rgba(214,198,160,.72); font-size: 8.5px; font-style: normal; letter-spacing: .04em; }
+.lv-gv-selection-marker { pointer-events: none; }
 .lv-gv-node:focus-visible { outline: none; filter: drop-shadow(0 0 9px currentColor); }
 .lv-gv-core-mark { fill: #ffe5a1; font-family: var(--lv-font-display); font-size: 10px; font-weight: 700; pointer-events: none; }
 .lv-gv-cluster-halo text { font-size: 7.5px; letter-spacing: .06em; text-transform: uppercase; }

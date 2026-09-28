@@ -8,10 +8,15 @@ import {
 } from "react";
 import { colorForType, type LiveBrainEdge, type LiveBrainNode } from "./brain-live";
 import { clientPointToMeetViewBox, fitPointsTransform } from "./brain-geometry";
+import {
+  buildBrainGraphLayout,
+  graphCanvasSize,
+  mergeDraggedGraphPositions,
+  type GraphPoint,
+  type PositionedGraphNode,
+} from "./brain-graph-layout";
 
-type Point = { x: number; y: number };
 type Viewport = { x: number; y: number; scale: number };
-type PositionedNode = LiveBrainNode & Point & { r: number; color: string; cluster: string; core: boolean };
 type ClusterLayout = { type: string; label: string; color: string; x: number; y: number; count: number; radius: number };
 
 type Props = {
@@ -24,14 +29,6 @@ type Props = {
   showDepth: boolean;
   physicsLayout: boolean;
 };
-
-const BASE_WIDTH = 1000;
-const BASE_HEIGHT = 610;
-
-function graphSize(count: number): { width: number; height: number } {
-  const expansion = Math.max(0, Math.sqrt(count) - 6);
-  return { width: BASE_WIDTH + expansion * 165, height: BASE_HEIGHT + expansion * 115 };
-}
 
 function NodeGlyph({ type, core, radius }: { type: string; core: boolean; radius: number }) {
   const kind = core ? "core" : type.toLowerCase();
@@ -70,129 +67,55 @@ function prettyType(type: string): string {
   return type.split(/[._-]+/g).filter(Boolean).map((part) => part.length <= 3 ? part.toUpperCase() : `${part[0].toUpperCase()}${part.slice(1)}`).join(" ");
 }
 
-function clusterKey(node: LiveBrainNode): string {
-  if (node.type === "capability" && typeof node.meta?.provider_kind === "string" && node.meta.provider_kind.trim()) {
-    return `capability.${node.meta.provider_kind.trim().toLowerCase()}`;
-  }
-  return node.type;
-}
-
-function clusterColor(key: string, sample: LiveBrainNode): string {
-  const base = colorForType(sample.type);
-  if (!key.startsWith("capability.")) return base;
-  const palette = ["#E6A13A", "#F0C875", "#E8794A", "#38C9D6", "#8D6EF4", "#42C58A"];
-  return palette[hashString(key) % palette.length];
-}
-
-function buildLayout(nodes: LiveBrainNode[], edges: LiveBrainEdge[], physics: boolean, width: number, height: number): PositionedNode[] {
-  if (!nodes.length) return [];
-  const center = { x: width / 2, y: height / 2 };
-  const groups = new Map<string, LiveBrainNode[]>();
-  for (const node of nodes) {
-    const key = clusterKey(node);
-    const group = groups.get(key) ?? [];
-    group.push(node);
-    groups.set(key, group);
-  }
-  const groupEntries = [...groups.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
-  const actualHub = nodes.find((node) => /leviathan/i.test(node.label)) ?? nodes.find((node) => node.type === "atlas") ?? null;
-  const positioned: PositionedNode[] = [];
-
-  groupEntries.forEach(([key, group], groupIndex) => {
-    const color = clusterColor(key, group[0]);
-    const includesHub = actualHub ? group.some((node) => node.id === actualHub.id) : false;
-    const nonHubIndex = includesHub ? Math.max(0, groupIndex - 1) : groupIndex;
-    const nonHubCount = Math.max(1, groupEntries.length - (actualHub ? 1 : 0));
-    const angle = (nonHubIndex / nonHubCount) * Math.PI * 2 - Math.PI / 2;
-    const orbit = Math.min(width, height) * (groupEntries.length < 3 ? 0.27 : 0.34);
-    const groupCenter = includesHub ? center : {
-      x: center.x + Math.cos(angle) * orbit,
-      y: center.y + Math.sin(angle) * orbit * 0.78,
-    };
-
-    group.forEach((node, index) => {
-      if (actualHub && node.id === actualHub.id) {
-        positioned.push({ ...node, ...center, r: 34, color: "#E6BD58", cluster: key, core: true });
-        return;
-      }
-      const seed = hashString(node.id);
-      const localAngle = index * 2.399963229728653 + (seed % 29) * 0.014;
-      const localRadius = index === 0 ? 0 : 42 + Math.sqrt(index) * 25;
-      positioned.push({
-        ...node,
-        x: groupCenter.x + Math.cos(localAngle) * localRadius,
-        y: groupCenter.y + Math.sin(localAngle) * localRadius,
-        r: index === 0 ? Math.min(26, 14 + Math.sqrt(group.length) * 2.4) : 7 + Math.min(3, Math.log2(index + 2) * 0.65),
-        color,
-        cluster: key,
-        core: false,
-      });
-    });
-  });
-
-  if (!physics || positioned.length > 500) return positioned;
-  const byId = new Map(positioned.map((node) => [node.id, node]));
-  for (let iteration = 0; iteration < 24; iteration += 1) {
-    for (const edge of edges) {
-      const a = byId.get(edge.source);
-      const b = byId.get(edge.target);
-      if (!a || !b || a.core || b.core) continue;
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const distance = Math.max(1, Math.hypot(dx, dy));
-      const desired = a.cluster === b.cluster ? 112 : 270;
-      const force = (distance - desired) * 0.008;
-      const fx = (dx / distance) * force;
-      const fy = (dy / distance) * force;
-      a.x += fx;
-      a.y += fy;
-      b.x -= fx;
-      b.y -= fy;
-    }
-    for (let aIndex = 0; aIndex < positioned.length; aIndex += 1) {
-      const a = positioned[aIndex];
-      for (let bIndex = aIndex + 1; bIndex < positioned.length; bIndex += 1) {
-        const b = positioned[bIndex];
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const distance = Math.hypot(dx, dy);
-        const minimum = a.r + b.r + (a.core || b.core ? 44 : 24);
-        if (distance >= minimum) continue;
-        const angle = distance < 0.001 ? (hashString(a.id + b.id) % 360) * Math.PI / 180 : Math.atan2(dy, dx);
-        const displacement = (minimum - distance) * 0.42;
-        if (!a.core) { a.x -= Math.cos(angle) * displacement; a.y -= Math.sin(angle) * displacement; }
-        if (!b.core) { b.x += Math.cos(angle) * displacement; b.y += Math.sin(angle) * displacement; }
-      }
-    }
-  }
-  return positioned;
-}
-
 export function BrainGraphCanvas({ nodes, edges, selectedId, onSelect, showLabels, showClusters, showDepth, physicsLayout }: Props) {
-  const { width, height } = useMemo(() => graphSize(nodes.length), [nodes.length]);
+  const { width, height } = useMemo(() => graphCanvasSize(nodes.length), [nodes.length]);
   const center = useMemo(() => ({ x: width / 2, y: height / 2 }), [width, height]);
   const svgRef = useRef<SVGSVGElement | null>(null);
-  const dragRef = useRef<{ id: string; pointerId: number } | null>(null);
-  const panRef = useRef<{ pointerId: number; start: Point; viewport: Viewport } | null>(null);
-  const initial = useMemo(() => buildLayout(nodes, edges, physicsLayout, width, height), [nodes, edges, physicsLayout, width, height]);
+  const dragRef = useRef<{ id: string; pointerId: number; offsetX: number; offsetY: number } | null>(null);
+  const panRef = useRef<{ pointerId: number; start: GraphPoint; viewport: Viewport } | null>(null);
+  const draggedIdsRef = useRef(new Set<string>());
+  const fitIdentityRef = useRef("");
+  const initial = useMemo(
+    () => buildBrainGraphLayout(nodes, edges, physicsLayout, width, height),
+    [nodes, edges, physicsLayout, width, height],
+  );
   const fitViewport = useMemo(
-    () => fitPointsTransform(initial.map((node) => ({ x: node.x, y: node.y, radius: node.r + 24 })), width, height, { padding: 58, minScale: 0.32, maxScale: 1 }),
+    () => fitPointsTransform(
+      initial.map((node) => ({ x: node.x, y: node.y, radius: node.r + 28 })),
+      width,
+      height,
+      { padding: 58, minScale: 0.28, maxScale: 1 },
+    ),
     [initial, width, height],
+  );
+  const graphIdentity = useMemo(
+    () => `${width}x${height}|${nodes.map((node) => node.id).join("\0")}`,
+    [nodes, width, height],
   );
   const [viewport, setViewport] = useState<Viewport>(fitViewport);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [positions, setPositions] = useState<Map<string, Point>>(() => new Map(initial.map((node) => [node.id, { x: node.x, y: node.y }])));
+  const [positions, setPositions] = useState<Map<string, GraphPoint>>(
+    () => new Map(initial.map((node) => [node.id, { x: node.x, y: node.y }])),
+  );
 
   useEffect(() => {
-    setPositions(new Map(initial.map((node) => [node.id, { x: node.x, y: node.y }])));
-    setViewport(fitViewport);
-  }, [initial, fitViewport]);
+    setPositions((previous) => mergeDraggedGraphPositions(initial, previous, draggedIdsRef.current));
+    for (const id of [...draggedIdsRef.current]) {
+      if (!initial.some((node) => node.id === id)) draggedIdsRef.current.delete(id);
+    }
+    if (fitIdentityRef.current !== graphIdentity) {
+      fitIdentityRef.current = graphIdentity;
+      setViewport(fitViewport);
+    }
+  }, [initial, fitViewport, graphIdentity]);
 
-  const rendered = useMemo(() => initial.map((node) => ({ ...node, ...(positions.get(node.id) ?? { x: node.x, y: node.y }) })), [initial, positions]);
+  const rendered = useMemo<PositionedGraphNode[]>(
+    () => initial.map((node) => ({ ...node, ...(positions.get(node.id) ?? { x: node.x, y: node.y }) })),
+    [initial, positions],
+  );
   const byId = useMemo(() => new Map(rendered.map((node) => [node.id, node])), [rendered]);
   const hovered = hoveredId ? byId.get(hoveredId) : null;
   const hasActualCore = rendered.some((node) => node.core);
-  const denseGraph = rendered.length > 45;
   const stars = useMemo(() => Array.from({ length: 170 }, (_, index) => ({
     x: hashString(`brain-star-x-${index}`) % width,
     y: hashString(`brain-star-y-${index}`) % height,
@@ -225,17 +148,17 @@ export function BrainGraphCanvas({ nodes, edges, selectedId, onSelect, showLabel
       ...row,
       x: row.x / Math.max(1, row.count),
       y: row.y / Math.max(1, row.count),
-      radius: Math.min(112, 38 + Math.sqrt(row.count) * 11),
+      radius: Math.min(140, 48 + Math.sqrt(row.count) * 14),
     }));
   }, [rendered]);
 
-  const rawPoint = (clientX: number, clientY: number): Point | null => {
+  const rawPoint = (clientX: number, clientY: number): GraphPoint | null => {
     const svg = svgRef.current;
     if (!svg) return null;
     const rect = svg.getBoundingClientRect();
     return clientPointToMeetViewBox(clientX, clientY, rect, { x: 0, y: 0, width, height });
   };
-  const pointInGraph = (clientX: number, clientY: number): Point | null => {
+  const pointInGraph = (clientX: number, clientY: number): GraphPoint | null => {
     const raw = rawPoint(clientX, clientY);
     if (!raw) return null;
     return { x: (raw.x - viewport.x) / viewport.scale, y: (raw.y - viewport.y) / viewport.scale };
@@ -245,7 +168,14 @@ export function BrainGraphCanvas({ nodes, edges, selectedId, onSelect, showLabel
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
-    dragRef.current = { id, pointerId: event.pointerId };
+    const point = pointInGraph(event.clientX, event.clientY);
+    const node = byId.get(id);
+    dragRef.current = {
+      id,
+      pointerId: event.pointerId,
+      offsetX: point && node ? point.x - node.x : 0,
+      offsetY: point && node ? point.y - node.y : 0,
+    };
     onSelect(id);
   };
   const handlePointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
@@ -253,16 +183,19 @@ export function BrainGraphCanvas({ nodes, edges, selectedId, onSelect, showLabel
     const start = rawPoint(event.clientX, event.clientY);
     if (!start) return;
     event.preventDefault();
+    // Snapshot viewport before capture so the first move cannot jump from a stale closure.
+    panRef.current = { pointerId: event.pointerId, start, viewport: { ...viewport } };
     event.currentTarget.setPointerCapture(event.pointerId);
-    panRef.current = { pointerId: event.pointerId, start, viewport };
   };
   const handlePointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
     if (dragRef.current?.pointerId === event.pointerId) {
       const point = pointInGraph(event.clientX, event.clientY);
       if (!point) return;
+      const drag = dragRef.current;
+      draggedIdsRef.current.add(drag.id);
       setPositions((previous) => {
         const next = new Map(previous);
-        next.set(dragRef.current!.id, point);
+        next.set(drag.id, { x: point.x - drag.offsetX, y: point.y - drag.offsetY });
         return next;
       });
       return;
@@ -367,7 +300,8 @@ export function BrainGraphCanvas({ nodes, edges, selectedId, onSelect, showLabel
             const selected = selectedId === node.id;
             const hoveredNode = hoveredId === node.id;
             const depthDimmed = showDepth && selectedId != null && !connectedToSelected.has(node.id);
-            const labelVisible = showLabels && (node.core || hoveredNode || (!denseGraph && node.label.length <= 22) || (denseGraph && node.r >= 19 && node.label.length <= 18));
+            // Names stay off by default. Hover (when labels enabled) or the core brand mark only.
+            const labelVisible = showLabels && (node.core || hoveredNode);
             return <g
               key={node.id}
               className={`lv-gv-node${node.core ? " is-core" : ""}${selected ? " is-selected" : ""}${depthDimmed ? " is-depth-dimmed" : ""}`}
@@ -385,15 +319,28 @@ export function BrainGraphCanvas({ nodes, edges, selectedId, onSelect, showLabel
               style={{ color: node.color }}
             >
               {node.core ? <circle r={node.r + 16} fill="none" stroke={node.color} strokeOpacity=".2" filter="url(#lv-gv-soft-glow)" /> : null}
-              <circle r={selected ? node.r + 3 : node.r} fill={node.core ? "url(#lv-gv-core)" : "rgba(3,8,9,.94)"} stroke="currentColor" strokeWidth={node.core ? 2.2 : selected ? 2 : 1.15} filter={node.core || selected ? "url(#lv-gv-glow)" : undefined} />
+              {selected ? <circle r={node.r + 6} fill="none" stroke="currentColor" strokeOpacity=".55" strokeWidth="1.2" className="lv-gv-selection-marker" /> : null}
+              <circle r={node.r} fill={node.core ? "url(#lv-gv-core)" : "rgba(3,8,9,.94)"} stroke="currentColor" strokeWidth={node.core ? 2.2 : selected ? 1.8 : 1.15} filter={node.core || selected ? "url(#lv-gv-glow)" : undefined} />
               <NodeGlyph type={node.type} core={node.core} radius={node.r} />
-              {labelVisible && node.label.length <= 22 ? <text y={node.r + 13} textAnchor="middle" className={node.core ? "lv-gv-label is-core" : "lv-gv-label"}>{node.label}</text> : null}
-              <title>{`${node.label} · ${node.type}`}</title>
+              {labelVisible && node.label.length <= 28 ? <text y={node.r + 13} textAnchor="middle" className={node.core ? "lv-gv-label is-core" : "lv-gv-label"}>{node.label}</text> : null}
             </g>;
           })}
         </g>
       </svg>
-      {hovered ? <div className="lv-gv-hover-card" role="tooltip" style={{ left: `${((hovered.x * viewport.scale + viewport.x) / width) * 100}%`, top: `${((hovered.y * viewport.scale + viewport.y) / height) * 100}%` }}><strong>{hovered.label}</strong><span>{prettyType(hovered.type)}</span></div> : null}
+      {hovered ? (
+        <div
+          className="lv-gv-hover-card"
+          role="tooltip"
+          style={{
+            left: `${((hovered.x * viewport.scale + viewport.x) / width) * 100}%`,
+            top: `${((hovered.y * viewport.scale + viewport.y) / height) * 100}%`,
+          }}
+        >
+          <strong>{hovered.label}</strong>
+          <span>{prettyType(hovered.type)}</span>
+          {hovered.cluster !== hovered.type ? <em className="lv-gv-hover-meta">{prettyType(hovered.cluster)}</em> : null}
+        </div>
+      ) : null}
       <div className="lv-gv-legend" aria-hidden="true">
         {[...new Map(nodes.map((node) => [node.type, colorForType(node.type)])).entries()].slice(0, 10).map(([type, color]) => <span key={type}><i style={{ background: color }} />{prettyType(type)}</span>)}
       </div>

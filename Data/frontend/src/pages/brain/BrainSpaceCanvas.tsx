@@ -13,6 +13,7 @@ import {
   buildBrainSpaceProjection,
   createBrainSpaceAnimationLoop,
   nodeVisibleAtKnowledgeAge,
+  prefersReducedMotion,
   type BrainSpaceDomain,
   type BrainSpaceMode,
   type BrainSpaceNode,
@@ -249,7 +250,8 @@ export function BrainSpaceCanvas({
       showDepth,
       showRelations,
     };
-    loopRef.current?.setPaused(paused);
+    // prefers-reduced-motion wins over an accidental running clock.
+    loopRef.current?.setPaused(paused || prefersReducedMotion());
   }, [edges, isolatedDomain, knowledgeAge, mode, paused, selectedId, showLabels, showClusters, showDepth, showRelations]);
 
   const starfield = useMemo(
@@ -336,7 +338,7 @@ export function BrainSpaceCanvas({
     };
 
     const loop = createBrainSpaceAnimationLoop({
-      paused: propsRef.current.paused,
+      paused: propsRef.current.paused || prefersReducedMotion(),
       onFrame: (simTime, _delta, wallNow) => {
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
@@ -625,7 +627,15 @@ export function BrainSpaceCanvas({
 
     loopRef.current = loop;
     loop.start();
+
+    const onVisibility = () => {
+      // Returning from a hidden tab must not dump accumulated wall time into sim.
+      if (!document.hidden) loop.setPaused(propsRef.current.paused || prefersReducedMotion());
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
     return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
       loop.stop();
       if (loopRef.current === loop) loopRef.current = null;
     };

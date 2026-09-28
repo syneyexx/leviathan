@@ -55,8 +55,147 @@ class AccountingMode(str, Enum):
     RELEASED = "RELEASED"
 
 
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+class PressureState(str, Enum):
+    """Host memory/VRAM pressure for admission (Wave 12).
+
+    Profile baseline: 16GB system RAM + dual VRAM profile (16GB primary / 6GB secondary).
+    """
+
+    NORMAL = "NORMAL"
+    PRESSURE = "PRESSURE"
+    CRITICAL = "CRITICAL"
+
+
+# Default host profile used when operators do not override.
+DEFAULT_HOST_RAM_MB = 16_384.0
+DEFAULT_VRAM_PRIMARY_MB = 16_384.0
+DEFAULT_VRAM_SECONDARY_MB = 6_144.0
+
+# Nonessential classes shed first under PRESSURE / CRITICAL.
+_NONESSENTIAL_MEMORY_HEAVY = frozenset(
+    {
+        ResourceClass.MEMORY_HEAVY,
+        ResourceClass.CPU_HEAVY,
+        ResourceClass.BATCH,
+        ResourceClass.GPU_SHARED,
+    }
+)
+
+# Always preserved — control plane + paper risk/execution path.
+_PROTECTED_OWNER_TYPES = frozenset(
+    {
+        "control_plane",
+        "paper_trading",
+        "paper",
+        "risk",
+        "execution",
+        "db_commit",
+        "db_writer",
+    }
+)
+
+_PROTECTED_RESOURCE_CLASSES = frozenset(
+    {
+        ResourceClass.DB_SERIAL,
+        ResourceClass.MAINTENANCE_EXCLUSIVE,
+        ResourceClass.CPU_LIGHT,
+        ResourceClass.NETWORK_BOUND,
+    }
+)
+
+
+@dataclass
+class ResourceGovernorDecision:
+    """Observability-facing resource decision (Wave 12)."""
+
+    pressure: str
+    allowed: bool
+    action: str
+    reason: str
+    shed_caches: bool = False
+    unload_idle_models: bool = False
+    pause_resumable_jobs: bool = False
+    protect_db_writer: bool = True
+    details: dict[str, Any] | None = None
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "pressure": self.pressure,
+            "allowed": self.allowed,
+            "action": self.action,
+            "reason": self.reason,
+            "shedCaches": self.shed_caches,
+            "unloadIdleModels": self.unload_idle_models,
+            "pauseResumableJobs": self.pause_resumable_jobs,
+            "protectDbWriter": self.protect_db_writer,
+            "details": self.details or {},
+            "truth": {
+                "never_kill_db_writer_mid_commit": True,
+                "paper_trading_risk_execution_preserved": True,
+                "profile_16gb_ram_16_6_vram": True,
+            },
+        }
+
+
+def classify_pressure(
+    *,
+    ram_used_pct: float | None = None,
+    ram_available_mb: float | None = None,
+    ram_total_mb: float = DEFAULT_HOST_RAM_MB,
+    vram_used_pct: float | None = None,
+    vram_available_mb: float | None = None,
+    vram_total_mb: float | None = None,
+) -> PressureState:
+    """Classify NORMAL / PRESSURE / CRITICAL from measured headroom.
+
+    Thresholds (16GB RAM profile):
+      PRESSURE  — RAM used ≥ 70% or available < 4GB; VRAM used ≥ 75%
+      CRITICAL  — RAM used ≥ 88% or available < 1.5GB; VRAM used ≥ 92%
+    Unknown telemetry → NORMAL (existing admission still applies conservative denies).
+    """
+    ram_pressure = PressureState.NORMAL
+    if ram_used_pct is not None:
+        pct = float(ram_used_pct)
+        if pct >= 88.0:
+            ram_pressure = PressureState.CRITICAL
+        elif pct >= 70.0:
+            ram_pressure = PressureState.PRESSURE
+    elif ram_available_mb is not None:
+        avail = float(ram_available_mb)
+        if avail < 1_536.0:
+            ram_pressure = PressureState.CRITICAL
+        elif avail < 4_096.0:
+            ram_pressure = PressureState.PRESSURE
+        elif ram_total_mb > 0:
+            used_pct = 100.0 * (1.0 - avail / float(ram_total_mb))
+            if used_pct >= 88.0:
+                ram_pressure = PressureState.CRITICAL
+            elif used_pct >= 70.0:
+                ram_pressure = PressureState.PRESSURE
+
+    vram_pressure = PressureState.NORMAL
+    if vram_used_pct is not None:
+        vp = float(vram_used_pct)
+        if vp >= 92.0:
+            vram_pressure = PressureState.CRITICAL
+        elif vp >= 75.0:
+            vram_pressure = PressureState.PRESSURE
+    elif vram_available_mb is not None and vram_total_mb:
+        avail_v = float(vram_available_mb)
+        total_v = float(vram_total_mb)
+        if total_v > 0:
+            used = 100.0 * (1.0 - avail_v / total_v)
+            if used >= 92.0:
+                vram_pressure = PressureState.CRITICAL
+            elif used >= 75.0:
+                vram_pressure = PressureState.PRESSURE
+
+    order = {
+        PressureState.NORMAL: 0,
+        PressureState.PRESSURE: 1,
+        PressureState.CRITICAL: 2,
+    }
+    return ram_pressure if order[ram_pressure] >= order[vram_pressure] else vram_pressure
 
 
 @dataclass
@@ -69,6 +208,8 @@ class AdmissionDecision:
     details: dict[str, Any] | None = None
     device_stable_id: str | None = None
     assigned_devices: list[dict[str, Any]] | None = None
+    pressure: str | None = None
+    governor: dict[str, Any] | None = None
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -79,13 +220,20 @@ class AdmissionDecision:
             "ram_known": self.ram_known,
             "deviceStableId": self.device_stable_id,
             "assignedDevices": self.assigned_devices or [],
+            "pressure": self.pressure,
+            "governor": self.governor or {},
             "details": self.details or {},
             "truth": {
                 "unknown_vram_is_not_zero": True,
                 "unknown_uses_conservative_policy": True,
                 "exclusive_is_per_device_when_known": True,
+                "pressure_states": ["NORMAL", "PRESSURE", "CRITICAL"],
             },
         }
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 class ResourceAdmission:
@@ -100,6 +248,12 @@ class ResourceAdmission:
         telemetry_reader: Any | None = None,
         interactive_busy_fn: Any | None = None,
         hardware_reader: Any | None = None,
+        host_ram_mb: float = DEFAULT_HOST_RAM_MB,
+        vram_primary_mb: float = DEFAULT_VRAM_PRIMARY_MB,
+        vram_secondary_mb: float = DEFAULT_VRAM_SECONDARY_MB,
+        cache_shed_hook: Any | None = None,
+        model_unload_hook: Any | None = None,
+        pause_jobs_hook: Any | None = None,
     ) -> None:
         self.db_path = Path(db_path)
         self.ram_headroom_mb = float(ram_headroom_mb)
@@ -107,6 +261,14 @@ class ResourceAdmission:
         self.telemetry_reader = telemetry_reader
         self.interactive_busy_fn = interactive_busy_fn
         self.hardware_reader = hardware_reader
+        self.host_ram_mb = float(host_ram_mb)
+        self.vram_primary_mb = float(vram_primary_mb)
+        self.vram_secondary_mb = float(vram_secondary_mb)
+        # Optional safe hooks — never kill DB writer mid-commit.
+        self.cache_shed_hook = cache_shed_hook
+        self.model_unload_hook = model_unload_hook
+        self.pause_jobs_hook = pause_jobs_hook
+        self._last_governor: ResourceGovernorDecision | None = None
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
     @contextmanager
@@ -207,6 +369,168 @@ class ResourceAdmission:
         devices = gpu.get("devices") if isinstance(gpu.get("devices"), list) else snap.get("devices") or []
         return [d for d in devices if isinstance(d, dict)]
 
+    def current_pressure(self, snap: dict[str, Any] | None = None) -> PressureState:
+        """Compute pressure from telemetry snapshot (Wave 12)."""
+        snap = snap if isinstance(snap, dict) else self._snapshot()
+        ram_avail = snap.get("ram_available_mb")
+        ram_pct = snap.get("ram_used_pct") or snap.get("ramPct")
+        vram_avail = snap.get("vram_available_mb")
+        vram_pct = snap.get("vram_used_pct") or snap.get("vramPct")
+        vram_total = snap.get("vram_total_mb") or self.vram_primary_mb
+        return classify_pressure(
+            ram_used_pct=float(ram_pct) if ram_pct is not None else None,
+            ram_available_mb=float(ram_avail) if ram_avail is not None else None,
+            ram_total_mb=self.host_ram_mb,
+            vram_used_pct=float(vram_pct) if vram_pct is not None else None,
+            vram_available_mb=float(vram_avail) if vram_avail is not None else None,
+            vram_total_mb=float(vram_total) if vram_total is not None else None,
+        )
+
+    def _owner_protected(self, owner_type: str | None, requested: dict[str, Any]) -> bool:
+        owner = str(owner_type or requested.get("ownerType") or requested.get("owner_type") or "").lower()
+        if owner in _PROTECTED_OWNER_TYPES:
+            return True
+        domain = str(requested.get("domain") or "").lower()
+        if domain in {"paper", "paper_trading", "control_plane", "db_commit"}:
+            return True
+        if requested.get("paperTrading") or requested.get("preserve_control_plane"):
+            return True
+        return False
+
+    def evaluate_governor(
+        self,
+        *,
+        resource_class: ResourceClass,
+        owner_type: str = "worker",
+        requested: dict[str, Any] | None = None,
+        snap: dict[str, Any] | None = None,
+    ) -> ResourceGovernorDecision:
+        """Pressure-aware admit / shed decision. Never kills DB writer mid-commit."""
+        requested = dict(requested or {})
+        pressure = self.current_pressure(snap)
+        protected = self._owner_protected(owner_type, requested) or resource_class in _PROTECTED_RESOURCE_CLASSES
+
+        if pressure == PressureState.NORMAL:
+            decision = ResourceGovernorDecision(
+                pressure=pressure.value,
+                allowed=True,
+                action="admit",
+                reason="pressure_normal",
+            )
+            self._last_governor = decision
+            return decision
+
+        if pressure == PressureState.PRESSURE:
+            # Stop admitting nonessential memory-heavy work; preserve control + paper.
+            if protected:
+                decision = ResourceGovernorDecision(
+                    pressure=pressure.value,
+                    allowed=True,
+                    action="admit_protected",
+                    reason="PRESSURE: protected control-plane / paper / risk path preserved",
+                )
+            elif resource_class in _NONESSENTIAL_MEMORY_HEAVY:
+                decision = ResourceGovernorDecision(
+                    pressure=pressure.value,
+                    allowed=False,
+                    action="deny_nonessential",
+                    reason="RESOURCE_ADMISSION_DENIED: PRESSURE — nonessential memory-heavy work paused",
+                    details={"resource_class": resource_class.value},
+                )
+            else:
+                decision = ResourceGovernorDecision(
+                    pressure=pressure.value,
+                    allowed=True,
+                    action="admit_essential",
+                    reason="PRESSURE: essential / light work still admitted",
+                )
+            self._last_governor = decision
+            return decision
+
+        # CRITICAL — shed caches, unload idle models, pause resumable background.
+        shed = True
+        unload = True
+        pause = True
+        if protected or resource_class == ResourceClass.DB_SERIAL:
+            decision = ResourceGovernorDecision(
+                pressure=pressure.value,
+                allowed=True,
+                action="admit_protected_critical",
+                reason="CRITICAL: DB writer / control / paper risk path never killed mid-commit",
+                shed_caches=shed,
+                unload_idle_models=unload,
+                pause_resumable_jobs=pause,
+                protect_db_writer=True,
+            )
+        else:
+            decision = ResourceGovernorDecision(
+                pressure=pressure.value,
+                allowed=False,
+                action="shed_and_deny",
+                reason="RESOURCE_ADMISSION_DENIED: CRITICAL — shedding caches / pausing resumable work",
+                shed_caches=shed,
+                unload_idle_models=unload,
+                pause_resumable_jobs=pause,
+                protect_db_writer=True,
+                details={"resource_class": resource_class.value},
+            )
+        self._last_governor = decision
+        self._apply_critical_hooks(decision)
+        return decision
+
+    def _apply_critical_hooks(self, decision: ResourceGovernorDecision) -> None:
+        """Invoke optional safe hooks. Failures are logged, never raise into admit path."""
+        if decision.shed_caches and self.cache_shed_hook is not None:
+            try:
+                self.cache_shed_hook()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("cache_shed_hook failed: %s", exc)
+        if decision.unload_idle_models and self.model_unload_hook is not None:
+            try:
+                self.model_unload_hook()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("model_unload_hook failed: %s", exc)
+        if decision.pause_resumable_jobs and self.pause_jobs_hook is not None:
+            try:
+                self.pause_jobs_hook()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("pause_jobs_hook failed: %s", exc)
+
+    def last_governor_decision(self) -> dict[str, Any] | None:
+        if self._last_governor is None:
+            return None
+        return self._last_governor.public_dict()
+
+    def observability_snapshot(self) -> dict[str, Any]:
+        """Expose resource decisions for worker / ops dashboards."""
+        snap = self._snapshot()
+        pressure = self.current_pressure(snap)
+        held = []
+        try:
+            held = self.list_held()
+        except Exception:  # noqa: BLE001
+            held = []
+        return {
+            "pressure": pressure.value,
+            "hostProfile": {
+                "ramMb": self.host_ram_mb,
+                "vramPrimaryMb": self.vram_primary_mb,
+                "vramSecondaryMb": self.vram_secondary_mb,
+            },
+            "telemetry": {
+                "ram_available_mb": snap.get("ram_available_mb"),
+                "vram_available_mb": snap.get("vram_available_mb"),
+                "source": snap.get("source"),
+            },
+            "heldReservations": len(held),
+            "lastGovernor": self.last_governor_decision(),
+            "truth": {
+                "never_kill_db_writer_mid_commit": True,
+                "lazy_startup_scale_to_zero_compatible": True,
+                "browser_affinity_not_broken": True,
+            },
+        }
+
     def try_reserve(
         self,
         *,
@@ -235,6 +559,24 @@ class ResourceAdmission:
         vram = snap.get("vram_available_mb")
         ram_known = ram is not None
         vram_known = vram is not None
+
+        # Wave 12 — pressure governor before capacity math.
+        governor = self.evaluate_governor(
+            resource_class=rc,
+            owner_type=owner_type,
+            requested=requested,
+            snap=snap,
+        )
+        if not governor.allowed:
+            return AdmissionDecision(
+                allowed=False,
+                reason=governor.reason,
+                vram_known=vram_known,
+                ram_known=ram_known,
+                pressure=governor.pressure,
+                governor=governor.public_dict(),
+                details=dict(governor.details or {}),
+            )
 
         # Extract device intent from requested if not passed explicitly.
         if device_stable_ids is None:
@@ -508,6 +850,8 @@ class ResourceAdmission:
             ram_known=ram_known,
             device_stable_id=selected_device_id,
             assigned_devices=assigned,
+            pressure=governor.pressure,
+            governor=governor.public_dict(),
             details={"reservationIds": reservation_ids},
         )
 

@@ -351,6 +351,16 @@ class IngestionProgress:
     filename: str | None = None
     error: str | None = None
     cancel_requested: bool = False
+    phase_progress_pct: float | None = None
+    processed_units: int | None = None
+    total_units: int | None = None
+    unit_kind: str | None = None
+    bytes_total: int | None = None
+    throughput: float | None = None
+    eta_seconds: float | None = None
+    measured: bool | None = None
+    started_at: str | None = None
+    updated_at: str | None = None
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -359,6 +369,10 @@ class IngestionProgress:
             "status": self.status.value,
             "phase": self.phase.value,
             "progress_pct": self.progress_pct,
+            "phase_progress_pct": self.phase_progress_pct,
+            "processed_units": self.processed_units,
+            "total_units": self.total_units,
+            "unit_kind": self.unit_kind,
             "files_discovered": self.files_discovered,
             "files_ingested": self.files_ingested,
             "files_skipped": self.files_skipped,
@@ -370,8 +384,14 @@ class IngestionProgress:
             "brain_synced": self.brain_synced,
             "brain_failed": self.brain_failed,
             "bytes_processed": self.bytes_processed,
+            "bytes_total": self.bytes_total,
             "compressed_bytes": self.compressed_bytes,
             "uncompressed_bytes": self.uncompressed_bytes,
+            "throughput": self.throughput,
+            "eta_seconds": self.eta_seconds,
+            "measured": self.measured,
+            "started_at": self.started_at,
+            "updated_at": self.updated_at,
             "archive_type": self.archive_type,
             "filename": self.filename,
             "error": self.error,

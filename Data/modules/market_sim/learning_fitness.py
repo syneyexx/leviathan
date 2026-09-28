@@ -350,6 +350,58 @@ def compute_fitness(
     ):
         components[name] = _component(name, None)
 
+    # Multi-objective axes (Wave 5): tail, cost sensitivity, regime stability,
+    # concentration — never invent zeros for UNMEASURED.
+    cvar, cvar_inv = _get(("cvar_95", "cvar", "expected_shortfall", "tail_loss_pct"))
+    if cvar is not None:
+        components["tail_risk_quality"] = _component(
+            "tail_risk_quality", max(0.0, 1.0 - abs(cvar) / max(objective.max_drawdown_pct, 1e-6))
+        )
+    else:
+        components["tail_risk_quality"] = _component("tail_risk_quality", None, present_invalid=cvar_inv)
+
+    conc, conc_inv = _get(("concentration", "herfindahl", "max_weight_pct", "concentration_pct"))
+    if conc is not None:
+        components["concentration_quality"] = _component(
+            "concentration_quality", max(0.0, 1.0 - abs(conc) / 100.0)
+        )
+    else:
+        # Keep prior UNMEASURED unless present-invalid
+        if conc_inv:
+            components["concentration_quality"] = _component(
+                "concentration_quality", None, present_invalid=True
+            )
+
+    regime_stab, regime_inv = _get(
+        ("regime_stability", "regime_stability_score", "cross_regime_consistency")
+    )
+    if regime_stab is not None:
+        components["regime_stability"] = _component(
+            "regime_stability", max(0.0, min(1.0, float(regime_stab)))
+        )
+        components["regime_robustness"] = _component(
+            "regime_robustness", max(0.0, min(1.0, float(regime_stab)))
+        )
+    else:
+        components["regime_stability"] = _component(
+            "regime_stability", None, present_invalid=regime_inv
+        )
+
+    cost_sens, cost_sens_inv = _get(
+        ("cost_sensitivity", "cost_sensitivity_score", "fee_stress_delta")
+    )
+    if cost_sens is not None:
+        # Lower sensitivity (smaller degradation under fee stress) → higher quality
+        components["cost_sensitivity_quality"] = _component(
+            "cost_sensitivity_quality", max(0.0, 1.0 - abs(cost_sens) / 50.0)
+        )
+        if abs(cost_sens) > 25.0:
+            categories.append(FailureCategory.HIGH_COST_SENSITIVITY.value)
+    else:
+        components["cost_sensitivity_quality"] = _component(
+            "cost_sensitivity_quality", None, present_invalid=cost_sens_inv
+        )
+
     if costs is not None:
         # lower costs better; normalize loosely
         components["execution_cost_quality"] = _component(
