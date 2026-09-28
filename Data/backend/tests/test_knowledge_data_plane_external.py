@@ -321,7 +321,7 @@ class KnowledgePrepareWorkerPipelineTests(unittest.TestCase):
         self.assertGreater(len(ks.list_chunks(staged.document_id)), 0)
 
     def test_embedding_worker_unavailable_is_honest(self) -> None:
-        from Data.modules.workers.entrypoints.embedding import _handle_batch
+        from Data.modules.embedding.worker import process_embedding_job
 
         job = self.runtime.enqueue(
             capability_id="embedding.batch",
@@ -336,7 +336,7 @@ class KnowledgePrepareWorkerPipelineTests(unittest.TestCase):
         )
         claimed = self.store.claim_next_queued(worker_id="emb1", lease_ttl_seconds=30)
         assert claimed is not None
-        result = _handle_batch(self.ctx, claimed)
+        result = process_embedding_job(self.ctx, claimed)
         self.assertEqual(result.get("status"), "EMBEDDING_UNAVAILABLE")
         self.assertEqual(result.get("embedded"), 0)
 
@@ -481,11 +481,14 @@ class ArchitectureRegressionAstTests(unittest.TestCase):
         self.assertNotIn("include_embeddings=True", source)
 
     def test_embedding_worker_does_not_open_bulk_sqlite_writer(self) -> None:
-        path = Path("Data/modules/workers/entrypoints/embedding.py")
-        source = path.read_text(encoding="utf-8")
-        self.assertIn("submit_knowledge_chunk_embeddings", source)
-        self.assertNotIn("KnowledgeStore(", source)
-        self.assertNotIn("upsert_document", source)
+        entry = Path("Data/modules/workers/entrypoints/embedding.py")
+        worker = Path("Data/modules/embedding/worker.py")
+        entry_src = entry.read_text(encoding="utf-8")
+        worker_src = worker.read_text(encoding="utf-8")
+        self.assertIn("process_embedding_job", entry_src)
+        self.assertIn("submit_knowledge_chunk_embeddings", worker_src)
+        self.assertNotIn("KnowledgeStore(", worker_src)
+        self.assertNotIn("upsert_document", worker_src)
 
     def test_db_commit_handler_has_typed_ops(self) -> None:
         from Data.modules.db_commit.handlers.knowledge import handlers

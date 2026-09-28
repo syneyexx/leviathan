@@ -2098,12 +2098,14 @@ async def lifespan(_: FastAPI):
             payload={"error": str(exc)},
             level="warning",
         )
-    dataset_service.reconcile()
     from Data.modules.datasets.worker import should_start_inprocess_runner
     from Data.modules.workers.settings import load_worker_settings
 
     worker_settings = load_worker_settings()
     externalize = bool(worker_settings.enabled and worker_settings.externalize_api_runners)
+    # Metadata reconcile only. Orphan/sidecar filesystem sweeps run in the
+    # dataset worker (see DatasetService.reconcile(include_heavy=...)).
+    dataset_service.reconcile(include_heavy=not externalize)
 
     if (not externalize) and should_start_inprocess_runner(settings):
         dataset_service.runner.start_background()
@@ -2438,7 +2440,7 @@ app.include_router(
         job_store=job_store,
     )
 )
-app.include_router(build_brain_router(brain_facade))
+app.include_router(build_brain_router(brain_facade, job_runtime=job_runtime))
 app.include_router(build_mcp_router(mcp_bridge, execution_gateway))
 app.include_router(
     build_market_sim_router(
@@ -2528,7 +2530,7 @@ app.include_router(
         version=app.version,
     )
 )
-app.include_router(build_memory_router(memory_store=memory_store))
+app.include_router(build_memory_router(memory_store=memory_store, job_runtime=job_runtime))
 app.include_router(build_evidence_router(evidence_service=evidence_service))
 app.include_router(
     build_capabilities_router(

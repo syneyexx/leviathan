@@ -408,4 +408,52 @@ def build_knowledge_router(
             }
         return enqueue_ingest_scan(safe_limit, requested_by="api.knowledge.ingest_scan")
 
+    class KnowledgeReconcileBody(BaseModel):
+        dry_run: bool = True
+        apply: bool = False
+        limit: int = Field(default=100, ge=1, le=5000)
+
+    @router.post("/api/knowledge/reconcile")
+    def reconcile_knowledge(payload: KnowledgeReconcileBody | None = None) -> dict:
+        """Enqueue Knowledge semantic reconciliation (knowledge_prepare).
+
+        Dry-run diagnosis is the default. Apply repairs only when apply=true
+        and dry_run=false. Never mutates merely by opening a health page.
+        """
+        body = payload or KnowledgeReconcileBody()
+        if evaluation_externalize_fn():
+            dry_run = bool(body.dry_run) and not bool(body.apply)
+            job = job_runtime.enqueue(
+                capability_id="knowledge.reconcile",
+                arguments={
+                    "dry_run": dry_run,
+                    "apply": bool(body.apply) and not dry_run,
+                    "limit": body.limit,
+                },
+                requested_by="api.knowledge.reconcile",
+                domain="knowledge",
+                worker_pool="knowledge_prepare",
+                resource_class="CPU_HEAVY",
+                latency_class="background",
+                metadata={"execution_class": "EXTERNAL_REQUIRED"},
+            )
+            return {
+                "queued": True,
+                "job": job.public_dict(),
+                "job_id": job.job_id,
+                "dry_run": dry_run,
+                "truth": {
+                    "executed_via": "knowledge_prepare_worker",
+                    "diagnosis_is_not_mutation": dry_run,
+                },
+            }
+        # In-process diagnosis only when externalize off (tests).
+        diagnosis = knowledge.diagnose_reconciliation(limit=body.limit)
+        result: dict[str, Any] = {"queued": False, "diagnosis": diagnosis, "applied": False}
+        if body.apply and not body.dry_run:
+            result["repair"] = knowledge.backfill_content(limit=body.limit)
+            result["applied"] = True
+            result["verification"] = knowledge.diagnose_reconciliation(limit=body.limit)
+        return result
+
     return router

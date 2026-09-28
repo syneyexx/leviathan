@@ -89,10 +89,22 @@ def build_research_router(service: ResearchService) -> APIRouter:
         limit: int = Field(default=3, ge=1, le=5)
 
     @router.post("/api/research/web/probe")
-    def web_probe(payload: WebProbeRequest | None = None) -> dict:
+    def web_probe(
+        response: Response,
+        payload: WebProbeRequest | None = None,
+    ) -> dict:
         query = payload.query if payload else "SQLite WAL mode"
         limit = payload.limit if payload else 3
-        return {"probe": service.probe_web_research(query=query, limit=limit)}
+        try:
+            result = service.request_web_probe(query=query, limit=limit)
+        except ResearchError as exc:
+            raise_research_error(exc)
+        if isinstance(result, dict) and result.get("queued"):
+            response.status_code = 202
+            return result
+        if isinstance(result, dict) and "probe" in result:
+            return result
+        return {"probe": result}
 
     @router.get("/api/research")
     def list_projects(limit: int = Query(100, ge=1, le=500)) -> dict:
@@ -153,8 +165,13 @@ def build_research_router(service: ResearchService) -> APIRouter:
         return {"project": project.public_dict()}
 
     @router.post("/api/research/{project_id}/plan")
-    def plan_project(project_id: str, payload: PlanRequest | None = None) -> dict:
+    def plan_project(
+        project_id: str,
+        response: Response,
+        payload: PlanRequest | None = None,
+    ) -> dict:
         edits: dict[str, Any] = {}
+        regenerate = False
         if payload is not None:
             mapping = {
                 "interpreted_question": payload.interpretedQuestion,
@@ -170,11 +187,26 @@ def build_research_router(service: ResearchService) -> APIRouter:
                 "notes": payload.notes,
             }
             edits = {k: v for k, v in mapping.items() if v is not None}
+            # Empty body / no edits → plan construction (external when enabled).
+            regenerate = not edits
+        else:
+            regenerate = True
         try:
-            project = service.plan(project_id, edits=edits or None)
+            result = service.request_plan(
+                project_id,
+                edits=edits or None,
+                regenerate=regenerate,
+            )
         except ResearchError as exc:
             raise_research_error(exc)
-        return {"project": project.public_dict(), "plan": project.plan.public_dict() if project.plan else None}
+        if isinstance(result, dict) and result.get("queued"):
+            response.status_code = 202
+            return result
+        project = result
+        return {
+            "project": project.public_dict(),
+            "plan": project.plan.public_dict() if project.plan else None,
+        }
 
     @router.post("/api/research/{project_id}/run", status_code=202)
     def run_project(project_id: str, response: Response) -> dict:

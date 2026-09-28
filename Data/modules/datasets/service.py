@@ -199,6 +199,22 @@ def _raw_version_schema(
     return schema
 
 
+def _cap_record_iter(records: Any, *, limit: int) -> tuple[Any, dict[str, bool]]:
+    """Yield at most ``limit`` records and record whether more remained."""
+    flag = {"hit": False}
+
+    def _gen() -> Any:
+        count = 0
+        for rec in records:
+            if count >= limit:
+                flag["hit"] = True
+                break
+            count += 1
+            yield rec
+
+    return _gen(), flag
+
+
 class DatasetService:
     """Production dataset control plane (local + HF import through indexing)."""
 
@@ -516,12 +532,20 @@ class DatasetService:
                     **({"filename": legacy_file} if legacy_file else {"mode": "repository"}),
                 },
             )
-        # Never persist raw token in config
+        # Never persist raw token in config, JobStore arguments, or results.
+        # A request-supplied token is stored as an ephemeral credential ref
+        # that the dataset worker resolves inside its own process.
+        credential_ref = "huggingface"
+        if token:
+            from Data.modules.provider_io.credentials import store_ephemeral_token
+
+            credential_ref = store_ephemeral_token(token, prefix="hf")
         safe_config: dict[str, Any] = {
             "repositoryId": repo,
             "revision": revision,
             "materialize": materialize,
             "hasToken": bool(token) or bool(resolve_hf_token(None)),
+            "credential_ref": credential_ref,
             "mode": "file" if legacy_file else "repository",
         }
         if legacy_file:
@@ -531,8 +555,6 @@ class DatasetService:
             dataset_id=ds.dataset_id,
             config=safe_config,
         )
-        # Keep token only in-memory via ephemeral map keyed by job id
-        self._hf_tokens[job.job_id] = token
         return job
 
     def enqueue_materialize(self, dataset_id: str, *, fmt: str | None = None) -> DatasetJob:
@@ -1638,7 +1660,29 @@ class DatasetService:
                 pass
         return cancelled
 
+    def production_dataset_inline_forbidden(self) -> bool:
+        """True when this service must not execute dataset handlers in-process.
+
+        Isolated unit tests construct ``DatasetService`` without JobRuntime and
+        may drain locally. A kernel-backed control plane (production FastAPI)
+        enqueues ``dataset.process`` and refuses to run the handler itself,
+        including when the dataset worker is down.
+        Explicit ``LEVIATHAN_DATASET_JOBS_RUNNER=inprocess_test`` opts back in.
+        """
+        from Data.modules.datasets.worker import resolve_runner_mode
+
+        if resolve_runner_mode() == "inprocess_test":
+            return False
+        return self.jobs is not None
+
     def process_jobs(self, *, max_jobs: int = 50) -> list[DatasetJob]:
+        if self.production_dataset_inline_forbidden():
+            raise DatasetError(
+                "Dataset execution is owned by the dataset worker; refusing in-process drain",
+                code="DATASET_EXECUTION_UNAVAILABLE",
+                http_status=503,
+                details={"owner": "dataset", "capability": "dataset.process"},
+            )
         return self.runner.drain(max_jobs=max_jobs)
 
     def process_kernel_job(self, kernel_job_id: str) -> DatasetJob | None:
@@ -1650,12 +1694,21 @@ class DatasetService:
             return None
         return self.runner.process_kernel_job(kernel)
 
-    def reconcile(self) -> list[DatasetJob]:
+    def reconcile(self, *, include_heavy: bool = True) -> list[DatasetJob]:
+        """Reconcile job ownership. Filesystem sweeps are optional.
+
+        Interrupted-job metadata always runs (control plane safe). Sidecar
+        catalog walks and orphan prepared-file scans are heavy and belong on
+        the dataset worker (``include_heavy=True``). FastAPI startup passes
+        ``include_heavy=False``.
+        """
         updated = self.runner.reconcile_interrupted()
         try:
             updated.extend(self.reconcile_stale_learning_jobs())
         except Exception:  # noqa: BLE001 — stale learning reconcile must not block
             pass
+        if not include_heavy:
+            return updated
         try:
             self.reconcile_sidecars()
         except Exception:  # noqa: BLE001 — catalog recovery must not block job reconcile
@@ -1669,7 +1722,6 @@ class DatasetService:
                     continue
         except Exception:  # noqa: BLE001
             pass
-        # W170: sweep orphan prepared temps under corpus data-plane roots.
         try:
             self.reconcile_data_plane_orphans()
         except Exception:  # noqa: BLE001 — orphan sweep must not block job reconcile
@@ -1720,6 +1772,14 @@ class DatasetService:
         name: str | None = None,
         materialize: bool = True,
     ) -> dict[str, Any]:
+        """Test helper. Production control plane must enqueue and return QUEUED."""
+        if self.production_dataset_inline_forbidden():
+            raise DatasetError(
+                "Refusing synchronous dataset import in the control plane",
+                code="DATASET_EXECUTION_UNAVAILABLE",
+                http_status=503,
+                details={"owner": "dataset"},
+            )
         job = self.enqueue_import_local(path=path, name=name, materialize=materialize)
         done = self.runner.process_next()
         assert done is not None and done.job_id == job.job_id
@@ -1738,9 +1798,13 @@ class DatasetService:
         ver = self.get_version(version_id)
         if not ver.storage_path:
             raise DatasetError("Version has no storage path", code="no_storage", http_status=400)
+        # Control-plane PII inspection is a bounded sample. A full corpus scan
+        # belongs on a dataset job; this path must not claim EXACT coverage
+        # once the record cap is hit.
         return scan_records_pii(
             self.iter_version_records(version_id),
             max_findings=self.memory_policy.max_findings,
+            max_records=2_000,
         )
 
     # --- Job handlers ---
@@ -2868,8 +2932,22 @@ class DatasetService:
             raise
 
     def _hf_token_for_job(self, job: DatasetJob) -> str | None:
-        token = self._hf_tokens.pop(job.job_id, None)
-        return resolve_hf_token(token)
+        """Resolve HF credentials inside the execution process.
+
+        Job config may carry ``credential_ref`` (including ``ephemeral:``)
+        but never the raw token. Environment/settings remain the durable source.
+        """
+        ref = str((job.config or {}).get("credential_ref") or "").strip()
+        if ref.startswith("ephemeral:"):
+            from Data.modules.provider_io.credentials import resolve_credential
+
+            resolved = resolve_credential(ref)
+            if resolved.api_key:
+                return resolved.api_key
+        legacy = self._hf_tokens.pop(job.job_id, None)
+        if legacy:
+            return resolve_hf_token(legacy)
+        return resolve_hf_token(None)
 
     def _throttled_job_progress(self, job_id: str) -> Any:
         import time as _time
@@ -5026,27 +5104,23 @@ class DatasetService:
         from Data.modules.provider_io.errors import ProviderError, ProviderErrorCode
         from Data.modules.provider_io.facade import ProviderExecutionClient
         from Data.modules.provider_io.readiness import provider_io_workers_ready
-        from Data.modules.workers.settings import load_worker_settings
 
-        try:
-            wsettings = load_worker_settings()
-            externalized = bool(wsettings.enabled and wsettings.externalize_api_runners)
-        except Exception:  # noqa: BLE001
-            externalized = False
-
-        if not externalized:
-            return list_hf_dataset_files(repository_id, revision=revision, token=token)
-
+        # Control plane never calls Hugging Face itself. Listing is
+        # provider.hf.list on provider_io. Bulk transfer stays on the dataset
+        # worker (IMPORT_HF). list_hf_dataset_files is only reached from
+        # dataset-worker handlers and the provider_io adapter.
         if self.jobs is None:
             raise DatasetError(
                 "job runtime not bound; refusing Control Plane HF list fallback",
                 code=ProviderErrorCode.PROVIDER_EXECUTION_UNAVAILABLE.value,
+                http_status=503,
             )
         db_path = getattr(getattr(self.jobs, "store", None), "path", None)
         if not provider_io_workers_ready(db_path):
             raise DatasetError(
                 "provider_io workers unavailable; refusing Control Plane HF list fallback",
                 code=ProviderErrorCode.PROVIDER_EXECUTION_UNAVAILABLE.value,
+                http_status=503,
             )
 
         credential_ref = "huggingface"
@@ -5067,11 +5141,13 @@ class DatasetService:
                 deadline_seconds=60.0,
             )
         except ProviderError as exc:
-            raise DatasetError(str(exc), code=exc.code.value) from exc
+            raise DatasetError(str(exc), code=exc.code.value, http_status=503) from exc
         if result.status != "succeeded" or not isinstance(result.structured, dict):
             err = (result.error or {}).get("message") or "HF list failed"
             raise DatasetError(
-                str(err), code=(result.error or {}).get("code") or "PROVIDER_UNAVAILABLE"
+                str(err),
+                code=(result.error or {}).get("code") or "PROVIDER_UNAVAILABLE",
+                http_status=503,
             )
         files = result.structured.get("files") or []
         return list(files) if isinstance(files, list) else []
@@ -5159,10 +5235,16 @@ class DatasetService:
 
     def packing_simulation(self, version_id: str, *, max_seq_length: int = 512) -> dict[str, Any]:
         self.get_version(version_id)
-        return simulate_packing(
-            self.iter_version_records(version_id),
-            max_seq_length=max_seq_length,
-        ).public_dict()
+        capped, truncated = _cap_record_iter(self.iter_version_records(version_id), limit=5_000)
+        report = simulate_packing(capped, max_seq_length=max_seq_length).public_dict()
+        report["evidenceClass"] = "SAMPLED" if truncated["hit"] else "EXACT"
+        report["recordCap"] = 5_000
+        report["truth"] = {
+            **dict(report.get("truth") or {}),
+            "controlPlaneBounded": True,
+            "fullPackingScanIsDatasetWorker": True,
+        }
+        return report
 
     def enqueue_annotation(
         self,
@@ -5227,7 +5309,7 @@ class DatasetService:
         records = self.iter_version_records(version_id)
         sealed = list(job.config.get("sealed_cases") or [])
         if not sealed:
-            # Fall back to empty sealed set — report passes with honesty note.
+            # No reference corpus. The report is UNMEASURED and must not pass as clean.
             report = scan_contamination(records, [], threshold=float(job.config.get("threshold") or 0.35))
             out = report.public_dict()
             out["note"] = "No sealed cases provided — contamination gate not exercised"

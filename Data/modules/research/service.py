@@ -794,6 +794,12 @@ class ResearchService:
         return self.get_project(project_id)
 
     def plan(self, project_id: str, *, edits: dict[str, Any] | None = None) -> ResearchProject:
+        """Generate or regenerate a research plan (worker-owned body).
+
+        Control plane must enqueue via :meth:`enqueue_plan` when externalized.
+        Bounded manual edits to an already-existing plan use
+        :meth:`apply_manual_plan_edits` instead.
+        """
         project = self.get_project(project_id)
         plan = build_plan(project)
         if edits:
@@ -804,11 +810,205 @@ class ResearchService:
         project.plan = plan
         project.budget = plan.budget
         project.total_rounds = plan.rounds
-        project.total_worker_rounds = plan.budget.research_workers * plan.rounds
+        project.total_worker_rounds = (
+            None
+            if plan.rounds is None
+            else plan.budget.research_workers * plan.rounds
+        )
         project.status = ResearchStatus.PLANNED
         project.phase = ResearchPhase.PLANNING
+        project.wait_reason = None
         self.store.save_project(project)
         return self.get_project(project_id)
+
+    def apply_manual_plan_edits(
+        self, project_id: str, edits: dict[str, Any]
+    ) -> ResearchProject:
+        """Bounded operator metadata edits on an already-existing plan.
+
+        Does not rebuild the plan. Control-plane CONTROL_WRITE is allowed.
+        """
+        project = self.get_project(project_id)
+        if project.plan is None:
+            raise ResearchError(
+                "RESEARCH_PLAN_MISSING",
+                "No plan exists yet; enqueue plan generation first",
+                http_status=409,
+            )
+        if not edits:
+            return project
+        plan = apply_plan_edits(project.plan, edits)
+        project.plan = plan
+        project.budget = plan.budget
+        project.total_rounds = plan.rounds
+        project.total_worker_rounds = (
+            None
+            if plan.rounds is None
+            else plan.budget.research_workers * plan.rounds
+        )
+        self.store.add_event(project_id, "plan_modified", "Plan edited by operator")
+        self.store.save_project(project)
+        return self.get_project(project_id)
+
+    def enqueue_plan(
+        self,
+        project_id: str,
+        *,
+        edits: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Enqueue durable ``research.plan`` — fail closed when runtime unbound."""
+        project = self.get_project(project_id)
+        if self.job_runtime is None:
+            raise ResearchError(
+                "RESEARCH_WORKER_UNAVAILABLE",
+                "JobRuntime not bound; cannot enqueue research.plan",
+                http_status=503,
+                details={"capability": "research.plan"},
+            )
+        available, wait_reason = self._research_worker_availability()
+        project.status = ResearchStatus.DRAFT
+        project.phase = ResearchPhase.PLANNING
+        project.wait_reason = (
+            wait_reason if not available else "QUEUED — research.plan pending"
+        )
+        project.error = None
+        self.store.save_project(project)
+        self.store.add_event(
+            project_id,
+            "plan_queued",
+            wait_reason or "Research plan queued for worker execution",
+            {"worker_available": available},
+        )
+        gen = project.updated_at or project.created_at or project_id
+        job = self.job_runtime.enqueue(
+            capability_id="research.plan",
+            arguments={
+                "action": "plan",
+                "project_id": project_id,
+                "edits": edits or None,
+            },
+            requested_by="api.research.plan",
+            domain="research",
+            domain_entity_type="research_project",
+            domain_entity_id=project_id,
+            worker_pool="research",
+            resource_class="CPU_HEAVY",
+            latency_class="interactive",
+            idempotency_key=f"research:plan:{project_id}:{gen}",
+            metadata={
+                "human_title": project.topic or project.title or project_id,
+                "topic": project.topic or project.title,
+                "execution_class": "EXTERNAL_REQUIRED",
+            },
+        )
+        project = self.get_project(project_id)
+        project.kernel_job_id = getattr(job, "job_id", None) or project.kernel_job_id
+        self.store.save_project(project)
+        self._emit_obs(
+            "research.plan_enqueued",
+            {
+                "project_id": project_id,
+                "job_id": getattr(job, "job_id", None),
+                "wait_reason": project.wait_reason,
+            },
+            level="INFO",
+            research_project_id=project_id,
+            job_id=getattr(job, "job_id", None),
+        )
+        return {
+            "queued": True,
+            "job": job.public_dict(),
+            "job_id": job.job_id,
+            "project": project.public_dict(),
+            "plan": project.plan.public_dict() if project.plan else None,
+            "status": "QUEUED",
+            "truth": {
+                "executed_via": "research_worker",
+                "fastapi_does_not_build_plan": True,
+            },
+        }
+
+    def request_plan(
+        self,
+        project_id: str,
+        *,
+        edits: dict[str, Any] | None = None,
+        regenerate: bool = False,
+    ) -> dict[str, Any] | ResearchProject:
+        """Control-plane entry: manual edits stay inline; generation is external."""
+        project = self.get_project(project_id)
+        edits = dict(edits or {})
+        # Bounded edits to an existing plan — CONTROL_WRITE, no rebuild.
+        if edits and project.plan is not None and not regenerate:
+            return self.apply_manual_plan_edits(project_id, edits)
+        if self._runners_externalized():
+            return self.enqueue_plan(project_id, edits=edits or None)
+        # Legacy / test in-process path when externalize is off.
+        return self.plan(project_id, edits=edits or None)
+
+    def enqueue_web_probe(
+        self, *, query: str = "SQLite WAL mode", limit: int = 3
+    ) -> dict[str, Any]:
+        """Enqueue live web probe — never perform network I/O in FastAPI."""
+        if self.job_runtime is None:
+            raise ResearchError(
+                "RESEARCH_WORKER_UNAVAILABLE",
+                "JobRuntime not bound; cannot enqueue research.web.probe",
+                http_status=503,
+                details={"capability": "research.web.probe"},
+            )
+        safe_limit = max(1, min(int(limit), 5))
+        q = (query or "SQLite WAL mode").strip() or "SQLite WAL mode"
+        job = self.job_runtime.enqueue(
+            capability_id="research.web.probe",
+            arguments={
+                "action": "web_probe",
+                "query": q,
+                "limit": safe_limit,
+            },
+            requested_by="api.research.web.probe",
+            domain="research",
+            worker_pool="research",
+            resource_class="NETWORK_BOUND",
+            latency_class="interactive",
+            idempotency_key=None,
+            metadata={
+                "human_title": f"web probe: {q[:80]}",
+                "execution_class": "EXTERNAL_REQUIRED",
+            },
+        )
+        return {
+            "queued": True,
+            "job": job.public_dict(),
+            "job_id": job.job_id,
+            "probe": {
+                "status": "QUEUED",
+                "query": q,
+                "truth": {
+                    "executed_via": "research_worker",
+                    "fastapi_does_not_probe_network": True,
+                    "persists_artifacts": False,
+                },
+            },
+            "truth": {
+                "executed_via": "research_worker",
+                "fastapi_does_not_probe_network": True,
+            },
+        }
+
+    def execute_web_probe(
+        self, *, query: str = "SQLite WAL mode", limit: int = 3
+    ) -> dict[str, Any]:
+        """Worker-owned live web probe body."""
+        return self.probe_web_research(query=query, limit=limit)
+
+    def request_web_probe(
+        self, *, query: str = "SQLite WAL mode", limit: int = 3
+    ) -> dict[str, Any]:
+        """Control-plane entry for web probe — external when runners externalized."""
+        if self._runners_externalized():
+            return self.enqueue_web_probe(query=query, limit=limit)
+        return {"probe": self.probe_web_research(query=query, limit=limit)}
 
     def run(self, project_id: str, *, background: bool = False) -> ResearchProject:
         """User/API start path.

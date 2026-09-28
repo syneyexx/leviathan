@@ -1731,6 +1731,155 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         tags=["research", "report"],
     )
     _ext(
+        cap_id="research.web.probe",
+        name="Probe Research Web Path",
+        description=(
+            "Live search+fetch readiness probe (research worker). "
+            "Not a control-plane readiness snapshot — performs real network I/O."
+        ),
+        side_effects=(SideEffect.NETWORK, SideEffect.READ),
+        worker_kind="research",
+        properties={
+            "query": {"type": "string"},
+            "limit": {"type": "integer"},
+            "action": {"type": "string"},
+        },
+        permissions=("knowledge.read",),
+        tags=["research", "web", "probe"],
+    )
+    _ext(
+        cap_id="memory.consolidate",
+        name="Consolidate Memory",
+        description=(
+            "Batch episodic→semantic memory consolidation (memory worker). "
+            "Candidates remain AGENT_PROPOSED; model confidence is not truth."
+        ),
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="memory",
+        properties={
+            "scope": {"type": "string"},
+            "project_id": {"type": "string"},
+            "conversation_id": {"type": "string"},
+            "limit": {"type": "integer"},
+            "min_cluster_size": {"type": "integer"},
+            "persist": {"type": "boolean"},
+        },
+        permissions=("process.execute",),
+        tags=["memory", "consolidate"],
+        domains=["memory"],
+    )
+    _ext(
+        cap_id="memory.enrich",
+        name="Enrich Memory",
+        description="Heavy memory enrichment/clustering proposals (memory worker).",
+        side_effects=(SideEffect.EXECUTE,),
+        worker_kind="memory",
+        properties={
+            "scope": {"type": "string"},
+            "project_id": {"type": "string"},
+            "conversation_id": {"type": "string"},
+            "limit": {"type": "integer"},
+        },
+        permissions=("process.execute",),
+        tags=["memory", "enrich"],
+        domains=["memory"],
+    )
+    _ext(
+        cap_id="memory.reconcile",
+        name="Reconcile Memory",
+        description="Scope/trust reconciliation sweep for durable MemoryStore.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.READ),
+        worker_kind="memory",
+        properties={"scope": {"type": "string"}, "dry_run": {"type": "boolean"}},
+        permissions=("process.execute",),
+        tags=["memory", "reconcile"],
+        domains=["memory"],
+    )
+    _ext(
+        cap_id="brain.compute.snapshot",
+        name="Brain Derived Snapshot",
+        description=(
+            "Heavy derived Brain graph snapshot/analysis artifact (brain_compute). "
+            "Brain remains a facade — this never creates a Brain database."
+        ),
+        side_effects=(SideEffect.EXECUTE, SideEffect.READ),
+        worker_kind="brain_compute",
+        properties={
+            "limit": {"type": "integer"},
+            "algorithm": {"type": "string"},
+            "q": {"type": "string"},
+            "types": {"type": "array"},
+        },
+        permissions=("knowledge.read",),
+        tags=["brain", "compute", "snapshot"],
+        domains=["brain"],
+    )
+    _ext(
+        cap_id="brain.rebuild",
+        name="Brain Derived Rebuild",
+        description="Recompute derived Brain projection/cache from authoritative stores.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.READ),
+        worker_kind="brain_compute",
+        properties={"limit": {"type": "integer"}, "algorithm": {"type": "string"}},
+        permissions=("knowledge.read",),
+        tags=["brain", "rebuild"],
+        domains=["brain"],
+    )
+    _ext(
+        cap_id="brain.recompute",
+        name="Brain Graph Recompute",
+        description="Heavy derived graph recomputation (communities/centrality/stats).",
+        side_effects=(SideEffect.EXECUTE, SideEffect.READ),
+        worker_kind="brain_compute",
+        properties={"limit": {"type": "integer"}, "algorithm": {"type": "string"}},
+        permissions=("knowledge.read",),
+        tags=["brain", "recompute"],
+        domains=["brain"],
+    )
+    _ext(
+        cap_id="brain.enrich",
+        name="Brain Derived Enrichment",
+        description=(
+            "Advisory Brain enrichment proposals (brain_compute). "
+            "Canonical mutations remain with Knowledge/Memory/Research owners."
+        ),
+        side_effects=(SideEffect.EXECUTE, SideEffect.READ),
+        worker_kind="brain_compute",
+        properties={"limit": {"type": "integer"}},
+        permissions=("knowledge.read",),
+        tags=["brain", "enrich"],
+        domains=["brain"],
+    )
+    _ext(
+        cap_id="brain.analyze",
+        name="Brain Heavy Analysis",
+        description="Heavy derived Brain analysis (communities, bridges, clusters).",
+        side_effects=(SideEffect.EXECUTE, SideEffect.READ),
+        worker_kind="brain_compute",
+        properties={"limit": {"type": "integer"}, "algorithm": {"type": "string"}},
+        permissions=("knowledge.read",),
+        tags=["brain", "analyze"],
+        domains=["brain"],
+    )
+    _ext(
+        cap_id="knowledge.reconcile",
+        name="Reconcile Knowledge Semantics",
+        description=(
+            "Diagnose/repair Knowledge semantic index mismatches "
+            "(missing chunks, stale embeddings/FTS) via knowledge_prepare."
+        ),
+        side_effects=(SideEffect.EXECUTE, SideEffect.READ),
+        worker_kind="knowledge_prepare",
+        properties={
+            "dry_run": {"type": "boolean"},
+            "limit": {"type": "integer"},
+            "apply": {"type": "boolean"},
+        },
+        permissions=("knowledge.write",),
+        tags=["knowledge", "reconcile"],
+        domains=["knowledge"],
+    )
+    _ext(
         cap_id="dataset.process",
         name="Process Dataset Job",
         description="Execute one durable dataset domain job (dataset worker pool).",
