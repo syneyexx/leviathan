@@ -1,157 +1,184 @@
 # LEVIATHAN System Frontend Reference
 
-> **Canonical frontend documentation.** This is the single human-readable reference for LEVIATHAN's React/TypeScript UI, route structure, client contracts and frontend file organization.
+> **Canonical frontend reference.** This file is the single human-readable source of truth for LEVIATHAN’s React operator interface: bootstrap, routing, navigation, API contracts, state, pages, components, styling, truth semantics, tests and exact code locations.
 >
-> Snapshot: **2026-09-28**, based on `cursor/module-dependency-install-2ee4` after dependency-aware module installation. Code and tests are authoritative when this file becomes stale.
+> **Snapshot:** `main` at `1c30a3d062b03f8b77eb14b9ae8dee16979fcb61` (2026-09-28), after the autonomous trading research closed-loop merge.
 >
-> Backend reference: [`Leviathan_system_backend.md`](./Leviathan_system_backend.md).
+> Backend companion: [`Leviathan_system_backend.md`](./Leviathan_system_backend.md).
 
 ---
 
-# 1. Frontend purpose and stack
+# 1. Documentation contract
 
-The frontend is the operator interface for LEVIATHAN's control planes. It is not an independent source of capability truth: buttons, badges and status views should reflect backend state rather than invent availability or success.
+`Data/docs/` contains two canonical LEVIATHAN system documents only: this frontend reference and the backend reference. Component-local README/spec/test files may exist beside code, but they do not supersede these canonical maps.
 
-Current stack (`Data/frontend/package.json`):
+Frontend product-truth rules:
+
+```text
+page exists != backend capability is available
+button exists != action is authorized
+spinner != work completed
+model prose != tool/verification receipt
+selected model != resident model
+configured provider != healthy provider
+TRAIN-positive != qualified trading strategy
+mock fixture != production state
+UNMEASURED / UNAVAILABLE / BLOCKED != green success
+```
+
+Production UI must derive truth from backend contracts. Explicit mock/demo data must remain labeled and isolated from production routes.
+
+---
+
+# 2. Stack, build and entrypoints
+
+Primary frontend root: `Data/frontend/`.
+
+Current stack:
 
 - React 19;
-- React DOM 19;
-- React Router DOM 7;
+- React Router 7;
 - TypeScript 5.9;
 - Vite 7;
 - Vitest 3;
-- oxlint.
+- oxlint;
+- browser-native fetch/EventSource-style streaming through the central API layer.
 
-Scripts:
+Core files:
 
-```bash
-npm run dev
-npm run build
-npm run lint
-npm run typecheck
-npm test
-npm run preview
-```
+| File | Role |
+|---|---|
+| `Data/frontend/src/main.tsx` | browser bootstrap/mount |
+| `Data/frontend/src/App.tsx` | authoritative route graph, lazy trading routes, ErrorBoundary/Suspense |
+| `Data/frontend/src/layouts/AppShell.tsx` | common application shell |
+| `Data/frontend/src/navigation/menu.ts` | main/sidebar/subnavigation model |
+| `Data/frontend/src/api/client.ts` | central compatibility API facade |
+| `Data/frontend/src/api/http.ts` | shared HTTP helper |
+| `Data/frontend/src/api/domains/` | domain-split clients, incrementally replacing giant-client internals |
+| `Data/frontend/src/types/` | shared backend-facing TypeScript contracts |
+| `Data/frontend/src/hooks/` | shared live/status/telemetry/toast hooks |
+| `Data/frontend/src/state/` | shared UI state |
+| `Data/frontend/src/styles/` | global/page design system CSS |
+| `Data/frontend/src/assets/` | production static imagery |
+| `Data/frontend/src/mocks/` | explicit test/demo fixtures only |
+| `Data/frontend/vite.config.ts` | Vite build/dev configuration |
+| `Data/frontend/package.json` | scripts/dependencies |
 
-Production builds are emitted to `Data/frontend/dist` and served by the FastAPI backend when present.
+Production output is `Data/frontend/dist/`.
 
-`run_leviathan.exe` is the backend host and operator launcher (`Data/launcher`). It is not this user-facing frontend. The host opens the configured loopback frontend in the system browser. It does not embed the operator UI routes of `Data/frontend`.
-
-The launcher WebView is a **read-only operator console** over canonical backend projections:
-
-- Host process state arrives via Tauri IPC (`host://state`, `host://console`).
-- Backend projections use direct loopback `fetch` / `EventSource` against `host.apiBase`.
-- Approved local launcher Origins receive a narrow CORS grant for GET read surfaces only (see backend doc).
-- Projection freshness uses `ReadProjection` states: `LOADING` / `LIVE` / `STALE` / `TRANSPORT_ERROR` / `UNAVAILABLE`.
-- `UNMEASURED` means the authoritative endpoint responded but the metric is absent — never a transport/CORS failure.
-- Live polls (approximate): liveness ~1.5–3s, workers/performance ~2s, overview ~20s, SSE event-driven; backoff when `document.hidden`.
-- Safe Mode is shown explicitly as workers **DISABLED BY SAFE MODE**.
-
-### Optional layout editor (W00 CURRENT)
-
-`vite.config.ts` does **not** statically import `../../editor/vite-plugin.mjs`. Default `npm run test` / `npm run build` / `npm run typecheck` resolve without the excluded `editor/` tree. Set `LEVIATHAN_EDITOR=1` only when the editor checkout is present; otherwise Vite fails with an explicit configuration error.
+Optional `editor/` integration is not a default frontend dependency: the Vite editor plugin is loaded only when the editor mode environment switch is explicitly enabled and the plugin is available. LEVIATHAN’s production client must build without the editor tree.
 
 ---
 
-# 2. Frontend repository layout
+# 3. App shell and layout ownership
+
+The UI is one application shell, not a collection of independent micro-frontends.
+
+`src/layouts/AppShell.tsx` owns the page frame around routed content. Shared shell components live in `src/components/` (header/sidebar/footer/navigation/status/supporting common components). `main#main-content` and the skip link provide the primary keyboard/a11y landmark.
+
+General layout contract:
 
 ```text
-Data/frontend/
-├── index.html
-├── package.json
-├── package-lock.json
-├── vite.config.ts
-├── tsconfig.json
-├── tsconfig.app.json
-├── tsconfig.node.json
-├── .oxlintrc.json
-├── public/
-└── src/
-    ├── App.tsx
-    ├── main.tsx
-    ├── editorContentRuntime.ts
-    ├── api/
-    ├── assets/
-    ├── components/
-    ├── config/
-    ├── hooks/
-    ├── layouts/
-    ├── lib/
-    ├── mocks/
-    ├── navigation/
-    ├── pages/
-    ├── state/
-    ├── styles/
-    └── types/
+App
+ └─ ErrorBoundary
+     └─ BrowserRouter
+         └─ AppShell
+             ├─ global/header chrome
+             ├─ primary navigation
+             ├─ secondary navigation where configured
+             ├─ routed main content
+             └─ global toast/status overlays
 ```
 
-`main.tsx` bootstraps React. `App.tsx` owns application routing. `layouts/AppShell.tsx` owns the shared shell. `navigation/menu.ts` owns the visible primary/submenu model.
+Shell status must be measured. App chrome must not claim “SYSTEMS ONLINE/OPERATIONAL” merely because the React app mounted.
 
----
+Relevant shared hooks:
 
-# 3. Application shell
+- `src/hooks/useShellStatus.ts` — health/readiness projection;
+- `src/hooks/useSystemTelemetry.ts` — telemetry;
+- `src/hooks/useLiveEvents.ts` — live backend events;
+- `src/hooks/useClock.ts` — UI clock;
+- `src/hooks/useToast.ts` — toast surface.
 
-## Shared UI
-
-`Data/frontend/src/components/`:
-
-- `AppHeader.tsx` — top-level header/status controls;
-- `AppSidebar.tsx` — primary navigation;
-- `AppFooter.tsx` — footer/subnavigation shell;
-- `BrandMark.tsx` — LEVIATHAN branding component;
-- `Toast.tsx` — toast rendering;
-- `media/` — shared Media Control UI components.
-
-`Data/frontend/src/layouts/AppShell.tsx` composes the application chrome around routed content.
-
-## Shared state
-
-`Data/frontend/src/state/`:
-
-- `ToastContext.tsx`;
-- `toastContextValue.ts`;
-- `useAppToast.ts`.
-
-The current frontend deliberately keeps global client state relatively small; much operational state is backend-backed and queried through the typed API client/hooks.
+Tests include `shellStatus.test.ts` / `useShellStatus.test.ts` and page-specific contract tests.
 
 ---
 
 # 4. Navigation model
 
-`Data/frontend/src/navigation/menu.ts` is the canonical menu definition.
+`src/navigation/menu.ts` is the human-facing navigation source. Current groups are:
 
-Current top-level groups:
+| Group | Main destinations |
+|---|---|
+| Hades AI | Chatten, Coding Agent, Taken |
+| LLM | Modellen, Agents, Training, Dataset Management, Offline Datasets, Statestieken |
+| Media Control | Overview, YouTube, TikTok, Instagram, Facebook, Queue, Viral Radar, Calendar, Analytics, Library, Personas |
+| TradingCenter | Simulation, Strategies, Market Data, Portfolio, PAPER, BROKER, Onderzoek, Research Lab, Control Room |
+| Onderzoek & Kennis | Research, Brain, Geheugen, Knowledge, Evidence, Datasets |
+| Plugin & Runtime | Performance, Tools, Modules, Skills, MCP, Workflows, Console |
+| Settings | General plus behavior, studio, security, benchmarks, media, storage, runtime, logs, RAG, cognition, agents, tools, market-sim and data/research sections |
 
-1. **Hades AI** — Chatten, Coding Agent, Taken;
-2. **LLM** — Modellen, Agents, Training, Dataset Management, Offline Datasets, Statestieken;
-3. **Media Control** — overview/platform/queue/radar/calendar/analytics/library/personas;
-4. **TradingCenter** — simulation, strategies, market data, portfolio, paper, broker, research;
-5. **Onderzoek & Kennis** — Research, Brain, Geheugen, Knowledge Library, Evidence Vault, Datasets;
-6. **Plugin & Runtime** — Performance, Tools, Modules, Skills, MCP, Workflows, Console;
-7. **Instellingen** — general, LLM behavior/studio, rights/security, benchmarks, media, storage (three canonical SQLite DBs + SQLite Manager API `/api/sqlite/*`), Python/runtime, console/logs, Knowledge & RAG, Cognition & Neuro, Agents & Coding, Tools & MCP, Market Simulation, Data & Research.
-
-The historical display label `Hades AI` is a UI navigation label; backend ownership and runtime documented here are LEVIATHAN.
+The “Hades AI” navigation label is UI naming. It does not make `Data/HADES/` the canonical owner of Chat/Coding/Tasks; those routes are backed by LEVIATHAN’s normal backend systems.
 
 ---
 
-# 5. Route map
+# 5. Authoritative route map
 
-`Data/frontend/src/App.tsx` currently wires the SPA routes.
+`src/App.tsx` is the final routing authority. Current routes:
 
-| Route | UI owner |
+## Core
+
+| Route | Page/behavior |
 |---|---|
 | `/` | `CommandPage` |
-| `/status` | redirects to `/tasks` |
+| `/status` | redirect to `/tasks` |
 | `/tasks` | `TasksPage` |
 | `/chat` | `ChatPage` |
-| `/chat.html` | compatibility redirect to `/chat` |
 | `/coding` | `CodingPage` |
-| `/models` | models control page |
+| `/models` | `ModelsPage` |
+| `/training` | `TrainingPixelPage` |
+| `/dataset-management` | `DatasetManagementPixelPage` |
+| `/offline-datasets` | `OfflineDatasetsPixelPage` |
 | `/agents` | `AgentsPage` |
-| `/training` | Training pixel/production page route |
-| `/dataset-management` | Dataset Management pixel page |
-| `/offline-datasets` | Offline Datasets pixel page |
 | `/analytics` | `AnalyticsPage` |
+
+## Media
+
+| Route | Page |
+|---|---|
+| `/media` | Media overview |
+| `/media/youtube` | YouTube surface |
+| `/media/tiktok` | TikTok surface |
+| `/media/instagram` | Instagram surface |
+| `/media/facebook` | Facebook surface |
+| `/media/queue` | publication queue |
+| `/media/viral` | Viral Radar |
+| `/media/calendar` | media calendar |
+| `/media/analytics` | current Media Analytics section surface |
+| `/media/library` | media library |
+| `/media/personas` | personas |
+
+## TradingCenter
+
+Trading pages are lazy-loaded and rendered inside Suspense/ErrorBoundary.
+
+| Route | Page |
+|---|---|
+| `/trading` | redirect to `/trading/simulatie` |
+| `/trading/simulatie` | `SimulatiePage` |
+| `/trading/strategieen` | `StrategieenPage` |
+| `/trading/marktdata` | `MarktdataPage` |
+| `/trading/portefeuille` | `PortefeuillePage` |
+| `/trading/paper` | `PaperTradingPage` |
+| `/trading/broker` | `BrokerTradingPage` |
+| `/trading/onderzoek` | `OnderzoekPage` → Research Command |
+| `/trading/lab` | `ResearchLabPage` |
+| `/trading/control-room` | `InstitutionalControlRoomPage` |
+
+## Research/knowledge
+
+| Route | Page |
+|---|---|
 | `/research` | `ResearchPage` |
 | `/brain` | `BrainPage` |
 | `/cognition` | `CognitionPage` |
@@ -159,421 +186,601 @@ The historical display label `Hades AI` is a UI navigation label; backend owners
 | `/knowledge` | `KnowledgeLibraryPage` |
 | `/evidence` | `EvidenceVaultPage` |
 | `/datasets` | `DatasetsPage` |
-| `/performance` | runtime performance page |
+
+## Plugin/runtime
+
+| Route | Page |
+|---|---|
+| `/performance` | `PerformancePage` |
 | `/tools` | `ToolsPage` |
-| `/modules` | modules/runtime page |
+| `/modules` | ModuleManager operator console |
+| `/skills` | `SkillsPage` |
 | `/mcp` | `McpPage` |
 | `/workflows` | `WorkflowsPage` |
-| `/console` | console page |
-| `/settings` | `SettingsPage` |
+| `/console` | `ConsolePage` |
 
-Media routes:
+## Settings/compatibility
 
-- `/media`
-- `/media/youtube`
-- `/media/tiktok`
-- `/media/instagram`
-- `/media/facebook`
-- `/media/queue`
-- `/media/viral`
-- `/media/calendar`
-- `/media/analytics`
-- `/media/library`
-- `/media/personas`
+`/settings` and settings subroutes use `SettingsPage`. Historical settings aliases redirect to the canonical sections. `/chat.html` is a compatibility redirect to `/chat`; wildcard routes redirect to `/`.
 
-Trading routes:
-
-- `/trading` → `/trading/simulatie`
-- `/trading/simulatie`
-- `/trading/strategieen`
-- `/trading/marktdata`
-- `/trading/portefeuille`
-- `/trading/paper`
-- `/trading/broker`
-- `/trading/onderzoek`
-- `/trading/lab`
-- `/trading/control-room`
-
-Settings aliases route to `/settings?section=...` for the appropriate operator category.
+When route documentation and an old page file disagree, `App.tsx` wins.
 
 ---
 
-# 6. Backend API client and live events
+# 6. API/client architecture
 
-## `src/api/`
+Frontend code should not create page-local transport stacks when a central client/domain module exists.
 
-- `client.ts` — centralized typed API client for LEVIATHAN backend routes;
-- `client.test.ts` — API-client contract tests;
-- `chatStream.boundary.test.ts` — chat streaming boundary tests.
+## 6.1 Shared HTTP
 
-Do not introduce page-local duplicate fetch wrappers when a canonical client method exists. API types and backend truth should stay aligned.
+`src/api/http.ts` owns common request behavior. `src/api/client.ts` is the public facade used by much of the app and contains compatibility wrappers while domain clients are split incrementally.
 
-Typed SQLite Manager client methods (three canonical DBs; Settings → Opslag):
+Domain clients live under `src/api/domains/`; for example `marketSimLab.ts` owns Research Lab calls instead of page-local `fetch()`.
 
-- `listSqliteDatabases()` → `GET /api/sqlite/databases`
-- `sqliteDatabaseStatus(domain)` → `GET /api/sqlite/databases/{domain}`
-- `sqliteDatabaseTables(domain)` → `GET /api/sqlite/databases/{domain}/tables`
-- `sqliteTableDetail(domain, table)` → `GET /api/sqlite/databases/{domain}/tables/{table}`
-- `sqliteQueryRows(domain, table, body)` → `POST /api/sqlite/databases/{domain}/tables/{table}/rows/query`
-- `sqliteQuery(domain, sql, limit?)` → `POST /api/sqlite/query` (read console)
-- `sqliteMutate(domain, confirmDomain, sql)` → `POST /api/sqlite/mutate` (explicit domain confirm required)
-- `sqliteInsertRow` / `sqliteUpdateRow` / `sqliteDeleteRow` → `/api/sqlite/rows/*` (parameterized; PK-required for update/delete)
-- `sqliteIntegrity(domain, kind)` → `POST /api/sqlite/integrity`
-- `sqliteWalCheckpoint(domain, confirmDomain, mode?)` → `POST /api/sqlite/wal-checkpoint`
-- `sqliteOwnershipAudit()` → `GET /api/sqlite/ownership-audit`
-- `sqliteRuntime()` → `GET /api/sqlite/runtime`
+Shared API types are under `src/types/`. Keep these aligned with backend response contracts instead of weakening them to broad `any`.
 
-`SqliteManagerPanel` clears table/row/query mutation state on domain switch so the previous domain cannot remain a hidden write target.
+## 6.2 Streaming/events
 
-## Hooks
+`src/hooks/useLiveEvents.ts` and chat streaming helpers consume public operational events. Eligible UI events include cognition state, tool/module/job progress, artifact/source observations and worker status. Private reasoning/chain-of-thought is never a UI event contract.
 
-`src/hooks/` currently contains:
+Chat status helpers under `src/lib/` normalize shared semantics, including `jobStatus.ts` and `executionFabric.ts`.
 
-- `useLiveEvents.ts` — live/backend event consumption;
-- `useShellStatus.ts` — shell/runtime status;
-- `useSystemTelemetry.ts` — system telemetry;
-- `useClock.ts` — UI clock;
-- `useToast.ts` — toast helper;
-- `shellStatus.test.ts`, `useShellStatus.test.ts` — shell/status tests.
+## 6.3 Errors
+
+API failures must remain errors/degraded state. Do not convert a missing response into zero counts or “healthy”. The global ErrorBoundary catches rendering failures; route/page state still owns domain-specific loading/error/empty states.
 
 ---
 
-# 7. Chat and Cognition UI
+# 7. Product-truth presentation model
 
-## Current
+Common backend statuses include `SUPPORTED`, `UNSUPPORTED`, `UNMEASURED`, `UNAVAILABLE`, `NOT_CONFIGURED`, `FEATURE_GATED`, `WAITING_APPROVAL`, `BLOCKED`, `DEGRADED`, `PARTIAL`, `READY`, `FAILED`, etc. Pages should preserve the backend distinction.
 
-- `pages/ChatPage.tsx` is the user-facing conversation UI.
-- `pages/chatTelemetry.ts` derives **real** turn telemetry from `ChatResponse.assistant_telemetry` / cognition (never mocks tools, agents, brain %, or private CoT).
-- Context / Tools / Agents tabs show measured model, behavior version/hash, context used/budget, brain/memory/evidence hits, web sources, verification, tool calls (status/duration/receipt), and specialist delegations.
-- Optional diagnostic strip: mode / model / brain / web / tools / agents / verification / context / latency / behavior.
-- `pages/CognitionPage.tsx` exposes cognition/run state separately.
-- Chat consumes the backend chat/cognition/model systems; the frontend must not synthesize reasoning success, tool execution or citations.
-- **TEAM collaboration (CURRENT):** `ChatPage` exposes a Direct/TEAM selector separate from Auto/Fast/Deep reasoning depth (orthogonal controls). TEAM explains: “Continues until the quality criteria are met, or shows exactly what prevents completion.” Context panel shows typed `quality_label` (`accepted` / `blocked` / `running` / `revising` / …), criterion verdicts, open-ended iteration count, and `criteria_ratio_label` from live `/api/chat` / `/api/team` payloads — never fake round fractions. Completed lightweight conversational TEAM turns render as ordinary assistant answers; genuine blockers remain visible.
+Rules:
 
-Current main contains the F0 baseline of the Frontier Reasoning program. The existing frontend has **not** yet earned the future F17 reasoning-control gate merely because the master program describes it.
+- Unknown dataset state uses neutral/muted UI, never “processed” green.
+- A module discovered in the catalog is not RUNNING/READY.
+- A model registered in the catalog is not resident/healthy.
+- Search enabled is not web-search ready.
+- An agent’s confidence is not verification.
+- Trading TRAIN/validation/sealed/qualification are distinct states.
+- Paper trading is simulated capital and visually distinct from live broker state.
+- Backend `UNMEASURED` fields display dashes/labels, not numeric zero.
 
-## TARGET — Frontier Reasoning F17
-
-Planned UI additions, only to be marked CURRENT after implementation/tests:
-
-- per-message `Auto / Fast / Standard / Deep / Maximum` reasoning selector;
-- requested versus effective reasoning mode;
-- native-reasoning capability/effort where measured;
-- public activity panel (plan/search/tool/test/verify events);
-- model/tool/source/agent usage summary;
-- verification/completion status;
-- no private chain-of-thought rendering.
+Explicit demo/mock data must use demo/mock labeling. Production route code should not import decorative mocks as runtime truth.
 
 ---
 
-# 8. Models UI
+# 8. Chat UI
 
-`pages/ModelsPage.tsx` is a thin route-facing wrapper; the substantial model UI lives in `pages/models/`.
+Primary file: `src/pages/ChatPage.tsx`.
 
-Verified current files include:
+Supporting chat code includes:
 
-- `ModelsPage.tsx` — composed models workspace;
-- `HardwareInventoryPanel.tsx` — host/model hardware visibility;
+- `src/pages/chatTelemetry.ts` — converts real `assistant_telemetry`/cognition fields into display data;
+- `src/pages/chat/CapabilityResultCards.tsx` — backend-backed tool result cards;
+- chat streaming/status helpers and tests near the page/lib directories.
+
+Current Chat surfaces:
+
+- conversation history/input;
+- requested/effective reasoning information when returned;
+- Direct vs TEAM collaboration selector;
+- model identity/status;
+- Brain/Memory/Evidence/retrieval usage;
+- sources/citations/web usage;
+- tool calls with backend status/duration/receipt/result/artifact/source information;
+- specialist/agent delegation;
+- verification/quality/completion state;
+- bounded public operational activity;
+- Stop/abort for in-flight streams.
+
+TEAM quality data is backend-owned. Criterion labels/rations come from `/api/chat`/`/api/team`; the UI never invents a “7/10 rounds” target for open-ended TEAM work.
+
+No private chain-of-thought panel exists or should be added. Public plan/event/rationale metadata is acceptable when explicitly emitted by the backend.
+
+Contract tests: `src/pages/chatCodingContracts.test.ts` and chat-specific tests.
+
+---
+
+# 9. Cognition UI
+
+`src/pages/CognitionPage.tsx` is the operator-facing cognition/run surface. It displays durable public run state rather than implementing reasoning in the browser.
+
+Backend owner: `Data/modules/cognition/`; HTTP: `/api/cognition/*`.
+
+The page may expose run state, plan/activity, requested/effective mode, evidence/tool/agent usage, verification, steering/cancel/resume controls where the API supports them. It must not fabricate unsupported frontier-reasoning gate states merely because machine program manifests mention them.
+
+The frontier reasoning gate manifest under `Data/backend/tests/frontier_reasoning_gates.json` remains a conservative machine ledger. Frontend rendering should follow actual API fields, not phase-name marketing.
+
+---
+
+# 10. Models UI
+
+Route: `/models`.
+
+`src/pages/ModelsPage.tsx` is the route-facing composition. Detailed UI lives in `src/pages/models/`:
+
+- `HardwareInventoryPanel.tsx` — measured host/model hardware;
 - `ModelCatalog.tsx` — registry/catalog;
-- `ModelDownloadManager.tsx` — download state/actions;
-- `ModelGatewayPanel.tsx` — gateway/inflight state;
-- `ModelImportDialog.tsx` — model import workflow;
-- `ModelInspector.tsx` — detailed model/profile inspection;
-- `ModelResidencyPanel.tsx` — model residency controls/state;
-- `ModelRouterPanel.tsx` — routing view;
-- `ModelServingPanel.tsx` — serving/runtime view;
-- `ModelStatusCards.tsx` — summary status;
-- `ModelTestConsole.tsx` — controlled model testing;
-- `ProviderManager.tsx` — provider management.
+- `ModelDownloadManager.tsx` — acquisition state/actions;
+- `ModelGatewayPanel.tsx` — gateway/inflight/queue;
+- `ModelImportDialog.tsx` — import;
+- `ModelInspector.tsx` — model/profile detail;
+- `ModelResidencyPanel.tsx` — residency;
+- `ModelRouterPanel.tsx` — routing;
+- `ModelServingPanel.tsx` — serving/runtime;
+- `ModelStatusCards.tsx` — summary;
+- `ModelTestConsole.tsx` — controlled inference test;
+- `ProviderManager.tsx` — providers.
 
-The UI must distinguish selected, active, resident, available and supported. A provider/model listed in the UI is not automatically loaded or capable of every operation.
-
-TARGET from Frontier Reasoning: model profiles will additionally expose native reasoning capability/effort/token-budget support once backend F2/F3 support is implemented and verified.
+The page must distinguish registry presence, provider availability, active routing, residency, READY serving and measured capabilities. Vision/tool/structured-response/reasoning support is only shown as supported when backend capability probes say so.
 
 ---
 
-# 9. Agents, Coding and Tasks UI
+# 11. Agents and Worker Fabric UI
 
-## Agents
+Route: `/agents`; primary file `src/pages/AgentsPage.tsx`.
 
-`pages/AgentsPage.tsx` is the main agent control surface. Supporting files under `pages/agents/` include:
+Supporting code under `src/pages/agents/` includes trading sections/helpers plus the Worker Fabric monitor. `agentsPageContracts.test.ts` protects important source/API contracts.
 
-- `TradeOrchestraSection.tsx`;
-- `helpers.ts`;
-- `tradingHelpers.ts`.
+The page combines **agent identity** and **execution infrastructure** without confusing them:
 
-`agentsPageContracts.test.ts` protects page/backend contracts.
+- Agent Fleet cards come from backend agent/system inventory.
+- Trading agents are ordinary Fleet-backed roles.
+- Worker Fabric monitor reads `GET /api/workers/dashboard`.
+- “Active Workers” is based on worker processes/READY state, not agent count.
+- STARTING worker is not healthy READY.
+- Native compute status is backend-probed, not mocked.
 
-Agent cards/status must reflect actual `AgentFleet`/SystemInventory/backend state. Orchestrators are represented through the same backend ownership rather than a fake second agent system.
+Primary worker panel: `WorkerPoolsPanel` within the Agents supporting component tree.
+
+---
+
+# 12. Coding and Tasks UI
 
 ## Coding
 
-- `pages/CodingPage.tsx` — Coding Agent workspace;
-- `pages/coding/types.ts` — local UI contracts;
-- `chatCodingContracts.test.ts` — Chat/Coding contract tests.
+Route `/coding`; `src/pages/CodingPage.tsx` with local contracts under `src/pages/coding/`.
 
-The page operates on real CodingControlPlane sessions and must not claim file writes/tests without backend state/receipts.
+It operates on real CodingControlPlane sessions/actions. File/test claims must come from backend receipts; the browser does not perform the coding mutation itself.
 
 ## Tasks
 
-`pages/TasksPage.tsx` is the durable task/operator surface. It consumes TaskService/job/workflow state rather than maintaining an independent task engine.
+Route `/tasks`; `src/pages/TasksPage.tsx`.
+
+The page projects TaskService/JobRuntime/workflow state. `/status` redirects here in current routing. `StatusPage.tsx` may remain in the source tree but does not own the active `/status` route.
 
 ---
 
-# 10. Brain, Memory, Knowledge and Evidence UI
+# 13. Brain, Memory, Knowledge and Evidence UI
 
-## Brain
+These are intentionally distinct backend concepts.
 
-`pages/BrainPage.tsx` composes the visual Brain interface. `pages/brain/` contains:
+## Brain — `/brain`
 
-- `BrainGraphCanvas.tsx` — graph visualization;
-- `BrainTreeView.tsx` — hierarchical view;
-- `BrainClustersView.tsx` — cluster view;
+`src/pages/BrainPage.tsx` composes:
+
+- `pages/brain/BrainGraphCanvas.tsx` — technical graph;
+- Celestial Nexus/celestial graph components in the Brain directory — live graph visualization;
+- `BrainTreeView.tsx` — hierarchy;
+- `BrainClustersView.tsx` — clusters;
 - `BrainAnalyticsView.tsx` — analytics;
 - `BrainTimelineView.tsx` — timeline;
-- `brain-live.ts` — live backend mapping;
-- `brain-shared.tsx` — shared UI/contracts;
-- `brain-mock.ts` — explicit mock/test support; production state must use live backend data.
+- `brain-live.ts` — live API mapping;
+- `brain-shared.tsx` — shared contracts/components;
+- explicitly named mock support for tests/reference only.
 
-## Memory
+Current graph views are backed by `/api/brain/graph`; selection/filter state remains under BrainPage ownership.
 
-`pages/GeheugenPage.tsx` exposes durable memory views/actions.
+## Memory — `/memory`
 
-## Knowledge
+`src/pages/GeheugenPage.tsx` presents durable MemoryStore records/scopes/trust/corrections.
 
-`pages/KnowledgeLibraryPage.tsx` exposes Knowledge/RAG documents/chunks/search/ingestion state.
+## Knowledge — `/knowledge`
 
-## Evidence
+`src/pages/KnowledgeLibraryPage.tsx` presents documents, retrieval/index/ingestion state and related operations.
 
-`pages/EvidenceVaultPage.tsx` displays evidence/verification-related records.
+## Evidence — `/evidence`
 
-These pages represent different backend concepts and should not collapse Brain, Memory, Knowledge and Evidence into one undifferentiated store.
+`src/pages/EvidenceVaultPage.tsx` presents evidence/verification records.
+
+Do not merge their concepts into a single fake “brain database” UI.
 
 ---
 
-# 11. Research UI
+# 14. General Research UI
 
-`pages/ResearchPage.tsx` is the active Research workspace. `ResearchMockPage.tsx` remains an explicit mock/reference page and is not the canonical `/research` route.
+Route `/research`; owner `src/pages/ResearchPage.tsx`. `ResearchMockPage.tsx` is explicit mock/reference code and is not the canonical route.
 
-`src/config/research.ts` contains research UI configuration/constants.
+Configuration: `src/config/research.ts`.
 
-Research UI should expose actual project/run/source/worker state and distinguish:
+The page projects real ResearchService state:
 
+- project/run lifecycle;
+- research plan and workers;
 - local retrieval;
-- outbound permission;
-- configured web search **vs** BEST_EFFORT_PUBLIC_SEARCH fallback (`web_search.mode`);
-- **Web Search READY / FETCH ONLY / UNAVAILABLE** from `GET /api/research/web/readiness`
-  (operator must never infer readiness from Evidence=0 alone);
-- **Test web research** probe (`POST /api/research/web/probe`) — search → fetch, no fake artifacts;
 - source upload/ingestion;
-- active worker state;
-- claims/evidence/conflicts with real source URLs;
-- explicit zero-evidence diagnosis (WEB SEARCH UNAVAILABLE / NO SOURCES / FETCH BLOCKED / …);
-- **execution mode Normal / Custom / TEAM** — TEAM uses `rounds: null` and criterion-level progress (no “7 of 10 rounds” fake total).
+- claims/evidence/conflicts/reports;
+- real source URLs/citations;
+- outbound network and web-search readiness as separate states;
+- `READY`, `FETCH ONLY` or `UNAVAILABLE` from `/api/research/web/readiness`;
+- web research probe via `/api/research/web/probe`;
+- Normal/Custom/TEAM execution modes.
 
-Do not render fabricated “web searched” state when the backend provider is unavailable.
-Search hit ≠ fetched source ≠ evidence ≠ supported claim ≠ knowledge.
+Evidence=0 alone is not a diagnosis. The UI should display backend reasons such as search unavailable, no sources, fetch blocked or no supporting evidence.
 
 ---
 
-# 12. Dataset and Training UI
+# 15. Datasets UI
 
-## Datasets
+Two related surfaces exist:
 
-`pages/DatasetsPage.tsx` is the research/knowledge-side dataset surface. Supporting `pages/datasets/` files:
+- `/datasets` → `src/pages/DatasetsPage.tsx` and `src/pages/datasets/` — research/knowledge dataset surface;
+- `/dataset-management` → `src/pages/pixel/DatasetManagementPixelPage.tsx` — operator management view;
+- `/offline-datasets` → `src/pages/pixel/OfflineDatasetsPixelPage.tsx` — offline dataset tooling.
+
+Supporting dataset code includes:
 
 - `DatasetActivityConsole.tsx`;
-- `datasetActivity.ts` (progress / backend / memory helpers — UNMEASURED when RSS missing);
+- `datasetActivity.ts`;
 - `useDatasetActivity.ts`;
 - `datasetsInventory.ts`;
-- `datasetActivity.test.ts`;
-- `datasetManagementActions.test.ts`;
-- `datasetLearningState.ts`.
+- `datasetLearningState.ts`;
+- dataset activity/management tests.
 
-Jobs expose compute truth from `public_job`: `backend` (`Python Streaming` / `Rust Native`), `fallbackReason`, and real progress fields when present. Missing peak RSS / spill metrics render as **UNMEASURED** — never invent `0`.
+Dataset Management uses `displayName ?? name`, category/tags/search and semantic re-analysis APIs. `REINDEX_REQUIRED` is never shown as learned Brain state.
 
-The LLM navigation also exposes dedicated Dataset Management and Offline Datasets pixel pages wired through `App.tsx`.
+Job/activity panels expose backend compute truth (`python_streaming` / `rust_native`) and progress. Missing peak RSS/spill/throughput remains UNMEASURED.
 
-### Dataset Management (pixel)
-
-
-Dataset Activity / Datasets pages show compute backend + progress honestly (`python_streaming` / `rust_native`, records, peak memory / spill / throughput). Missing metrics render as **UNMEASURED**, never 0. Performance page surfaces native data-plane probe status and DB contention (file/WAL size, busy retries, commit queue depth) from `/api/performance/snapshot`.
-
-`pages/pixel/DatasetManagementPixelPage.tsx` shows `displayName ?? name` as the primary label, a **category** column + filter, and search across displayName/tags/category. Details expose semantic summary fields and recovery honesty: `REINDEX_REQUIRED` is never shown as learned Brain state. Operators can PATCH displayName/category/tags and trigger semantic re-analyze via `/api/datasets/{id}/semantic`. The shared Dataset Activity console surfaces native/Python backend labels and memory honesty.
-
-### Worker Fabric (Agents)
-
-`WorkerPoolsPanel` reads `GET /api/workers/dashboard`. When the backend includes `nativeCompute`, the panel shows probe `status`, `binaryVersion` (or UNMEASURED), and operation count — derived from `NativeComputeRunner.probe`, not mocked.
-
-### Settings (native compute)
-
-Settings remain catalog-driven. Native compute keys (`native_compute.mode`, `memory_budget_mb`, `max_record_mb`, `threads`, …) appear under the data/research category when present in the Settings Control Plane catalog — no page-local hardcoding of those knobs.
-
-## Training
-
-`/training` currently routes to the production/pixel Training page family. A legacy/top-level `TrainingPage.tsx` also exists in the tree; route truth in `App.tsx` wins.
-
-Training UI must show real training jobs, recipes, readiness, candidate versions and evaluation state. It must not imply that a training recipe ran on GPU or promoted a model unless backend evidence says so.
+Explicit demo rows are labeled DEMO and are protected from appearing as live inventory.
 
 ---
 
-# 13. TradingCenter UI
+# 16. Training and evaluation-facing UI
 
-`pages/trading/` contains:
+`/training` currently routes to the production pixel Training page family via `App.tsx`; an older top-level `TrainingPage.tsx` may remain for compatibility/source history, but route truth wins.
 
-- `SimulatiePage.tsx` — causal simulation/runs/agents/activity with explicit run builder (`initialCash`, `engine` single|multi, `decisionCadence`); default is single-strategy (no silent multi-agent roster);
+Training pages display real jobs/recipes/readiness/candidate versions/evaluation state. A configured recipe must not be shown as “trained” or “GPU completed” without backend evidence.
+
+Evaluation/analytics data used by Training or model pages should come through central API contracts; no client-side score fabrication.
+
+---
+
+# 17. Analytics and command surfaces
+
+- `src/pages/CommandPage.tsx` — root command/dashboard;
+- `src/pages/AnalyticsPage.tsx` — LLM/system analytics;
+- `src/pages/PerformancePage.tsx` — performance/native/DB contention read model;
+- `src/pages/ConsolePage.tsx` — console/operator projection;
+- `src/pages/SectionPage.tsx`, `PlaceholderPage.tsx` — reusable generic section/fallback surfaces.
+
+Operational numbers use backend telemetry. Zero is a measurement only when the backend measured zero.
+
+---
+
+# 18. TradingCenter — shared architecture
+
+Primary tree: `src/pages/trading/`.
+
+Shared page support: `src/pages/trading/shared.tsx` and trading-specific view-model/helper folders. Backend authority is MarketSim; the UI does not calculate canonical PnL/qualification itself.
+
+Current top-level pages:
+
+- `SimulatiePage.tsx` — simulation;
 - `StrategieenPage.tsx` — strategy definitions/versions;
-- `MarktdataPage.tsx` — market-data registration/inspection;
-- `PortefeuillePage.tsx` — portfolio view;
-- `PaperTradingPage.tsx` — paper trading against real `/api/market-sim/paper` + capabilities;
-- `BrokerTradingPage.tsx` — broker/live boundary and guarded state (live remains BLOCKED);
-- `OnderzoekPage.tsx` — trading research;
-- `shared.tsx` — shared TradingCenter components/contracts.
+- `MarktdataPage.tsx` — data registration/inspection;
+- `PortefeuillePage.tsx` — portfolio;
+- `PaperTradingPage.tsx` — paper execution/operator page;
+- `BrokerTradingPage.tsx` — explicit live broker boundary;
+- `OnderzoekPage.tsx` — re-exports Research Command page;
+- `researchLab/ResearchLabPage.tsx` — autonomous Research Lab;
+- institutional Control Room page under trading tree.
 
-This UI sits on the existing `MarketSimControlPlane` and trading-orchestra backend. It must not imply live-money readiness or profitability. Paper/simulation state is distinct from live broker state. No mock success badges.
+`/api/market-sim/capabilities` is the UI capability authority: family support, operating modes, execution granularity and action matrix. BAR_OHLCV must never be drawn/labeled as L2/L3. Unknown/unmeasured/blocked capability uses neutral/degraded styling.
 
-T1 backend additions consumed by TradingCenter (no mock data): sealed/versioned market datasets (`/api/market-sim/datasets`, `/api/market-sim/data/import`), run knowledge snapshots (`/api/market-sim/runs/{id}/knowledge-snapshot`), and causal `MarketView` / epistemic `as_of` boundaries on historical runs.
-
-T2 backend: simulation rounds persist deterministic `MarketState` (regime/trend/volatility/features with provenance). UI continues to read live run events — no fabricated order-book capabilities.
-
-**P4C:** SimulatiePage run builder is explicit; PaperTradingPage and capabilities come from the live API. G41/G42 PASS.
-
-**Slice 16:** TradingCenter UI remains paper/sim-backed only. Live broker stays BLOCKED; A5 is impossible. No mock-success badges. Gate evidence: G41/G42/G48 PASS. Remaining advanced ops gates (G49–G60) stay honest NOT_STARTED.
-
-**Capability honesty (CURRENT):** `/api/market-sim/capabilities` is the sole capability authority for Trading Center (typed as `MarketSimCapabilities`). It includes per-family HISTORICAL_SIM / LIVE_PAPER / LIVE_TRADING statuses, a machine-derived `mode_matrix` (HISTORICAL_RESEARCH…AUTONOMOUS_PAPER per family), an `execution_granularity` matrix (BAR_OHLCV SUPPORTED; QUOTE_L1 SUPPORTED via real bid/ask only; BOOK_L2 / ORDER_EVENT_L3 UNSUPPORTED), and a backend-authored `action_matrix` (deploy_shadow_paper / autonomous_paper_step / paper_drift_review; live broker always BLOCKED). Durable A3/A4 paper deployments use `/api/market-sim/paper/deployments` (`MarketSimPaperDeployment`) — simulated capital only. UI must not invent L2/L3 from OHLCV, fabricate connected/provider success, or display SEALED-derived adaptive learning as TRAIN evidence. Unknown/UNMEASURED/BLOCKED states use honest styling — never success chrome. Options/fixed-income trading remain NOT_IMPLEMENTED.
+**Live-money trading remains BLOCKED.** Broker UI presence is not readiness, and no page may expose an unguarded live-enable control.
 
 ---
 
-# 14. Media Control UI
+# 19. Simulation, strategies and market data pages
 
-The Media Control family is routed from `App.tsx` and grouped under `pages/media/` plus shared `components/media/`.
+## Simulation — `/trading/simulatie`
 
-Routes cover:
+`src/pages/trading/SimulatiePage.tsx` builds causal MarketSim runs. Run builder explicitly exposes capital/engine/cadence instead of silently creating a multi-agent topology. Activity/orders/metrics are API-backed.
 
-- overview;
-- YouTube;
-- TikTok;
-- Instagram;
-- Facebook;
-- publication queue;
-- Viral Radar;
-- calendar;
-- media analytics;
-- library;
-- personas.
+## Strategies — `/trading/strategieen`
 
-`src/assets/media-control/` contains the visual asset/crop set used by these pages. Media UI capability must reflect the backend media/provider posture; UI presence is not proof that every external platform integration is configured.
+`StrategieenPage.tsx` lists/creates/inspects strategy definitions and versions from MarketSim. Status/lineage/compatibility are backend truth.
 
-**Product truth (PR #181):** When media/platform backends are not connected, routed Media pages render honest `NOT CONNECTED` / `UNAVAILABLE` states via `MediaTruthBanner` / `PlatformUnavailablePage` — they must not present fabricated follower/reach/revenue KPIs as live operational metrics. Dataset unknown status maps to `Onbekend` (muted), never success-like `Verwerkt`. AppShell `systemItems` chrome must not claim `SYSTEMS ONLINE` / `SYSTEMS OPERATIONAL` without measured health.
+## Market data — `/trading/marktdata`
+
+`MarktdataPage.tsx` handles registered/imported sources, readiness and provider metadata. Historical data version/seal/split state comes from MarketSim; frontend does not infer data quality from file presence.
+
+## Portfolio — `/trading/portefeuille`
+
+`PortefeuillePage.tsx` displays canonical MarketSim portfolio/accounting state.
 
 ---
 
-# 15. Runtime / tools / MCP / workflows UI
+# 20. Paper Trading UI
 
-- `pages/ToolsPage.tsx` — canonical capability/tool surface;
-- `pages/McpPage.tsx` — MCP servers/sessions/tools;
-- `pages/WorkflowsPage.tsx` — workflow controls;
-- `pages/ModulesPage.tsx` / `pages/plugin-runtime/ModulesPage.tsx` — ModuleManager surface (discover, install, start/stop/restart, ensure-ready, health, logs, jobs, capabilities, sweep-idle, versions/check-update/install-version/activate-version/rollback, execute). Shows adapter kind, runtime state, capability counts for external modules. Does **not** invent RUNNING/READY — derives from backend snapshot. **Dependency-aware install UI (CURRENT):** operator sees the backend install plan (strategies, package manager, privilege state, dependency observations, privileged system changes, application actions, blockers), then **APPROVE & INSTALL EVERYTHING** (approves via `ApprovalService` when required and re-posts install with `plan_hash` + `auto_resolve_dependencies`). Live phase progress polls `/api/modules/{id}/install-state` (PLANNING → system deps → fetch → runtime → app deps → post_install → verify → READY / FAILED). Client: `api.moduleInstallPlan` / `moduleInstallState` / `installModule`; helpers in `pages/plugin-runtime/modules/viewModels.ts` + `useModulesWorkspace.ts`. Does not invent install success — only backend plan/operation evidence;
-- `pages/plugin-runtime/SkillsPage.tsx` — `/skills` installed + catalog skill search (paginated metadata only). Enable/disable and on-demand instruction load via `/api/skills`. Never dumps thousands of skills into prompts;
-- Chat capability result cards (`pages/chat/CapabilityResultCards.tsx`) render backend-backed tool telemetry (status, duration, result/source/artifact counts) under the latest assistant message and in the Tools tab — never invent counts;
-- `pages/PerformancePage.tsx` — thin wrapper/performance page;
-- `pages/ConsolePage.tsx` — thin wrapper/console page.
+Route `/trading/paper`; source is `PaperTradingPage.tsx` plus `pages/trading/paper/`.
 
-Chat Tools tab telemetry may optionally include `module_id`, `provider`, `result_count`, `artifact_refs`, `source_count`, and typed `parts` from capability outputs while preserving backward-compatible `assistant_message` / TEAM contracts. Chat SSE may surface operational `capability.discovered`, `job.started` / `job.progress` / `job.completed`, and `tool.*` / `module.*` / `artifact.*` / `source.*` events when CognitiveRuntime offloads EXTERNAL_REQUIRED work through JobRuntime — status line only (`job.*` labels via `formatJobStateLabel` / shared JobRuntime semantics), never private CoT.
+Important components include:
 
-Runtime-oriented supporting pages/components also live in page subdirectories (`pages/plugin/`, `pages/runtime/` where present). Route wiring in `App.tsx` is authoritative.
+- `PaperTradingChartPanel.tsx` — chart from backend OHLCV;
+- `PaperTradingChartShell.tsx` — chart panel chrome/state;
+- additional paper orchestrator/portfolio/positions/orders/analytics/risk/activity components in the same directory;
+- styles in `src/styles/trading-paper.css`.
 
-`src/lib/executionFabric.ts` contains shared execution-fabric UI helpers/contracts. `src/lib/jobStatus.ts` normalizes job status/presentation logic.
+The page consumes real paper-session/portfolio/capability APIs. Equity/PnL/positions/orders are backend sourced. If profit factor or another metric is not exposed, it remains unavailable rather than being synthesized.
+
+Durable A3/A4 deployments are simulated capital. Kill switch/flatten/pause controls call canonical paper APIs.
 
 ---
 
-# 16. Settings UI
+# 21. Trading Research Command UI
 
-`pages/SettingsPage.tsx` is the settings control surface. `pages/settings/` contains:
+Route `/trading/onderzoek`.
 
-- `SettingsNavigation.tsx` — settings subsection navigation;
-- `SettingField.tsx` — typed setting editor;
-- `RestartRequiredBadge.tsx` — apply-mode visibility;
-- `settingsPage.test.ts` — UI contract test.
+`src/pages/trading/OnderzoekPage.tsx` re-exports `researchCommand/ResearchCommandPage.tsx`. Supporting code:
 
-Navigation currently exposes settings sections for:
+- `researchCommand/ResearchCommandPage.tsx` — composition;
+- `researchCommand/ResearchCommandPanels.tsx` — panels;
+- `researchCommand/useResearchCommand.ts` — data/action hook;
+- `researchCommandContracts.test.ts` — source contract coverage.
 
-- General;
-- LLM behavior;
-- LLM Studio;
-- Rights & Security;
-- Model Benchmarks;
-- MediaCenter;
-- Storage;
-- Python & Runtime;
-- Console;
-- Logs;
-- Knowledge & RAG;
-- Cognition & Neuro;
-- Agents & Coding;
-- Tools & MCP;
-- Market Simulation;
-- Data & Research.
+Research Command is an operator **composition** over existing TradingOrchestra, paper portfolio, news and Research Lab. It is not a frontend or backend second learner.
 
-Settings are backend-owned. The frontend should honor validation, enum/range constraints and HOT/restart-required semantics returned by the Settings Control Plane.
+Current projections include session state, orchestration/decision/news state, paper portfolio, bound lab run mode/stage, active hypotheses, best-candidate/qualification summary and paper-forward drift tickets when available.
+
+Start/pause/flatten/kill-switch/evolution actions call their backend owners. Live remains blocked.
 
 ---
 
-# 17. Analytics, command and operator surfaces
+# 22. Autonomous Research Lab UI
 
-- `pages/CommandPage.tsx` — primary command/dashboard landing;
-- `pages/AnalyticsPage.tsx` — LLM/system analytics;
-- `pages/StatusPage.tsx` — status implementation file retained even though the current `/status` route redirects to Tasks;
-- `pages/SectionPage.tsx` and `PlaceholderPage.tsx` — reusable/placeholder route surfaces.
+Route `/trading/lab`; root `src/pages/trading/researchLab/`.
 
-Operator status should use real health/telemetry/job/model/system inventory APIs.
+Current files/directories:
+
+- `ResearchLabPage.tsx` — three-column operator workspace and modal composition;
+- `hooks/useResearchLab.ts` — API-backed state, polling, lifecycle and create flow;
+- `components/` — run rail, tabs/panels/details/create dialog support;
+- `viewModels.ts` — backend→display derivation;
+- `viewModels.test.ts` — truth/derivation tests;
+- API domain: `src/api/domains/marketSimLab.ts`;
+- relevant styles under `src/styles/` trading/research-lab files.
+
+## 22.1 Create modes
+
+The create flow supports:
+
+**AUTONOMOUS_DISCOVERY**
+- no existing `strategyId` required;
+- research objective/hypothesis;
+- READY market data source;
+- autonomy ceiling/budgets;
+- optional model/chart-vision research policy;
+- optional research scope/dataset bundle from backend contracts.
+
+**SEED_EXISTING_STRATEGY**
+- retains strategy selector/version seed behavior.
+
+The frontend must not manufacture a dummy seed strategy for autonomous discovery.
+
+## 22.2 Lab data surfaces
+
+Current lab APIs/client methods cover overview, cost pack, feed health, list/get/create/start/pause/resume/cancel, learning state, generations, candidates, run trials, lessons, hypotheses, perception, strategy-family labels and candidate explainability.
+
+Tabs/panels expose only backend-backed data:
+
+- overview/progress;
+- generations/population and family probabilities;
+- candidate lineage/proposal method;
+- hypotheses;
+- causal numeric/chart perception when measured;
+- validation/qualification information when returned;
+- evidence-linked lessons;
+- paper/forward/drift context;
+- public run events/logs.
+
+Candidate labels distinguish TRAIN leader, validation/sealed/qualified states. A high TRAIN score is not rendered as “profitable/qualified” without the corresponding backend evidence.
+
+## 22.3 Chart perception
+
+Chart vision is advisory. The page may render a deterministic backend artifact and typed observation if the backend measured a chart-capable model. `UNAVAILABLE` chart vision is a valid state; numeric perception continues. Visual observations never create order controls.
+
+## 22.4 Explain candidate
+
+`GET /api/market-sim/lab/runs/{labId}/candidates/{candidateId}/explain` returns structured evidence for explanation drawers/cards. The UI should display the hypothesis, proposal origin/lineage, measured trials, rejection gates and evidence refs rather than asking an LLM to invent a retroactive story.
 
 ---
 
-# 18. Assets and styling
+# 23. Institutional Control Room UI
+
+Route `/trading/control-room`.
+
+The page consumes `GET /api/market-sim/institutional/control-room` and related institutional projections. It surfaces live-trading BLOCKED state, qualification/research/data-plane/fabric information, reconciliation breaks/exceptions and audit-chain state when measured.
+
+A catalog entry or missing metric must never be painted green. Empty/unmeasured is explicit.
+
+---
+
+# 24. Broker/live boundary UI
+
+Route `/trading/broker`; `BrokerTradingPage.tsx`.
+
+This page is a boundary/status surface. It must preserve backend LiveTradingGuard posture and cannot add a hidden UI-only bypass. Paper controls are not live controls. External finance modules/tools remain research/analytics capabilities unless MarketSim explicitly exposes a safe paper action.
+
+---
+
+# 25. Media Control UI
+
+Media pages live in `src/pages/media/` with shared widgets/components in `src/components/media/`. Static imagery/crops live under `src/assets/media-control/`.
+
+When media providers are not connected, pages use truthful `NOT CONNECTED` / `UNAVAILABLE` presentation through shared truth banners/unavailable shells. Follower/reach/revenue KPIs must not be fabricated from reference/mock assets.
+
+Routes are listed in section 5. The Media Analytics route currently uses the generic section surface in `App.tsx`; route truth should be updated here when a dedicated page becomes active.
+
+---
+
+# 26. Tools UI
+
+Route `/tools`; `src/pages/ToolsPage.tsx`.
+
+Tools represent ExecutionGateway/CapabilityCatalog truth. Availability, risk/approval, last invocation and receipts are backend-owned. Chat capability cards reuse shared execution presentation where possible.
+
+No page should call a tool provider directly to bypass central capability policy.
+
+---
+
+# 27. ModuleManager UI
+
+Route `/modules`.
+
+Canonical workspace: `src/pages/plugin-runtime/ModulesPage.tsx` plus `src/pages/plugin-runtime/modules/` (`viewModels.ts`, workspace hook/components) and `src/styles/modules-page.css`. Any top-level compatibility wrapper should delegate to this workspace.
+
+Supported operator functions include:
+
+- discover/refresh;
+- install planning/install;
+- start/stop/restart/ensure-ready;
+- health/logs/jobs/capabilities;
+- execute;
+- sweep idle modules;
+- check update/version list;
+- install version/activate/rollback.
+
+## Dependency-aware install UI
+
+The UI requests the backend install plan, showing declared runtime/application/system dependencies, detected package manager, privilege needs, blockers and planned actions. If privileged system changes require approval, the operator approves the exact plan/argument digest and then starts the persisted install operation.
+
+Phase state is polled from `/api/modules/{id}/install-state`, e.g. planning → system deps → fetch/stage → runtime/app deps → post-install → verify → READY/FAILED.
+
+Client helpers include `moduleInstallPlan`, `moduleInstallState` and `installModule` on the API facade/domain code. The frontend never treats a click as installation success.
+
+Layout invariant: module header/search/filters are compact; `.lv-mod-rows` owns remaining scroll height. Search/icon styling must remain scoped to the module page.
+
+---
+
+# 28. Skills UI
+
+Route `/skills`; `src/pages/plugin-runtime/SkillsPage.tsx`.
+
+The page supports installed skills and bounded external catalog search. Enable/disable and instruction load use `/api/skills`. Instruction bodies are loaded on demand; catalog scale does not imply thousands of instructions enter prompt/context.
+
+Skill execution still uses backend capability authority. Catalog presence and enabled state are separate.
+
+---
+
+# 29. MCP, Workflows and Console UI
+
+- `/mcp` → `src/pages/McpPage.tsx`: server/session/tool state from backend MCP bridge;
+- `/workflows` → `src/pages/WorkflowsPage.tsx`: workflow store/runtime control;
+- `/console` → `src/pages/ConsolePage.tsx`: operator console projection;
+- `/performance` → `src/pages/PerformancePage.tsx`: performance/native/DB read model.
+
+MCP tool invocation is not a direct browser-to-MCP channel; backend gateway/approval semantics remain authoritative.
+
+---
+
+# 30. Settings UI
+
+Route `/settings`; `src/pages/SettingsPage.tsx` plus `src/pages/settings/`:
+
+- `SettingsNavigation.tsx` — sections;
+- `SettingField.tsx` — typed field editor;
+- `RestartRequiredBadge.tsx` — apply-mode truth;
+- `settingsPage.test.ts` — contracts.
+
+Current settings sections include General, LLM behavior, LLM Studio, Rights & Security, Model Benchmarks, MediaCenter, Storage, Python & Runtime, Console, Logs, Knowledge & RAG, Cognition & Neuro, Agents & Coding, Tools & MCP, Market Simulation and Data & Research.
+
+Settings are catalog-driven from the backend. Type/range/enum/secret/restart semantics should not be redefined page-locally.
+
+Native compute, worker, market and research controls appear only if present in the backend Settings catalog.
+
+---
+
+# 31. SQLite Manager UI
+
+The SQLite Manager is an operator surface over CONTROL/KNOWLEDGE/MARKET and is normally reached through relevant runtime/settings tooling.
+
+Frontend API methods in the central client cover overview, tables/schema/index/FKs, bounded rows, read/write SQL, row insert/update/delete, integrity, WAL checkpoint, ownership audit and runtime/commit/backup metadata.
+
+Mutation safety rules:
+
+- selected database domain is explicit;
+- changing domain clears previous table/row/query mutation state;
+- backend requires `confirmDomain` for writes;
+- update/delete requires deterministic row identity;
+- schema DDL is not a console operation.
+
+Frontend never treats SQLite Manager as a fourth data store.
+
+---
+
+# 32. Shared components, hooks, libraries, state and types
+
+## Components
+
+`src/components/` owns reusable visual pieces including shell/navigation, error/demo/truth wrappers, media widgets and cross-page presentation components. Prefer shared components over page-specific copies when semantics match.
+
+## Hooks
+
+`src/hooks/` owns cross-page behavior: live events, shell status, telemetry, clock, toasts and other generic hooks. Domain-heavy hooks should live beside the domain page (e.g. Research Lab workspace hook).
+
+## Libraries
+
+`src/lib/executionFabric.ts` — shared capability/execution display contracts.
+
+`src/lib/jobStatus.ts` — JobRuntime status formatting/normalization.
+
+Other `src/lib/` helpers should remain pure/shared; backend authority stays in API responses.
+
+## State
+
+`src/state/` contains global UI state such as toast/application coordination. Avoid duplicating backend durable state in a browser store when polling/SSE/API is already authoritative.
+
+## Types
+
+`src/types/` contains shared TypeScript contracts. Domain APIs may keep narrower colocated types where appropriate, but do not create conflicting duplicate shapes for the same response.
+
+---
+
+# 33. Assets and styles
 
 ## Assets
 
-`src/assets/` contains static imagery such as:
+`src/assets/` includes core hero/background/avatar/globe imagery and `media-control/` assets. Assets are presentation only and never evidence that a capability is connected.
 
-- `hero.jpg`;
-- `coding-hero.jpg`;
-- `analytics-hero.jpg`;
-- `architecture-bg.jpg`;
-- `avatar.jpg`;
-- `globe.jpg`;
-- `earth-mini.jpg`;
-- `media-control/` and its prepared crops/tiles.
+## Styles
 
-Binary assets are intentionally described by directory/purpose here rather than duplicated as an image-by-image catalog.
+Global/page CSS lives under `src/styles/`. Preserve the common LEVIATHAN design language rather than introducing a new design system for every screen.
 
-## Styling
+Trading, modules, research, brain and media pages have dedicated style files where the layout requires it. Prefer scoped selectors for page-specific SVG/flex behavior to avoid global regressions.
 
-Global and page-specific styles live under `src/styles/`. Preserve the LEVIATHAN shell/layout classes and shared style conventions rather than introducing a second design system per page.
+Responsive layouts should preserve scroll ownership and information hierarchy at typical desktop widths. Dense operator pages should scroll the data panel, not expand compact header/search elements to consume the viewport.
 
 ---
 
-# 19. Mocks and truth boundaries
+# 34. Accessibility and resilience
 
-`src/mocks/` and explicitly named mock files may support development/tests. Production routes must prefer backend-backed state.
+Current application-level protections include:
 
-Frontend invariant:
+- global ErrorBoundary;
+- React.lazy/Suspense around the TradingCenter route family;
+- skip-to-content link and `main#main-content`;
+- semantic buttons/labels for interactive controls;
+- explicit loading/error/empty/degraded states.
 
-```text
-button exists != backend capability available
-spinner != work completed
-model prose != execution receipt
-UI status != verified status unless backend-backed
-mock fixture != production integration
-```
-
-Where a backend returns `UNAVAILABLE`, `UNMEASURED`, `NOT_CONFIGURED`, `WAITING_APPROVAL`, `PARTIAL` or similar states, the UI should render that state honestly instead of converting it to success.
+A11y additions should preserve keyboard navigation and visible focus without bypassing the common AppShell.
 
 ---
 
-# 20. Frontend tests
+# 35. Frontend testing
 
-Current frontend scripts:
+Primary commands:
 
 ```bash
 cd Data/frontend
@@ -583,110 +790,140 @@ npm run lint
 npm run build
 ```
 
-Tests exist beside system surfaces, including API client/streaming, shell status, Agents, Chat/Coding, datasets and Settings contracts. New pages/actions should add tests close to the relevant module.
+Tests live beside relevant pages/helpers and include shell status, Chat/Coding, Agents, datasets, Settings, Research Lab view-models/contracts, Research Command contracts, module/skills/chat fabric contracts and truth-state helpers.
+
+Playwright/MSW support remains feature-gated unless the repository/CI actually contains and runs those dependencies. Never claim E2E coverage because a plan mentions it.
+
+For a UI PR, minimum expectation is typecheck + relevant Vitest + build; lint when configured/available.
 
 ---
 
-# 21. Frontend file locator
+# 36. Backend contract map for frontend work
 
-Use this map when changing UI behavior:
+| UI area | Backend owner / route family |
+|---|---|
+| Chat | `POST /api/chat`, Cognition, Brain, ExecutionGateway |
+| Cognition | `/api/cognition/*`, `/api/team/*` |
+| Models | `/api/models/*`, Model Control Plane |
+| Agents | `/api/agents/*`, Agent Fleet |
+| Worker Fabric | `/api/workers/*` |
+| Coding | `/api/coding/*`, CodingControlPlane |
+| Tasks | `/api/tasks/*`, JobRuntime/workflows |
+| Brain | `/api/brain/*` |
+| Memory | `/api/memory/*` |
+| Knowledge | `/api/knowledge/*` |
+| Evidence | `/api/evidence/*` |
+| Research | `/api/research/*` |
+| Datasets | `/api/datasets/*` |
+| Training | `/api/training/*` |
+| Tools | `/api/capabilities/*`, `/api/functions/*` |
+| Modules | `/api/modules/*` |
+| Skills | `/api/skills/*` |
+| MCP | `/api/mcp/*` |
+| Workflows | `/api/workflows/*` |
+| Settings | `/api/settings/*` |
+| SQLite Manager | `/api/sqlite/*` |
+| Trading | `/api/market-sim/*`, `/api/trading-orchestra/*` |
+| Research Command | research-command route module/API family |
+| Media | `/api/media/*` |
+| Browser | `/api/browser*` |
+| Voice | `/api/voice/*` |
+| Host/runtime | `/api/host/*`, `/api/system/*`, `/api/performance/*`, events |
+
+Always inspect the current client function and backend route before adding a page-local endpoint spelling.
+
+---
+
+# 37. Complete frontend locator for Cursor
 
 | Need | Start here |
 |---|---|
-| Route/page wiring | `src/App.tsx` |
-| App bootstrap | `src/main.tsx` |
-| Main/sub navigation | `src/navigation/menu.ts` |
-| Shell layout | `src/layouts/AppShell.tsx` |
-| Header/sidebar/footer | `src/components/App*.tsx` |
-| Backend API | `src/api/client.ts` |
-| Live events | `src/hooks/useLiveEvents.ts` |
-| Health/shell state | `src/hooks/useShellStatus.ts` |
-| System telemetry | `src/hooks/useSystemTelemetry.ts` |
-| Chat | `src/pages/ChatPage.tsx` |
+| browser bootstrap | `src/main.tsx` |
+| routes/lazy loading | `src/App.tsx` |
+| primary/sub navigation | `src/navigation/menu.ts` |
+| shell/chrome | `src/layouts/AppShell.tsx`, `src/components/` |
+| backend HTTP | `src/api/http.ts`, `src/api/client.ts` |
+| domain API | `src/api/domains/` |
+| shared backend types | `src/types/` |
+| live events | `src/hooks/useLiveEvents.ts` |
+| shell health | `src/hooks/useShellStatus.ts` |
+| telemetry | `src/hooks/useSystemTelemetry.ts` |
+| Chat | `src/pages/ChatPage.tsx`, `src/pages/chat/`, `chatTelemetry.ts` |
 | Cognition | `src/pages/CognitionPage.tsx` |
+| Models | `src/pages/ModelsPage.tsx`, `src/pages/models/` |
+| Agents/workers | `src/pages/AgentsPage.tsx`, `src/pages/agents/` |
 | Coding | `src/pages/CodingPage.tsx`, `src/pages/coding/` |
-| Models | `src/pages/models/` |
-| Agents | `src/pages/AgentsPage.tsx`, `src/pages/agents/` |
+| Tasks | `src/pages/TasksPage.tsx` |
 | Brain | `src/pages/BrainPage.tsx`, `src/pages/brain/` |
 | Memory | `src/pages/GeheugenPage.tsx` |
 | Knowledge | `src/pages/KnowledgeLibraryPage.tsx` |
 | Evidence | `src/pages/EvidenceVaultPage.tsx` |
-| Research | `src/pages/ResearchPage.tsx`, `src/config/research.ts` |
-| Datasets | `src/pages/DatasetsPage.tsx`, `src/pages/datasets/` |
+| General Research | `src/pages/ResearchPage.tsx`, `src/config/research.ts` |
+| Datasets | `src/pages/DatasetsPage.tsx`, `src/pages/datasets/`, `src/pages/pixel/*Dataset*` |
 | Training | route in `App.tsx`, training/pixel page family |
-| Trading | `src/pages/trading/` |
-| Media | `src/pages/media/`, `src/components/media/` |
+| Analytics | `src/pages/AnalyticsPage.tsx` |
+| Trading shared | `src/pages/trading/` |
+| Simulation | `src/pages/trading/SimulatiePage.tsx` |
+| Strategies | `src/pages/trading/StrategieenPage.tsx` |
+| Market data | `src/pages/trading/MarktdataPage.tsx` |
+| Portfolio | `src/pages/trading/PortefeuillePage.tsx` |
+| Paper | `src/pages/trading/PaperTradingPage.tsx`, `src/pages/trading/paper/` |
+| Broker boundary | `src/pages/trading/BrokerTradingPage.tsx` |
+| Research Command | `src/pages/trading/researchCommand/`, `OnderzoekPage.tsx` |
+| Research Lab | `src/pages/trading/researchLab/`, `src/api/domains/marketSimLab.ts` |
+| Control Room | trading institutional Control Room page |
+| Media | `src/pages/media/`, `src/components/media/`, `src/assets/media-control/` |
 | Tools | `src/pages/ToolsPage.tsx` |
+| Modules | `src/pages/plugin-runtime/ModulesPage.tsx`, `src/pages/plugin-runtime/modules/` |
+| Skills | `src/pages/plugin-runtime/SkillsPage.tsx` |
 | MCP | `src/pages/McpPage.tsx` |
 | Workflows | `src/pages/WorkflowsPage.tsx` |
+| Performance | `src/pages/PerformancePage.tsx` |
+| Console | `src/pages/ConsolePage.tsx` |
 | Settings | `src/pages/SettingsPage.tsx`, `src/pages/settings/` |
-| Shared execution presentation | `src/lib/executionFabric.ts` |
-| Job presentation | `src/lib/jobStatus.ts` |
-| Toast state | `src/state/`, `src/hooks/useToast.ts` |
-| Images | `src/assets/` |
-| Styles | `src/styles/` |
-| Shared TS types | `src/types/` |
+| execution display | `src/lib/executionFabric.ts` |
+| job display | `src/lib/jobStatus.ts` |
+| global state | `src/state/` |
+| images | `src/assets/` |
+| styles | `src/styles/` |
+| mocks/demo | `src/mocks/` and explicitly named mock files |
 
 ---
 
-# 22. Frontier Reasoning frontend program status
+# 38. Frontend contribution rules
 
-The master implementation program preserves the existing frontend and adds reasoning surfaces only after backend phases establish real data.
+When changing LEVIATHAN UI:
 
-Current documentation snapshot:
-
-- F0 baseline is present on `main`;
-- F1–F16 are backend/intelligence phases to be implemented/verified sequentially;
-- **F17** is the dedicated frontend/settings phase;
-- F18 is final hardening.
-
-Do not pre-render fake F17 values. Future reasoning UI must be driven by actual backend fields/events added by the earlier phases.
-
-Machine reasoning gates remain at `Data/backend/tests/frontier_reasoning_gates.json`; UI gate R25 is not PASS until implementation/tests prove it.
+1. **Find the backend owner first.** The page is usually a projection/control surface, not the business-logic owner.
+2. **Use the central API client/domain module.** Avoid page-local duplicate transports.
+3. **Preserve truth states.** Missing/unmeasured/unavailable is not success or numeric zero.
+4. **Do not expose hidden CoT.** Public plan/activity/evidence is fine; private reasoning is not.
+5. **Do not create a second shell/design system.** Extend AppShell/shared components/styles.
+6. **Do not make mocks production truth.** Keep them explicit and labeled.
+7. **Keep TypeScript contracts strict.** Update backend/API/types together.
+8. **Add relevant tests.** Prefer view-model/helper contract tests for truth-sensitive derivation.
+9. **Update this document** whenever a route, page owner, API module, status contract or major file location changes.
+10. **Update the backend companion** when the UI change requires a backend contract change.
 
 ---
 
-# 23. Frontend architecture rules
+# 39. High-value invariants
 
-1. Backend capability/status is authoritative.
-2. Use the central API client instead of page-specific duplicate transports where possible.
-3. Keep the common AppShell/navigation rather than building isolated micro-frontends.
-4. Preserve real error/degraded/unmeasured states.
-5. Keep mock/test data explicitly marked and out of production truth paths.
-6. Do not expose private chain-of-thought; only public reasoning/activity metadata is eligible for UI.
-7. Update this document when routes, pages, API ownership or major file organization changes.
-8. Update the backend companion document when a UI change adds or changes an API contract.
-
-
-### Trading Center Lab (W17 / W25)
-
-`/trading/lab` (`ResearchLabPage`) binds to typed `/api/market-sim/lab/*` endpoints (overview, cost-pack, feed-health, trials, runs lifecycle, learning/generations/candidates/lessons). Shows real Learning Run status/stage/generation/budgets, family probabilities, candidate lineage, and evidence-linked lessons. Labels use TRAIN LEADER / VALIDATION PASSED / SEALED PASSED / QUALIFIED / UNMEASURED / NOT RUN — never fake profitability claims. Live broker remains explicitly blocked. No mock KPIs.
-
-### Autonomous Research Lab + Research Command (CURRENT)
-
-- **Autonomous Discovery vs Seed Existing:** create modal exposes `AUTONOMOUS_DISCOVERY` (research objective) and `SEED_EXISTING_STRATEGY` (existing strategy id). UI must not invent seed elites for discovery runs.
-- **Hypothesis lifecycle:** lab detail / RC evolution card show active hypothesis ids/count from API — public statements only.
-- **Hybrid agent + evolution:** candidate tables show proposal method / generation; no fabricated rankings.
-- **Numeric + chart perception:** advisory panels only when backend returns measured perception; never order controls.
-- **Qualification authority Q01–Q11:** UI may show lab finalist / qualification-required status; never claim institutional PASS without QualificationAuthority fields.
-- **Paper-forward continual research:** Research Command may surface linked deployment drift tickets when a paper portfolio is bound.
-- **Live money BLOCKED:** Research Command / Lab chrome keep live trading blocked; chat READ tools never unlock broker.
-- **Historical profitability ≠ future guarantee:** no mock equity curves or success badges from TRAIN fitness alone.
-
-Explain route: `GET /api/market-sim/lab/runs/{labId}/candidates/{candidateId}/explain` (structured evidence for drawers — no LLM prose).
-
-### Institutional Control Room (W68 / W98)
-
-`/trading/control-room` (`InstitutionalControlRoomPage`) consumes `GET /api/market-sim/institutional/control-room`. Panels show live-trading blocked status, open reconciliation breaks, open exceptions, and audit-chain verification from `InstitutionalRuntime` — UNMEASURED/EMPTY only when genuinely unmeasured. Frontend does not invent green health.
-
-**W16 lifecycle (CURRENT):** client helpers in `api/domains/marketSimLab.ts` cover `/api/market-sim/lab/runs` create/list/get/start/pause/resume/cancel plus learning inspection endpoints.
-
-
-### Frontend Platform (W18 CURRENT)
-
-- **W18A:** `ErrorBoundary` wraps the app; trading routes are `React.lazy` + `Suspense`; `SkipLink` + `main#main-content` in `AppShell`.
-- **W18B:** Shared `api/http.ts`; domain module `api/domains/marketSimLab.ts` (no page-local fetch for lab). Further domain splits continue incrementally — giant client remains the facade.
-- **W18C:** Chat exposes reasoning mode, sources/verification telemetry, and **Stop** abort for in-flight streams. No hidden CoT.
-- **W18D:** Dataset demo rows are labelled DEMO-only and regression-blocked from live inventory; decorative mocks must use `DemoBanner`.
-- **W18E:** Vitest unit coverage for ErrorBoundary. Playwright E2E / MSW: **FEATURE_GATED** until packages are adopted in CI.
-- **W18F:** Skip-to-content a11y; NL default / EN secondary preserved. Design language unchanged.
+```text
+App.tsx is route truth
+menu.ts is navigation truth
+backend is capability/status truth
+central API/domain clients own transport
+AppShell owns common chrome
+page-local state does not replace durable backend state
+UNMEASURED is neutral, never green
+mock/demo is never production truth
+model output is not execution proof
+public reasoning metadata may be shown; hidden CoT may not
+MarketSim owns trading metrics/qualification
+Research Command is composition, not a second learner
+Research Lab may discover strategies autonomously without a fake seed
+chart vision is advisory
+paper uses simulated capital
+live-money trading remains BLOCKED
+```

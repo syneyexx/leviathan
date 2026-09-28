@@ -1,1483 +1,1174 @@
 # LEVIATHAN System Backend Reference
 
-> **Canonical backend documentation.** This is the single human-readable backend architecture reference for LEVIATHAN.
+> **Canonical backend reference.** This file is the single human-readable source of truth for LEVIATHAN backend architecture, runtime ownership, persistence, execution, intelligence, research/trading systems, security boundaries, verification and exact code locations.
 >
-> Documentation snapshot: **2026-09-28**, based on `cursor/module-dependency-install-2ee4` after dependency-aware module installation. Runtime code and tests remain the final authority when this document and executable behavior disagree.
+> **Snapshot:** `main` at `1c30a3d062b03f8b77eb14b9ae8dee16979fcb61` (2026-09-28), after the autonomous trading research closed-loop merge. Runtime code, schemas and executable tests remain authoritative when prose and behavior disagree.
 >
-> Companion frontend reference: [`Leviathan_system_frontend.md`](./Leviathan_system_frontend.md).
+> Frontend companion: [`Leviathan_system_frontend.md`](./Leviathan_system_frontend.md).
 
 ---
 
-## 1. Documentation policy
+# 1. Documentation contract
 
-`Data/docs/` intentionally contains exactly two canonical documents:
+`Data/docs/` has exactly two canonical LEVIATHAN system documents:
 
-1. `Leviathan_system_backend.md` — backend architecture, ownership, runtime flows, module/file map, machine program state locations and active target architecture.
-2. `Leviathan_system_frontend.md` — frontend architecture, routes, pages, API/client structure and frontend file map.
+1. **`Leviathan_system_backend.md`** — everything behind the UI: composition, APIs, databases, cognition, models, knowledge, workers, agents, research, training, modules, security, trading, verification and file ownership.
+2. **`Leviathan_system_frontend.md`** — everything rendered or operated in the React client: routes, shell, pages, state, API client, components, styles and file ownership.
 
-Program gate manifests, generated verifier reports and machine state belong outside `Data/docs`, normally under `Data/backend/tests/` or `scripts/`. New implementation work should update these two canonical documents instead of creating another architecture Markdown file.
+Component-local README files, test manifests and generated reports may still live beside code because they are implementation evidence, not competing system architecture documents. New system-level information belongs in one of these two files.
 
-### Status vocabulary
+Status vocabulary used here:
 
-- **CURRENT** — implemented in the current repository/runtime.
-- **FEATURE-GATED** — implementation exists, but runtime availability depends on configuration/provider/hardware.
-- **BOUNDARY/STUB** — an honest boundary exists but production implementation is not claimed.
-- **TARGET** — part of an active implementation program, not yet a claim about current runtime behavior.
+- **CURRENT** — implemented on the snapshot above.
+- **FEATURE-GATED** — code exists, runtime availability depends on configuration, hardware, credentials or an external dependency.
+- **UNMEASURED / UNAVAILABLE / BLOCKED** — explicit runtime truth, never an implicit PASS.
+- **BOUNDARY** — intentional adapter/stub/guard; no larger capability is claimed.
+- **TARGET** — only used when discussing a machine program or future gate; it is not current product truth.
+
+The repository follows one overriding rule: **one responsibility → one canonical owner**. Do not solve a feature by adding a parallel `*V2`, second queue, second model router, fourth product database or private subsystem client.
 
 ---
 
 # 2. What LEVIATHAN is
 
-LEVIATHAN is a **local-first AI control plane and cognitive runtime**. The backend is not a single LLM wrapper: it composes model routing, cognition, retrieval, durable memory, neural advisory layers, capabilities, approvals, agents, jobs/workers, evidence, verification, datasets, training, evaluation, market simulation and operator controls into one system.
+LEVIATHAN is a **local-first AI control plane, cognitive runtime and operator platform**. It composes models, cognition, retrieval, memory, evidence, tools, approvals, agents, background workers, research, datasets, training/evaluation, external capability modules and a causal market-research/paper-trading environment into one supervised system.
 
-The architectural rule is **one responsibility → one canonical owner**. Existing subsystems are extended in-place. Parallel `*V2` runtimes are forbidden unless an explicit tested migration replaces the old owner.
-
-High-level runtime:
+The main backend shape is:
 
 ```text
-User / UI
-   |
-   v
-FastAPI control plane
-   |
-   +--> Settings / BehaviorProfile
-   +--> CognitiveRuntime
-   |      +--> TaskModel / Perception / BeliefState / WorkingMemory
-   |      +--> MetaController / CognitivePlanner / ActionSelector
-   |      +--> Brain/RAG + Memory + Evidence + Neuro/Cortex
-   |      +--> CapabilityBroker -> ExecutionGateway
-   |      +--> Agent delegation -> Coding / Research / specialists
-   |      +--> Verification + Completion
-   |
-   +--> Model Control Plane -> inference_session -> provider/runtime
-   |
-   +--> JobRuntime -> external worker pools for long/heavy work
-   |
-   +--> SQLite durable state / observations / receipts / artifacts
+Operator / React frontend
+        |
+        v
+FastAPI Control Plane                         Data/backend/main.py
+        |
+        +--> Settings + BehaviorProfile       Data/modules/settings/
+        +--> Chat + CognitiveRuntime          Data/modules/cognition/
+        |       +--> Brain facade             Data/modules/brain/
+        |       |      + Knowledge/RAG        Data/modules/knowledge/
+        |       |      + Memory               Data/modules/memory/
+        |       |      + Evidence             Data/modules/evidence/
+        |       |      + Neuro (advisory)     Data/modules/neuro/
+        |       +--> CapabilityBroker
+        |              + ExecutionGateway     Data/modules/execution/
+        |              + ModuleManager/MCP
+        +--> Model Control Plane              Data/modules/models/
+        |       + model runtime/providers     Data/modules/model_runtime/
+        +--> Agent/Coding/Research services
+        +--> MarketSim research + paper
+        +--> JobRuntime                       Data/modules/jobs/
+                |
+                v
+        Worker Fabric                         Data/modules/workers/
+                |
+                + heavy CPU/I/O/GPU work
+                + DB Commit Coordinator
+
+Durable state:
+    CONTROL   -> control/jobs/settings/runtime metadata
+    KNOWLEDGE -> documents/chunks/research knowledge
+    MARKET    -> market simulation/research/paper state
+    Artifacts -> ArtifactStore/file-backed payloads
 ```
 
----
-
-# 3. Canonical ownership map
-
-The encoded ownership contract lives in `Data/modules/common/ownership.py`.
-
-| Responsibility | Canonical owner | Primary location |
-|---|---|---|
-| Application composition | FastAPI composition root | `Data/backend/main.py` |
-| Configuration | Settings Control Plane | `Data/modules/settings/` |
-| Assistant behavior/identity | BehaviorProfile | `Data/modules/settings/behavior*.py`, `resolver.py`, `seed.py` |
-| Legacy intent/complexity classification | ReasoningEngine | `Data/modules/reasoning/` |
-| Cognitive orchestration | CognitiveRuntime | `Data/modules/cognition/` |
-| Cognitive compute policy | MetaController + ReasoningPolicy | `Data/modules/cognition/meta_controller.py`, `Data/modules/intelligence/policy.py` |
-| Cognitive planning | CognitivePlanner | `Data/modules/cognition/planner.py` |
-| Orchestration action selection | ActionSelector | `Data/modules/cognition/action_selector.py` |
-| Model selection/routing/residency | Model Control Plane | `Data/modules/models/` |
-| Provider transport/inference | Model runtime | `Data/modules/model_runtime/` |
-| Prompt/context compilation | Context subsystem | `Data/modules/context/` (canonical); cognition `context_v3.py` is adapter only |
-| Unified knowledge access | Brain facade | `Data/modules/brain/` |
-| Documents/RAG/retrieval | Knowledge | `Data/modules/knowledge/` |
-| Durable scoped memory | Memory | `Data/modules/memory/` |
-| Neural advisory/cortex | Neuro | `Data/modules/neuro/` |
-| Evidence | Evidence | `Data/modules/evidence/` |
-| Capabilities/side effects | ExecutionGateway | `Data/modules/execution/` |
-| Cold-path functions | FunctionRuntime | `Data/modules/function_runtime/`, `Data/functions/` |
-| Permission/approval policy | Approvals | `Data/modules/approvals/` |
-| Durable jobs | JobRuntime | `Data/modules/jobs/` |
-| External execution pools | Worker system | `Data/modules/workers/` |
-| Specialist agents | AgentRuntime/AgentFleet | `Data/modules/agents/` |
-| Coding | CodingControlPlane | `Data/modules/coding/` |
-| Research | ResearchService | `Data/modules/research/` |
-| Datasets | DatasetService | `Data/modules/datasets/` |
-| Training | TrainingService | `Data/modules/training/` |
-| Evaluation/release evidence | Evaluation platform | `Data/modules/evaluation/`, `Data/modules/release/` |
-| Verification | VerificationEngine | `Data/modules/verification/` |
-| Artifacts | ArtifactStore | `Data/modules/artifacts/` |
-| MCP integration | McpBridge/McpProvider | `Data/modules/mcp/` |
-| Plugins | PluginRegistry | `Data/modules/plugins/` |
-| Dynamic modules | ModuleManager | `Data/modules/module_manager/` |
-| Market simulation | MarketSimControlPlane | `Data/modules/market_sim/` |
-| Workflows/schedules | WorkflowRuntime / ScheduleRunner | `Data/modules/workflows/`, `Data/modules/schedules/` |
-| Tasks | TaskService | `Data/modules/tasks/` |
-| Observability | ObservabilityHub | `Data/modules/observability/` |
-| Metrics/time series | Metrics | `Data/modules/metrics/` |
-| Persistent metadata | three canonical SQLite DBs (Control / Knowledge / Market) | `Data/backend/config.py`, `database.py`, `db_upgrade.py`, `migrations.py`, `table_ownership.py` |
+The Python API remains the only HTTP control plane. The native launcher supervises it; workers execute heavy durable work; model residency is a separate execution concern; the React app is an operator surface, not an authority.
 
 ---
 
-# 4. Backend composition root
+# 3. Repository and process topology
+
+## 3.1 Top-level locations
+
+| Path | Responsibility |
+|---|---|
+| `leviathan.py` | primary Python application bootstrap used by launchers |
+| `Data/backend/` | FastAPI composition, configuration, database upgrade and HTTP routes |
+| `Data/modules/` | canonical domain implementations |
+| `Data/functions/` | FunctionRuntime cold-path functions |
+| `Data/external_capabilities/` | declarative external module manifests/catalog content |
+| `Data/frontend/` | React operator UI; documented in the frontend reference |
+| `Data/launcher/` | native/Tauri backend host and process supervisor |
+| `Data/native/` | native compute/data-plane implementation/binaries when present |
+| `scripts/` | worker launchers, verification harnesses and maintenance scripts |
+| `.env.example` | documented environment controls/defaults |
+| `installer.bat` | Windows installer/bootstrap helper |
+| `run_leviathan.bat` / `run_leviathan.exe` | operator launch paths |
+| `run_leviathan_workers.bat` | manual/advanced Worker Fabric recovery path |
+| `upgrade_leviathan_databases.bat` | three-database upgrade entrypoint |
+| `Data/HADES/` | separate submodule/boundary; not a canonical LEVIATHAN backend owner |
+| `editor/` | separate editor product tree; not a canonical LEVIATHAN backend owner |
+
+## 3.2 Runtime processes
+
+**Control plane:** FastAPI in `Data/backend/main.py`. It validates/routs requests, resolves settings/authority, enqueues durable work and serves lightweight/read APIs.
+
+**Worker plane:** `Data/modules/workers/` with `WorkerSupervisor`, pool registry, leases, admission and domain entrypoints. Heavy work must not silently fall back into FastAPI when externalization is enabled.
+
+**Model plane:** `Data/modules/models/` + `Data/modules/model_runtime/`; model routing/residency is independent from worker queue ownership.
+
+**Native host:** `Data/launcher/`; supervises Python and exposes local host lifecycle. It is not a second API or queue.
+
+Production boot contract:
+
+1. launcher/bootstrap starts the API process;
+2. it waits for bounded loopback `GET /api/host/liveness`;
+3. only after FastAPI lifespan bootstrap is proven does WorkerSupervisor start;
+4. supervisor verifies CONTROL schema readiness;
+5. workers are healthy only after process alive + registered + READY + heartbeat.
+
+Relevant files: `Data/modules/workers/bootstrap.py`, `process.py`, `supervisor.py`, `loop.py`, `registry.py`, `pools.py`, `protocol.py`, `settings.py`, `admission.py`, `events.py`, `crash_diagnostics.py`, and `entrypoints/`.
+
+---
+
+# 4. Backend composition root and configuration
 
 ## 4.1 `Data/backend/main.py`
 
-`main.py` is the composition root (**CURRENT**). It creates and wires the shared instances used by route modules and services. Domain HTTP handlers live in `Data/backend/routes/*` via `build_*_router(deps)`; `main.py` keeps composition, lifespan, middleware, **`POST /api/chat`**, SPA shell routes (`/`, `/chat`, `/{spa_path}`), and `/api/health`.
+`main.py` is the **composition root**. It constructs shared stores/services, binds dependencies to routers, installs middleware, owns lifespan boot/shutdown, retains `POST /api/chat`, serves the SPA shell and exposes `/api/health`.
 
-Current wiring includes:
+It wires, among others:
 
-- `Database`, `MigrationRunner`, run/artifact stores;
-- embedding provider, `KnowledgeStore`, `HybridRetriever`, `StagedRetriever`, `DeepRecallService`, `AtlasStore`, `WhyLibrary`, `KnowledgeAssimilationService`;
-- `FunctionRuntime`, `CapabilityCatalog`, `ExecutionGateway`, approvals, observations and capability receipts;
-- `JobRuntime`, resource manager and external-worker admission;
-- evidence, memory and verification stores/services;
-- `AgentRuntime`, `MultiAgentCoordinator`, `AgentFleetService`;
-- workflows and schedules;
-- observability, telemetry and metrics;
-- Neuro/Cortex/residual components;
-- module manager, plugins and MCP bridge/provider;
-- evaluation, release gates, training/flywheel services;
-- datasets, research, coding and market simulation;
-- browser/media/voice capability services and honest stubs;
-- `ReasoningEngine`, `OpenAICompatibleLLM`, `ModelControlPlane`;
-- Settings Control Plane and BehaviorProfile resolution;
-- `CognitiveRuntime`, specialist delegation handlers and cognition persistence;
-- tasks, Brain facade and domain strategy registry;
-- security, backup, chaos and master/release checks.
+- database paths/upgrades and core stores;
+- Settings Control Plane + BehaviorProfile;
+- KnowledgeStore, retrieval, Brain, Memory, Evidence and Neuro;
+- Model Control Plane/model runtime;
+- FunctionRuntime, capability catalog, ExecutionGateway and approvals;
+- JobRuntime, workers and resource admission;
+- AgentRuntime/Fleet, CodingControlPlane, ResearchService;
+- Dataset, training, evaluation, release and verification systems;
+- ModuleManager, PluginRegistry, MCP and external capability fabric;
+- MarketSimControlPlane, TradingOrchestra and Research Command;
+- browser/media/voice/multimodal boundaries;
+- observability, metrics, security, backup and product-truth services.
 
-## 4.2 Backend core files
+If a new backend subsystem needs a singleton dependency, its construction belongs here or in an established composition helper, not in a route handler.
+
+## 4.2 Configuration files
+
+| File | Role |
+|---|---|
+| `Data/backend/config.py` | typed environment/default configuration and canonical DB paths |
+| `.env.example` | human-readable environment catalogue |
+| `Data/modules/settings/catalog.py` | operator-visible setting definitions |
+| `Data/modules/settings/service.py` | settings control service |
+| `Data/modules/settings/store.py` | persisted settings |
+| `Data/modules/settings/validation.py` | type/range/enum validation |
+| `Data/modules/settings/bindings.py` | hot-apply bindings to live consumers |
+| `Data/modules/settings/behavior.py` | behavior profile contract |
+| `Data/modules/settings/behavior_store.py` | persisted behavior profile |
+| `Data/modules/settings/resolver.py` | immutable behavior snapshot per operation |
+| `Data/modules/settings/seed.py` | first-install/bootstrap behavior seed |
+
+Environment/default configuration establishes boot values. Persisted settings are the durable operator layer where supported. HOT settings bind live; restart-required settings must not be presented as already applied.
+
+BehaviorProfile controls model-facing identity/interaction behavior. It is **not** technical authority. Approval/permission remains in `Data/modules/approvals/` and ExecutionGateway policy.
+
+---
+
+# 5. Persistence: exactly three canonical SQLite databases
+
+LEVIATHAN has **exactly three product metadata databases**:
+
+```text
+CONTROL   LEVIATHAN_CONTROL_DATABASE_PATH
+          default Data/backend/data/leviathan_control.db
+
+KNOWLEDGE LEVIATHAN_KNOWLEDGE_DATABASE_PATH
+          default Data/backend/data/leviathan_knowledge.db
+
+MARKET    LEVIATHAN_MARKET_DATABASE_PATH
+          default Data/backend/data/leviathan_market.db
+```
+
+`LEVIATHAN_DATABASE_PATH` is legacy upgrade input only. `settings.database_path` is a CONTROL compatibility alias. A subsystem must not introduce a fourth product SQLite authority.
+
+Primary files:
+
+| File | Responsibility |
+|---|---|
+| `Data/backend/database.py` | core SQLite access/bootstrap compatibility |
+| `Data/backend/migrations.py` | preserved legacy single-DB migration history (1..56) |
+| `Data/backend/db_upgrade.py` | fresh 3-DB bootstrap + legacy cutover + domain migrations |
+| `Data/backend/table_ownership.py` | canonical table→CONTROL/KNOWLEDGE/MARKET ownership |
+| `Data/modules/common/sqlite_policy.py` | busy-timeout/WAL/hot-path connection policy |
+| `Data/modules/db_commit/` | bulk canonical write coordinator |
+| `Data/modules/sqlite_manager/` | operator DB inspection/controlled mutation surface |
+| `Data/backend/routes/sqlite_manager.py` | `/api/sqlite/*` HTTP surface |
+
+Current domain migration history includes CONTROL additions through dependency-aware external-install operations (domain v6) and MARKET autonomous-research hypotheses (domain v7). Never infer a future migration number from this document: inspect `DOMAIN_MIGRATIONS` in `db_upgrade.py` before adding the next migration.
+
+## 5.1 Write classes
+
+**CONTROL_WRITE** — small latency-sensitive writes may be direct when policy permits: job state, heartbeat, lease/cancel flags, bounded operator mutation.
+
+**COMMIT_WRITE** — substantial canonical mutations use `Data/modules/db_commit/`: Knowledge chunks/embeddings, bulk research records, dataset index batches, market/evaluation/training lineage and similar heavy writes.
+
+DB Commit Coordinator rules:
+
+- one managed external writer pool (`db_commit`) with independent CONTROL/KNOWLEDGE/MARKET lanes;
+- typed `CommitIntent`, allowlisted handlers, hashes and references — no arbitrary SQL payloads;
+- durable spool under each DB parent for correctness/recovery;
+- idempotent receipts before replay;
+- bounded batches release SQLite locks between batches;
+- unavailable writer means durable backpressure/failure, never silent direct heavy-write fallback.
+
+## 5.2 SQLite Manager
+
+`Data/modules/sqlite_manager/` and `Data/backend/routes/sqlite_manager.py` expose operator tooling over all three DBs: overview, schema/table/index/FK inspection, bounded row browse, parameterized PK-safe CRUD, read-only SQL, guarded INSERT/UPDATE/DELETE, integrity checks, WAL checkpoint, ownership audit, contention/runtime data and backup metadata.
+
+It is **not** a new persistence layer and does not own schema DDL. Migrations remain the schema authority.
+
+---
+
+# 6. HTTP/API architecture and mutation security
+
+Domain route modules live in `Data/backend/routes/`. `main.py` binds shared dependencies into `build_*_router(...)` functions. Important route files:
+
+| File | Domain |
+|---|---|
+| `agents.py` | Agent Fleet/execution/multi-agent |
+| `agent_signals.py` | Signal Fabric |
+| `analytics.py` | analytics |
+| `approvals.py` | approval requests/decisions |
+| `artifacts.py` | ArtifactStore/run artifacts |
+| `brain.py` | Brain graph/search/status |
+| `browser.py`, `browser_qa.py` | browser capabilities/QA |
+| `capabilities.py` | capability catalog/invoke/receipts |
+| `coding.py` | Coding Agent sessions/actions |
+| `cognition.py` | cognition run lifecycle/events/steering |
+| `conversations.py` | conversation CRUD |
+| `datasets.py` | dataset lifecycle/index/offline operations |
+| `efficiency.py` | efficiency/resource projections |
+| `evaluation.py` | evaluation platform/harness |
+| `evidence.py` | evidence store |
+| `flywheel.py` | post-training candidates/promotion/lineage |
+| `functions.py` | FunctionRuntime catalogue/invoke |
+| `host_console.py` | native-host read projections/liveness |
+| `jobs.py` | JobRuntime |
+| `knowledge.py` | knowledge/RAG/Atlas/DeepRecall/Why |
+| `market_sim.py` | market data, simulation, strategies, research lab, qualification, paper |
+| `mcp.py` | MCP servers/sessions/tools |
+| `media.py` | media capability boundary |
+| `memory.py` | durable MemoryStore |
+| `models.py` | model registry/providers/routing/runtime/download |
+| `modules.py` | ModuleManager lifecycle/install/execute |
+| `multimodal.py` | multimodal sessions |
+| `neuro.py` | Neuro/Cortex/operator surfaces |
+| `observability.py`, `observations.py` | live events and durable observations |
+| `platform.py` | architecture/security/release/backup/chaos/context/master projections |
+| `plugins.py` | PluginRegistry |
+| `research.py` | general research projects/runs/sources |
+| `research_command.py` | Trading Research Command composition surface |
+| `schedules.py` | schedule store/runner |
+| `settings.py` | Settings/BehaviorProfile |
+| `skills.py` | external skill search/load/enable |
+| `sqlite_manager.py` | three-DB operator control surface |
+| `system.py` | telemetry/system status |
+| `tasks.py` | durable tasks |
+| `team.py` | TEAM quality/collaboration APIs |
+| `trading_orchestra.py` | trading-only orchestras/agents |
+| `training.py` | training/jobs/preference/synthetic/active-learning |
+| `verification.py` | VerificationEngine/reports |
+| `voice.py` | voice boundary |
+| `workers.py` | Worker Fabric dashboard/control |
+| `workflows.py` | workflow store/runtime |
+
+### Central mutation authentication
+
+Current main has a central mutation boundary in `Data/backend/main.py` backed by `Data/modules/common/http_auth.py`. Loopback mutation is allowed by local policy; non-loopback `/api` mutations require the configured operator token. The middleware protects newly mounted mutating routers so authorization is not dependent on every handler remembering a check. Token comparison is constant-time (`hmac.compare_digest`), and unsafe non-loopback startup is rejected rather than silently exposed.
+
+Tests: `Data/backend/tests/test_central_mutation_auth.py`.
+
+CORS for native/Vite origins is narrowly scoped and is **not authorization**. Read projections may be allowlisted; mutating authority still goes through the central policy, approvals and domain guards.
+
+---
+
+# 7. Chat, Cognition and TEAM
+
+## 7.1 Chat path
+
+`POST /api/chat` remains in `Data/backend/main.py` because it is a composition-level path. The current high-level flow is:
+
+```text
+request
+ -> effective settings + BehaviorSnapshot
+ -> intent/retrieval classification
+ -> Brain/Memory/Evidence/Neuro perception as needed
+ -> CognitiveRuntime.submit(...)
+ -> TaskModel + Perception + BeliefState + WorkingMemory
+ -> MetaController + CognitivePlanner + ActionSelector
+ -> model / retrieval / capability / agent / verification loop
+ -> cognition-owned answer (or compatible fallback path)
+ -> persist public assistant turn + telemetry
+```
+
+`Data/modules/reasoning/` is the legacy lightweight intent/retrieval-classification seam. **CognitiveRuntime** in `Data/modules/cognition/` is the deep orchestration owner.
+
+## 7.2 Core cognition files
 
 | File | Purpose |
 |---|---|
-| `Data/backend/main.py` | Composition root + chat + SPA + health (**CURRENT**) |
-| `Data/backend/config.py` | typed environment/runtime settings |
-| `Data/backend/database.py` | SQLite access and initialization |
-| `Data/backend/migrations.py` | legacy single-DB migration history 1..**56** (preserved); domain baselines materialize from this head |
-| `Data/backend/db_upgrade.py` | canonical upgrade orchestrator — fresh 3-DB install + legacy single-DB → 3-DB cutover |
-| `Data/backend/table_ownership.py` | machine-verifiable CONTROL/KNOWLEDGE/MARKET table ownership map |
-| `upgrade_leviathan_databases.bat` | root Windows entrypoint for database upgrades (calls `Data.backend.db_upgrade`) |
-| `Data/backend/llm.py` | compatibility/boundary helpers |
-| `Data/backend/reasoning.py` | compatibility import/boundary |
+| `cognition/runtime.py` | run/submit/cancel/resume/steer/event state machine |
+| `task_model.py` | typed task model/criteria |
+| `perception.py` | Brain/knowledge/memory/evidence/neuro input |
+| `belief_state.py` | support/contradiction/confidence state |
+| `working_memory.py` | bounded in-run memory/pinned constraints |
+| `meta_controller.py` | orchestration + neural compute policy |
+| `compute_axes.py` | neural inference budget axis |
+| `planner.py` | structured plans/replans |
+| `action_selector.py` | next-action selection |
+| `capability_broker.py` | bounded capability shortlist/discovery |
+| `context_v3.py` | adapter into canonical ContextBuilder |
+| `completion.py` | typed acceptance/completion decisions |
+| `delegation.py`, `specialists.py` | specialist/agent delegation |
+| `domain_strategy.py` | domain-specific strategy hooks without another runtime |
+| `experience.py` | VerifiedExperience admission |
+| `ttc.py` | inference-time candidate generation/scoring/pruning/repair |
+| `critics.py`, `hypotheses.py`, `neural_advisor.py` | critic/hypothesis/advice support |
+| `skills.py` | measured procedural skill library |
+| `store.py` + hydration/checkpoint helpers | durable resume |
 
-SQLite is the canonical metadata plane as **exactly three** product databases:
+Reasoning modes FAST/STANDARD/DEEP/MAXIMUM change actual orchestration budgets; ADAPTIVE can change effective mode from evidence/uncertainty/failure/resource pressure. Neural compute and orchestration compute are separate axes controlled by MetaController.
 
-```text
-Control Plane DB  — LEVIATHAN_CONTROL_DATABASE_PATH   (default Data/backend/data/leviathan_control.db)
-Knowledge DB      — LEVIATHAN_KNOWLEDGE_DATABASE_PATH (default Data/backend/data/leviathan_knowledge.db)
-Market DB         — LEVIATHAN_MARKET_DATABASE_PATH    (default Data/backend/data/leviathan_market.db)
-```
+Private chain-of-thought is not a persistence/API contract. Persist public plan/activity/evidence summaries, not hidden reasoning tokens.
 
-`LEVIATHAN_DATABASE_PATH` is **legacy upgrade input only** (not post-cutover product authority).
-`settings.database_path` remains the Control Plane path compatibility alias.
-Subsystems must not create a fourth product metadata authority.
+## 7.3 TEAM collaboration
 
-### SQLite write architecture (CONTROL_WRITE vs COMMIT_WRITE)
+TEAM is orthogonal to reasoning depth. Canonical pieces:
 
-LEVIATHAN uses three canonical SQLite databases with two explicit write classes:
+- `Data/modules/cognition/team_strategy.py` — role policy + `TeamSpecialistResult`;
+- `Data/modules/cognition/team_task_profile.py` — task-aware profile;
+- `Data/modules/cognition/team_orchestrator.py` — DAG/follow-up/progress/no-progress;
+- `Data/modules/verification/quality_contract.py` and `quality_store.py` — acceptance truth;
+- `Data/backend/routes/team.py` — `/api/team/*`;
+- Research TEAM mode uses the same quality-contract semantics.
 
-| Class | Rule | Examples |
-| --- | --- | --- |
-| `CONTROL_WRITE` | Tiny, latency-sensitive, **direct** SQLite allowed | supervisor/worker heartbeats, job status transitions, cancel flags, lease renewals |
-| `COMMIT_WRITE` | Substantial canonical mutations **must** go through the DB Commit Coordinator | Knowledge chunks/embeddings, research evidence/claims/reports, dataset index batches, MarketSim event batches, evaluation/training lineage batches, source-ingestion bulk metadata |
-
-**DB Commit Coordinator** (`Data/modules/db_commit/`, worker pool `db_commit`, `desired_count=1`):
-
-- External worker managed by `WorkerSupervisor` (not an AI agent).
-- Producers submit typed `CommitIntent` messages (payload **refs** + hashes — never giant inline blobs, never arbitrary SQL).
-- Fast path: Windows-compatible localhost IPC; correctness path: durable filesystem spool under `<db-parent>/commit_spool_{control|knowledge|market}/`.
-- Independent lanes: Control / Knowledge / Market may commit concurrently; each SQLite file remains serialized.
-- Allowlisted `CommitHandlerRegistry` adapters call domain stores (`KnowledgeStore`, `ResearchStore`, …) — domain ownership stays with those stores.
-- Idempotent `commit_receipts` / `commit_batches` tables live **per owning DB**; crash recovery checks receipts before re-applying.
-- Bulk handlers use bounded batches and release the SQLite writer lock between batches so control-plane heartbeats are not starved.
-- Writer unavailable ⇒ durable spool / `DB_COMMIT_BACKPRESSURE` / `DB_COMMIT_SPOOL_UNAVAILABLE` — **never** fall back to direct heavy SQLite writes from producers.
-- Legacy `knowledge_commit` pool defaults to `0`; `knowledge.commit` jobs are owned by `db_commit`.
-
-**SQLite Manager** (`Data/modules/sqlite_manager/`, routes `/api/sqlite/*`): operator control plane over Control / Knowledge / Market — not a second persistence layer, migration engine, or DB writer.
-
-- **Overview** — live domain path, existence, size, WAL/SHM, schema version, table count, journal mode, health/readiness, ownership description.
-- **Explorer** — table/schema/index/FK introspection with ownership states (`EXPECTED` / `INFRASTRUCTURE` / `EPHEMERAL` / `UNKNOWN` / `WRONG_DATABASE` / `AMBIGUOUS` / `MISSING`), bounded row browse (pagination, filters, search), parameterized row insert/update/delete when a deterministic primary key exists (`ROW_IDENTITY_UNAVAILABLE` otherwise).
-- **SQL console** — separated READ (SELECT / WITH…SELECT / allowlisted PRAGMA) vs controlled WRITE (INSERT/UPDATE/DELETE only). Read connections use URI `mode=ro` when available, `PRAGMA query_only`, disabled extension loading, and a SQLite authorizer. Comment-prefixed / multi-statement / schema / ATTACH bypasses fail closed.
-- **Mutations** — require `confirmDomain` matching the selected domain; classified as `CONTROL_WRITE` via `sqlite_policy.control_write` (never a silent COMMIT_WRITE fallback, never arbitrary coordinator SQL). Schema DDL remains owned by MigrationRunner / `db_upgrade`.
-- **Integrity / ownership** — `PRAGMA quick_check` / `integrity_check(N)` / `foreign_key_check`; system ownership audit across all three DBs (`GET /api/sqlite/ownership-audit`).
-- **Runtime** — WAL checkpoint (explicit, confirmed), process-local SQLite contention metrics, DB Commit settings + per-domain spool stats when present, BackupService latest metadata (restore remains BackupService-owned).
-
-Canonical connection policy: `Data/modules/common/sqlite_policy.py` (busy_timeout on hot paths; `PRAGMA journal_mode=WAL` only during initialize/migration).
+Conversational TEAM uses a lightweight topology; research/coding/quantitative work keeps strict evidence/test/calculation criteria. Model-authored booleans never count as proof: artifact text and real receipt IDs are inspected.
 
 ---
 
+# 8. Context, trust and multimodal state
 
-# 5. API route map
+Canonical context compilation is `Data/modules/context/`:
 
-Dedicated route modules live in `Data/backend/routes/` (Wave 0D — domain routers extracted from `main.py`):
+- `builder.py` — sole context compiler;
+- `reference.py` — untrusted reference serialization;
+- `budget.py`, `fit.py`, `tokenization.py` — token budgets;
+- `compaction.py`, `hierarchical_compaction.py` — reduction;
+- `bounded_cache.py`, `cache_policy.py`, `singleflight.py` — efficiency;
+- `snapshots.py`, `fingerprints.py` — identity/reproducibility;
+- `multimodal.py` — text/image/audio/video typed session parts;
+- `types.py` — ContextPack contracts.
 
-| Route module | System |
-|---|---|
-| `agents.py` | Agent Fleet / execute / multi-agent |
-| `agent_signals.py` | agent signal fabric |
-| `analytics.py` | analytics |
-| `approvals.py` | approval requests/decisions |
-| `artifacts.py` | artifacts + run lookup |
-| `brain.py` | Brain graph/search/status |
-| `browser.py` | legacy browser request + QA journey surfaces |
-| `browser_qa.py` | Browser QA crawls control plane |
-| `capabilities.py` | capability catalog / invoke / receipts |
-| `coding.py` | Coding Agent sessions/turns/actions |
-| `cognition.py` | cognition submit/status/events/cancel/resume |
-| `conversations.py` | conversation CRUD |
-| `datasets.py` | dataset management, ingest/index/offline workflows |
-| `efficiency.py` | efficiency/resource surfaces |
-| `evaluation.py` | evaluation harness / platform / residual |
-| `evidence.py` | evidence store |
-| `flywheel.py` | post-training challengers / promotions / lineage |
-| `functions.py` | function registry / invoke |
-| `host_console.py` | read-only backend-host projections (`/api/host/liveness`, `/api/host/overview`, `/api/host/source-ingestion`, `/api/host/native-operations`) |
-| `jobs.py` | job runtime |
-| `knowledge.py` | knowledge / atlas / deep-recall / why / ingest |
-| `market_sim.py` | market simulation, strategies, data, paper trading |
-| `mcp.py` | MCP servers/sessions/tools |
-| `media.py` | media capability request |
-| `memory.py` | memory store |
-| `models.py` | model registry/providers/downloads/routing/runtime |
-| `modules.py` | module manager discover/execute |
-| `multimodal.py` | multimodal sessions |
-| `neuro.py` | Neuro / Cortex / residual operator surfaces |
-| `observability.py` | runtime events/observability |
-| `observations.py` | observation store |
-| `platform.py` | thin misc: architecture, metrics, telemetry, isolation, release, security, native, trading stub, backup, chaos, secrets, context preview, master gates |
-| `plugins.py` | plugin registry / invoke |
-| `research.py` | research projects/runs/sources |
-| `schedules.py` | schedule store / runner |
-| `settings.py` | Settings + BehaviorProfile operations |
-| `system.py` | telemetry/system status |
-| `tasks.py` | durable task orchestration |
-| `trading_orchestra.py` | trading-only orchestras/agents |
-| `training.py` | durable training jobs + preference/synthetic/active-learning surface |
-| `verification.py` | verification evaluate / reports |
-| `voice.py` | voice capability request |
-| `workers.py` | worker supervisor / admission |
-| `workflows.py` | workflow store / runtime |
+Instruction authority is reserved for trusted runtime/BehaviorProfile/pinned constraints. Knowledge, Memory, Evidence, web content, MCP/tool output, external module output and Neuro associations remain **data**, not system instruction authority.
 
-`main.py` (**CURRENT**) retains composition + `POST /api/chat` + SPA shell + `/api/health`. Route modules are the preferred domain boundary.
+Multimodal routes: `Data/backend/routes/multimodal.py`. Model vision capability truth: `Data/modules/models/vision.py`; `UNMEASURED` is never treated as `SUPPORTED`.
 
 ---
 
-# 6. Chat, Reasoning and CognitiveRuntime
+# 9. Brain, Knowledge, Memory, Evidence and Neuro
 
-## 6.1 Current chat intelligence path
+## 9.1 Brain
 
-The current architecture combines a lightweight legacy classifier with a real cognitive runtime:
+`Data/modules/brain/` is a facade, not another database:
 
-```text
-POST /api/chat
-  -> effective Settings / BehaviorProfile snapshot
-  -> legacy ReasoningEngine + retrieval policy
-  -> Brain/RAG / Memory / Neuro enrichment when justified
-  -> CognitiveRuntime.submit(...)
-       -> TaskModel
-       -> Perception
-       -> BeliefState
-       -> WorkingMemory
-       -> MetaController
-       -> CognitivePlanner
-       -> ActionSelector
-       -> model / retrieval / capability / agent / verify loop
-  -> cognition-owned answer when available
-  -> otherwise compatible chat/model path
-  -> persist final assistant turn
-```
+- `access.py` — access contracts;
+- `contracts.py` — Brain-facing types;
+- `facade.py` — unified query across canonical stores.
 
-`ReasoningEngine` is **not** the deep reasoning system. It remains a compatibility classifier and retrieval-plan seam under `Data/modules/reasoning/`. `CognitiveRuntime` is the canonical orchestration authority.
+Cognition/perception should use Brain instead of inventing private direct retrieval paths.
 
-## 6.2 CognitiveRuntime files
+## 9.2 Knowledge/RAG
 
-`Data/modules/cognition/` contains the cognitive state machine and supporting types. Important files include:
+`Data/modules/knowledge/` owns durable documents/chunks and retrieval:
 
-- `runtime.py` — submit/run/cancel/steer/status/events/resume;
-- `task_model.py` — task model construction;
-- `perception.py` — evidence/knowledge/memory/neuro perception;
-- `belief_state.py` — confidence/support/contradiction state;
-- `working_memory.py` — bounded current-run memory and pinned constraints;
-- `meta_controller.py` — adaptive mode/strategy/budget selection;
-- `planner.py` — structured plans with acceptance conditions;
-- `action_selector.py` — value-based next action selection;
-- `capability_broker.py` — capability shortlist/discovery;
-- `context_v3.py` — cognition **profile adapter** over canonical `ContextBuilder` (not a second compiler);
-- `completion.py` — typed acceptance criteria + evidence-based completion decisions (legacy string criteria remain compatibility-only / unverified when unsupported);
-- `delegation.py` / `specialists.py` — agent/specialist delegation;
-- `domain_strategy.py` — domain-specialized cognition without a second runtime;
-- `experience.py` — VerifiedExperience/admission;
-- `store.py` / hydration helpers — persistence/resume;
-- `loop_detection.py`, `failure.py`, `steering.py`, `types.py`, `errors.py` — control-state machinery;
-- `model_adapter.py` — bridge into the Model Control Plane.
-
-## 6.3 Current reasoning modes
-
-Current `ReasoningPolicy`/`MetaController` modes control **real orchestration budgets**:
-
-| Mode | Wall | Model calls | Model tokens | Tools | Agents | Replans | Retries | Retrieval | Workers | Context | Critics | Iterations |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| FAST | 30s | 1 | 2,000 | 0 | 0 | 0 | 1 | 1 | 1 | 3,000 | 0 | 2 |
-| STANDARD | 90s | 3 | 6,000 | 4 | 1 | 2 | 2 | 2 | 2 | 6,000 | 1 | 5 |
-| DEEP | 180s | 6 | 12,000 | 8 | 2 | 3 | 3 | 3 | 3 | 8,000 | 2 | 8 |
-| MAXIMUM | 300s | 10 | 20,000 | 12 | 3 | 4 | 4 | 4 | 4 | 12,000 | 3 | 12 |
-
-`ADAPTIVE` can escalate/de-escalate from uncertainty, evidence coverage, contradiction density, failures, information gain and **measured** resource pressure (CPU/RAM/VRAM telemetry, queue depth, inflight model workloads — never a fake constant `0.0`).
-
-### Collaboration strategy (TEAM) — CURRENT
-
-`CollaborationStrategy` is **orthogonal** to `ReasoningMode`. Depth describes effort within model work; TEAM describes how specialist tasks cooperate under a typed quality contract. Explicit `collaboration_strategy=team` always remains TEAM semantics (including lightweight topologies) — it never silently becomes DIRECT.
-
-| Concern | Owner |
-|---|---|
-| Quality contracts / verdicts / acceptance | `Data/modules/verification/quality_contract.py`, `quality_store.py` |
-| TEAM policy / roles / caps / specialist result contract | `Data/modules/cognition/team_strategy.py` (`TeamSpecialistResult`) |
-| Task-aware TEAM profile (reuses `classify_intent`) | `Data/modules/cognition/team_task_profile.py` (`TeamTaskProfile`) |
-| Orchestrator (artifact inspection, follow-up DAGs, progress, no-progress) | `Data/modules/cognition/team_orchestrator.py` |
-| HTTP surface | `Data/backend/routes/team.py` (`/api/team/*`) |
-| Chat entry | `POST /api/chat` with `collaboration_strategy=team` |
-| Research entry | `ResearchExecutionMode.TEAM` + `completion_policy=quality_contract` |
-
-**Task-aware contracts.** `build_default_contract_for_request` selects criteria from `TeamTaskProfile`:
-
-- Conversational / self-description / general advice → `crit:deliverable_present`, `crit:request_addressed`, `crit:synthesis_rechecked` (no web/test/calc receipts).
-- Research / factual (current-data) → claim support + citation audit (strict).
-- Coding / repair → trusted test receipts (strict).
-- Quantitative → calculation receipts (strict).
-
-Irrelevant criteria may be marked `NOT_APPLICABLE` on the contract (with justification) and are excluded from mandatory satisfaction. Applicability is established from the profile/contract — not assigned after a verification miss.
-
-**Specialist result contract.** Chat TEAM and the orchestrator share `TeamSpecialistResult` (`schema=TeamSpecialistResult.v1`). LLM booleans such as `artifact_ok` / `tests_passed` / `claims_supported` are never proof alone: the aggregator inspects real provisional artifact text and receipt ids before emitting `SATISFIED`.
-
-**Lightweight TEAM.** Greeting/identity/capability requests use Analyst → Synthesizer → Verifier (still TEAM). Research/coding keep denser role graphs.
-
-**Progress / no-progress.** Meaningful progress includes criterion satisfaction increases, first artifact, new evidence, or improved verdict rank — not rewording alone. The no-progress window (default 3) remains; blockers distinguish `repeated_no_progress`, `internal_result_schema_error`, `evidence_unavailable`, and `verification_failed` rather than always saying “no progress.”
-
-TEAM defaults: no fixed cumulative round/token/deadline success gate; optional user caps yield **incomplete/blocked**, never green success with unmet mandatory criteria. `rounds=null` serializes as JSON null (not 999999). Resource bounds (timeouts, fan-out, retries) remain. Machine ledger: `Data/backend/tests/team_quality_program.json`. Routing regression: `Data/backend/tests/test_team_quality_routing_repair.py`.
-
-### Two-axis compute (W3 CURRENT)
-
-```text
-ReasoningDepth = OrchestrationCompute + NeuralInferenceCompute
-```
-
-- **Orchestration** — `CognitiveBudgets` (retrieval rounds, critics, tools, agents, model calls, iterations).
-- **Neural** — `NeuralComputeBudget` in `Data/modules/cognition/compute_axes.py` (reasoning effort, reasoning token allowance, candidate count, sampling, output allowance).
-
-`MetaController` is the single policy owner for both axes. `MetaDecision` exposes `requested_mode`, `effective_mode`, `orchestration`, `neural`, and `resource_pressure`. FAST / STANDARD / DEEP / MAXIMUM differ measurably on both axes.
-
-### Test-time compute (W4 CURRENT)
-
-`Data/modules/cognition/ttc.py` owns candidate search when `neural.candidate_count > 1`:
-
-- `Candidate` / `CandidateSet` — id, output, structured result, usage, hash, scores
-- Scorers: Schema, Grounding, Consistency, Constraint, ToolGrounding, Integrity
-- `IntegrityScorer` is **technical** only (injection boundary, unsupported capability claims, fabricated tool observations, secret leakage, authority confusion, schema) — not moral/political/ideological moderation
-- Prune weak candidates; bounded repair with explicit verifier feedback
-- Persist hashes/scores/public summaries/selected answer — not raw rejected private CoT
-
-`CognitiveRuntime` applies TTC on RESPOND/MODEL_CALL when the neural axis budgets multiple candidates.
-
-### Neural task advice + critic mesh (W5 CURRENT)
-
-- `neural_advisor.py` — `NeuralTaskModelAdvisor` emits structured TaskAdvice; heuristic fallback is always labeled `heuristic_fallback`
-- `hypotheses.py` — `HypothesisBoard` integrated into cognitive runs (support/contradiction/open questions)
-- `critics.py` — Critic mesh (Process, Factual, Plan, Integrity, Code, Consistency); critic output is **not** verification proof and cannot authorize side effects
-- Integrity critics remain technical-only (no ideological content layer)
-
-### Async cognition resume / steering (W7 CURRENT)
-
-- Durable checkpoints include plan, beliefs, working memory, budgets, neural axis, hypotheses, evidence refs, public events, pinned constraints
-- `steer` supports goal_change / constraint_add / correction / status_request (program aliases)
-- Pinned constraints re-applied on hydrate so compaction cannot drop them
-- API: `/api/cognition/runs/{id}/steer`, `/resume`, `/cancel`, `/events` — no raw CoT exposure
-- FAST may stay inline; DEEP/MAXIMUM remain budgeted for external-worker paths via JobRuntime when bound
-
-### Frontier Reasoning target — not yet a current-main claim
-
-The active master program continues beyond W7 into Brain/memory unification, agent recursion governance, coding/research expert systems, training/evaluation, trading lab, frontend, browser, multimodal, voice, and operations waves. Remaining items are **TARGET** until merged and verified.
-
----
-
-# 7. Context, authority and prompt trust
-
-## 7.1 Canonical context system
-
-`Data/modules/context/` contains:
-
-- `builder.py` — canonical context compilation for normal model paths;
-- `reference.py` — untrusted reference serialization/escaping;
-- `budget.py`, `fit.py`, `tokenization.py` — token budgeting;
-- `compaction.py`, `hierarchical_compaction.py` — context reduction;
-- `bounded_cache.py`, `cache_policy.py`, `singleflight.py` — efficiency/cache controls;
-- `snapshots.py`, `fingerprints.py` — deterministic context identity;
-- `multimodal.py` — multimodal session/parts;
-- `types.py` — ContextPack/section types.
-
-Cognition uses `Data/modules/cognition/context_v3.py` as a **thin adapter**: TaskModel / perception / beliefs / plan map into `ContextBuilder.build()` inputs. There is one compilation implementation.
-
-## 7.2 Context authority (W1 CURRENT)
-
-`ContextBuilder` is the sole compiler. Instruction authority contains BehaviorProfile identity, pinned constraints, and trusted runtime contract only.
-
-Retrieved Knowledge, Memory, Evidence, web/tool/MCP/browser content, and Neuro associations remain **DATA** (reference_context / typed sections on the conversation path). They must not elevate into system authority.
-
-Invariants covered by tests:
-
-- prompt-injection payloads in knowledge stay out of `system_prompt` but remain available as data;
-- latest user turn is pinned and cannot disappear because the same string appeared earlier;
-- large retrieval degrades per-item under token budget (not one atomic all-or-nothing block);
-- BehaviorProfile / response language apply per operation via overlays (hot-apply / cross-process freshness owned by settings);
-- packs carry context fingerprints / snapshot identity.
-
-Epistemic trust labels (`KNOWLEDGE_SOURCE`, `EVIDENCE`, `TOOL_OBSERVATION`, `NEURAL_ASSOCIATION`, …) remain for model-facing DATA classification — not system instruction elevation.
-
----
-
-# 8. Brain, Knowledge/RAG, Atlas and Deep Recall
-
-## 8.1 Brain
-
-`Data/modules/brain/` is the **single Brain access facade**, not a second storage engine:
-
-- `access.py` — access contracts/helpers;
-- `contracts.py` — Brain-facing data contracts;
-- `facade.py` — unified querying across knowledge, memory, evidence, experience and capabilities.
-
-`main.py` constructs `BrainAccessFacade` over the canonical stores and binds it onto `PerceptionService` (W8). When Brain is bound, Perception gathers Knowledge/Memory/Evidence through Brain first and does **not** bypass Brain with private store calls.
-
-## 8.2 Knowledge/RAG
-
-`Data/modules/knowledge/` owns documents and retrieval. Important files:
-
-- `store.py`, `types.py` — persistent documents/chunks/provenance;
-- `retrieval.py` — hybrid lexical+dense retrieval;
-- `staged_retrieval.py` — staged retrieval and deeper recall policy;
-- `embeddings.py` — embedding provider interface/implementations;
-- `deep_recall.py` — deep recall service;
-- `atlas.py` — Atlas interpretation store;
+- `store.py`, `types.py` — persistence/provenance;
+- `retrieval.py` — lexical+dense hybrid retrieval;
+- `staged_retrieval.py` — staged/deep policy;
+- `embeddings.py` — embedding interface/providers;
+- `deep_recall.py` — DeepRecall;
+- `atlas.py` — Atlas;
 - `why_library.py` — Why Library;
-- `economy.py` — cognitive retrieval economy/budgets;
-- `chunking.py`, `hashing.py`, `index_generations.py` — ingest/index mechanics;
-- `pipeline/artifact.py`, `pipeline/curator.py`, `pipeline/committer.py` — knowledge preparation/commit path.
+- `economy.py` — retrieval budgets;
+- `chunking.py`, `hashing.py`, `index_generations.py` — indexing mechanics;
+- `pipeline/artifact.py`, `curator.py`, `committer.py` — preparation/commit.
 
-Current behavior is RAG/Brain-based evidence acquisition with provenance and retrieval gating. Retrieved text must never itself become execution or system authority.
+Heavy ingest/index commits respect worker/DB-commit ownership.
 
----
+## 9.3 Memory
 
-# 9. Memory
+`Data/modules/memory/store.py`, `types.py` and `consolidation.py` own durable scoped memory. Trust states distinguish agent proposal, user statement, source-derived, verified, conflicted and revoked memory. Preference corrections supersede earlier scoped preference/fact rows; retrieval stays on current ACTIVE truth.
 
-`Data/modules/memory/` owns **durable scoped memory**:
+Do not collapse conversation history, cognition WorkingMemory, durable MemoryStore, Knowledge documents, VerifiedExperience and SkillLibrary into one concept.
 
-- `store.py` — persistence/search;
-- `types.py` — kinds, scopes, states and contracts;
-- `consolidation.py` — episodic → semantic candidates with provenance (W8).
+## 9.4 Evidence / observations / artifacts
 
-Explicit trust states (`MemoryTrustState`):
+- `Data/modules/evidence/` — durable evidence and verification-facing records;
+- `Data/modules/observations/` — durable observations/tool receipts;
+- `Data/modules/artifacts/` — file/large-result artifacts and hash validation.
 
-`AGENT_PROPOSED` · `USER_STATED` · `SOURCE_DERIVED` · `VERIFIED` · `CONFLICTED` · `REVOKED`
+Execution and external modules should return refs for large payloads rather than megabytes inline.
 
-LLM confidence never becomes memory truth. Consolidation may admit semantic candidates as `AGENT_PROPOSED` until verification. Procedural skills derived from repeated VERIFIED cognition runs live in `cognition/skills.py` (`SkillLibrary`) — no hidden CoT.
+## 9.5 Neuro/Cortex
 
-**A08 / W08 preference correction:** `MemoryStore.correct_preference` is the canonical write path when a user corrects an earlier stored preference. It persists a new `PREFERENCE` row, marks prior matching `PREFERENCE`/`FACT` rows (`preference_key` / tags) as `SUPERSEDED`, and leaves retrieval on ACTIVE-only so the current preference wins. No parallel preference store — BehaviorProfile remains conversational identity/settings; durable user preferences live here.
-
-Keep these concepts separate:
-
-1. conversation history;
-2. cognition `WorkingMemory`;
-3. durable MemoryStore;
-4. Brain/Knowledge documents;
-5. VerifiedExperience;
-6. SkillLibrary (procedural, measured success rate).
-
-They may be combined in perception/context, but they are not the same storage or trust class.
+`Data/modules/neuro/` (`advisor.py`, `cortex.py`, `cortex_runtime.py`, `critic.py`, `residual.py`, `residual_orchestrator.py`, `memory_tiers.py`, `receipts.py`, `snapshots.py`, `soak.py`) is advisory. Neural associations may influence retrieval/planning/hypotheses but do not become factual or execution authority merely because a model produced them.
 
 ---
 
-# 10. Neuro / Cortex
+# 10. Model Control Plane and provider runtime
 
-`Data/modules/neuro/` remains part of the architecture and is **advisory**, not factual authority.
+## 10.1 Model Control Plane — `Data/modules/models/`
 
-Current files/components include:
+This is the sole model routing/residency owner.
 
-- `advisor.py` — NeuroAdvisor integration;
-- `cortex.py`, `cortex_runtime.py` — bounded cortex planning/runtime;
-- `critic.py` — process critic;
-- `memory_tiers.py` — neuro-facing memory tiers;
-- `residual.py`, `residual_orchestrator.py` — residual adapter/runtime boundary;
-- `receipts.py` — residual receipts;
-- `snapshots.py` — neuro snapshots;
-- `adapters.py`, `types.py` — contracts;
-- `soak.py` — soak harness;
-- `echo_module.py`, `module.json` — module integration.
+Key files:
 
-`main.py` wires residual runtime, NeuroMemoryFacade, ContrastiveRetrievalHead, ProcessCritic, CortexRuntime, CortexPlanner and NeuroAdvisor. Neural associations can influence retrieval, hypotheses and planning but do not automatically become exact facts or permission.
-
----
-
-# 11. Model Control Plane and model runtime
-
-## 11.1 Model Control Plane — `Data/modules/models/`
-
-The Model Control Plane is the only model routing/residency owner. Key files:
-
-- `control_plane.py` — top-level model control API;
+- `control_plane.py` — top-level model authority;
 - `inference_session.py` — canonical inference session;
-- `registry.py`, `store.py`, `contracts.py` — model/provider registry state;
-- `router.py`, `measured_routing.py` — routing decisions;
+- `registry.py`, `store.py`, `contracts.py` — registry state/types;
+- `router.py`, `measured_routing.py` — routing policy;
 - `gateway.py` — inflight/queue/error accounting;
-- `residency.py`, `resource_manager.py`, `placement.py` — physical placement/resource truth;
-- `runtime_manager.py`, `runtime_binding.py`, `worker_client.py` — runtime lifecycle/worker bridge;
+- `residency.py`, `resource_manager.py`, `placement.py` — hardware/residency;
+- `runtime_manager.py`, `runtime_binding.py`, `worker_client.py` — runtime bridge;
 - `profiles.py` — persisted model profiles;
-- `capability_probe.py`, `vision.py`, `efficiency_capabilities.py` — capability truth (probes measure behavior; config alone never upgrades to SUPPORTED);
-- `downloads.py`, `import_service.py` — model acquisition/import;
-- `benchmarks.py` — model benchmark support;
-- `providers/` — LM Studio, Ollama, OpenAI-compatible, llama.cpp boundary, vLLM-class/base adapters.
+- `capability_probe.py`, `vision.py`, `efficiency_capabilities.py` — measured capabilities;
+- `downloads.py`, `import_service.py`, `benchmarks.py` — acquisition/benchmarking;
+- `providers/` — LM Studio, Ollama, OpenAI-compatible and other configured adapters.
 
-`ModelCapabilities` includes frontier transport fields (`toolCalling`, `parallelToolCalls`, `jsonSchemaResponse`, `reasoningEffort`, `logprobs`, `streamingToolDeltas`, `multiCandidate`, …) with honest `supported` / `unsupported` / `unmeasured` / `unknown` / `unverified` states.
+A configured/listed model is not automatically resident, healthy or tool/vision/reasoning capable. Capability probes and runtime evidence determine support.
 
-Routing and model selection are not permission grants. Model state is reconciled with actual runtime discovery.
+Do not abbreviate Model Control Plane as MCP: in this repository **MCP means Model Context Protocol**.
 
-Do **not** abbreviate Model Control Plane as MCP — in this repository MCP means Model Context Protocol.
+## 10.2 Model runtime — `Data/modules/model_runtime/`
 
-## 11.2 Model runtime — `Data/modules/model_runtime/`
+- `openai_compatible.py` — provider chat/completion transport;
+- `dialect.py` — provider feature adaptation without silent feature dropping;
+- `inference_contract.py` — tool/schema/context contract and repair/fail-closed logic;
+- `streaming.py` — separated content/reasoning/tool frames;
+- `serving.py` — serving supervision/cancel;
+- `managed_adapter.py`, `launch_strategy.py`, `process_control.py`, `port_allocator.py`, `llama_cpp_command.py` — managed process boundaries;
+- `durable_requests.py`, `latency.py` — durable request/latency support.
 
-Provider-facing execution lives here:
-
-- `openai_compatible.py` — OpenAI-compatible chat/completion client (frontier transport options: tools, response_format, logprobs, n/candidates, …);
-- `dialect.py` — provider dialect adaptation; requested capabilities are never silently dropped (`SUPPORTED` / `UNSUPPORTED` / `UNMEASURED`);
-- `inference_contract.py` — W04 inference contract: tool-calling probe/record, structured/json_schema repair-or-`UNAVAILABLE`, context refuse/truncate with explicit signal;
-- `serving.py` — serving supervisor/cancellation;
-- `streaming.py` — stream normalization with separated `content` / `reasoning` / `tool` channels (partial separation is labeled honestly);
-- `managed_adapter.py`, `launch_strategy.py`, `process_control.py`, `port_allocator.py`, `llama_cpp_command.py` — managed serving boundaries;
-- `durable_requests.py`, `latency.py` — request/latency support.
-
-`Data/modules/cognition/model_adapter.py` bridges CognitiveRuntime to `ModelControlPlane.inference_session`; cognition must not call an independent private model client.
-
-**W04 inference contract (CURRENT):** Requested tools must appear in the provider payload or be recorded as rejected — never silently omitted (`TOOL_CALLING_DROPPED` if marked SUPPORTED but absent). `response_format` / `json_schema` responses are deterministically repaired (fence strip, span extract, trailing commas) then schema-validated; failure is `STRUCTURED_RESPONSE_UNAVAILABLE` — never a pretended structured success. Streaming keeps reasoning on `reasoning_delta` frames and tool calls on `tool_delta` frames; content reduction ignores reasoning. Context overflow either refuses (`CONTEXT_WINDOW_EXCEEDED`) or truncates with `CONTEXT_TRUNCATED` and an explicit `context_bound` signal.
+Cognition uses `Data/modules/cognition/model_adapter.py`; trading agents use `Data/modules/market_sim/orchestra/model_adapter.py`. Neither should instantiate a private provider client.
 
 ---
 
-# 12. Execution, functions, approvals and capability truth
+# 11. ExecutionGateway, capabilities, functions and approvals
 
-## 12.1 Execution world
+## 11.1 Single side-effect gateway
 
 `Data/modules/execution/`:
 
-- `catalog.py` — capability catalog;
-- `gateway.py` — single side-effect boundary;
-- `builtins.py` — built-in capability definitions;
-- `manifest.py`, `metadata.py` — capability metadata/manifests;
-- `receipts.py` — durable execution receipts;
-- `types.py` — request/result/risk contracts.
+- `catalog.py` — canonical capability catalogue;
+- `gateway.py` — authorization/idempotency/dispatch boundary;
+- `builtins.py` — built-in capability registrations;
+- `manifest.py`, `metadata.py` — capability metadata;
+- `receipts.py` — receipts;
+- `types.py` — request/result/risk contracts;
+- `workload.py` — INLINE_SAFE / EXTERNAL_PREFERRED / EXTERNAL_REQUIRED.
 
-`ExecutionGateway` mediates tools, files, knowledge, artifacts, browser, MCP, media and voice where configured. A model saying an action happened is not proof; receipts/observations are the truth boundary.
+A model stating “I ran tool X” is not evidence. ExecutionGateway result/ObservationStore/receipt is the authority.
 
-## 12.2 Function runtime
+Gateway idempotency prevents replayed `idempotency_key` actions from dispatching side effects twice. Approval IDs are validated against policy; booleans such as `approved_by_user=true` are never authority.
 
-`Data/modules/function_runtime/` owns cold-path function registration/execution (`registry.py`, `runtime.py`, `builtins.py`, `types.py`). Physical functions live under `Data/functions/`:
+## 11.2 FunctionRuntime
 
-- `text_file_read/`
-- `text_file_write/`
-- `text_file_patch/`
-- `text_file_delete/`
-- `workspace_list/`
-- `workspace_search/`
-- `coding_run_tests/`
-- `git_status/`
-- `git_diff/`
-- `csv_inspector/`
-- `pdf_parser/`
-- `numeric_compute/`
+`Data/modules/function_runtime/` owns registry/runtime/built-ins/types. Physical cold functions are under `Data/functions/`, including text file read/write/patch/delete, workspace list/search, test execution, git status/diff, CSV/PDF and numeric compute functions.
 
-## 12.3 Approvals / authority
+## 11.3 Approvals
 
-`Data/modules/approvals/`:
-
-- `authority.py` — technical authority profile;
-- `policy.py` — policy engine;
-- `service.py` — approval orchestration;
-- `store.py`, `types.py` — durable approval state.
-
-BehaviorProfile is **not** AuthorityProfile. Side effects that require approval cannot be granted merely by model text.
+`Data/modules/approvals/authority.py`, `policy.py`, `service.py`, `store.py`, `types.py` own technical permission. Dependency-aware module installation binds approval to request argument digests/plan identity so approval cannot be reused for a different privileged operation.
 
 ---
 
-# 13. Jobs and external workers
+# 12. JobRuntime and Worker Fabric
 
-## 13.1 Jobs
+## 12.1 Durable jobs
 
-`Data/modules/jobs/` contains durable schedulable work:
+`Data/modules/jobs/runtime.py`, `store.py`, `states.py`, `types.py`, `leases.py`, `retry.py`, `priority.py`, `budgets.py`, `resources.py` implement durable scheduling.
 
-- `runtime.py`, `store.py`, `states.py`, `types.py`;
-- `leases.py`, `retry.py`, `priority.py`;
-- `budgets.py`, `resources.py`.
+Important invariants:
 
-## 13.2 External worker system
+- claim/lease ownership fences terminal writes;
+- stale worker cannot overwrite a newer owner;
+- expired RUNNING leases recover to retry, not fabricated completion;
+- cancel flags propagate to cooperative executors;
+- idempotency keys deduplicate durable work;
+- heavy API workloads remain queued/fail honestly when required workers are unavailable.
 
-`Data/modules/workers/` provides external process execution and admission:
+## 12.2 Worker Fabric
 
-- `bootstrap.py`, `process.py`, `supervisor.py`, `loop.py`;
-- `registry.py`, `pools.py`, `protocol.py`, `settings.py`;
-- `admission.py`, `sqlite_support.py` (re-exports canonical `sqlite_policy`);
-- `events.py` — centralized worker terminal observability (`WorkerEventEmitter`);
-- `crash_diagnostics.py` — bounded crash-log tails, classification, retention;
-- `entrypoints/` for domain-specific processes;
-- `Data/modules/db_commit/` — DB Commit Coordinator (serialized `COMMIT_WRITE`).
+`Data/modules/workers/` is the external execution plane. Domain entrypoints include agents, coding, research, datasets/documents, embeddings/reranking, evaluation/training, market simulation, MCP, model downloads, provider I/O, source ingestion, scheduler/workflows, maintenance/backup, telemetry and DB commit.
 
-Current entrypoint families include agents, backup, coding, dataset, document AI, embeddings, evaluation, general jobs, knowledge prepare, **db_commit** (canonical bulk writer; knowledge_commit is a deprecated compatibility shim with desired=0), maintenance, market simulation, MCP execution, model downloads, provider I/O, reranking, research, scheduler, source ingestion, telemetry, training control and workflows.
+Crash forensics are durable and bounded: each process generation gets a unique log; unexpected exits publish structured metadata plus a human terminal summary; restart does not truncate predecessor evidence.
 
-Architecture rule: the FastAPI/chat process is the **control plane**; long I/O/CPU/GPU work must be externalized through JobRuntime/workers.
+`GET /api/workers/dashboard` and `/api/workers/{id}` are operator read models; STARTING is not READY.
 
-**Production boot ordering (CURRENT):**
-1. Parent `bootstrap.run_all()` spawns the API process only.
-2. Parent waits on bounded loopback `GET /api/host/liveness` until FastAPI lifespan bootstrap is proven (`API_READY`).
-3. Only then does the parent spawn `WorkerSupervisor`.
-4. Supervisor verifies CONTROL schema readiness, then spawns pools.
-5. A worker counts as recovered only when process-alive + registered + READY + heartbeat observed — not merely because `Popen()` returned.
+## 12.3 Source Ingestion authority
 
-**Worker crash forensics (CURRENT):**
-- Each worker process generation writes a unique immutable log under `{control_db_parent}/worker_logs/{pool}/…-pid{N}-{timestamp}.log` (never truncate predecessor).
-- Unexpected exits emit one human terminal crash line (no duplicate structured echo) plus structured `WORKER_CRASHED` metadata (exit, phase, error_code, crash_log_path, restart attempt).
-- Pool crash evidence (`last_crash_*`, `recent_crashes`) is retained across respawn.
+The former standalone source-ingestion design is consolidated into the Worker Fabric `source_ingestion` pool. Canonical entrypoint: `Data.modules.workers.entrypoints.source_ingestion`.
 
-**Production defaults (CURRENT):**
-- `workers.enabled` / `supervisor_enabled` / `externalize_api_runners` = ON
-- Dataset runner = `external`; Source Ingestion production owner = Worker Fabric `source_ingestion` pool (`LEVIATHAN_SOURCE_INGESTION_RUNNER=fabric`; legacy alias `external` maps to fabric). `inprocess_test` is TEST only; `standalone_legacy` is diagnostics-only and must not co-own the queue with fabric.
-- Agents / Coding / Signal Fabric / Reasoning = ON
-- `network.allow_outbound` = ON (SSRF, private-network, and ExecutionGateway restrictions still apply)
-- Manual recovery launcher: `run_leviathan_workers.bat` → one consolidated supervisor terminal for **all** pools
-- Operator launcher: `run_leviathan.exe` (Tauri backend host) starts `leviathan.py` in one window and does not open that bat. The bat stays the advanced/manual recovery path.
-- Do **not** manually start `scripts/source_ingestion_worker.py` during normal production — fabric owns SI.
-- Operator read-model: `GET /api/workers/dashboard` (+ `/api/workers/{id}`) — pools + workers + job join + progress + resources; `ready` requires READY workers (STARTING ≠ healthy).
-- Agents page → **Worker Fabric** monitor consumes that dashboard (never agentCount as “Active Workers”)
-- Process topology: API = control plane; WorkerSupervisor = spawn/lease/restart/drain; specialist workers = one OS process per slot; model serving remains a separate residency plane
+Ingress rules:
 
-**SQLite slow-transaction telemetry (CURRENT):** attributed `store` / `operation` / `total_ms` / `begin_ms` / `body_ms` / `commit_ms` / `rows` (`UNMEASURED` when not counted). Core CONTROL paths (worker_registry, resource_admission, job_store) must not emit `store=unknown`.
+| Source path | Canonical owner/behavior |
+|---|---|
+| Research file upload | Research `accept_upload` creates source and enqueues `source_ingestion.process` |
+| Archive children | remain under parent ingestion job/lineage |
+| Brain retry | enqueues source-ingestion brain retry; no synchronous heavy Knowledge write |
+| Research URL fetch | Research web/fetch worker path; not mislabeled as source-ingestion queue work |
+| Research coordinator local/seed/web source construction | Research source/evidence path; not a fake SI job |
+| Production externalized mode with SI unavailable | explicit `SOURCE_INGESTION_UNAVAILABLE`; no silent legacy parse fallback |
 
-**Host liveness ownership (CURRENT):** Rust host controller owns STARTING readiness via `/api/host/liveness`. Launcher React polls that endpoint only after RUNNING (slow independent monitor); it does not burst-poll during PREFLIGHT/STARTING.
+An idle READY source-ingestion worker with zero queue depth means **healthy idle/no work**, not failure.
 
-Pool catalog (CURRENT shape): ~25 pools; optional/FEATURE_GATED include `rerank`, `document_ai`, `telemetry`; legacy `knowledge_commit` desired=0 (db_commit owns bulk writes).
-
-When externalization is enabled, worker unavailable → durable queued/failed/`WORKER_UNAVAILABLE` — **never** silent synchronous heavy fallback inside FastAPI.
-
-### Control Plane vs Execution Plane
-
-| Plane | Owns | Must not own |
-| --- | --- | --- |
-| Control Plane (API/main) | routing, validation, auth/policy, job enqueue/cancel/status, SSE, lightweight metadata | PDF/archive parse, bulk embedding, research runs, dataset transforms, training, evaluation suites, unbounded network fetch |
-| Execution Plane (WorkerSupervisor pools) | durable job claim/execute for heavy work | control-plane routing / approvals |
-
-### Workload classification (`Data/modules/execution/workload.py`)
-
-Capabilities declare an `execution_class` in metadata:
-
-- `INLINE_SAFE` — small/bounded; may run in API
-- `EXTERNAL_PREFERRED` — prefer workers when available
-- `EXTERNAL_REQUIRED` — must not run heavy implementation in API when `LEVIATHAN_WORKERS_EXTERNALIZE_API=true`
-
-`ExecutionGateway` rejects inline API execution of `EXTERNAL_REQUIRED` with `worker_required` (honest `WORKER_UNAVAILABLE` / enqueue path). Worker processes (`LEVIATHAN_WORKER_ID`) and explicit developer mode (`LEVIATHAN_WORKERS_EXTERNALIZE_API=false`) remain exempt. Classification never bypasses authorization.
-
-`CognitiveRuntime` is bound to `JobRuntime`. When API externalization is on, cognition proactively offloads `EXTERNAL_REQUIRED` and `EXTERNAL_PREFERRED` MODULE capabilities through JobRuntime / Worker Fabric (so CLI/process work does not block the API thread). It also recovers when the gateway returns `REJECTED`/`worker_required`. Offload emits `job.started` / `job.progress` / `job.completed` (and `tool.progress`), starts/wakes an in-process JobRuntime background worker when dedicated workers are absent (never blocks the await loop inside `process_next`, so cancel can propagate), and maps the durable result back into the cognition loop. Cancel sets JobRuntime cancel flags; ExecutionGateway `_job_cancel_check` feeds adapter `cancel_check`. Claimed JobRuntime execution temporarily sets `LEVIATHAN_WORKER_ID` so EXTERNAL_REQUIRED is not re-rejected as API-inline. Missing workers surface as honest `TIMEOUT`/`WORKER_UNAVAILABLE` — never silent inline fallback.
-
-### Terminal observability
-
-Worker lifecycle uses one emitter → human terminal lines + structured logs:
-
-- `[LEVIATHAN] Control Plane gestart`
-- `[JOB] Research '…' ingepland — job ab12cd34` (enqueue; not yet started)
-- `[WORKER] research pool gestart — 2 workers` (after processes are owned)
-- `[WORKER:research-1] Research '…' gestart` (after claim/begin)
-- completion/failure with duration and safe error codes
-
-Labels come from allowlisted metadata (topic/filename/dataset name); secrets and document bodies are never printed.
-
-DB Commit Coordinator terminal channel:
-
-- `[WORKER] DB Commit pool gestart — 1 worker`
-- `[DB-WRITER] Research '…' commit ingepland — N records` (queued ≠ started)
-- `[DB-WRITER] … commit gestart` / `voltooid — N records — …ms`
-- retries (`SQLITE_BUSY`), quarantine (`PAYLOAD_HASH_MISMATCH`), shutdown (`writer stopt — pending=N`)
+Canonical implementation: `Data/modules/source_ingestion/`, worker entrypoint above, Research routes/services under `Data/modules/research/` and `Data/backend/routes/research.py`.
 
 ---
 
-### Fallback policy
+# 13. Agent system and Signal Fabric
 
-When externalization is enabled, worker unavailable → durable queued/failed/`WORKER_UNAVAILABLE` — **never** silent synchronous heavy fallback inside FastAPI.
+## 13.1 Agent runtime/fleet
 
-### Knowledge / Research control-plane rules (W3–W4)
-
-- Public `POST /api/knowledge` stages content (`INDEXING`) and enqueues `knowledge.prepare`; chunking/embedding run on `knowledge_prepare` workers.
-- `KnowledgeStore.initialize()` is **schema-only**. Legacy content backfill is a resumable `knowledge.prepare` (`action=backfill`) job (`KNOWLEDGE_BACKFILL_PENDING`).
-- ModelData / neuro absorb scans enqueue `knowledge.ingest_scan` on the prepare pool.
-- Research URL add validates SSRF shape in API, creates `PENDING` source, enqueues `research.fetch_url`.
-- Report regeneration enqueues `research.report.generate`.
-- Brain retry enqueues `source_ingestion.brain_retry` (no sync `upsert_document` on the API thread).
-- When externalized, missing Source Ingestion returns `SOURCE_INGESTION_UNAVAILABLE` — never legacy `UploadIngestor` PDF parse in FastAPI.
-- Cognition research delegation uses `background=True` / durable enqueue (WAITING), not sync deep research on the chat thread.
-- Training cancel returns promptly (`wait_seconds=0`); log reads use bounded tail I/O.
-- Artifact hash verification streams from disk.
-
----
-
-# 14. Agents, coding and research
-
-## 14.1 Agent system — `Data/modules/agents/`
-
-Files include:
+`Data/modules/agents/`:
 
 - `runtime.py` — AgentRuntime;
-- `fleet.py`, `fleet_types.py`, `store.py` — AgentFleet;
-- `governance.py` — DelegationGovernor (W9): depth, cycle detection, authority inheritance, child budget from parent;
-- `planner.py` — structured agent planning;
-- `multi.py` — DAG multi-agent coordination;
-- `blackboard.py` — shared agent result state;
-- `system_inventory.py` — truthful runtime component inventory;
+- `fleet.py`, `fleet_types.py`, `store.py` — Agent Fleet;
+- `governance.py` — delegation depth/cycle/authority/budget policy;
+- `planner.py` — agent planning;
+- `multi.py` — multi-agent DAG orchestration;
+- `blackboard.py` — shared projections;
+- `system_inventory.py` — truthful component inventory;
 - `types.py` — contracts;
-- `signals/` — Signal Fabric for durable async coordination (not all sync subresults).
+- `signals/` — Signal Fabric.
 
-CognitiveRuntime may delegate via `DelegationService`, but parent cognition remains orchestration authority.
+Delegated child authority is clamped to parent authority. Delegation depth and lineage are explicit; cycles are blocked; child budgets are derived from parent remaining budget.
 
-W9 governance invariants:
+## 13.2 Signal Fabric
 
-- `parent_run_id`, `delegation_depth`, `max_delegation_depth` on every hop;
-- child authority ≤ parent authority (`clamp_authority`);
-- child compute budget derived from remaining parent budget;
-- lineage cycle detection blocks Cognition→Agent→Cognition→same-Agent recursion;
-- agent memory: `AGENT_PRIVATE` plus optional `ORCHESTRATOR_SHARED` scope.
+Signal Fabric is a **coordination layer**, not a second AgentRuntime, JobRuntime, chat bus or database. It reuses canonical Agent Fleet, MemoryStore, JobRuntime/workers and ExecutionGateway.
 
-## 14.2 Coding — `Data/modules/coding/`
+Conceptual lifecycle:
 
-Coding is a dedicated specialist control plane, not a second general assistant. Important files:
+```text
+CREATED -> ROUTED -> PENDING -> CLAIMED -> DELIVERED -> ACKNOWLEDGED -> CONSUMED
+                                \-> RETRY_WAIT -> ... -> DEAD_LETTER
+```
 
-`service.py`, `loop.py`, `worker.py`, `planner.py`, `cognition.py`, `llm_adapter.py`, `parser.py`, `prompts.py`, `workspace.py`, `tools.py`, `patch.py`, `transaction.py`, `verify.py`, `review.py`, `semantic_map.py`, `store.py`, `types.py`.
+Signal families include task/handoff, verify, block/unblock/cancel, knowledge candidate, memory candidate, heartbeat and progress. Routing supports direct, role, capability, orchestrator, mission and system routing with deterministic selection.
 
-Writes/executes remain capability/approval gated; tests and receipts are used for verification.
+Sender identity never grants technical authority. Side effects still go through ExecutionGateway/Agent Fleet/Knowledge workers. Blackboard projections are convenience views, not canonical truth.
 
-W10 hardening:
-
-- Native provider tool_calls preferred when offered (`CodingLLMAdapter` + `capabilities_from_native_tool_calls`); text XML/JSON is fallback only.
-- Repo semantic map injected into loop context as advisory DATA.
-- Workspace snapshots before mutating writes; restore on verify/test failure.
-- Any completed write requires `coding.run_tests` evidence before COMPLETED (no "fixed" without tests).
-- Post-write `StepKind.CRITIC` with structured `HunkReview` findings.
-
-## 14.3 Research — `Data/modules/research/`
-
-Research supports local evidence and optional outbound/web sources:
-
-`service.py`, `runner.py`, `worker.py`, `worker_context.py`, `planner.py`, `coordinator.py`, `question_model.py`, `sources.py`, `source_quality.py`, `web.py`, `ssrf.py`, `uploads.py`, `local_retrieval.py`, `claims.py`, `evidence.py`, `conflicts.py`, `citation_audit.py`, `coverage.py`, `gaps.py`, `graph.py`, `reports.py`, `quality_scorecard.py`, `brain_sync.py`, `assignments.py`, `budgets.py`, `store.py`, `types.py`.
-
-Important truth: outbound network permission and a configured web-search provider are separate conditions. Research must not fabricate browsing.
-
-W10 web policy:
-
-- Real `robots.txt` enforcement when `respect_robots_txt=True` (refuse Disallow).
-- Per-host rate limiting + Retry-After honor.
-- Readability extraction prefers `article`/`main`/paragraph clusters.
-- `published_at` extracted from HTML meta when present; citation resolution includes `location`.
-- Long Research remains external-first via cognition specialists (`background=True`).
+Worker pool: `agent_signals`; job families include `agent_signal.deliver`, retry and housekeeping. HTTP surface: `Data/backend/routes/agent_signals.py` under `/api/agents/signals...`.
 
 ---
 
-# 15. Datasets, source ingestion and document extraction
+# 14. Coding specialist
 
-## 15.1 Dataset system — `Data/modules/datasets/`
+`Data/modules/coding/` is a specialist control plane, not a second general assistant. Important files include `service.py`, `loop.py`, `worker.py`, `planner.py`, `cognition.py`, `llm_adapter.py`, `parser.py`, `prompts.py`, `workspace.py`, `tools.py`, `patch.py`, stores/types and test/verification bridges.
 
-Dataset lifecycle covers ingest, validation, canonicalization, dedupe, PII/contamination checks, split/mixture manifests, indexing and training export.
+Coding mutations remain subject to workspace boundaries, approvals and ExecutionGateway/function receipts. Test claims require real test receipts; model prose is not evidence that a patch or test ran.
 
-Key files include:
+HTTP: `Data/backend/routes/coding.py`. Heavy coding work is worker-capable via the canonical jobs/workers architecture.
 
-`service.py`, `store.py`, `types.py`, `formats.py`, `importers.py`, `huggingface.py`, `offline.py`, `materialize.py`, `shards.py`, `validation.py`, `quality.py`, `canonicalize.py`, `dedupe.py`, `pii.py`, `contamination.py`, `splits.py`, `mixtures.py`, `packing_sim.py`, `tokenize_stats.py`, `indexing.py`, `relations.py`, `transforms.py`, `annotation.py`, `export.py`, `jobs.py`, `worker.py`, `sidecar.py`, `streaming_io.py`, `memory_policy.py`, `scratch.py`, `publish.py`, `storage_authority.py`, `semantic_types.py`, `semantic_profiler.py`, `semantic_engine.py`, `semantic_enrichment.py`, `catalog.py`, `recovery.py`, `compute_planner.py`, `learning_state.py`.
+---
 
-### Streaming data plane (Stage 1)
+# 15. General Research system
 
-Materialize/transform/split/dedupe/export/validate operate as **bounded streaming** jobs: record iterators, scratch spill, and atomic publish. Full in-memory corpus loads are refused above policy thresholds (`DatasetMemoryPolicy`). Python streaming remains the default fallback path.
+`Data/modules/research/` owns non-trading deep research. It is separate from Trading Research Lab but shares Brain, workers, models, capabilities and evidence principles.
 
-### Semantic profile + display names (Stage 2)
+Core ownership:
 
-Deterministic enrichment (`enrich_semantic_deterministic` / `ENRICH_METADATA` jobs) writes a governed `semanticProfile` into dataset metadata: `displayName`, `primaryCategory`, tags, summary, confidence. Operator PATCH overrides win over model/heuristic fields. Sidecar schema **2** and the derived global catalog (`dataset-catalog.json`) carry compact semantic fields for recovery/browse — they are **not** Brain truth.
+- `service.py` — project lifecycle/enqueue/configuration;
+- `runner.py` — run/recovery wrapper;
+- `coordinator.py` — research phase/wave orchestration;
+- `worker.py`, `worker_context.py` — external worker execution;
+- `planner.py`, `question_model.py` — research planning/question modeling;
+- `web.py`, `web_capabilities.py`, `web_readiness.py` — web search/fetch/readiness;
+- `sources.py` — source ingestion/snapshots;
+- `evidence.py`, claims/conflicts/report/quality modules — evidence chain and synthesis;
+- store/types/graph/export modules — durability/provenance.
 
-### Catalog + recovery
+High-level chain:
 
-Recovery evidence precedence: **DB → sidecar → catalog → filesystem**. `assess_dataset_recovery(dataset_id)` returns typed states: `READY`, `METADATA_RESTORED`, `REINDEX_REQUIRED`, `SOURCE_MISSING`, `HASH_MISMATCH`, `CONFLICT`, `UNSUPPORTED`. Tombstones (`.leviathan-dataset.deleted`) block resurrection. **Brain readiness is never derived from the catalog** — use `DatasetLearningState`; missing indexes surface as `REINDEX_REQUIRED` (≠ `LEARNED`). Optional settings: `datasets.recovery_auto_reindex` (default false), `datasets.recovery_max_auto_jobs`.
+```text
+ResearchPage/API
+ -> ResearchService
+ -> JobRuntime research.advance
+ -> research worker
+ -> ResearchRunner/Coordinator
+ -> local retrieval + optional web search/fetch
+ -> sources/snapshots
+ -> evidence/claims/conflicts
+ -> report/citation audit/quality
+ -> optional Brain/Knowledge assimilation
+```
 
-### Streaming checkpoints (W171)
+Web permission and web search readiness are different. Outbound enabled does not mean a search provider is configured. Best-effort public search must remain labeled best-effort; fetch-only/search-unavailable states are explicit.
 
-Large native/Python streaming jobs (`validate` / `transform` / `export`) write **bounded** checkpoint metadata under job scratch (`streaming-checkpoint.json`): input hash, operation, phase, records processed, optional safe byte offset, and protocol version. Fingerprint mismatch or input-hash change invalidates resume. Checkpoints are files — not huge DB blobs. Job `result` / `public_job.compute` expose `backend` (`python_streaming`|`rust_native`), `phase`, `recordsProcessed`, `peakMemory`, `memoryBudget`, `spillBytes`, `throughput` with **UNMEASURED** (never invented 0) when not measured.
+Search hit ≠ fetched source ≠ evidence span ≠ supported claim ≠ knowledge document.
 
-### DB contention telemetry (W176)
+HTTP: `Data/backend/routes/research.py`.
 
-`GET /api/performance/snapshot` and `GET /api/metrics` include a bounded `dbContention` object: DB file size, WAL size, busy retries (from `sqlite_policy`), and commit queue depth when the spool is available.
+---
 
-### Native compute behind Worker Fabric
+# 16. Datasets, documents and ingestion
 
-`ComputeBackendPlanner` selects `PYTHON_STREAMING` vs `RUST_NATIVE` for allowlisted ops (`dataset.validate|hash|transform|split|export|dedupe` plus Parquet: `dataset.parquet_validate|parquet_hash|parquet_to_jsonl`). When Rust is selected and `NativeComputeRunner` is `AVAILABLE`, DatasetService invokes the allowlisted `leviathan-data-plane` binary, verifies receipt + content hash, then atomically publishes and commits metadata — **never** marking a version `READY` before the Python metadata commit. Unavailable/failure paths fall back to streaming Python and expose `fallbackReason`. Native compute is a Worker Fabric data-plane accelerator, not a second control plane.
+`Data/modules/datasets/` owns dataset lifecycle, quality, indexing, semantic state, offline workflows and exports. `Data/modules/documents/` owns document extraction/intelligence. `Data/modules/source_ingestion/` owns source/file ingestion execution under Worker Fabric.
 
-**Admission / memory / cancel (P0 safety):** Heavy data-plane job types enqueue as Worker Fabric `MEMORY_HEAVY` with `reservedRamBytes` from `DatasetMemoryPolicy` (settings `native_compute.memory_budget_mb`). Soft RSS watchdog samples the native child (`MEMORY_RSS_GRACE_FACTOR`); over-budget runs fail closed with honest enforcement markers (not silent OOM). Job cancel propagates to the native child (SIGTERM/kill). Orphan `.prepared.tmp` / publish temps are reconciled via `reconcile_orphans` / `DatasetService.reconcile_data_plane_orphans` on job reconcile.
+Important dataset concepts:
 
-**Settings (catalog-driven):** `native_compute.mode`, `native_compute.memory_budget_mb`, `native_compute.max_record_mb`, `native_compute.batch_rows`, `native_compute.threads`, `native_compute.rust_threshold_mb` — exposed on the Settings page through the Settings Control Plane catalog.
+- canonical dataset identity + versions;
+- processing/index state separate from “learned”/Brain state;
+- semantic re-analysis explicitly requested;
+- large transforms externalized;
+- native/Python compute backend reported honestly;
+- missing memory/throughput metrics remain UNMEASURED.
 
-**Worker Fabric dashboard:** `GET /api/workers/dashboard` includes a bounded `nativeCompute: { status, binaryVersion, operations }` summary from `NativeComputeRunner.probe` (honest `BUILD_MISSING` when the binary is absent).
+HTTP: `Data/backend/routes/datasets.py`. Knowledge ingestion: `Data/backend/routes/knowledge.py`. Source ingestion enters through domain APIs but heavy parse/index work is worker-owned.
 
-**Supply chain:** Direct crate inventory + justification lives in `Data/backend/tests/native_cargo_supply_chain.json` (from `cargo tree -p leviathan_data_plane`). `cargo audit` is recorded AVAILABLE/UNAVAILABLE honestly — never as a silent PASS.
+---
 
-**Market-data native pilot:** Present when `market.ohlcv_validate` is registered in the native binary; otherwise NOT_IMPLEMENTED. Do not claim unbuilt pilot ingest.
+# 17. Training, flywheel, evaluation, release and verification
 
-**Backup truth:** Local backup/restore (`Data/modules/backup/`) snapshots the **three canonical SQLite databases** as one coherent backup set (plus manifest) under `backup_root`. Partial/missing DB members fail restore honestly. Truth flags include `backup_is_not_cloud_sync` and `backupSetComplete`. Legacy single-DB backup manifests remain restorable into Control when `databases` is absent. Domain schema baseline is version **1** materialized from legacy migration head **56** (`institutional_runtime`).
+## Training
 
-**Restore maintenance / recovery (PR #181 remediation):** Live three-DB file replacement requires a **server-issued maintenance proof** from `MaintenanceCoordinator` — a client `maintenance_boundary=true` boolean is not authority. Quiescence is proven (mutating enqueue / DB Commit writes fenced) before cutover. Durable restore journal phases include `OLD_SET_ACTIVE`, `NEW_SET_ACTIVE`, and `RECOVERY_REQUIRED`. Application lifespan **refuses normal boot** while the journal indicates `RECOVERY_REQUIRED` or mixed-revision cutover.
+`Data/modules/training/` owns durable recipes/jobs/training control/post-training data. `Data/backend/routes/training.py` exposes operations. A recipe definition is not proof a GPU training run completed.
 
-**Misplaced-table reconciliation:** Wrong-domain product tables are detected during upgrade. `UNKNOWN` / unreadable / schema mismatch / conflicting content ⇒ `BLOCK_*` (never `MIGRATE`). Migration copies into the **canonical destination schema** (not source stub DDL), verifies counts/checksums, journals phases (`COPY_STARTED` → `COPIED_VERIFIED` → `SOURCE_RETIRED`), and only then drops the source. An upgrade report with blocked tables or errors **must not** claim `completed=True`.
+## Flywheel
 
-**Worker lease fencing:** Authoritative job terminal mutations (`COMPLETED` / `FAILED` / `CANCELLED`) in provider_io, MCP, model_download, and worker entrypoints go through `fenced_transition` with `expected_lease_owner`. Stale workers after takeover cannot overwrite the new owner's job truth.
+`Data/backend/routes/flywheel.py` and training/flywheel modules manage challengers, lineage and promotion evidence. Promotions require the configured verification/evaluation authority; model preference alone is insufficient.
 
-**Private-host / SSRF authority:** `allow_private_hosts` cannot be granted from job/capability payloads. Trusted private endpoints are identified by **scheme + host + port** from env allowlist / configured model base URL — not hostname-only, and not inherited by generic HTTP merely because a model endpoint shares a host.
+## Evaluation
 
-**DB Commit receipt truth:** Handlers must not return `REJECTED` after a durable primary write. Same-DB primary+auxiliary work is one transaction where possible; unavoidable post-commit aux failure uses `FAILED_AFTER_PARTIAL_COMMIT` / `PARTIAL` with explicit side-effect metadata.
+`Data/modules/evaluation/` owns benchmark/evaluation harnesses, ablations, scorecards/platform state. Missing model/provider measurements remain unavailable/unmeasured.
 
-**Model serving process ownership:** `ServingSupervisor` is the sole managed-process lifecycle/reconciliation owner. `ModelControlPlane` delegates. Persisted READY is not trusted after restart without health proof; PID reuse without matching fingerprint ⇒ do not kill / do not claim ownership.
+## Verification/quality
 
-**Adversarial / clean-install evidence:** `test_native_adversarial_w188.py`, admission/cancel/orphan tests (`test_native_admission_cancel_w167.py`), supply-chain JSON, `scripts/verify_native_data_plane.py`, and `scripts/verify_clean_install_native.py` (`LOCAL_CLEAN_CHECK` — not a Windows VM claim).
+`Data/modules/verification/` owns verification reports and TEAM quality contracts. Important files include the verification engine/store plus `quality_contract.py`, `quality_store.py`.
 
-### Storage authority
+## Release/master/product truth
 
-DatasetStore (Knowledge DB SQLite) remains canonical for catalog rows and version metadata. Corpus paths under `CorpusLayout` hold immutable raw / materialized / processed / export artifacts. Sidecars and the global catalog are recovery/browse aids only. Competing permanent domain DB filenames (`knowledge.db`, `trading.db`, `datasets.db`, …) are forbidden (`storage_authority.assert_no_competing_domain_db`); only the three canonical product files (`leviathan_control.db` / `leviathan_knowledge.db` / `leviathan_market.db`) plus the legacy upgrade artifact `leviathan.db` are allowed product SQLite authorities. File-backed corpus data survives DatasetService reconstruction on the same Knowledge DB.
+- `Data/modules/release/` — release/CI relevance and gates;
+- `Data/modules/master/` — master readiness aggregation;
+- `Data/modules/product_truth/` — honest operator/product state helpers.
 
-API surfaces (backwards compatible): `GET/POST /api/datasets/catalog`, `POST /api/datasets/{id}/semantic/analyze`, `PATCH /api/datasets/{id}/semantic`, `GET /api/datasets/{id}/recovery`; list/get responses include `displayName` and semantic summary fields without removing legacy keys.
+---
 
-## 15.2 Source ingestion — `Data/modules/source_ingestion/`
+# 18. ModuleManager, Plugins, Skills and external capability fabric
 
-Files include `service.py`, `pipeline.py`, `worker.py`, `store.py`, `types.py`, `settings.py`, `detection.py`, `handlers.py`, `skip_policy.py`, `secrets_policy.py` and archive/safety helpers. Uploaded/registered sources can feed knowledge/dataset workflows according to policy.
+## 18.1 ModuleManager
 
-**Production owner (CURRENT):** Worker Fabric pool `source_ingestion` (`Data.modules.workers.entrypoints.source_ingestion`). One `SourceIngestionService` instance is built per worker process and reused across jobs via `process_job` (never `process_next` re-claim inside the fabric handler).
+`Data/modules/module_manager/` is the dynamic module lifecycle authority. It handles discovery, installation, readiness, start/stop/restart, health, logs/jobs, capability registration, version lifecycle, idle sweep and external adapters.
 
-**Runner modes (`LEVIATHAN_SOURCE_INGESTION_RUNNER`):**
-| Mode | Meaning |
+The external fabric under `Data/modules/module_manager/external/` is generic. Supported declarative families include CLI, MCP, owned process/service, HTTP/OpenAPI, skill pack, catalog and composite. External sources are described in manifests under `Data/external_capabilities/`; per-repository bespoke wrapper classes are intentionally avoided.
+
+External state is CONTROL-owned. PluginRegistry is rehydrated after external capabilities register so durable plugin bindings do not become a competing runtime.
+
+## 18.2 Dependency-aware InstallationService
+
+Installation is one flow, not ad-hoc shell calls from pages/adapters:
+
+```text
+plan install
+ -> inspect declared dependencies/runtime/package manager
+ -> persist operation
+ -> approval for privileged system changes if required
+ -> fetch/stage
+ -> runtime/app dependencies
+ -> post-install
+ -> verify/re-probe
+ -> promote version
+ -> READY or typed failure
+```
+
+Primary install authority is `Data/modules/module_manager/external/install.py`; dependency/package-manager helpers and adapters live beside it under `Data/modules/module_manager/external/`. Lifecycle composition remains in `Data/modules/module_manager/manager.py`; routes are `Data/backend/routes/modules.py`.
+
+Privileged system dependency approval is bound to request arguments/plan hash. Normal production execution uses JobRuntime/Worker Fabric; synchronous install fallback is default-off and must be explicitly enabled. Installation state/receipts are persisted in CONTROL domain migration v6.
+
+## 18.3 Skills
+
+`Data/backend/routes/skills.py` + external skill store/loader support bounded catalog search, on-demand instruction loading, enable/disable and execution through registered capability paths. Thousands of skill bodies are never dumped into model context just because they exist in the catalog.
+
+## 18.4 External result handling
+
+Large CLI/HTTP outputs spill to ArtifactStore; cognition/Chat receives bounded excerpts and artifact/source refs. Operational SSE may expose module/job/tool/artifact/source lifecycle, never hidden chain-of-thought.
+
+External finance/trading packages are analytics/research capabilities only. If a manifest marks MarketSim bypass forbidden, mutation bypass is rejected; real-money execution remains blocked.
+
+## 18.5 Plugins and MCP
+
+- `Data/modules/plugins/` + `Data/backend/routes/plugins.py` — PluginRegistry lifecycle/invoke.
+- `Data/modules/mcp/` + `Data/backend/routes/mcp.py` — MCP server/session/tool bridge.
+
+MCP tools still enter the same capability/approval/observation architecture. MCP is not model routing and does not bypass ExecutionGateway authority.
+
+---
+
+# 19. Browser, media, voice and provider I/O
+
+- `Data/modules/browser/` + `Data/backend/routes/browser.py`, `browser_qa.py` — browser capability/QA boundaries;
+- `Data/modules/media/` + `Data/backend/routes/media.py` — media capability boundary; disconnected platforms stay NOT CONNECTED/UNAVAILABLE;
+- `Data/modules/voice/` + `Data/backend/routes/voice.py` — realtime voice boundary;
+- `Data/modules/provider_io/` — controlled remote HTTP/provider/market-data/chat I/O, credentials, readiness and streams;
+- `Data/modules/model_download/` — model-download worker boundary;
+- `Data/modules/isolation/` — sandbox/isolation guard;
+- `Data/modules/security/` — audit, deployment, injection and secrets controls.
+
+Network permission, provider configuration and provider health are three different states. SSRF/private-network policy must be evaluated from trusted settings, not payload-supplied booleans.
+
+---
+
+# 20. MarketSim and Trading Center backend — end to end
+
+`Data/modules/market_sim/` is the **single trading simulation, strategy research, qualification and paper authority**. `Data/modules/trading/` remains an explicit boundary/stub; no parallel live trading engine exists.
+
+**Real-money execution is BLOCKED.** Historical simulation, shadow and autonomous paper use simulated capital. A5/live-money autonomy is impossible by product contract.
+
+HTTP owner: `Data/backend/routes/market_sim.py`; trading-agent/orchestra HTTP: `Data/backend/routes/trading_orchestra.py`; Research Command: `Data/backend/routes/research_command.py`.
+
+## 20.1 Market data and causality
+
+Important files:
+
+- `data_store.py` — `MarketDataStore`, canonical indexed historical market-file registry; large market files stay on disk;
+- `dataset_pipeline.py` — market-data import/quality/version preparation around `MarketDataStore`;
+- `ohlcv.py` — OHLCV loading/validation/normalization;
+- `causality.py` — `SimulationClock`, `MarketView`, as-of firewall;
+- `features.py` — canonical FeatureEngine;
+- `regimes.py` — deterministic trend/volatility/correlation/changepoint regimes; HMM stays feature-gated until real support exists;
+- `market_state.py` — causal market-state snapshots;
+- `costs.py` — cost model packs;
+- `universe.py`, `exchange_calendars.py`, `instruments.py` — point-in-time universe, session calendars and instrument/session rules;
+- `Data/modules/provider_io/adapters/market_stream.py` — external/current market-feed stream ordering, stable feed identity and gap recovery;
+- `paper_deployment.py` — paper-forward feed-health representation used by deployments.
+
+Historical perception may only use `timestamp <= as_of`. Unknown calendars/data/features fail closed or stay UNMEASURED; OHLCV is never promoted to fake L2/L3 order-book truth.
+
+## 20.2 Strategies and simulation
+
+Key files:
+
+- `strategy_dsl.py` — bounded declarative DSL, no arbitrary eval/exec;
+- `strategy_families.py` — canonical learner/generation family descriptors;
+- `strategy_asset.py`, `strategy_lineage.py` — versioned assets/lineage/compatibility;
+- `gym.py` — causal simulation episode engine;
+- `execution.py`, `fill_model.py`, `accounting.py`, `risk_guard.py` — fills/wallet/risk/economic accounting;
+- `experiments.py`, `strategy_eval.py` — trial/evaluation provenance;
+- `behavior_fingerprint.py` — strategy behavior identity/dedup support.
+
+The DSL supports the bounded implemented strategy kinds (including moving-average, mean-reversion, breakout, RSI, momentum, volatility, relative-strength, pairs-spread, feature-compare and composite families) plus operational HOLD. Unknown/arbitrary code fails closed.
+
+## 20.3 Autonomous Trading Research Lab
+
+Current main supports two lab creation modes:
+
+- `SEED_EXISTING_STRATEGY` — existing strategy/version is the parent;
+- `AUTONOMOUS_DISCOVERY` — no manually pre-created strategy is required; the lab creates a durable research lineage and generates its own candidates.
+
+Core files:
+
+| File | Role |
 |---|---|
-| `fabric` | Production — Worker Fabric pool (default). Legacy alias: `external`. |
-| `standalone_legacy` | Diagnostics-only `scripts/source_ingestion_worker.py` — refuse when fabric owns the pool. |
-| `inprocess_test` | API-thread runner for tests. Legacy alias: `inprocess`. |
-| `disabled` | No executor. |
+| `agent_lab.py` | lab contract/outcomes/acceptance/sealed lineage rules |
+| `learning.py` | adaptive evolutionary learner and run creation |
+| `learning_runtime.py` | durable generation execution/resume |
+| `learning_candidates.py` | mutation/crossover/exploration/proposals |
+| `learning_fitness.py` | fitness, failure classes, expectancy economics |
+| `learning_types.py` | run/objective/candidate types |
+| `research_hypothesis.py` | explicit falsifiable hypothesis contract |
+| `research_perception.py` | causal numeric research perception |
+| `chart_perception.py` | deterministic as-of chart snapshots + typed VLM observations |
+| `research_cycle.py` | actual agent/evolution generation cycle + dedup |
+| `research_roles.py` | canonical research-role reconciliation |
+| `research_scope.py` | `ResearchDatasetBundle` / `EdgeScope`, multi-source/timeframe/asset refs |
+| `candidate_explainability.py` | evidence-only “why was this candidate accepted/rejected?” projection |
+| `lesson_trust.py` | lesson trust evolution from proposal to measured validation |
+| `strategy_memory.py` / brain hooks | strategy lessons/negative evidence/retrieval |
 
-**Ingress → job contract:** Research `POST …/sources/upload` → `SourceIngestionService.accept_upload` → durable `source_ingestion.process` job (`worker_pool=source_ingestion`, idempotency `source_ingestion:process:{source_id}`). URL/web research sources use other capabilities (`research.fetch_url`, etc.) and must not silently look like SI idle forever without an explicit state. Idle with `queue=0` is healthy: `READY` / `IDLE_NO_WORK` / `reason=NO_QUEUED_WORK` on `/api/host/source-ingestion`.
+MARKET domain v7 adds `market_research_hypotheses` and additive run-mode support.
 
-Do **not** start a second standalone SI worker when `LEVIATHAN_WORKERS_AUTOSTART=1` / WorkerSupervisor is enabled.
+A research hypothesis is public structured reasoning: mechanism, scope, falsification criteria, evidence/counterevidence, provenance and status. It is not hidden chain-of-thought. Falsification conditions may not be relaxed after outcome observation.
 
-## 15.3 Documents — `Data/modules/documents/`
+### Perception and chart vision
 
-Document extraction/parsing support lives here and is used by ingestion/capability flows.
+Numeric market truth remains primary. Research perception uses causal bars/features/regimes with source/version/as-of provenance. Chart perception is advisory:
+
+```text
+as-of bounded OHLCV
+ -> deterministic chart snapshot
+ -> artifact/reference
+ -> model selected through Model Control Plane
+ -> only if VisionCapabilityProfile.charts == SUPPORTED
+ -> schema-validated ChartObservation
+ -> optional numeric-vs-visual conflict evidence
+```
+
+No chart-capable model means honest UNAVAILABLE while numeric research continues. A VLM cannot place an order or override RiskGuard/qualification.
+
+### Hybrid search
+
+Research generations combine bounded evolutionary search (elite/mutation/crossover/exploration) with agent-proposed candidates. Agent model calls route through `market_sim/orchestra/model_adapter.py` → Model Control Plane; no private Ollama/OpenAI client lives in the research modules.
+
+Duplicate/equivalent specs are canonicalized/deduplicated before expensive trials where supported. Losing trials remain evidence and update future priors/failure statistics.
+
+## 20.4 Trading agents and orchestra
+
+`Data/modules/market_sim/orchestra/` contains service, store, types, model adapter and executors. Roles include market/regime analysis, signal/news analysis, strategy research/authoring, critic, deterministic risk officer, execution agent, evaluator, postmortem and orchestrator. Role registration integrates with the existing Agent Fleet instead of creating a second fleet.
+
+Important invariant from `orchestra/executors.py`: models propose/critique/explain; **RiskGuard is deterministic authority**; execution agent records/routes paper intent only.
+
+`Data/modules/market_sim/roles.py`, `research_roles.py` and `institutional_team.py` reconcile role vocabularies/required risk veto.
+
+## 20.5 Scientific split integrity
+
+Research is not considered qualified from a green TRAIN curve.
+
+Canonical integrity components include:
+
+- dataset certification/version/hash;
+- immutable split manifests and research episode binding;
+- TRAIN/VAL/ROBUSTNESS/SEALED roles;
+- embargo/point-in-time constraints;
+- walk-forward folds;
+- multiple-testing/PBO/CSCV diagnostics where configured;
+- regime matrix;
+- cost/slippage/spread/parameter/time perturbations;
+- sample adequacy;
+- capacity/execution compatibility;
+- sealed single-use/lineage contamination firewall.
+
+Relevant files include `split_manifest.py` (`DatasetSplitManifest` / `ResearchEpisodeBinding`), `epistemic.py` (adaptive-vs-sealed evidence classes), `walk_forward.py`, `robustness.py`, `regimes.py`, `sample_adequacy.py`, `capacity_qualification.py`, `qualification.py`, `commit_reveal.py` and related tests.
+
+SEALED evidence is not adaptive training material for the same contaminated lineage. Renaming a strategy does not reset the root lineage.
+
+## 20.6 Profitability/fitness truth
+
+The learner does **not** treat win rate as profitability. `learning_fitness.py` derives expectancy economics so a 70% win rate with destructive losses can rank below a lower-win-rate strategy with positive post-cost expectancy. Evaluation considers net return/expectancy, payoff, drawdown, risk-adjusted/stability signals, costs, turnover, sample adequacy, regime/parameter/cost sensitivity and complexity where measurable.
+
+Missing economic inputs remain UNMEASURED; they are not silently treated as zero.
+
+## 20.7 QualificationAuthority
+
+`Data/modules/market_sim/qualification.py` is the canonical scientific promotion authority with fixed gate order:
+
+1. Q01 Data Certification
+2. Q02 Reproducibility
+3. Q03 Baseline Acceptance
+4. Q04 Walk Forward
+5. Q05 Statistical Multiplicity
+6. Q06 Regime Matrix
+7. Q07 Adversarial Robustness
+8. Q08 Execution Validity
+9. Q09 Capacity
+10. Q10 Sealed Holdout
+11. Q11 Portfolio Compatibility
+
+Agent/VLM confidence is never a competing gate. Caller `passed=true` booleans are not qualification evidence.
+
+## 20.8 Paper, shadow and autonomy
+
+Key files:
+
+- `portefeuille/service.py` — canonical paper portfolio lifecycle/accounting/order service used by Research Command/Orchestra paper routing;
+- `paper_broker.py` — paper-broker abstraction and local paper sessions;
+- `paper_forward.py` — paper-forward runner;
+- `paper_deployment.py` — durable deployment/feed health;
+- `autonomous_paper_loop.py` — A0–A4 loop state/promotion receipts;
+- `paper_forward_drift.py` — forward evidence policy/drift/tickets;
+- `trading_live_guard.py` — real-money boundary.
+
+Progression is qualification-governed. Shadow is observe-only; autonomous paper uses simulated capital and RiskGuard. Kill-switch state is durable. Paper sessions restore wallet/orders on restart and client-order/event replay is idempotent.
+
+Forward evidence requires meaningful history; a few lucky observations do not become PASS. Drift can create a continual-research ticket but does not automatically promote a replacement or enable live execution.
+
+## 20.9 Closed continual-research loop
+
+Current main closes:
+
+```text
+historical data
+ -> autonomous/seed Research Lab
+ -> hypotheses/perception
+ -> hybrid candidate generation
+ -> TRAIN/VAL/robustness/SEALED
+ -> QualificationAuthority
+ -> shadow/autonomous paper
+ -> forward evidence/drift
+ -> ContinualResearchTicket
+ -> linked new Research Lab run
+```
+
+Old evidence remains immutable. PAPER-observed StrategyMemory has its own epistemic state; companion lessons start AGENT_PROPOSED and become VALIDATED only through measured evidence policy.
+
+## 20.10 Research Command and Control Room
+
+**Research Command**: `Data/modules/market_sim/research_command/service.py`, store support, `Data/backend/routes/research_command.py`. It composes existing TradingOrchestra, paper portfolio, news and Research Lab. It can start/pause a bound paper/research session, manage watch state, flatten paper positions, arm paper kill switch and invoke the existing lab lifecycle. It **does not own a second learning engine**.
+
+**Institutional Control Room**: MarketSim institutional runtime/service projections exposed through `Data/backend/routes/market_sim.py`. It surfaces qualification/reconciliation/exceptions/audit/data-plane/fabric truth without inventing green states.
+
+## 20.11 Chat read capabilities for trading research
+
+`Data/modules/market_sim/chat_capabilities.py` binds current MarketSim state into registered read capabilities for lab status, lessons/drift/explanation. Chat reads through canonical capability/Brain paths; it does not query MARKET SQLite directly and cannot unlock live trading.
 
 ---
 
-# 16. Training, post-training, evaluation and verified learning
+# 21. Workflows, schedules and tasks
 
-## 16.1 Training — `Data/modules/training/`
+- `Data/modules/workflows/` — workflow store/runtime/multi-step execution;
+- `Data/modules/schedules/` — schedule persistence/runner;
+- `Data/modules/tasks/` — durable operator task service;
+- `Data/modules/run/` — parent run/event envelope utilities.
 
-Current infrastructure includes:
-
-- service/store/registry/planner/preflight/recovery;
-- recipes and launch/hardware/capability checks;
-- SFT data preparation;
-- preference schema/store/bridge and DPO infrastructure;
-- active-learning and synthetic-data components;
-- integrity/lineage/model registration;
-- candidate promotion/flywheel boundary;
-- worker entry/trainer loop and neuro worker.
-
-Files include `service.py`, `store.py`, `registry.py`, `recipes.py`, `planner.py`, `preflight.py`, `launcher.py`, `hardware.py`, `capabilities.py`, `config.py`, `events.py`, `recovery.py`, `artifacts.py`, `integrity.py`, `lineage.py`, `model_registration.py`, `sft_data.py`, `preference_schema.py`, `preference_store.py`, `preferences.py`, `dpo.py`, `active_learning.py`, `synthetic.py`, `promotion.py`, `evaluation.py`, `neuro_worker.py`, `types.py`, and `worker/`.
-
-Do not infer that every recipe is production GPU-ready on every machine. Availability is provider/hardware/config dependent. Candidate promotion is explicit; silent active-model replacement is not the architecture.
-
-W11 learning flywheel (CURRENT):
-
-- `ExperienceStore.aggregate_stats` / `search` — admitted-only training truth rollups.
-- Active-learning kinds cover verification failure, low TTC agreement, user correction, critic high severity, tool failure patterns, retrieval miss (`training/active_learning.py`).
-- Lifecycle: `CANDIDATE → EVALUATED → ELIGIBLE → PROMOTED` via govern (never auto-promote).
-- `trajectory_export.export_training_trajectory` — public states/messages/answer/verified only; no private CoT.
-- GRPO / RL / reward-model / HF-DPO reported as `FEATURE_GATED` until operational trainers exist.
-
-## 16.2 Evaluation — `Data/modules/evaluation/`
-
-`harness.py`, `platform.py`, `store.py`, `types.py`, `scorecard.py`, `paired.py`, `compute_paired.py`, `judge_calibration.py`, `ablations.py`, `assistant_benchmark.py` implement evaluation/reporting. `UNMEASURED` is not treated as PASS.
-
-W12 CURRENT:
-
-- Paired compute FAST vs DEEP uses bootstrap of paired quality deltas (`compute_paired.py`); DEEP need not beat FAST on every easy task; hard suites require mean delta ≥ min useful effect with CI lower bound > 0.
-- LLM judge calibration (`judge_calibration.py`): below reliability threshold → `UNMEASURED`.
-- Assistant benchmark families include reasoning, prompt-injection resistance, language following, browser, multimodal honesty, trading live-block, research grounding.
-
-## 16.3 VerifiedExperience
-
-`Data/modules/cognition/experience.py` admits only sufficiently verified/eligible experience. Current Frontier Reasoning target extends this with aggregate statistics, active-learning capture and structured training trajectories. Raw hidden chain-of-thought must not become training truth.
+They reuse JobRuntime/ExecutionGateway rather than maintaining independent execution queues or side-effect channels.
 
 ---
 
-# 17. Evidence, observations, verification and artifacts
+# 22. Security, isolation, secrets and authority
 
-- `Data/modules/evidence/` — evidence store/service/types;
+Relevant code:
+
+- `Data/modules/common/http_auth.py` — central HTTP mutation policy;
+- `Data/modules/security/` — auditor/deployment/injection/secrets controls;
+- `Data/modules/isolation/` — sandbox/isolation guard;
+- `Data/modules/approvals/` — approval authority;
+- `Data/modules/context/reference.py` — untrusted model-facing reference boundary;
+- `Data/modules/execution/gateway.py` — side-effect authorization/idempotency;
+- `Data/modules/provider_io/` + Research SSRF helpers — remote/private-host controls.
+
+Rules:
+
+- external/web/news/tool/module text is untrusted data;
+- payload fields never grant private-network or execution authority;
+- secrets are leased/brokered, not copied into public telemetry/prompts;
+- side effects use code-enforced authority, not prompt instructions;
+- hidden chain-of-thought is not logged or exposed;
+- non-loopback API mutations require operator auth;
+- trading real-money mutations remain blocked independently of generic approval.
+
+---
+
+# 23. Observability, analytics, health, backup and chaos
+
+- `Data/modules/observability/` — event hub, operator registry, telemetry/event stream;
 - `Data/modules/observations/` — durable observations;
-- `Data/modules/verification/` — verification engine/report store/types;
-  - tiers (W6): `DETERMINISTIC_VERIFICATION`, `CROSS_MODEL_VERIFICATION`, `SELF_CRITIQUE` — same-model critique is never labelled independent verification;
-  - `capability_state.py` — `SystemCapabilityState` self-knowledge (available capabilities, workers, web/browser/network, GPU when measured; brain percentage stays UNMEASURED);
-- `Data/modules/artifacts/` — artifact store/types/validation.
+- `Data/modules/metrics/` — metric/time-series collection;
+- `Data/modules/analytics/` — analytics service;
+- `Data/modules/host_console/` + `Data/backend/routes/host_console.py` — read-only host projections;
+- `Data/modules/backup/` — database backup/restore with maintenance/recovery fencing;
+- `Data/modules/chaos/` — controlled fault injection;
+- `Data/modules/product_truth/` — truthful product/readiness projections.
 
-System invariant:
+`GET /api/host/liveness` is intentionally cheap. `/api/health` is the richer application diagnostic and must not be substituted into tight launcher polling loops.
 
-```text
-model output != observation
-request != authority
-execution request != successful effect
-model says done != verified completion
-SELF_CRITIQUE != CROSS_MODEL_VERIFICATION
-UNMEASURED != PASS
-exit_code=0 alone != tests passed
-source ref alone != claim supported
-```
-
-**Typed completion (W03 CURRENT):** `TaskModel.acceptance_criteria` carry criterion IDs, verifier kind, scope, expected artifact/effect, and required evidence. `CompletionEngine` publishes per-criterion `verification_status` (`supported` / `contradicted` / `insufficient_evidence` / `unavailable_verifier` / `failed_execution` / `unverified`). Only `supported` counts as met.
+Restore is maintenance-coordinated and startup checks recovery journals; mixed/unfinished restore state fails closed rather than booting across inconsistent databases.
 
 ---
 
-# 18. MCP, plugins and module manager
+# 24. Native compute and resource boundaries
 
-## MCP — `Data/modules/mcp/`
+`Data/native/` contains the native data-plane implementation where available; `Data/modules/native/` is the Python-facing boundary. `Data/modules/compute/` owns bounded numeric/compute helpers.
 
-One bridge handles supported MCP sessions and synchronizes tools into the canonical capability catalog. Files include `bridge.py`, `provider.py`, `session.py`, `execution.py`, `catalog_sync.py`, `module_integration.py`, `policy.py`, `limits.py`, `secrets.py`, `store.py`, `protocol.py`, `transports/`, `types.py`, `errors.py`.
+Native acceleration is a capability, not a truth claim. If the binary/toolchain/operation is missing, backend and UI report unavailable/unmeasured/fallback. Heavy Python remains worker-externalized rather than being rewritten into ad-hoc native code merely for labeling.
 
-MCP invocation still passes through `ExecutionGateway`; MCP is not a private side-effect channel.
-
-## Plugins — `Data/modules/plugins/`
-
-`registry.py`, `types.py` manage declarative plugin/MCP/skill capability bindings into `CapabilityCatalog`. PluginRegistry is **not** a loader or lifecycle owner. Binding configuration may persist in CONTROL (`external_plugin_bindings`); hydrated ENABLED ≠ runtime READY.
-
-Adapter kinds: `DECLARATIVE`, `MCP`, `PROTOCOL`, `SKILL`.
-
-## Module manager — `Data/modules/module_manager/`
-
-`manager.py`, `discovery.py`, `subprocess_exec.py`, `types.py` own dynamic module discovery/lifecycle and optional subprocess isolation.
-
-### External capability fabric (**CURRENT**)
-
-`Data/modules/module_manager/external/` is the **one** generic fabric for third-party software — not a second plugin/runtime/gateway system.
-
-- **Adapters:** `MCP` (via McpBridge), `CLI`, `PROCESS_SERVICE`, `HTTP_OPENAPI`, `SKILL_PACK`, `CATALOG_SOURCE`, `SCRIPT_PACKAGE`, `COMPOSITE`.
-- **Declarative manifests:** `Data/external_capabilities/*/module.json` (plus existing `Data/modules/*/module.json`). Top-level `external` folds into manifest metadata.
-- **Factory:** `create_external_capability_module(manifest=...)` — ModuleManager calls factories with `manifest=` when the signature accepts it; legacy `factory()` still works.
-- **Lifecycle API:** `ensure_installed`, `start`, `stop`, `restart`, `ensure_ready`, `health`, `logs`, `active_jobs` on ModuleManager. HTTP: `/api/modules/{id}/install|start|stop|restart|ensure-ready|health|logs|capabilities|jobs` plus install-plan/state surfaces below.
-- **Install:** typed strategies (`GIT_CHECKOUT`, `PYTHON_VENV`, `PIP_PACKAGE`, `NODE_NPM`/`NODE_PNPM`, `BINARY`, `NONE`) under `data_root/external_capabilities/<module-id>/versions/<ref>`. Binary dependency checks alias `python`↔`python3`; Node installs prefer the newest discoverable toolchain (e.g. nvm ≥22.22) and honor argv `post_install` (no shell strings). Version rows auto-upsert parent CONTROL module registration (FK-safe). Optional/third-party install failures never crash core boot.
-- **Dependency-aware install (CURRENT):** Before fetch/runtime work, `InstallationService` runs a dependency preflight (`dependencies.py` + `package_managers.py`). Manifest `install.dependencies` are **logical** ids (aliases like `python3`→`python`); package names come only from the trusted `LOGICAL_DEPENDENCY_REGISTRY` — unsupported ids fail closed as `DEPENDENCY_UNSUPPORTED` and are **never** injected as arbitrary strings into a package manager. Strategy-implied deps are merged automatically: `GIT_CHECKOUT`→`git`; `PYTHON_VENV`→`python`+`python_venv`; `PIP_PACKAGE`→`python`+`pip`; `NODE_NPM`→`node`+`npm`; `NODE_PNPM`→`node`+`pnpm`; `NODE_SCRIPT`→`node`. Supported missing host deps can be auto-resolved through the detected supported manager (`apt`/`dnf`/`yum`/`pacman`/`zypper`/`apk`/`brew`/`winget`) **only after** the operator approves the exact install plan (`plan_hash`). Privileged host mutations require `ApprovalService` with `arguments_digest` bound to the plan (`plan_hash` / privileged package set); stale plans require re-approval (`PLAN_STALE_REAPPROVAL_REQUIRED`). System-package elevation is privilege-scoped; third-party `post_install` / pip / npm / venv steps always run unprivileged argv (`shell=False`) and never inherit root solely because system packages needed privilege. Production installs enqueue through JobRuntime workers; synchronous install is development-only when `features.module_manager_allow_sync_install_fallback` is explicitly true. HTTP: `POST /api/modules/{id}/install-plan` (read-only plan), `GET /api/modules/{id}/install-state` (operation + phase progress), `POST /api/modules/{id}/install` / `install-version` (approve+execute path).
-- **Version control:** `check_update`, `install_version`, `activate_version`, `rollback_version`, `list_versions`. HTTP: `/api/modules/{id}/check-update|versions|install-version|activate-version|rollback-version`. Activation refuses while active jobs exist (`UPDATE_BLOCKED_ACTIVE`).
-- **Idle shutdown:** LAZY/RESIDENT process services honor `runtime.idle_timeout_seconds`; `ModuleManager.sweep_idle_modules` / `POST /api/modules/sweep-idle` stop idle processes with no active jobs.
-- **Port isolation:** PROCESS_SERVICE start fails closed with `PORT_IN_USE` when `base_url` / ready-probe host:port already accepts connections (prevents ready-probe success against another module — e.g. llm-agent-trader `:8010` vs Osintgram `:8000`).
-- **Execution:** `ExternalModuleExecutor` is wired as `ExecutionGateway.module_executor`. Catalogued MODULE capabilities execute through the gateway; MCP tools remain McpBridge-owned. After gateway-verified approval (`plan_hash` present), privileged system-dep resolution may proceed for that install operation only.
-- **MCP module registration:** `module.json` `mcp.servers` accept `server_id` / `display_name` / `name`; `register_servers_from_module` resolves `$INSTALL_ROOT` in command/args/cwd/env. `McpAdapter.ensure_installed`/`start` re-registers with the active install root before connect.
-- **Skills:** SKILL.md importer indexes metadata; instructions load on demand. Large catalogs (`CATALOG_SOURCE`) never enter system prompts. Skill search tokenizes natural-language goals (OR over keywords ≥3 chars) so CapabilityBroker/CognitiveRuntime `SEARCH_CAPABILITY` can shortlist `skill:` refs without injecting instruction bodies. HTTP: `/api/skills` (search/paginate), `/api/skills/{id}`, `/api/skills/{id}/enable`.
-- **Assimilation:** `KnowledgeAssimilationService.assimilate_external_capability` + `external.knowledge.assimilate` capability. Modes NONE / EVIDENCE / KNOWLEDGE_CANDIDATE / AUTO_KNOWLEDGE. Background via JobRuntime when available; Chat may show "Knowledge ingestion queued".
-- **Chat SSE:** Cognition emits operational events only (`capability.discovered` / `tool.started` / `tool.progress` / `tool.completed` / `tool.failed` / `module.starting` / `module.ready` / `artifact.created` / `source.observed` / `knowledge.assimilation_queued` / `job.started` / `job.progress` / `job.completed`, …) — no private CoT. `SEARCH_CAPABILITY` emits one `capability.discovered` per shortlisted id. Rich tool telemetry includes optional `module_id`, `parts`, artifact/source counts. `INVOKE_CAPABILITY` passes cooperative `_cancel_check` / `_progress_cb` into ExecutionGateway so in-flight external adapters can cancel honestly; EXTERNAL_REQUIRED MODULE caps offload via JobRuntime as above.
-- **Observability (bounded):** `external.modules.discovered|installed|running`, `external.invocations`, `external.failures`, `external.jobs.active`, `external.bytes_output`, `skills.indexed|loaded`, `mcp.sessions`, `assimilation.queued|completed` — no unbounded high-cardinality labels. Install emits bounded `module.install.*` / phase progress events without unbounded package-name cardinality.
-- **CONTROL persistence:** `external_modules`, `external_module_versions`, `external_process_records`, `external_skills`, `external_skill_catalogs`, `external_plugin_bindings`, `external_log_windows` (domain migration **v4**); plus `external_install_operations` and `external_install_dependency_receipts` (domain migration **v6**) for durable install plans, phases, approvals, and per-dependency receipts. No fourth database.
-- **Process ownership:** PID + fingerprint reconciliation — persisted RUNNING is never trusted after restart; PID-reuse kills are refused.
-- **Optional modules:** missing/failed third-party installs do not prevent LEVIATHAN boot.
-- **Trading boundary:** external finance packages with `marketsim_bypass_forbidden` / `real_money_blocked` are research/analytics only. Mutation-like ops (orders/live trades) are REJECTED at `ExternalModuleExecutor` and MCP dispatch; MarketSim remains trading authority; real-money remains BLOCKED.
-- **Live source contracts (audited):** Feynman = Node CLI `bin/feynman.js` + `npm run build` post_install + `skills/` (help/version/status/doctor/search_status/packages_list/alpha_status; research needs provider auth); OpenMAIC = `pnpm exec next dev` + `/api/health|/api/server-providers|/api/usage`, course jobs via `/api/generate-classroom` (agent `/api/agent/*` feature-gated) + `skills/`; Osintgram = uvicorn `src.web.app:app` start + `/api/about|/api/tools|/api/token|/api/balance` invoke/stop proven (Instagram queries need HikerAPI); ScrollCraft = generate + frames-from-style (ffmpeg) + build + verify → `dist/index.html`; Selfstarter = `bin/*.sh` Unreal harness (UE5 BLOCKED_EXTERNAL); Fincept = analytics CLI composite (start N/A); Agent-Reach = SKILL.md internet router + CLI `doctor --json` / `fetch_url` (Jina) / `v2ex_hot` (no native `search` subcommand — other platforms via optional upstream tools); DesktopCommander = McpBridge + ExecutionGateway (approval-gated EXECUTE); Vibe-Trading = `vibe-trading-mcp` via McpBridge (74 tools; `analyze_options` via ExecutionGateway+approval PASS — MarketSim remains trading authority); llm-agent-trader = FastAPI start/docs/stop without LLM keys (analyze/backtest keys BLOCKED_EXTERNAL); GhostTrack = CLI declarative curl for audited public APIs (ip_lookup→ipwho.is, show_ip→api.ipify.org; GhostTR.py TUI phone/username BLOCKED_EXTERNAL); skill packs + OpenClaw catalog = live index/search/materialize.
-- **COMPOSITE routing:** declared `runtime.operations` names win over skill-pack ops with the same name (e.g. CLI `search` vs skill `search`); skill search remains available as `search_skills`. MCP `ensure_ready` is lazy (register without connect) unless `eager_start`.
-- **HTTP body aliases:** `HTTP_OPENAPI` / process-service HTTP ops support declarative `body_aliases` (arg→body rename) and `accept_statuses` without per-source wrappers.
-
-Acceptance matrix (machine-readable): `Data/backend/tests/external_sources_acceptance_matrix.json`.
-
-### Remaining external limits
-
-LEVIATHAN does not mutate the host during CI.
-At runtime, module installation performs a dependency preflight.
-Supported missing host dependencies can be resolved automatically through
-the detected supported package managers (apt/dnf/yum/pacman/zypper/apk/brew/winget)
-after the operator approves the exact install plan.
-Unsupported package managers, unavailable privilege elevation, blocked
-network access, or unknown dependency mappings remain explicit blockers.
-Production installation executes through JobRuntime workers; synchronous
-installation is development-only when explicitly enabled.
-
-This is **not** universal host-package support: only registry-mapped logical dependencies on detected supported managers are installable; everything else stays an explicit `DEPENDENCY_UNSUPPORTED` / privilege / network blocker.
-
-### Manifest dependency audit (external_capabilities, excl. HADES/editor)
-
-Implicit strategy deps cover git/python/venv/node/npm/pnpm gaps — do **not** needlessly duplicate those into every `module.json`. Manifest `dependencies` should list only extras beyond strategy implication (or keep redundant aliases harmlessly). Snapshot:
-
-| Module | Strategies | Manifest deps | Implicit coverage / notes |
-|---|---|---|---|
-| `agent-reach` | GIT_CHECKOUT, PYTHON_VENV | python3, curl | python covered by PYTHON_VENV; **curl** must stay explicit |
-| `andrej-karpathy-skills` | GIT_CHECKOUT | — | git implied |
-| `anthropic-skills` | GIT_CHECKOUT | — | git implied |
-| `awesome-openclaw-skills` | GIT_CHECKOUT | — | git implied |
-| `claude-osint` | GIT_CHECKOUT | — | git implied |
-| `cloudflare-security-audit-skill` | GIT_CHECKOUT | — | git implied |
-| `desktop-commander-mcp` | GIT_CHECKOUT, NODE_NPM | — | git/node/npm implied |
-| `feynman` | GIT_CHECKOUT, NODE_NPM | node | node redundant with NODE_NPM (harmless) |
-| `financial-services` | GIT_CHECKOUT | — | git implied |
-| `fincept-terminal` | GIT_CHECKOUT, PYTHON_VENV | python3 | python redundant with PYTHON_VENV |
-| `ghosttrack` | GIT_CHECKOUT, PYTHON_VENV | python3, curl | python implied; **curl** must stay explicit |
-| `llm-agent-trader` | GIT_CHECKOUT, PYTHON_VENV | python3 | python redundant with PYTHON_VENV |
-| `mattpocock-skills` | GIT_CHECKOUT | — | git implied |
-| `obra-superpowers` | GIT_CHECKOUT | — | git implied |
-| `openmaic` | GIT_CHECKOUT, NODE_PNPM | node, pnpm | both implied by NODE_PNPM (harmless) |
-| `osintgram` | GIT_CHECKOUT, PYTHON_VENV | — | git/python/python_venv implied |
-| `ponytail` | GIT_CHECKOUT | — | git implied |
-| `scrollcraft` | GIT_CHECKOUT, NODE_NPM | node, ffmpeg | node implied; **ffmpeg** must stay explicit |
-| `selfstarter` | GIT_CHECKOUT | bash | **bash** must stay explicit (not strategy-implied) |
-| `tech-leads-agent-skills` | GIT_CHECKOUT | — | git implied |
-| `vibe-trading` | GIT_CHECKOUT, PYTHON_VENV | python3 | python redundant with PYTHON_VENV |
+System telemetry measures CPU/RAM, optional GPU, disk capacity and network rates; first/reset network sample stays null rather than fabricated zero.
 
 ---
 
-# 19. Browser, media, voice and multimodal
+# 25. Native launcher / backend host
 
-- `Data/modules/browser/` — local DOM/Playwright boundary, worker and honest stub;
-- `Data/modules/media/` — media service/stub and artifact integration;
-- `Data/modules/voice/` — realtime voice service/stub;
-- `Data/modules/context/multimodal.py` — multimodal session/part contracts.
+`Data/launcher/` is a Tauri/native host around `leviathan.py`. It owns process lifecycle, not API business logic.
 
-These paths are FEATURE-GATED and backend/provider availability must be reported honestly. Existence of a boundary does not imply universal production browser, speech or media-generation support.
+Host lifecycle states include STOPPED, PREFLIGHT, STARTING, RUNNING, DEGRADED, STOPPING, FAILED and ATTACHED_EXTERNAL. System readiness is separate (STARTING/READY/DEGRADED/SAFE_MODE/NOT_CONFIGURED/UNMEASURED).
 
-### General Assistant Fabric (GI)
+Key backend contracts:
 
-LEVIATHAN integrates existing owners into one assistant path — **not** a second ChatRuntime:
+- `GET /api/host/liveness` — cheap boot proof;
+- `/api/host/overview`, `/api/host/source-ingestion`, `/api/host/native-operations` — read projections;
+- `/api/workers/dashboard` — Worker Fabric state;
+- `/api/performance/snapshot` — resource/DB contention;
+- `/api/models/status` — model plane;
+- `/api/events/stream` — live operational stream.
 
-- **CognitiveRuntime** (`Data/modules/cognition/`) remains the sole cognitive orchestration authority. Adaptive `TaskModel.execution_class` selects DIRECT / CONTEXTUAL / TOOL_REQUIRED / CURRENT_INFO / COMPLEX_REASONING / MULTI_DOMAIN / VERIFICATION_REQUIRED / WORK.
-- **BehaviorProfile** owns conversational behavior (`SYSTEM_PROMPT`). **AuthorityProfile** / **ExecutionGateway** own technical side effects. They must never merge.
-- **system.inspect** aggregates real provider telemetry; brain percentage is explicitly UNMEASURED (not a metric).
-- **FactualityGate** / claim assessment live under `Data/modules/verification/claims.py`. Fake critic `evidence_refs` cannot PASS.
-- **web.search** / **web.fetch** route through `Data/modules/research/web.py` providers.
-  Provider chain (**CURRENT**, W109–W118): configured SearxNG/Brave/generic JSON endpoint
-  first; when `research.web_search_mode=auto` (default) and no endpoint is set, a bounded
-  **BEST_EFFORT_PUBLIC_SEARCH** DuckDuckGo HTML adapter discovers real public HTTPS URLs
-  (rate-limited, SSRF-validated — never invents hits). Modes:
-  `auto` | `configured_only` | `fallback_only` | `off`.
-  Search hits are discovery metadata only; fetched page content is the source; evidence
-  spans require a fetched source. Zero evidence on `allow_web` runs is an explicit
-  quality failure (`INSUFFICIENT_EVIDENCE`), not a silent PASS.
-  Readiness: `GET /api/research/web/readiness` + `POST /api/research/web/probe`
-  (no secrets). Live smoke: `scripts/verify_research_web_live.py`.
-  Unconfigured *configured_only* search still returns `WEB_SEARCH_UNAVAILABLE` — never fabricates results.
-- **General Intelligence Orchestra** seeds live in AgentFleet (`Data/modules/agents/general_orchestra.py`). Parent Cognition owns the final voice.
-- **PlaywrightBrowserBackend** is READY only after Chromium launch + navigate + observation proof.
-- **BrowserJourneyCrawler** / `LocalUserJourneyCrawler` (`Data/modules/browser/qa_crawler.py`) is localhost-scoped QA; APIs under `/api/browser/qa/*` (gateway) and thin `/api/browser/qa/crawls*` router. No CrawlerRuntime2 / stealth.
-- **QaRepairBridge** (`Data/modules/browser/qa_repair.py`) is an optional operator-triggered finding → `CodingCognitiveStrategy` → tests/replay path; never marks fixed without evidence.
-- Chat returns `assistant_telemetry` assembled from cognition public status (tool_calls with receipts/duration, agent_delegations, web_sources, context budget/used, behavior hash/version, latency). No hidden CoT.
-
-### Capability contract (CURRENT)
-
-`CapabilityCatalog` (`Data/modules/execution/`) is the sole executable capability registry. Declared/planned capability ids in coding prompts, coding tool gates, cognition planner `likely_capabilities`, AgentFleet seeds, and `EXTERNAL_WORKER_CAPABILITIES` must be ⊆ catalog (`Data/backend/tests/test_capability_contract_drift.py`).
-
-- Fictional prompt ids (`git.commit`, `coding.run_command`) are rejected — not registered.
-- Real worker aliases registered: `knowledge.ingest_document`, `knowledge.ingest_path`, `rerank.batch` (FEATURE_GATED pool), `market_sim.mandate.loosen` (approval identity).
-- Trading role labels (`market_sim.observe`, …) and agent inventory abstracts remain descriptors, not gateway capabilities.
-
-### Behavior / Chat integrity (CURRENT)
-
-- Behavior identity is BehaviorProfile → immutable BehaviorSnapshot per turn (`Data/modules/settings/`); ContextBuilder must not invent a second identity.
-- Language follows the latest user turn when configured (`auto_follow_user`).
-- Retrieved Knowledge/Memory/Evidence/Web/tool output remain **DATA**, never system instruction authority.
-- Stream frames are snapshot-safe (no cumulative `message.content` appended as deltas).
-- Heavy domain work stays on JobRuntime/workers; Chat/model stream stays on the Model Control Plane by design.
+Safe Mode intentionally disables workers and is not equivalent to a random worker crash.
 
 ---
 
-# 20. Market Simulation / TradingCenter
+# 26. Verification, gate manifests and machine truth
 
-`Data/modules/market_sim/` is the current trading research/simulation owner. It includes:
+Architecture prose is not release evidence. Machine manifests/reports live outside `Data/docs`:
 
-- market/data models: `ohlcv.py`, `data_store.py`, `dataset_pipeline.py`, `pit_fabric.py`, `instruments.py`, `fx.py`, `futures_contracts.py`, `options_contracts.py`, `fixed_income.py`, providers;
-- causality / epistemic time: `causality.py` (`SimulationClock`, `MarketView`), `epistemic.py` (`EpistemicFirewall`, `available_at <= as_of`);
-- market state / features (T2): `features.py` (deterministic OHLCV indicator library + provenance), `market_state.py` (`MarketState`, `MultiTimeframeView`, `build_multi_horizon_state`);
-- reproducibility: `knowledge_snapshot.py` (`TradingKnowledgeSnapshot` persisted per run);
-- engine: `engine.py` (WalletLedger + RiskGuard + NextBarFillModel), `multi_engine.py`, `fill_model.py` (legacy shim), `execution.py` (TIF / Limit / Stop / IntrabarPathPolicy; W13 TWAP/VWAP schedule lab with ASSUMED impact);
-- accounting/risk: `accounting.py`, `portfolio.py`, `risk_guard.py`, `risk_analytics.py`, `scenario_risk.py`, `trading_live_guard.py`;
-- event intelligence: `event_intel.py` (PIT fundamentals/earnings/CA; no auto price adjust);
-- institutional ops: `institutional_ops.py`, `champion_challenger.py`, `research_director.py`, `institutional_team.py`, `paper_forward_drift.py`, `learning_multi_asset.py`;
-- data realism: `universe.py` (PIT membership), `costs.py` (CostModelPack provenance), `stats_inferential.py` (DSR/PBO/FDR/bootstrap/CPCV geometry);
-- strategy governance: `strategy_asset.py`, `strategy_dsl.py` (v3), `regimes.py`, `hpo.py`, `curriculum.py`;
-- agent lab: `agent_lab.py` (scientific search / tournaments / lesson trust);
-- strategy learning: `policy.py`, `learning_types.py`, `learning_fitness.py`, `learning_candidates.py`, `learning.py`, `learning_runtime.py`;
-- paper ops: `paper_deployment.py`, `paper_forward.py`;
-- portefeuille: `portefeuille/` including `intelligence.py` institutional exposure + `attribution.py` contributions;
-- strategies/experiments: `strategy_eval.py`, `experiments.py`, `metrics.py`, `position_episodes.py`;
-- multi-agent hooks: `roles.py`, `role_knowledge.py`, `deliberation.py`, `commit_reveal.py`, `brain_hooks.py`, `trading_brain.py`;
-- paper path: `paper_broker.py`;
-- service/store/worker/types/capabilities;
-- `orchestra/` — trading-only orchestration on the existing Agent Fleet and Model Control Plane.
-  **Learning loop (CURRENT, W119–W135):** Market Sim experiments write durable StrategyMemory
-  (`available_at` = when learned; PIT-safe). `TradingBrainAdapter` retrieves successes **and**
-  negative/rejected lessons with provenance. `RoleAwareTradingKnowledge` is bound into Trading
-  Orchestra so Critic/Risk/Postmortem receive challenge evidence; DecisionRecords carry
-  `evidenceRefs`. Paper routing uses `paper_router` → `PortfolioService.place_order`
-  (mandate + RiskGuard); live remains BLOCKED. Postmortems append AGENT_PROPOSED lessons
-  (Memory + StrategyMemory) without rewriting history. Prediction errors are recorded on
-  paper fills when expectations exist. Paper-forward drift (`paper_forward_drift.py`) opens
-  continual-research tickets and may persist PAPER_OBSERVED memory — never auto-promotes or
-  auto-disables. Trading→Research gaps use `trading_research_bridge.request_trading_research`
-  (async ResearchService/JobRuntime; urgent → HOLD / INSUFFICIENT_EVIDENCE, never sync crawl
-  in the order path). Knowledge/memory never authorizes execution.
-
-**Institutional Trading Program:** sequential waves W00–W36 established paper/portfolio foundations (tracked historically in `Data/backend/tests/institutional_trading_program.json`). Waves **W37–W72** delivered the `market_sim/institutional_core/` domain foundation (instrument master, IBOR, subledger, reconciliation, risk, mandates, audit, control room, etc.) plus migration **55** schema — domain present, runtime integration was partial at merge. Waves **W73+** (Institutional Runtime Completion) introduce `InstitutionalRuntime` as the integration fabric: persistent repositories on the canonical SQLite DB (migration **56**), mandate/compliance gates on `PortfolioService.place_order`, IBOR/subledger/decision/audit on paper fills, persisted reconciliation breaks, real Control Room aggregation, maker-checker authority records, bitemporal observations with quarantine, and `scripts/verify_institutional_runtime.py`. Editor/`Data/HADES` remain out of scope. Live trading remains **BLOCKED**. Options and fixed income remain **NOT_IMPLEMENTED** for full trading paths; futures/forex historical-sim labels are honest `NOT_IMPLEMENTED` where the full path is absent.
-
-**T1 (causality + data foundation):** historical agents observe markets through `MarketView`; information sources must respect `available_at <= simulation as_of`; sealed market dataset versions are content-addressed and immutable (corrections create a new version); every run stores a `TradingKnowledgeSnapshot`.
-
-**T2 (market state + features):** `FeatureEngine` computes causal SMA/EMA/RSI/ATR/ADX/Bollinger/z-score/ROC/realized-vol/Donchian/VWAP/volume/breakout/slope/drawdown/correlation/beta/relative-strength with measured/insufficient/not-implemented status and provenance. `MarketState` packages deterministic price/trend/momentum/volatility/volume/structure/regime fields (neural interpretation excluded). Multi-timeframe views synthesize higher TFs from visible base bars only. OHLCV never claims order-book imbalance. Live broker/real-money execution remains blocked.
-
-**P0A (kernel honesty):** `SimFill` carries measured honesty fields (`realized_delta`, `remaining_qty`, `order_type`, `fill_price_source`, `observed_execution`, `decision_bar_index`, `intent_id`, `trade_id`) — unmeasured fields are omitted from `public_dict`. `ClosedTrade` / `PositionEpisode` (`position_episodes.py`) is the foundation for closed-trade win rate; fill-level win rate is separately labeled and must not be conflated. `resolve_periods_per_year` annualizes Sharpe/Sortino via instrument calendar → observed frequency → asset-family default → timeframe fallback (crypto 1h ≠ equity 1h); unresolved annualization yields UNMEASURED. `evaluate_acceptance` reads `compute_metrics` keys (`trade_count`, `total_return`/`total_return_pct`, `max_drawdown`/`max_drawdown_pct`). Migration 45 persists honesty fill columns and `market_sim_closed_trades`.
-
-**P0D (resume/determinism/leases):** Three hashes — `RunInputFingerprint` (immutable), `CheckpointStateHash` (per checkpoint), `TrajectoryHash` (trajectory). `SimulationEngine` records fingerprints/checkpoints; multi-engine `prepare` restores `wallet_snapshot` when `bar_index > 0` (no cash rewind). Soft leases: `heartbeat_run_lease` / `expire_stale_leases` (migration 46). WalletLedger rejects duplicate `tx_id` and exposes `assert_invariants`. G08–G11 PASS. P0 complete.
-
-**P0C (risk/sizing/instruments):** `RiskGuard.on_bar_timestamp` resets `orders_today` on UTC day change. Explicit `SizingModel` on `SimRun.sizingModel`. Instrument lot/tick/min_notional. Shorts require `ShortMarginPolicy`. G10 PASS.
-
-**P1A (streaming + splits + SEALED attempts):** Canonical `iter_ohlcv` / `stream_ohlcv` stream CSV/Parquet without materializing the series (G01). `DatasetSplitManifest` (`split_manifest.py`) builds chronological TRAIN/VAL/SEALED windows with optional `embargo_bars`; sealing a dataset freezes the manifest (G06). `SealedAttemptBinder` binds `sealed_attempt_id` + `run_id` on first SEALED exposure; crash/resume keeps the same attempt and checkpoint (never rewind); COMPLETED is single-use (`SEALED_ALREADY_CONSUMED`). Migration 47. G13/G21 IN_PROGRESS (absolute 5y soak + acceptance-from-run-IDs remain later).
-
-**P1B (TradingGym + API + worker):** `TradingGym` (`gym.py`) provides causal `reset`/`step` with observations via `MarketView` (G26 PASS). Interactive episodes may step in the control plane; **complete** episodes are `EXTERNAL_REQUIRED` (`market_sim.gym_episode`) on the market_sim worker — FastAPI refuses sync fallback with `TRADING_WORKER_UNAVAILABLE`. Routes under `/api/market-sim/gym/episodes`.
-
-**P1C (trajectory + RewardSpec + dataset bridge):** Canonical `RewardSpec` (`reward.py`) computes kernel-derived step rewards (`equity_delta`, `log_return`, `realized_pnl_delta`, sparse `episode_total_return`); unknown defs stay UNMEASURED. `TrajectoryBuilder` / `TrajectoryArtifact` (`trajectory.py`) seal content-addressed gym step streams; `dataset_bridge.export_trajectory_to_dataset` writes JSONL under markets `.artifacts` and registers via DatasetService when bound (honest `FILE_ONLY` otherwise). G29 PASS.
-
-**P2A (Strategy DSL v2):** `strategy_dsl.py` defines `StrategySpecV2` over `FeatureEngine` — kinds `breakout`, `rsi`, `feature_compare`, plus legacy `ma_cross` / `mean_reversion`, with `regime_filter` gating entries fail-closed. `evaluate_strategy` dispatches v2 kinds; no arbitrary code execution. G15 PASS.
-
-**P2B (Trial Ledger + WFA + sealed acceptance):** Append-only `append_trial` / `count_trials`; `save_experiment` persists `strategy_version` (D14). `wfa.py` rolling WFA windows with purge gap; `walk_forward_splits` rolling overload (D13). `evaluate_acceptance_from_run` reads kernel `run.metrics` only (G21 PASS). G19 PASS; G20 IN_PROGRESS (CPCV later).
-
-**P2C (sandbox + lineage + StrategyMemory):** Python code strategies are `FEATURE_GATED` / `NOT_AVAILABLE` (`code_strategy.py`) until an IsolationSandbox escape suite PASSes — AST filtering alone is insufficient; create/version reject `kind=python`. Immutable lineage via `strategy_lineage.py` (`parent_version`, `parent_content_hash`, `immutable`) on create/version (G17 PASS). `MultiAgentEngine.prepare` hydrates durable StrategyMemory from `list_strategy_memories(as_of_ts=run.start)` (G22 PASS, D15). G16 remains FEATURE_GATED (honest).
-
-**P3A (orchestra cadence + async DecisionRecord):** `decision_cadence.py` owns explicit cadence gates (`every_n_bars` / `daily_close` / `hourly` / `event_driven` / `off`) and `AsyncDecisionQueue` (causal as_of eligibility, no rewind). `create_run` no longer injects a silent multi-agent roster (D31); cadence is recorded on run metadata. Engines consult `should_decide_on_bar`. Trading Orchestra registers `AgentDefinitionKind.TRADING` executors on Agent Fleet; append-only `DecisionRecord` chain (proposal→critique→risk→intent). `AgentKind.TRADING` labeled. G24 PASS.
-
-**P3B (ResearchCampaign + causal Brain/Memory + A0–A4):** Durable `ResearchCampaign` (migration 48) with `checkpoint_iteration` resume; worker job `market_sim.research_campaign` is EXTERNAL_REQUIRED (`TRADING_WORKER_UNAVAILABLE` without JobRuntime). `BrainFacade.retrieve(as_of)` + StrategyMemory as_of (G23 PASS). Scorecards with violation penalties (G27 PASS). Readiness ladder A0–A4; A5/LIVE → `A5_IMPOSSIBLE`; promotion via kernel acceptance never enables live (G25/G28/G31 PASS).
-
-**P4A (PaperForwardRunner + isolated paper + RiskGuard):** `LocalPaperBroker.wallet_for_session` isolates cash per paper session (D18). `PaperForwardRunner` + `paper_forward_step` / `paper_place_order` run every paper order through canonical `RiskGuard` (G32/G34 PASS). Live money remains BLOCKED.
-
-**P4B (sim-to-paper gap + Gateway + leases):** `sim_to_paper_gap.measure_sim_to_paper_gap` reports honest MEASURED/UNMEASURED gaps (G33). `LiveBrokerAdapter` is UNSUPPORTED (G35). Market-sim mutation routes bind `ExecutionGateway` + `capability_catalog` (G37, D16). `claim_next_runnable` uses `BEGIN IMMEDIATE`; JobStore leases are canonical (G38, D25/D26). Contiguous migrations through 48 (G39).
-
-**P4C (TradingCenter frontend real backend):** `SimulatiePage` exposes `initialCash` / `engine` / `decisionCadence`; default single-strategy with empty agents (D27). Paper/strategy pages call real APIs. G41/G42 PASS.
-
-**W24 Final integration (CURRENT):** Backend lab/computer-use/multimodal/voice/security helpers covered by wave tests; frontend typecheck green on W18 surfaces; live trading BLOCKED; A5 IMPOSSIBLE; parallel runtimes created: NONE. Playwright E2E/MSW and full OS sandbox remain honest FEATURE_GATED / UNMEASURED where not measured.
-
-**W23 Security / multi-user / ops (CURRENT):** `common/security_ops.py` auth posture + RBAC role vocabulary; unmeasured OS enforcement is not called secure; secrets-broker honesty; rate-limit/OTel FEATURE_GATED.
-
-**W22 Automations / plugins / MCP / data analysis (CURRENT):** `execution/data_analysis.py` safe AST calculator + CSV summarize; MCP content untrusted; no AutomationRuntime2 (JobRuntime/schedules).
-
-**W21 Voice (CURRENT):** `voice/transport.py` — voice is transport into Chat/CognitiveRuntime; ASR/TTS MEASURED/UNAVAILABLE/NOT_CONFIGURED honesty; no duplicate conversation memory.
-
-**W20 Multimodal / documents (CURRENT):** `documents/intelligence.py` vision capability declaration + document structure refs; eval families FEATURE_GATED until measured; not an independent multimodal runtime.
-
-**W19 Web / Browser / Computer-use (CURRENT):** Computer-use loop (`execution/computer_use.py`) enforces proposal→authority→execute→observe→verify; free-form OS text refused; click success ≠ task completion. Existing Playwright readiness, localhost QA crawler (no stealth), and QaRepairBridge retained. Web search unconfigured → WEB_SEARCH_UNAVAILABLE, never fabricated.
-
-**W18 Frontend Platform (CURRENT):** ErrorBoundary + lazy trading routes; `api/http.ts` + `api/domains/marketSimLab.ts`; chat Stop abort; DEMO banners for decorative mocks; Playwright/MSW FEATURE_GATED until CI dependency.
-
-**W17 Trading Center UI (CURRENT):** `/trading/lab` + `/api/market-sim/lab/overview|cost-pack|feed-health|trials` expose real lab truth (curriculum, roles, Trial Ledger, cost provenance, feed probe). Broker/live remains BLOCKED. No mock KPIs.
-
-**W25 Strategy Learning Loop (CURRENT):** Canonical `TradingPolicy` / `DslStrategyPolicy` (`policy.py`) drives complete TradingGym episodes — bound strategies no longer silently HOLD. Versioned ObservationSpec/ActionSpec v1 on gym observations. Adaptive Evolutionary Strategy Search (`learning.py`, `learning_candidates.py`, `learning_fitness.py`, `learning_runtime.py`, `learning_types.py`) is durable in `market_sim_learning_runs` (migration **54**), worker capability `market_sim.learning_run`, crash-resumable, TRAIN-only learner updates, VAL/ROBUSTNESS/SEALED stages with sealed never mutating proposal distributions. Agent Lab create/start binds a LearningRun by default; pause/resume/cancel propagate. Fitness is server-side from kernel metrics (UNMEASURED/NaN/inf fail-closed). Neural RL remains FEATURE_GATED via TrainingService — not required for DSL learning. Live trading BLOCKED; A5 impossible. Gates L01–L15.
-
-### Autonomous Trading Research Loop (CURRENT)
-
-Composition over existing MarketSim owners — not a second trading runtime. Editor/`Data/HADES` remain out of scope.
-
-- **Autonomous Discovery vs Seed Existing:** Lab create modes `AUTONOMOUS_DISCOVERY` (objective → ResearchHypothesis + lineage-root strategy; never elite-seeded from a champion) and `SEED_EXISTING_STRATEGY` (bound strategy version). Research Command projects lab `runMode` / stage / hypotheses but does **not** advance generations (composition-only).
-- **Hypothesis lifecycle:** Durable `market_research_hypotheses` with public statements/trust only (PROPOSED→TESTING→SUPPORTED|REJECTED|INCONCLUSIVE). No private chain-of-thought.
-- **Hybrid agent + evolution search:** Generation cycle mixes agent-proposed slots with evolutionary mutate/crossover under AdaptiveEvolutionaryLearner; critic notes stay metadata evidence.
-- **Numeric + chart perception (advisory):** `research_perception` / `chart_perception` produce advisory features — never order authority or qualification proof.
-- **Qualification authority remains Q01–Q11:** Only `QualificationAuthority` can claim institutional qualification. Lab finalists set `institutional_qualified=false` + `qualification_required=true`.
-- **Paper-forward continual research:** Drift tickets may spawn discovery labs; never auto-promote; never auto-enable live.
-- **Live money BLOCKED:** Chat READ capabilities (`market_sim.lab.*`, `market_sim.lessons.summary`, `market_sim.paper.drift`) and Research Command always report `liveTrading=BLOCKED`.
-- **Historical profitability ≠ future guarantee:** Explainability (`candidate_explainability.explain_candidate`) and UI labels stay evidence-only; backtest/paper PnL is not a live promise.
-
-`GET /api/market-sim/lab/runs/{lab_id}/candidates/{candidate_id}/explain` returns structured why-proposed / parents / method / critic notes / killing split / regime / cost / sealed blockers.
-
-**Research integrity hardening (CURRENT):** `ResearchEpisodeBinding` (`split_manifest.py`) is the canonical episode window contract — `dataset_id`/`dataset_version`/`split_manifest_id`/`hash`/`start_ts`/`end_ts` derived from the frozen `DatasetSplitManifest`; callers cannot expand windows. Learning + gym + worker re-verify bounds. All SEALED consumption goes through `SealedAttemptBinder` (REST/gym/learning/worker); adapted strategy versions cannot re-qualify on a disclosed holdout (`HOLDOUT_LINEAGE_CONTAMINATED`). Epistemic `EvidenceClass` (`epistemic.py`): SEALED → `SEALED_QUALIFICATION_EVIDENCE` (audit sink); TradingBrain StrategyMemory retrieval excludes non-adaptive/SEALED evidence. ROBUSTNESS (`robustness.py`) executes new cost/slippage/spread/parameter/time perturbation runs — TRAIN/VAL rescore alone is not qualification authority. Unknown calendar days are UNKNOWN/fail-closed (never silent OPEN). `WalletLedger.assert_invariants` hard-fails when `reserved_cash > cash + epsilon`. Corporate actions apply through `WalletLedger.apply_corporate_action` + engine PIT path (SPLIT/DIVIDEND/SYMBOL_CHANGE; MERGER/SPINOFF/DELISTING fail-closed). `compute_metrics` emits block-bootstrap mean-return CIs; CPCV has OOS scoring (`score_cpcv_paths`); CSCV PBO is MEASURED diagnostic (`qualification_authority=false`); DSR remains APPROXIMATE diagnostic. Quote L1 fills via `QuoteL1FillModel` (never synthesized from OHLCV). Futures hist uses `futures_vm` variation-margin accounting. Alpaca paper credentials leased via `SecretsBroker` secret refs. Live remains BLOCKED.
-
-**W16 Trading Lab IV (CURRENT):** `paper_deployment.py` PaperDeployment with compatibility validation, environment fingerprint, feed health (staleness/gaps), kill switch, and modelled/shadow/paper gap comparison. Paper does not prove live profitability; LIVE BLOCKED; A5 impossible.
-
-**A4 autonomous paper closed loop (CURRENT):** Durable `market_paper_deployments` (legacy migration **57** / MARKET domain v2). Control-plane owners: `autonomous_paper_loop.py` + `MarketSimControlPlane.create_and_persist_paper_deployment` / `shadow_observe_step` / `promote_deployment_autonomy` / `autonomous_paper_step` / `review_deployment_drift`. A3 shadow = observe-only (no paper orders). A4 = RiskGuard paper steps on real quotes with simulated capital. Promotion requires resolved `shadow_run_id` / `paper_deployment_id` receipts — caller booleans are not proof. Drift persists `PAPER_OBSERVED` StrategyMemory and may spawn a shadow challenger (never auto-promote; never live). Mode capability matrix (`capabilities.build_mode_capability_matrix`) is machine-derived per family × HISTORICAL_RESEARCH…AUTONOMOUS_PAPER. EU venues explicit via `exchange_calendars.py` (XAMS/XETR/XLON/XPAR/XMIL). DSL search primitives include momentum/volatility/relative_strength/pairs_spread. Futures/FX paper remain NOT_IMPLEMENTED (foundation + continuous-refuse + missing-FX≠1). Options/FI paper NOT_IMPLEMENTED. Sample adequacy (`sample_adequacy.py`) rejects tiny samples as `INSUFFICIENT_EVIDENCE`. Gates **AP01–AP08**. Live money BLOCKED; A5 impossible.
-
-**W15 Trading Lab III (CURRENT):** `agent_lab.py` scientific search loop with pre-registered `AcceptanceCriteria` (threshold relaxation forbidden). Terminal outcomes `QUALIFIED_STRATEGY_FOUND` | `NO_STRATEGY_QUALIFIED` (valid PASS). Lessons default `AGENT_PROPOSED`; sealed lineage contamination refused; tournaments VAL-first with Elo that does not prove profitability; public trajectory→dataset bridge (no hidden CoT). Live BLOCKED; A5 impossible.
-
-**T08 / W17 sealed rename inheritance:** `register_lineage_rename` / root lineage aliases keep sealed holdout exposure on the contamination root. Renamed or parent-lineage descendants still raise `HOLDOUT_LINEAGE_CONTAMINATED` for the same sealed dataset; a new holdout/version/epoch is required.
-
-**W14 Trading Lab II (CURRENT):** `strategy_asset.py` StrategyAsset + ExecutionCompatibilityManifest (live_compatible always false; promotion requires evidence). DSL v3 extends `strategy_dsl.py` (stop/take-profit/trailing/time-stop/sizing/universe/session/portfolio; no eval/exec). `regimes.py` volatility/trend/correlation/changepoint + synthetic fixtures; HMM FEATURE_GATED. `hpo.py` grid/random/evolutionary with mandatory Trial Ledger; sealed tuning forbidden; Bayesian/TPE FEATURE_GATED. `curriculum.py` logged reproducible stage progression through sealed/paper.
-
-**W13 Trading Lab I (CURRENT):** Point-in-time universe membership (`universe.py`: IPO/delist/rename/exchange events, corporate actions, session calendars, `DatasetRevisionIdentity`) — default `point_in_time`; today's universe must be labelled. Canonical `WalletLedger`/`WalletBook` multi-symbol `positions` with gross/net exposure and equity-at-marks; single-currency restriction refuses silent FX mix (missing FX → VALUATION_BLOCKED). `CostModelPack` (`costs.py`) labels Spread/Impact/Latency/Fee/Funding/Borrow as MEASURED/ASSUMED/UNMEASURED with provenance. Inferential honesty (`stats_inferential.py`): block bootstrap CIs, Monte Carlo resample, Deflated Sharpe (trial ledger N, APPROXIMATE), CSCV PBO (MEASURED diagnostic), Benjamini–Hochberg FDR, purge/embargo, CPCV geometry+scoring, minimum useful sample. Live remains BLOCKED.
-
-**Slice 16 (final gates + verifier):** A0–A4 Trading Center Master Program complete on this branch. `LiveTradingGuard` = BLOCKED; A5 = impossible; long work is `market_sim` worker EXTERNAL_REQUIRED; no second trading runtime. Verifier: `scripts/verify_trading_100.py --allow-incomplete`. Offline required gates: PASS or FEATURE_GATED (Python strategy sandbox escape = FEATURE_GATED until isolation proven). Windows paths = NOT_TESTED_IN_CI. Crypto 24/7 absolute 5y×1m soak = NOT_TESTED_AT_FULL_SCALE (equity-session 5y×1m-equivalent streaming proven). Options/fixed-income trading remain NOT_IMPLEMENTED (identity only). Never false PASS.
-
-`Data/modules/trading/stub.py` remains a boundary/stub, not a second trading platform.
-
-Machine gate state lives in `Data/backend/tests/trading_gates.json`; `scripts/verify_trading_100.py` is the verifier.
-
----
-
-# 21. Tasks, workflows and schedules
-
-- `Data/modules/tasks/`: `service.py`, `store.py`, `planner.py`, `projection.py`, `types.py` — durable task control;
-- `Data/modules/workflows/`: runtime/store/types — multi-step workflow execution;
-- `Data/modules/schedules/`: runner/store/types — scheduled targets.
-
-They reuse JobRuntime/ExecutionGateway instead of introducing independent queues or side-effect paths.
-
----
-
-# 22. Settings and BehaviorProfile
-
-`Data/modules/settings/` is the operator configuration authority:
-
-- `catalog.py` — setting definitions;
-- `service.py`, `store.py` — control plane and persistence;
-- `validation.py`, `types.py` — contracts;
-- `bindings.py` — live consumer bindings;
-- `behavior.py`, `behavior_store.py`, `resolver.py`, `seed.py` — assistant BehaviorProfile.
-
-`Data/backend/config.py` supplies typed environment/default configuration. SQLite overrides are the durable operator layer where supported. Settings indicate HOT vs restart-required semantics.
-
-Behavior defines model-facing identity/interaction policy; it does not grant technical authority.
-
-### Behavior hot-apply (CURRENT)
-
-- `BehaviorProfileStore` is the persisted global behavioral truth.
-- `BehaviorSettingsResolver` creates a **new immutable `BehaviorSnapshot` per independent operation** (chat turn, cognition submit, coding model call).
-- Conversations are **not** pinned to the BehaviorProfile version that existed at conversation creation.
-- Editing the system prompt (or other BehaviorProfile fields) hot-applies from the **next** turn — no new chat, page refresh, backend restart, or model reload.
-- An operation already in flight keeps the immutable snapshot with which it started.
-- Long-lived workers observe the latest persisted profile on the next job by reading the store at operation start (not via in-process callbacks alone).
-- `SEED_SYSTEM_PROMPT` is first-install / bootstrap only; it is not runtime identity when a persisted profile exists.
-
----
-
-# 23. Security, isolation, secrets and deployment posture
-
-Relevant modules:
-
-- `Data/modules/security/`: auditor, deployment, injection defenses, secrets broker;
-- `Data/modules/isolation/`: guard/sandbox/types;
-- `Data/modules/approvals/`: authority and approvals;
-- `Data/modules/backup/`: backup/restore;
-- `Data/modules/chaos/`: fault injection for controlled testing.
-
-Default posture is local/loopback-oriented. Outbound network is **enabled by default** for provider connectivity, but remains policy-controlled (SSRF protection, private-network restrictions, credential isolation, ExecutionGateway). Non-loopback privileged mutations may require the configured operator token. Do not store secrets in prompts, docs or public telemetry.
-
----
-
-# 24. Observability, metrics, release and health
-
-- `Data/modules/observability/` — event hub/operator registry/system telemetry;
-- `Data/modules/metrics/` — metrics collector/time series;
-- `Data/modules/release/` — release gates/CI relevance;
-- `Data/modules/master/` — master gate aggregation;
-- `Data/modules/product_truth/` — product-truth/posture helpers;
-- `Data/modules/analytics/` — analytics service.
-
-Release/evaluation philosophy: missing measurements remain missing; they are not converted to synthetic PASS.
-
----
-
-# 25. Provider I/O and remote boundaries
-
-`Data/modules/provider_io/` owns controlled remote/provider operations such as generic HTTP, Hugging Face metadata, market-data providers and remote chat/provider calls. It includes policy, credentials, readiness, stream state and executor/facade layers. Network permission remains separate from provider configuration.
-
-`Data/modules/model_download/` owns model-download readiness/facade/executor/errors. `Data/modules/compute/` owns small compute/numeric tier helpers. `Data/modules/native/` is an explicit stub/boundary rather than another model stack.
-
----
-
-# 26. Repository backend map — where to find things
-
-## `Data/backend/`
-
-- `main.py` — composition + app
-- `config.py` — environment/runtime settings
-- `database.py` — Control Plane conversation/message helpers (composition still uses three DB paths)
-- `migrations.py` — preserved legacy schema migrations 1..56
-- `db_upgrade.py` — three-DB upgrade / legacy cutover orchestrator
-- `table_ownership.py` — CONTROL/KNOWLEDGE/MARKET ownership map
-- `routes/` — domain APIs
-- `tests/` — backend/unit/integration/gate manifests
-
-## `Data/modules/`
-
-| Directory | What lives there |
+| Program | Manifest / verifier |
 |---|---|
-| `agents/` | agent runtime/fleet/multi-agent/blackboard |
-| `analytics/` | analytics service |
-| `approvals/` | authority/policy/approval persistence |
-| `artifacts/` | artifact storage/validation |
-| `backup/` | backup/restore |
-| `brain/` | unified Brain facade/contracts |
-| `browser/` | browser capability implementations/boundaries |
-| `chaos/` | controlled fault injection |
-| `coding/` | Coding Agent control plane |
-| `cognition/` | CognitiveRuntime and structured cognition |
-| `common/` | shared atomic/path/hash/correlation/ownership utilities |
-| `compute/` | compute/numeric tier utilities |
-| `context/` | context building, trust, compaction, multimodal, budgets |
-| `datasets/` | dataset lifecycle/quality/index/export |
-| `documents/` | document extraction |
-| `evaluation/` | evaluation harness/platform/ablations/scorecards |
-| `evidence/` | evidence storage/service |
-| `execution/` | capability catalog/gateway/receipts |
-| `function_runtime/` | cold function registry/runtime |
-| `intelligence/` | cross-cutting intelligence policy/health/assimilation |
-| `isolation/` | sandbox/isolation guard |
-| `jobs/` | durable jobs/leases/retry/resources |
-| `knowledge/` | RAG/retrieval/Atlas/DeepRecall/Why |
-| `market_sim/` | market simulation/paper/trading orchestras |
-| `master/` | master readiness gates |
-| `mcp/` | MCP bridge/provider/sessions/transports |
-| `media/` | media capabilities |
-| `memory/` | durable scoped memory |
-| `metrics/` | metrics/time series |
-| `model_download/` | model download boundary |
-| `model_runtime/` | inference transport/serving |
-| `models/` | Model Control Plane |
-| `module_manager/` | module discovery/lifecycle + generic external capability fabric (`external/`) |
-| `native/` | native runtime stub/boundary |
-| `neuro/` | Neuro/Cortex/residual advisory layer |
-| `observability/` | system/operator telemetry |
-| `observations/` | durable observations |
-| `plugins/` | plugin registry |
-| `product_truth/` | truth/posture reporting |
-| `provider_io/` | controlled remote/provider I/O |
-| `reasoning/` | legacy reasoning/retrieval policy |
-| `release/` | release/CI gates |
-| `research/` | research runtime/evidence/source graph |
-| `run/` | parent run lifecycle/event envelope |
-| `schedules/` | schedule persistence/runner |
-| `security/` | audit/injection/secrets/deployment controls |
-| `settings/` | Settings Control Plane/BehaviorProfile |
-| `source_ingestion/` | source/file ingestion workers/pipeline |
-| `tasks/` | durable task service |
-| `trading/` | explicit trading boundary/stub |
-| `training/` | training/post-training/flywheel |
-| `verification/` | verification engine/report store |
-| `voice/` | realtime voice boundary |
-| `workers/` | external worker architecture |
-| `workflows/` | workflow runtime/store |
+| Frontier reasoning | `Data/backend/tests/frontier_reasoning_gates.json`, `scripts/verify_frontier_reasoning.py` |
+| Trading | `Data/backend/tests/trading_gates.json`, `scripts/verify_trading_100.py` |
+| Aggregate | `scripts/verify_leviathan.py` |
+| Capability drift | `Data/backend/tests/test_capability_contract_drift.py` |
+| Backend tests | `Data/backend/tests/` |
+| Production-quality ledger | `Data/backend/tests/production_quality_program.json` |
 
-## Other backend-relevant locations
+The frontier manifest currently remains a conservative F0/R01–R30 machine ledger and may mark gates NOT_STARTED even while individual production features with similar historical wave names exist. **Do not infer product capability from a wave label.** Inspect the actual subsystem tests and gate entry.
 
-- `Data/functions/` — FunctionRuntime executables/cold-path helpers.
-- `scripts/` — launchers, worker helpers and verification harnesses.
-- `.env.example` — documented environment controls.
-- `leviathan.py`, `run_leviathan.bat`, `run_leviathan.exe`, `installer.bat` — startup/install entrypoints.
-- `Data/launcher/` — native backend host. It supervises `leviathan.py`; it is not a second API, Worker Fabric, or JobStore. See `Data/launcher/IMPLEMENTATION_NOTES.md`.
+Trading verifier supports strict provenance/evidence semantics. Documentary/file-exists checks alone cannot produce strict PASS; FEATURE_GATED/UNMEASURED/NOT_TESTED do not become PASS because CI is otherwise green.
 
-### Native backend host contracts (CURRENT)
-
-`run_leviathan.exe` (Tauri + `host-core`) owns process lifecycle. FastAPI remains the only HTTP control plane.
-
-| Concern | Contract |
-|---|---|
-| Cheap liveness | `GET /api/host/liveness` — tiny `{ok,liveness,bootstrapped,started,version}`. No LLM/knowledge/product-truth/worker/dashboard work. Served only after FastAPI lifespan startup. Native probe uses this endpoint (not heavy `/api/health`). |
-| Process lifecycle | Host states: `STOPPED` / `PREFLIGHT` / `STARTING` / `RUNNING` / `DEGRADED` / `STOPPING` / `FAILED` / `ATTACHED_EXTERNAL`. Successful liveness moves `STARTING` → `RUNNING`. |
-| System readiness | Distinct from process lifecycle. Snapshot field `systemReadiness`: `STARTING` / `READY` / `DEGRADED` / `SAFE_MODE` / `NOT_CONFIGURED` / `UNMEASURED`. Safe Mode is intentional API-only recovery — workers are disabled, not unhealthy. |
-| WebView read transport | Production Tauri origins (`http://tauri.localhost`, `https://tauri.localhost`, `tauri://localhost`) and Vite dev (`http://127.0.0.1:1420`, `http://localhost:1420`, `http://[::1]:1420`) may consume an exact allowlist of GET read projections via narrow CORS middleware. No wildcard Origin. No credentials. Mutation routes are not CORS-enabled. CORS is not authorization — loopback/token mutation gates remain authoritative. |
-| Allowlisted read paths | `/api/host/liveness`, `/api/health`, `/api/workers/dashboard`, `/api/performance/snapshot`, `/api/host/overview`, `/api/host/source-ingestion`, `/api/host/native-operations`, `/api/models/status`, `/api/events/stream` |
-| System telemetry | `SystemTelemetrySampler` measures CPU/RAM/(optional) GPU, disk **capacity** utilization for the install data volume, and network bytes/sec from OS counter deltas. First network sample and counter resets stay null (UNMEASURED), never fabricated zero. |
-
-`/api/health` remains the rich public/application diagnostic aggregate for existing callers and must stay compatible.
-
----
-
-# 27. Frontier Reasoning + Inference-Time Compute program
-
-The active program is an **in-place** evolution. It does not replace Brain/RAG, Memory, Neuro/Cortex, CognitiveRuntime, agents, workers, Model Control Plane, Training or Evaluation.
-
-Current `main` at the documentation snapshot contains the **F0 baseline/audit machinery**. Later phases are targets until merged and verified:
-
-| Phase | Target |
-|---|---|
-| F0 | baseline/audit + gate skeleton — CURRENT baseline |
-| F1 | context/trust + canonical BehaviorProfile |
-| F2 | two-axis compute + reasoning capability profile |
-| F3 | provider-native reasoning |
-| F4 | test-time compute candidates/pruning/repair |
-| F5 | structured reasoning state |
-| F6 | neural TaskModel + planner |
-| F7 | advisory neural action ranking |
-| F8 | HypothesisBoard + critic mesh |
-| F9 | verification/completion v2 |
-| F10 | CapabilityState/self-awareness |
-| F11 | async cognition via JobRuntime/workers |
-| F12 | long-horizon steering/compaction/resume |
-| F13 | experience aggregation/active learning |
-| F14 | verified training trajectory bridge |
-| F15 | post-training candidate lifecycle |
-| F16 | reasoning/tool/coding/research eval + ablations |
-| F17 | frontend reasoning controls/observability/settings |
-| F18 | final integration/hardening |
-
-Machine-readable reasoning gates are kept at:
-
-- `Data/backend/tests/frontier_reasoning_gates.json`
-- verifier: `scripts/verify_frontier_reasoning.py`
-- generated verifier report: `Data/backend/tests/frontier_reasoning_completion_report.json` when requested.
-
-R01–R30 must not be described as PASS without executed evidence.
-
-### Invariants for every future phase
-
-```text
-one CognitiveRuntime
-one Model Control Plane
-one ExecutionGateway
-one central metadata SQLite authority
-Brain/RAG remains knowledge
-Memory remains memory
-Neuro/Cortex remains advisory
-workers remain heavy-work execution plane
-model output != observation
-action request != authority
-unverified result != verified experience
-no private chain-of-thought persistence/exposure
-```
-
----
-
-# 28. Machine verification and tests
-
-Key verification manifests/harnesses live outside `Data/docs` so canonical documentation stays limited to two files:
-
-- Frontier reasoning: `Data/backend/tests/frontier_reasoning_gates.json`, `scripts/verify_frontier_reasoning.py`.
-- Trading program: `Data/backend/tests/trading_gates.json`, `scripts/verify_trading_100.py`.
-- Aggregate runner: `scripts/verify_leviathan.py` (frontier + trading).
-- Capability contract: `Data/backend/tests/test_capability_contract_drift.py`.
-- Backend tests: `Data/backend/tests/`.
-- Frontend tests/build: see companion frontend document.
+Common commands:
 
 ```bash
 python -m pytest Data/backend/tests -q
 python scripts/verify_leviathan.py --allow-incomplete --write-report
 python scripts/verify_frontier_reasoning.py --allow-f0-skeleton-only
 python scripts/verify_trading_100.py --allow-incomplete
+python scripts/verify_trading_100.py --strict --run-tests
 ```
 
-Incomplete / NOT_STARTED / UNMEASURED / FEATURE_GATED are **not** PASS. Baseline-green CI must not coerce frontier or trading program gates to PASS. `--allow-incomplete` only permits an honest incomplete report without FAIL/crash.
-
-Production-quality program ledger (machine state): `Data/backend/tests/production_quality_program.json` maps waves W00–W23 onto existing R/G/F identifiers. Status is never PASS without executed evidence.
-
-### Production-quality integrity repairs (W00–W04 CURRENT)
-
-- **W00:** Default frontend Vite config no longer statically imports `editor/vite-plugin.mjs`. Editor mode loads only when `LEVIATHAN_EDITOR=1` and the plugin file exists; otherwise it raises a precise configuration error. Excluded trees (`Data/HADES/`, `editor/`) remain unmodified.
-- **W01:** `AssistantBenchmarkRunner` never fabricates `ACK` for a missing model or retry (`force_ack` removed). Absent model → `measured=False` / UNAVAILABLE. Retries re-invoke the real caller and preserve attempt evidence. `TaskRunResult.truth` is derived (component vs model-quality), not a fixed end-to-end claim. Token usage is provider-reported or an explicit estimate — never word-count mislabeled as tokens. Trading verifier frontend globs enumerate `.ts`/`.tsx` explicitly (no brace-expansion assumption).
-- **W02:** `run_research_campaign_on_worker` executes canonical gym episodes per iteration; trials complete only with simulation receipts; wins come from acceptance, not trial count; zero-risk promotion inputs are not fabricated. `AcceptanceCriteria.evaluate` and `experiments.evaluate_acceptance` fail closed on missing/NaN/infinite metrics and refuse unit inference from magnitude. `evaluate_candidate_pipeline` enforces `max_candidates` atomically (`CANDIDATE_BUDGET_EXHAUSTED`). `may_promote_to` / `promote_asset` reject caller booleans and enforce stage prerequisites. `MarketView.feature` cache keys include clock index/as_of. Citation validity without a report audit is `UNMEASURED`. `SchemaScorer` validates nested types (not keys only).
-- **W03:** `TaskModel.acceptance_criteria` are typed predicates (criterion ID, expected artifact/effect, verifier kind, scope, required evidence, status). `CompletionEngine` scores only `supported` as met; outcomes distinguish supported / contradicted / insufficient_evidence / unavailable_verifier / failed_execution. Legacy string `success_criteria` remain compatibility readers — unsupported semantics stay unverified. Trusted test receipts require suite/command, execution, workspace/artifact revision, and attempt id; unrelated shell `exit_code=0`, directory listings, stale receipts, fake artifact IDs, and model-authored evidence fields do not pass. Source refs alone do not satisfy claim support. Low-risk `simple_chat` may finish `COMPLETED_UNVERIFIED` without pretending verification.
-- **W04:** `model_runtime/inference_contract.py` + streaming channel honesty. Tool-calling is probed/recorded on every request; SUPPORTED-without-payload raises `TOOL_CALLING_DROPPED`. Structured/`json_schema` responses repair deterministically or fail closed with `STRUCTURED_RESPONSE_UNAVAILABLE` (never schemaSatisfied without validation). Reasoning stream frames stay on a separate channel; partial separation is labeled. Context overflow refuses or truncates with an explicit `context_bound` signal (`CONTEXT_WINDOW_EXCEEDED` / `CONTEXT_TRUNCATED`) — no silent overflow.
-
-### Typed completion and autonomous lab lifecycle (W03 / W16 CURRENT)
-
-- **W03:** See production-quality W03 bullet above (typed `AcceptanceCriterion`, trusted test receipts, A04).
-- **W16:** Durable `market_sim_agent_labs` (migration 53). Control-plane methods create/start/pause/resume/cancel labs bound to research campaigns; worker path runs real simulations. HTTP: `/api/market-sim/lab/runs` (+ start/pause/resume/cancel). Valid outcomes remain `QUALIFIED_STRATEGY_FOUND` | `NO_STRATEGY_QUALIFIED`.
-- **W25:** Strategy Learning Loop — `policy.py`, `learning*.py`, migration 54 `market_sim_learning_runs`, worker `market_sim.learning_run`. Lab APIs extended: `/learning`, `/generations`, `/candidates`, `/trials`, `/lessons`. Tests: `test_strategy_learning.py` (L01–L15 evidence).
-
-Adversarial coverage: `Data/backend/tests/test_adversarial_w01_w02.py` (A01–A03, A06, T01–T05, T14–T15); `test_adversarial_w03_completion.py` (A04 + stale/fake/model-authored); `test_adversarial_w04_inference_contract.py` (tool drop, structured UNAVAILABLE, reasoning channels, context bounds); `test_adversarial_w08_w17.py` (A08 preference supersession + T08 sealed rename inheritance); `test_adversarial_w09_w19.py` (T16 + NL citation/hedging); `test_adversarial_w10_w11.py` (gateway unauthorized/idempotency + lease fence/crash recovery); `test_trading_lab_w16_lifecycle.py`.
-
-Citation audit includes Dutch factual/hedging cues; hedging does not clear evidence duty when factual markers remain. `instruments.support_matrix()` / `family_capability()` keep options/futures/forex as explicit `NOT_IMPLEMENTED` (no silent equity fallback).
-
-### Production-quality cognition / memory / sealed / web (W06 / W08 / W17 CURRENT)
-
-- **W06:** `CognitiveRuntime.cancel` propagates to registered `child_run_ids` (delegation metadata `child_run_id` / `run_id` auto-registers). Parent stop does not leave children running in-process. `CognitivePlanner.replan` records `observation_linked` / `observation_refs`; adaptive reasons without observation ids are marked `observation_trace:MISSING` (strict mode raises `COGNITION_REPLAN_MISSING_OBSERVATION_TRACE`).
-- **W08 / A08:** `MemoryStore.correct_preference` writes a new `PREFERENCE`, supersedes every ACTIVE matching `preference_key` (`PREFERENCE` or legacy `FACT`), stays in-scope (no silent GLOBAL wipe from a conversation edit), and ACTIVE search/list return only the current preference.
-- **W17 / T08:** Sealed holdout contamination keys use a rename-stable root via `lineage_aliases` / `register_lineage_rename` / optional `root_lineage_id`. Renamed descendants cannot claim a fresh sealed holdout after revelation.
-- **Web (GI7):** `HttpWebProvider` search/fetch tolerate thin response doubles (`status_code` / `.text` via getattr + `content` fallback) so rate-limit and robots paths do not turn real provider results into `UNAVAILABLE`/`FAILED` under mocks. Fabrication remains forbidden.
-- **W18 / T09:** `LocalPaperBroker.restore_session` + `WalletLedger.from_public_dict` hydrate durable paper wallet/orders after process restart; `paper_session_state` calls hydrate before trading. Feed `EventOrderer` drops duplicate `event_id`s on reconnect; `client_order_id` remains fill-idempotent so replay cannot double-apply.
-- **W10 (tool gateway):** Canonical `ExecutionGateway` (`Data/modules/execution/gateway.py`) rejects unauthorized tool calls (`approved_by_user` is never authority; forged/consumed approvals denied). COMPLETED invocations with an `idempotency_key` replay prior output via process cache + durable `ObservationStore` and do not re-dispatch providers (no double side-effects).
-- **W11 (durable execution):** `JobStore.transition` / `schedule_retry` accept `expected_lease_owner` fencing; `JobRuntime` completes under its worker id. A stale worker that lost its lease cannot mark COMPLETED after takeover. `recover_expired_leases` moves crashed RUNNING jobs to `RETRY_WAIT` (never fabricates COMPLETED); a later claim re-executes honestly.
-
-Run targeted suites first during phased implementation, then the impacted broader suites.
+Generated reports must be regenerated by their verifier, not hand-edited green.
 
 ---
 
-# 29. Documentation maintenance rule
+# 27. Complete `Data/modules/` locator
 
-Whenever a backend system, route, canonical owner, major file location, reasoning phase or runtime truth changes:
+This table is the fastest entry point for Cursor when locating ownership.
 
-1. update this document in the same change;
-2. update `Leviathan_system_frontend.md` if the UI contract changes;
-3. update machine gate manifests/tests instead of adding a new architecture doc;
-4. preserve clear `CURRENT` versus `TARGET` wording;
-5. prefer code/tests over stale prose.
+| Directory | Canonical responsibility |
+|---|---|
+| `agents/` | AgentRuntime/Fleet, governance, multi-agent, Signal Fabric |
+| `analytics/` | analytics service |
+| `approvals/` | authority/policy/approval persistence |
+| `artifacts/` | artifact storage/hash/validation |
+| `backup/` | backup/restore/maintenance recovery |
+| `brain/` | unified Brain access facade |
+| `browser/` | browser capability/QA boundary |
+| `chaos/` | controlled fault injection |
+| `coding/` | CodingControlPlane |
+| `cognition/` | CognitiveRuntime/TEAM/planning/TTC/critics |
+| `common/` | shared hashing/path/ownership/HTTP auth/SQLite utilities |
+| `compute/` | bounded numeric/compute helpers |
+| `context/` | context/trust/budget/compaction/multimodal |
+| `datasets/` | dataset lifecycle/quality/index/offline/export |
+| `db_commit/` | canonical bulk SQLite commit coordinator |
+| `documents/` | document extraction/intelligence |
+| `evaluation/` | evaluation platform/harness/ablations |
+| `evidence/` | Evidence service/store |
+| `execution/` | capability catalog + ExecutionGateway + receipts |
+| `function_runtime/` | cold function registry/runtime |
+| `host_console/` | host/operator read models |
+| `intelligence/` | cross-cutting intelligence policy/health |
+| `isolation/` | sandbox/isolation guard |
+| `jobs/` | durable jobs/leases/retries/resources |
+| `knowledge/` | RAG/Brain documents/Atlas/DeepRecall/Why |
+| `market_sim/` | causal market sim, autonomous strategy research, qualification, paper |
+| `master/` | master readiness aggregation |
+| `mcp/` | Model Context Protocol bridge/session/tool provider |
+| `media/` | media capability boundary |
+| `memory/` | durable scoped MemoryStore |
+| `metrics/` | metrics/time series |
+| `model_download/` | model acquisition worker boundary |
+| `model_runtime/` | provider inference/serving/streaming |
+| `models/` | Model Control Plane |
+| `module_manager/` | ModuleManager + generic external capability fabric/install authority |
+| `native/` | Python-facing native runtime boundary |
+| `neuro/` | Neuro/Cortex/residual advisory system |
+| `observability/` | event/system/operator telemetry |
+| `observations/` | durable observations/receipts |
+| `plugins/` | PluginRegistry |
+| `product_truth/` | truthful readiness/posture projections |
+| `provider_io/` | controlled remote/provider I/O |
+| `reasoning/` | legacy intent/retrieval classification seam |
+| `release/` | release/CI gates |
+| `research/` | general research runtime/evidence/source graph |
+| `run/` | common run lifecycle/envelopes |
+| `schedules/` | schedule persistence/runner |
+| `security/` | audit/injection/secrets/deployment controls |
+| `settings/` | Settings Control Plane + BehaviorProfile |
+| `source_ingestion/` | source/file ingestion pipeline executed by Worker Fabric |
+| `sqlite_manager/` | operator control plane for the three SQLite DBs |
+| `tasks/` | durable task service |
+| `trading/` | explicit live-trading boundary/stub |
+| `training/` | training/post-training/flywheel support |
+| `verification/` | verification/quality contracts/reports |
+| `voice/` | realtime voice boundary |
+| `workers/` | Worker Fabric/supervisor/pools/entrypoints |
+| `workflows/` | workflow runtime/store |
+
+Other backend-relevant code:
+
+- `Data/functions/` — physical FunctionRuntime implementations;
+- `Data/external_capabilities/` — external source manifests only, not bespoke runtime owners;
+- `Data/native/` — Rust/native data-plane source/build output boundary;
+- `scripts/` — verifiers/worker helper scripts;
+- `Data/backend/tests/` — executable architecture and product-truth evidence.
+
+---
+
+# 28. Cursor change guide — where to start
+
+| You need to change... | Start at... | Also inspect... |
+|---|---|---|
+| app dependency wiring | `Data/backend/main.py` | target route/service constructor |
+| environment/default setting | `Data/backend/config.py` | `settings/catalog.py`, `bindings.py`, `.env.example` |
+| persisted setting/UI catalog | `Data/modules/settings/` | frontend Settings page |
+| DB ownership/schema | `Data/backend/table_ownership.py`, `Data/backend/db_upgrade.py` | owning store + migration tests |
+| bulk DB write | `Data/modules/db_commit/` | owning domain store |
+| Chat behavior | `Data/backend/main.py` chat endpoint | `Data/modules/cognition/`, Brain, context |
+| cognition planning/reasoning | `Data/modules/cognition/` | `verification/`, `context/` |
+| model routing | `Data/modules/models/control_plane.py` | router/residency/model_runtime |
+| provider transport | `Data/modules/model_runtime/` | capability probe/contracts |
+| retrieval/RAG | `Data/modules/knowledge/` | `brain/`, `context/` |
+| durable memory | `Data/modules/memory/` | Brain/perception |
+| tool/side effect | `Data/modules/execution/` | approval, observation, function/module/MCP owner |
+| durable heavy job | `Data/modules/jobs/` | `Data/modules/workers/entrypoints/` |
+| worker lifecycle | `Data/modules/workers/` | `Data/backend/routes/workers.py`, launcher boot |
+| agent/fleet | `Data/modules/agents/` | cognition delegation |
+| coding agent | `Data/modules/coding/` | execution functions/verification |
+| research/web | `Data/modules/research/` | `Data/backend/routes/research.py`, workers |
+| dataset ingestion | `Data/modules/datasets/`, `Data/modules/source_ingestion/` | db_commit/knowledge workers |
+| training/evaluation | `Data/modules/training/`, `Data/modules/evaluation/` | release/verification/flywheel |
+| module installation/lifecycle | `Data/modules/module_manager/` | `Data/backend/routes/modules.py`, approvals, JobRuntime |
+| skill integration | `Data/backend/routes/skills.py` | module_manager external skill store |
+| MCP | `Data/modules/mcp/` | ExecutionGateway |
+| market simulation | `Data/modules/market_sim/gym.py` | causality/features/execution/accounting |
+| strategy generation | `Data/modules/market_sim/strategy_families.py`, `Data/modules/market_sim/learning_candidates.py` | DSL/learning/research_cycle |
+| autonomous trading research | `Data/modules/market_sim/research_cycle.py` | hypothesis/perception/learning/qualification |
+| qualification | `Data/modules/market_sim/qualification.py` | WFA/regimes/robustness/capacity/sealed |
+| paper autonomy/drift | `Data/modules/market_sim/autonomous_paper_loop.py`, `Data/modules/market_sim/paper_forward_drift.py` | service/store/live guard |
+| Research Command | `Data/modules/market_sim/research_command/` | route + orchestra + paper + lab |
+| security/auth | `Data/modules/common/http_auth.py`, `Data/modules/security/`, `Data/modules/approvals/` | main middleware/ExecutionGateway |
+| observability | `Data/modules/observability/`, `Data/modules/metrics/` | event producers + frontend event client |
+
+---
+
+# 29. Architectural invariants to preserve
+
+```text
+one FastAPI control plane
+one CognitiveRuntime
+one Model Control Plane
+one canonical ContextBuilder
+one Brain facade over canonical stores
+one ExecutionGateway for capability side effects
+one JobRuntime / Worker Fabric for durable heavy work
+one Agent Fleet
+one ModuleManager external fabric
+one MarketSim trading/research authority
+exactly three product SQLite databases: CONTROL / KNOWLEDGE / MARKET
+ArtifactStore for large/file payloads
+model output != observation
+retrieved text != instruction authority
+request/approval flag != technical authority
+UNMEASURED != PASS
+TRAIN profit != qualification
+chart/VLM opinion != trading authority
+real-money trading remains BLOCKED
+no private chain-of-thought persistence/exposure
+```
+
+---
+
+# 30. Documentation maintenance rule
+
+For every backend PR that changes a canonical owner, route, database/table ownership, model/cognition contract, worker flow, external module lifecycle, trading/research flow or major file location:
+
+1. update this document in the same PR;
+2. update `Leviathan_system_frontend.md` when the operator/API contract changes;
+3. update executable manifests/tests rather than creating a new system-level architecture Markdown file;
+4. state CURRENT vs FEATURE-GATED/UNMEASURED honestly;
+5. include exact file paths so Cursor can start at the right owner;
+6. never use documentation prose to upgrade a runtime state to PASS.
