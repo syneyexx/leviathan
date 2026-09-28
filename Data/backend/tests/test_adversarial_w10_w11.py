@@ -306,6 +306,10 @@ class DurableLeaseFenceAndRecoveryTests(unittest.TestCase):
         job = runtime.enqueue(
             capability_id="file.read",
             arguments={"path": str(self.note)},
+            # Lease/recovery semantics under test — keep on general so
+            # JobRuntime.process_next (general-only claim) can resume it.
+            # Specialist file_io ownership is covered elsewhere.
+            worker_pool="general",
         )
         claimed = self.store.claim_next_queued(worker_id="worker-a", lease_ttl_seconds=30.0)
         assert claimed is not None
