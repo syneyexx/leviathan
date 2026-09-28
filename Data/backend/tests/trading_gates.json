@@ -2553,6 +2553,170 @@
         }
       ],
       "notes": "A4 is ceiling; A5 impossible"
+    },
+    "L16": {
+      "title": "Strategy family registry covers DSL; hold excluded from research generation",
+      "phase": "W-AR / Autonomous-Research",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/modules/market_sim/strategy_families.py",
+        "Data/backend/tests/test_strategy_families_registry.py"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_strategy_families_registry.py::StrategyFamiliesRegistryTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_strategy_families_registry.py::StrategyFamiliesRegistryTests"
+          ],
+          "timeout_sec": 60
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/strategy_families.py"
+        }
+      ],
+      "notes": "Single registry source for learning_types / FAMILY_TEMPLATES / generatable set"
+    },
+    "L17": {
+      "title": "Research hypothesis W1 persist / lifecycle / falsification immutability / no private CoT",
+      "phase": "W-AR / Autonomous-Research",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/modules/market_sim/research_hypothesis.py",
+        "MARKET domain migration v7 market_research_hypotheses",
+        "Data/backend/tests/test_research_hypothesis_w1.py"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_research_hypothesis_w1.py::ResearchHypothesisW1Tests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_research_hypothesis_w1.py::ResearchHypothesisW1Tests"
+          ],
+          "timeout_sec": 90
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/research_hypothesis.py"
+        }
+      ],
+      "notes": "Public structured reasoning only; falsification frozen after create"
+    },
+    "L18": {
+      "title": "Autonomous discovery closed loop E2E (lab \u2192 hypothesis \u2192 learn \u2192 live BLOCKED)",
+      "phase": "W-AR / Autonomous-Research",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "create_agent_lab AUTONOMOUS_DISCOVERY",
+        "research_lineage_root",
+        "heuristic research cycle",
+        "Data/backend/tests/test_autonomous_research_closed_loop_e2e.py"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_autonomous_research_closed_loop_e2e.py::AutonomousResearchClosedLoopE2ETests::test_autonomous_discovery_lab_hypothesis_learning_loop"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_autonomous_research_closed_loop_e2e.py::AutonomousResearchClosedLoopE2ETests::test_autonomous_discovery_lab_hypothesis_learning_loop"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "Product machinery only — does not claim market edge; sealed path optional"
+    },
+    "G67": {
+      "title": "Autonomous research adversarial honesty (causality, DSL, expectancy, live, VLM)",
+      "phase": "W-AR / Autonomous-Research",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "research_perception as_of bound",
+        "render_chart_snapshot future bar refuse",
+        "derive_expectancy_metrics / ranks_by_expectancy_not_win_rate",
+        "LiveTradingGuard",
+        "Data/backend/tests/test_autonomous_research_adversarial.py"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_autonomous_research_adversarial.py"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_autonomous_research_adversarial.py"
+          ],
+          "timeout_sec": 90
+        }
+      ],
+      "assertions": [
+        "future bar leak rejected",
+        "malformed DSL / arbitrary Python rejected",
+        "high win-rate negative expectancy loses to positive expectancy",
+        "live orders BLOCKED",
+        "chart observation has no order authority",
+        "falsification criteria immutable"
+      ],
+      "notes": "A\u2013J adversarial suite for closed-loop research honesty"
+    },
+    "G68": {
+      "title": "Drift ticket spawns linked AUTONOMOUS_DISCOVERY research lab (no auto-promote)",
+      "phase": "W-AR / Autonomous-Research",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "review_deployment_drift spawn_research_lab",
+        "Data/backend/tests/test_autonomous_research_closed_loop_e2e.py::AutonomousResearchClosedLoopE2ETests::test_drift_ticket_spawns_linked_discovery_lab"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_autonomous_research_closed_loop_e2e.py::AutonomousResearchClosedLoopE2ETests::test_drift_ticket_spawns_linked_discovery_lab"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_autonomous_research_closed_loop_e2e.py::AutonomousResearchClosedLoopE2ETests::test_drift_ticket_spawns_linked_discovery_lab"
+          ],
+          "timeout_sec": 90
+        }
+      ],
+      "notes": "Continual research requester; live remains BLOCKED; does not auto-promote"
+    },
+    "AP09": {
+      "title": "Autonomous research closed loop retains paper/live ceiling (discovery does not unlock live)",
+      "phase": "A4-Autonomous-Paper / W-AR",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "LiveTradingGuard",
+        "AUTONOMOUS_DISCOVERY lab metadata live_trading BLOCKED",
+        "Data/backend/tests/test_autonomous_research_closed_loop_e2e.py::AutonomousResearchClosedLoopE2ETests::test_autonomous_discovery_lab_hypothesis_learning_loop",
+        "Data/backend/tests/test_autonomous_research_adversarial.py::LiveGuardTests::test_h_live_order_blocked"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_autonomous_research_adversarial.py::LiveGuardTests::test_h_live_order_blocked",
+        "Data/backend/tests/test_autonomous_research_closed_loop_e2e.py::AutonomousResearchClosedLoopE2ETests::test_autonomous_discovery_lab_hypothesis_learning_loop"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_autonomous_research_adversarial.py::LiveGuardTests::test_h_live_order_blocked",
+            "Data/backend/tests/test_autonomous_research_closed_loop_e2e.py::AutonomousResearchClosedLoopE2ETests::test_autonomous_discovery_lab_hypothesis_learning_loop"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "Extends AP08: discovery research path cannot place live orders"
     }
   },
   "frontier_program": {

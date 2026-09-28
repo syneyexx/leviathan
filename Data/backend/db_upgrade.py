@@ -527,6 +527,51 @@ def _dm6_external_install_operations(conn: sqlite3.Connection, domain: DatabaseD
     )
 
 
+def _dm7_market_research_hypotheses(conn: sqlite3.Connection, domain: DatabaseDomain) -> None:
+    """MARKET domain v7 — research hypotheses for autonomous Trading Research Lab."""
+    if domain is not DatabaseDomain.MARKET:
+        return
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS market_research_hypotheses (
+            hypothesis_id TEXT PRIMARY KEY,
+            lab_id TEXT,
+            learning_run_id TEXT,
+            parent_hypothesis_id TEXT,
+            status TEXT NOT NULL,
+            trust TEXT NOT NULL,
+            statement TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            provenance_hash TEXT NOT NULL,
+            as_of TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_market_research_hypotheses_lab
+            ON market_research_hypotheses(lab_id);
+        CREATE INDEX IF NOT EXISTS idx_market_research_hypotheses_learning_run
+            ON market_research_hypotheses(learning_run_id);
+        CREATE INDEX IF NOT EXISTS idx_market_research_hypotheses_status
+            ON market_research_hypotheses(status);
+        """
+    )
+    # Optional run_mode column on learning runs — DEFAULT keeps existing rows intact.
+    # Prefer metadata_json for run_mode in application code; column is additive only.
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(market_sim_learning_runs)").fetchall()}
+    except sqlite3.Error:
+        cols = set()
+    if cols and "run_mode" not in cols:
+        try:
+            conn.execute(
+                "ALTER TABLE market_sim_learning_runs "
+                "ADD COLUMN run_mode TEXT DEFAULT 'SEED_EXISTING_STRATEGY'"
+            )
+        except sqlite3.Error:
+            pass
+
+
 DOMAIN_MIGRATIONS: tuple[DomainMigration, ...] = (
     DomainMigration(
         version=2,
@@ -552,6 +597,11 @@ DOMAIN_MIGRATIONS: tuple[DomainMigration, ...] = (
         version=6,
         name="external_install_operations",
         apply=_dm6_external_install_operations,
+    ),
+    DomainMigration(
+        version=7,
+        name="market_research_hypotheses",
+        apply=_dm7_market_research_hypotheses,
     ),
 )
 

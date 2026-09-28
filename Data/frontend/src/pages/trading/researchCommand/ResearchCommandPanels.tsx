@@ -685,7 +685,30 @@ export function EvolutionCard({
       <p className="lv-rc-muted">
         {evo?.bound ? `${evo.name || evo.labId} · ${evo.status || "UNMEASURED"}` : "No research lab run selected."} · owner {evo?.owner || "Research Lab"} · generation{" "}
         {generationLabel(evo?.currentGeneration.value, evo?.currentGeneration.measurement)}
+        {evo?.runMode ? ` · mode ${evo.runMode}` : ""}
+        {evo?.stage ? ` · stage ${evo.stage}` : ""}
       </p>
+      {evo?.bound ? (
+        <p className="lv-rc-muted">
+          Active hypotheses: {evo.activeHypothesisCount ?? 0}
+          {evo.activeHypothesisIds && evo.activeHypothesisIds.length
+            ? ` · ${evo.activeHypothesisIds.slice(0, 4).join(", ")}`
+            : ""}
+          {evo.bestCandidate?.present && evo.bestCandidate.candidateId
+            ? ` · best ${evo.bestCandidate.role || "candidate"} ${evo.bestCandidate.candidateId}`
+            : ""}
+          {evo.qualification?.status ? ` · qualification ${evo.qualification.status}` : ""}
+          {" · live BLOCKED"}
+        </p>
+      ) : null}
+      {snap?.paperForward?.bound && (snap.paperForward.driftTickets?.length || snap.paperForward.deployments?.length) ? (
+        <p className="lv-rc-muted">
+          Paper-forward deployments: {snap.paperForward.deployments.length}
+          {snap.paperForward.driftTickets.length
+            ? ` · drift tickets ${snap.paperForward.driftTickets.length}`
+            : ""}
+        </p>
+      ) : null}
       {rows.length === 0 ? <p className="lv-rc-empty">No strategy generation recorded.</p> : null}
       {rows.length > 0 ? (
         <table className="lv-rc-table">

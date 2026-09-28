@@ -1299,6 +1299,13 @@ def build_default_catalog() -> CapabilityCatalog:
         )
     )
     _register_fabric_worker_capabilities(catalog)
+    try:
+        from Data.modules.market_sim.chat_capabilities import register_market_sim_chat_capabilities
+
+        register_market_sim_chat_capabilities(catalog)
+    except Exception:  # noqa: BLE001
+        # Catalog build must not fail closed on optional research chat surface.
+        pass
     return catalog
 
 

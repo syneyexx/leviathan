@@ -1,9 +1,11 @@
 import { Donut, LineSeries, Spark } from "../../shared";
 import {
+  asRecord,
   fmtMetric,
   fmtPctMetric,
   progressPct,
   type CandidateRecord,
+  type LabRunRecord,
   type OverviewModel,
 } from "../viewModels";
 import { LineageMiniGraph } from "./LineageMiniGraph";
@@ -80,12 +82,16 @@ function CandidateCard({
 export function ResearchLabOverview({
   model,
   candidates,
+  lab,
+  qualification,
   hasLearning,
   learningError,
   loading,
 }: {
   model: OverviewModel;
   candidates: CandidateRecord[];
+  lab: LabRunRecord | null;
+  qualification?: Record<string, unknown> | null;
   hasLearning: boolean;
   learningError: string | null;
   loading: boolean;
@@ -100,12 +106,57 @@ export function ResearchLabOverview({
     );
   }
 
+  const meta = asRecord(lab?.metadata) || {};
+  const runMode = String(lab?.run_mode || meta.run_mode || "—");
+  const researchObjective = String(
+    lab?.research_objective || meta.research_objective || meta.hypothesis || "",
+  );
+  const bestNet =
+    model.bestTrain.metrics.netExpectancy ??
+    model.bestValidation.metrics.netExpectancy ??
+    model.qualified.metrics.netExpectancy ??
+    null;
+  const qualSummary = qualification
+    ? String(
+        qualification.summary ||
+          qualification.status ||
+          qualification.state ||
+          qualification.decision ||
+          "",
+      )
+    : "";
+
   if (!hasLearning) {
     return (
-      <div className="lv-rl-empty">
-        <strong>No learner state available yet</strong>
-        {learningError ||
-          "Select a run with learning enabled, or create a new research run. Market simulation remains the evaluation environment."}
+      <div className="lv-rl-overview">
+        <section className="lv-rl-card">
+          <p className="lv-rl-sec-label">Run identity</p>
+          <dl className="lv-rl-dl">
+            <div>
+              <dt>Run mode</dt>
+              <dd>{runMode}</dd>
+            </div>
+            <div>
+              <dt>Research objective</dt>
+              <dd>{researchObjective || "—"}</dd>
+            </div>
+            <div>
+              <dt>Best candidate net expectancy</dt>
+              <dd>UNMEASURED</dd>
+            </div>
+            {qualSummary ? (
+              <div>
+                <dt>Qualification</dt>
+                <dd>{qualSummary}</dd>
+              </div>
+            ) : null}
+          </dl>
+        </section>
+        <div className="lv-rl-empty">
+          <strong>No learner state available yet</strong>
+          {learningError ||
+            "Select a run with learning enabled, or create a new research run. Market simulation remains the evaluation environment."}
+        </div>
       </div>
     );
   }
@@ -118,6 +169,30 @@ export function ResearchLabOverview({
 
   return (
     <div className="lv-rl-overview">
+      <section className="lv-rl-card">
+        <p className="lv-rl-sec-label">Run identity</p>
+        <dl className="lv-rl-dl">
+          <div>
+            <dt>Run mode</dt>
+            <dd>{runMode}</dd>
+          </div>
+          <div>
+            <dt>Research objective</dt>
+            <dd>{researchObjective || "—"}</dd>
+          </div>
+          <div>
+            <dt>Best candidate net expectancy</dt>
+            <dd>{bestNet != null ? fmtMetric(bestNet) : "UNMEASURED"}</dd>
+          </div>
+          {qualSummary ? (
+            <div>
+              <dt>Qualification</dt>
+              <dd>{qualSummary}</dd>
+            </div>
+          ) : null}
+        </dl>
+      </section>
+
       <section className="lv-rl-card">
         <p className="lv-rl-sec-label">Learning progress</p>
         <div className="lv-rl-progress-panel">

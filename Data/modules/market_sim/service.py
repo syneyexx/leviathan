@@ -2361,8 +2361,13 @@ class MarketSimControlPlane:
         observed_metrics: dict[str, float],
         relative_threshold: float = 0.25,
         spawn_challenger: bool = True,
+        spawn_research_lab: bool = True,
     ) -> dict[str, Any]:
-        """Compare research expectation vs paper-forward; persist PAPER_OBSERVED lesson."""
+        """Compare research expectation vs paper-forward; persist PAPER_OBSERVED lesson.
+
+        When a drift ticket opens, optionally spawn an AUTONOMOUS_DISCOVERY lab linked to
+        the original strategy + ticket. Does NOT auto-promote. Live remains BLOCKED.
+        """
         self._require_enabled()
         from .autonomous_paper_loop import (
             loop_state_from_dict,
@@ -2380,13 +2385,86 @@ class MarketSimControlPlane:
         def _memory_writer(mem: Any) -> Any:
             return self.store.save_strategy_memory(mem)
 
+        research_lab: dict[str, Any] | None = None
+
+        def _research_requester(question: str) -> Any:
+            nonlocal research_lab
+            if not spawn_research_lab:
+                return None
+            meta = dict(row.get("metadata_json") or row.get("metadata") or {})
+            payload = dict(row.get("payload_json") or row.get("payload") or {})
+            source_id = (
+                meta.get("source_id")
+                or payload.get("source_id")
+                or (loop.metadata or {}).get("source_id")
+                if hasattr(loop, "metadata")
+                else None
+            )
+            if not source_id:
+                # Best-effort: prefer a READY market data source
+                try:
+                    ready = self.data.list_sources(status="READY", limit=1)
+                    if ready:
+                        source_id = ready[0].source_id if hasattr(ready[0], "source_id") else ready[0].get("source_id")
+                except Exception:  # noqa: BLE001
+                    source_id = None
+            if not source_id:
+                return {"error": "SOURCE_ID_MISSING_FOR_RESEARCH", "question": question}
+            try:
+                lab = self.create_agent_lab(
+                    name=f"drift-research-{deployment_id[:8]}",
+                    strategy_id=None,
+                    source_id=str(source_id),
+                    run_mode="AUTONOMOUS_DISCOVERY",
+                    research_objective=str(question),
+                    hypothesis=str(question),
+                    metadata={
+                        "origin": "continual_research_drift",
+                        "deployment_id": deployment_id,
+                        "original_strategy_id": loop.strategy_id,
+                        "original_strategy_version": loop.strategy_version,
+                        "does_not_auto_promote": True,
+                        "live_trading": "BLOCKED",
+                    },
+                    enable_learning=True,
+                )
+                research_lab = lab
+                return {
+                    "lab_id": lab.get("lab_id"),
+                    "hypothesis_id": lab.get("hypothesis_id")
+                    or (lab.get("metadata") or {}).get("hypothesis_id"),
+                    "run_mode": "AUTONOMOUS_DISCOVERY",
+                    "linked_strategy_id": loop.strategy_id,
+                    "does_not_auto_promote": True,
+                    "live_trading": "BLOCKED",
+                }
+            except MarketSimError as exc:
+                return {"error": exc.code, "detail": str(exc), "question": question}
+
         drift = review_loop_drift(
             loop,
             baseline_metrics=baseline_metrics,
             observed_metrics=observed_metrics,
             strategy_memory_writer=_memory_writer,
+            research_requester=_research_requester if spawn_research_lab else None,
             relative_threshold=relative_threshold,
         )
+        # Attach ticket id onto lab metadata when research was spawned
+        if research_lab and isinstance(drift.get("persisted"), dict):
+            req = (drift.get("persisted") or {}).get("researchRequest")
+            ticket = drift.get("continualResearch") or {}
+            if isinstance(req, dict) and req.get("lab_id") and ticket.get("ticketId"):
+                try:
+                    lab_row = self.store.get_agent_lab(str(req["lab_id"]))
+                    if lab_row:
+                        lab_row["metadata"] = {
+                            **dict(lab_row.get("metadata") or {}),
+                            "drift_ticket_id": ticket.get("ticketId"),
+                            "original_strategy_id": loop.strategy_id,
+                        }
+                        self.store.upsert_agent_lab(lab_row)
+                except Exception:  # noqa: BLE001
+                    pass
         challenger = None
         if spawn_challenger and drift.get("status") == "DRIFT_DETECTED":
             challenger = spawn_challenger_from_drift(loop)
@@ -2396,6 +2474,7 @@ class MarketSimControlPlane:
         return {
             "drift": drift,
             "challenger": challenger,
+            "research_lab": research_lab,
             "loop": loop.public_dict(),
             "truth": {
                 "does_not_auto_promote": True,
@@ -4261,7 +4340,7 @@ class MarketSimControlPlane:
         self,
         *,
         name: str = "",
-        strategy_id: str,
+        strategy_id: str | None = None,
         source_id: str,
         strategy_version: int | None = None,
         max_candidates: int = 10,
@@ -4273,27 +4352,87 @@ class MarketSimControlPlane:
         metadata: dict[str, Any] | None = None,
         learning: dict[str, Any] | None = None,
         enable_learning: bool = True,
+        run_mode: str = "SEED_EXISTING_STRATEGY",
+        research_objective: str = "",
+        enable_chart_vision: bool = False,
+        model_budget: int = 6,
+        agent_proposal_rate: float | None = None,
+        research_scope: dict[str, Any] | None = None,
+        dataset_bundle: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Create a durable lab bound to a research campaign + optional Strategy Learning Run."""
+        """Create a durable lab bound to a research campaign + optional Strategy Learning Run.
+
+        MODE A ``SEED_EXISTING_STRATEGY``: require ``strategy_id`` (current behavior).
+        MODE B ``AUTONOMOUS_DISCOVERY``: create a research-lineage Strategy (hold root —
+        identity for versioning only, never used as elite seed) and bootstrap a
+        ResearchHypothesis from ``research_objective`` / ``hypothesis``.
+
+        Optional ``research_scope`` / ``dataset_bundle`` (Wave 5) reference additional
+        source_ids without duplicating data; single-source path remains default.
+        """
         self._require_enabled()
         from .agent_lab import AcceptanceCriteria, LabOutcome, new_agent_lab
         from .features import FEATURE_PIPELINE_VERSION
         from .learning import create_learning_run
         from .learning_runtime import persist_learning_run
-        from .learning_types import LearningObjectiveSpec
+        from .learning_types import LearningObjectiveSpec, ResearchRunMode
+        from .research_hypothesis import hypothesis_from_objective_brief
+        from .research_scope import (
+            objective_universe_from_scope,
+            parse_research_scope,
+            schedule_episodes_per_source,
+        )
 
-        strat = self.store.get_strategy(strategy_id)
+        mode = str(run_mode or ResearchRunMode.SEED_EXISTING_STRATEGY.value).upper().strip()
+        if mode not in {
+            ResearchRunMode.SEED_EXISTING_STRATEGY.value,
+            ResearchRunMode.AUTONOMOUS_DISCOVERY.value,
+        }:
+            raise MarketSimError("INVALID_RUN_MODE", mode, http_status=400)
+
+        sid = str(strategy_id or "").strip() or None
+        if mode == ResearchRunMode.SEED_EXISTING_STRATEGY.value:
+            if not sid:
+                raise MarketSimError("STRATEGY_ID_REQUIRED", "strategy_id required for SEED_EXISTING_STRATEGY", http_status=400)
+        elif mode == ResearchRunMode.AUTONOMOUS_DISCOVERY.value and not sid:
+            short = str(uuid.uuid4())[:8]
+            created = self.create_strategy(
+                name=f"Research Lineage {short}",
+                tags=["research_lineage_root", "autonomous_discovery"],
+                entry_rules={
+                    "version": 3,
+                    "kind": "hold",
+                    "metadata": {
+                        "research_lineage_root": True,
+                        "not_a_trading_seed": True,
+                    },
+                },
+                exit_rules={"kind": "hold"},
+                parameters={},
+                changelog="autonomous discovery research lineage root — not a profitable seed",
+            )
+            sid = str((created.get("strategy") or {}).get("strategy_id") or "")
+            if not sid:
+                raise MarketSimError("RESEARCH_LINEAGE_CREATE_FAILED", "could not create lineage root", http_status=500)
+
+        assert sid is not None
+        strat = self.store.get_strategy(sid)
         if strat is None:
-            raise MarketSimError("STRATEGY_NOT_FOUND", strategy_id, http_status=404)
-        ver = self.store.get_strategy_version(strategy_id, strategy_version)
+            raise MarketSimError("STRATEGY_NOT_FOUND", sid, http_status=404)
+        ver = self.store.get_strategy_version(sid, strategy_version)
         if ver is None:
-            raise MarketSimError("STRATEGY_VERSION_MISSING", strategy_id, http_status=404)
+            raise MarketSimError("STRATEGY_VERSION_MISSING", sid, http_status=404)
         source = self.data.get_source(source_id)
         if source.status != SourceStatus.READY.value:
             raise MarketSimError("SOURCE_NOT_READY", source_id, http_status=400)
 
         crit = dict(acceptance_criteria or {})
         learning_cfg = dict(learning or {})
+        rate = (
+            float(agent_proposal_rate)
+            if agent_proposal_rate is not None
+            else float(learning_cfg.get("agent_proposal_rate", 0.15))
+        )
         acceptance = AcceptanceCriteria(
             min_trades=int(crit.get("min_trades", learning_cfg.get("min_trades", 1))),
             max_drawdown_pct=float(crit.get("max_drawdown_pct", learning_cfg.get("max_drawdown_pct", 100.0))),
@@ -4309,17 +4448,56 @@ class MarketSimControlPlane:
             max_candidates=max(1, int(max_candidates)),
             seed=int(seed),
         )
+        objective_text = str(research_objective or hypothesis or "").strip()
+        # Wave 5 — optional multi-asset/timeframe scope (references only)
+        try:
+            parsed_scope = parse_research_scope(
+                research_scope=research_scope,
+                dataset_bundle=dataset_bundle,
+                metadata=metadata,
+            )
+        except ValueError as exc:
+            raise MarketSimError("INVALID_RESEARCH_SCOPE", str(exc), http_status=400) from exc
+        scope_public = parsed_scope.public_dict() if parsed_scope else None
+        episode_schedule = []
+        if parsed_scope and parsed_scope.dataset_bundle:
+            try:
+                available_ids = {s.source_id for s in self.data.list_sources(limit=5000)}
+            except Exception:  # noqa: BLE001
+                available_ids = {source_id}
+            # Primary create source must remain available even if list fails partially
+            available_ids.add(source_id)
+            episode_schedule = [
+                ep.public_dict()
+                for ep in schedule_episodes_per_source(
+                    parsed_scope.dataset_bundle,
+                    available_source_ids=available_ids,
+                )
+            ]
+        research_meta = {
+            "lab_id": lab.lab_id,
+            "run_mode": mode,
+            "research_objective": objective_text,
+            "enable_chart_vision": bool(enable_chart_vision),
+            "model_budget": int(model_budget),
+            "agent_proposal_rate": rate,
+            "enable_research_cycle": True,
+            **dict(metadata or {}),
+        }
+        if scope_public:
+            research_meta["research_scope"] = scope_public
+            research_meta["episode_schedule"] = episode_schedule
         campaign = self.create_research_campaign(
             name=name or f"lab-{lab.lab_id[:8]}",
-            strategy_id=strategy_id,
+            strategy_id=sid,
             strategy_version=ver.version,
             source_id=source_id,
             max_iterations=max(1, int(max_iterations)),
             seed=int(seed),
-            hypothesis=hypothesis,
+            hypothesis=hypothesis or objective_text,
             acceptance_criteria=acceptance.public_dict(),
             autonomy_ceiling=autonomy_ceiling,
-            metadata={"lab_id": lab.lab_id, **dict(metadata or {})},
+            metadata=research_meta,
         )
         now = utc_now()
         payload = {
@@ -4327,7 +4505,7 @@ class MarketSimControlPlane:
             "name": name or campaign["name"],
             "status": "CREATED",
             "outcome": LabOutcome.IN_PROGRESS.value,
-            "strategy_id": strategy_id,
+            "strategy_id": sid,
             "strategy_version": ver.version,
             "source_id": source_id,
             "campaign_id": campaign["campaign_id"],
@@ -4344,16 +4522,62 @@ class MarketSimControlPlane:
             "metadata": {
                 "seed": seed,
                 "max_iterations": max(1, int(max_iterations)),
-                "hypothesis": hypothesis,
+                "hypothesis": hypothesis or objective_text,
                 "enable_learning": bool(enable_learning),
+                "run_mode": mode,
+                "research_objective": objective_text,
+                "enable_chart_vision": bool(enable_chart_vision),
+                "model_budget": int(model_budget),
+                "agent_proposal_rate": rate,
+                "enable_research_cycle": True,
                 **dict(metadata or {}),
+                **({"research_scope": scope_public, "episode_schedule": episode_schedule} if scope_public else {}),
             },
         }
         self.store.upsert_agent_lab(payload)
+        if scope_public:
+            self._emit_event(
+                "research.scope.bound",
+                {
+                    "lab_id": lab.lab_id,
+                    "edge_scope": scope_public.get("edge_scope"),
+                    "source_ids": (scope_public.get("dataset_bundle") or {}).get("source_ids") or [source_id],
+                    "episode_count": len(episode_schedule),
+                },
+            )
+
+        # Bootstrap research hypothesis (Wave 2) — persisted before outcomes known
+        hypothesis_id = None
+        if objective_text or mode == ResearchRunMode.AUTONOMOUS_DISCOVERY.value:
+            try:
+                rh = hypothesis_from_objective_brief(
+                    objective_text=objective_text
+                    or "Search for positive net expectancy after costs via autonomous discovery.",
+                    created_at=now,
+                    lab_id=lab.lab_id,
+                    symbols=[getattr(source, "symbol", "") or ""],
+                    timeframes=[getattr(source, "timeframe", "") or "1h"],
+                )
+                saved = self.store.upsert_research_hypothesis(rh.public_dict())
+                hypothesis_id = str(saved.get("hypothesis_id") or rh.hypothesis_id)
+                payload["metadata"]["hypothesis_id"] = hypothesis_id
+                self.store.upsert_agent_lab(payload)
+                self._emit_event(
+                    "research.hypothesis.proposed",
+                    {"hypothesis_id": hypothesis_id, "lab_id": lab.lab_id, "run_mode": mode},
+                )
+            except MarketSimError:
+                # Table missing / store unavailable — lab still usable without hyp persistence
+                pass
+            except Exception:  # noqa: BLE001
+                pass
 
         learning_run_id = None
         if enable_learning:
             parent_family = str((ver.entry_rules or {}).get("kind") or "ma_cross")
+            if mode == ResearchRunMode.AUTONOMOUS_DISCOVERY.value:
+                # Lineage root is hold — do not bias family priors toward hold
+                parent_family = None
             obj_raw = {
                 "min_trades": acceptance.min_trades,
                 "max_drawdown_pct": acceptance.max_drawdown_pct,
@@ -4373,7 +4597,30 @@ class MarketSimControlPlane:
                 "mutation_rate": float(learning_cfg.get("mutation_rate", 0.35)),
                 "crossover_rate": float(learning_cfg.get("crossover_rate", 0.25)),
                 "max_episode_bars": learning_cfg.get("max_episode_bars"),
-                "universe": list(learning_cfg.get("universe") or []),
+                "universe": list(
+                    learning_cfg.get("universe")
+                    or objective_universe_from_scope(
+                        parsed_scope,
+                        fallback=list((metadata or {}).get("universe") or []),
+                    )
+                ),
+                "metadata": {
+                    "agent_proposal_rate": rate,
+                    "run_mode": mode,
+                    "enable_chart_vision": bool(enable_chart_vision),
+                    "model_budget": int(model_budget),
+                    "enable_research_cycle": True,
+                    **(
+                        {
+                            "research_scope": scope_public,
+                            "dataset_bundle": (scope_public or {}).get("dataset_bundle"),
+                            "episode_schedule": episode_schedule,
+                            "edge_scope": (scope_public or {}).get("edge_scope"),
+                        }
+                        if scope_public
+                        else {}
+                    ),
+                },
             }
             # Merge fitness weights if provided
             if learning_cfg.get("fitness_weights"):
@@ -4386,7 +4633,7 @@ class MarketSimControlPlane:
             try:
                 prior_trials = [
                     t
-                    for t in self.store.list_experiments(strategy_id=strategy_id, limit=50)
+                    for t in self.store.list_experiments(strategy_id=sid, limit=50)
                     if str((t.get("split") or {}).get("role") or "").upper() != "SEALED"
                 ]
             except Exception:  # noqa: BLE001
@@ -4394,7 +4641,7 @@ class MarketSimControlPlane:
             lrun = create_learning_run(
                 lab_id=lab.lab_id,
                 campaign_id=campaign["campaign_id"],
-                strategy_id=strategy_id,
+                strategy_id=sid,
                 parent_strategy_version=ver.version,
                 source_id=source_id,
                 objective=objective,
@@ -4405,19 +4652,43 @@ class MarketSimControlPlane:
                 feature_pipeline_version=str(FEATURE_PIPELINE_VERSION),
                 now=now,
             )
+            lrun.metadata = {
+                **dict(lrun.metadata or {}),
+                "run_mode": mode,
+                "research_objective": objective_text,
+                "enable_chart_vision": bool(enable_chart_vision),
+                "model_budget": int(model_budget),
+                "agent_proposal_rate": rate,
+                "enable_research_cycle": True,
+                "hypothesis_id": hypothesis_id,
+            }
+            if hypothesis_id:
+                # Bind learning_run_id onto hypothesis after create
+                pass
             persist_learning_run(self.store, lrun)
             learning_run_id = lrun.learning_run_id
+            if hypothesis_id:
+                try:
+                    existing = self.store.get_research_hypothesis(hypothesis_id)
+                    if existing:
+                        existing["learning_run_id"] = learning_run_id
+                        existing["updated_at"] = utc_now()
+                        self.store.upsert_research_hypothesis(existing)
+                except Exception:  # noqa: BLE001
+                    pass
             payload["metadata"]["learning_run_id"] = learning_run_id
             self.store.upsert_agent_lab(payload)
             self._emit_event(
                 "learning_run.created",
-                {"learning_run_id": learning_run_id, "lab_id": lab.lab_id},
+                {"learning_run_id": learning_run_id, "lab_id": lab.lab_id, "run_mode": mode},
             )
 
         out = self.get_agent_lab(lab.lab_id)
         if learning_run_id:
             out["learning_run_id"] = learning_run_id
             out["learning"] = self.get_learning_run(learning_run_id)
+        if hypothesis_id:
+            out["hypothesis_id"] = hypothesis_id
         return out
 
     def get_agent_lab(self, lab_id: str) -> dict[str, Any]:
@@ -4796,12 +5067,86 @@ class MarketSimControlPlane:
             "best_validation_candidate": learning.get("best_validation_candidate"),
         }
 
+    def explain_lab_candidate(self, lab_id: str, candidate_id: str) -> dict[str, Any]:
+        """Structured evidence-only explainability for one lab candidate (Wave 27)."""
+        self._require_enabled()
+        from .candidate_explainability import explain_candidate
+
+        lab = self.get_agent_lab(lab_id)
+        learning = lab.get("learning")
+        learning_run_id = lab.get("learning_run_id") or (lab.get("metadata") or {}).get("learning_run_id")
+        if learning is None and learning_run_id:
+            learning = self.store.get_learning_run(str(learning_run_id))
+        explanation = explain_candidate(
+            self.store,
+            candidate_id=str(candidate_id),
+            learning_run=learning if isinstance(learning, dict) else None,
+            learning_run_id=str(learning_run_id) if learning_run_id else None,
+        )
+        return {
+            "lab_id": lab_id,
+            "candidate_id": candidate_id,
+            "explanation": explanation,
+            "liveTrading": "BLOCKED",
+            "truth": {
+                "evidence_only": True,
+                "no_llm_storytelling": True,
+                "live_trading": "BLOCKED",
+            },
+        }
+
     def get_lab_lessons(self, lab_id: str) -> dict[str, Any]:
         lab = self.get_agent_lab(lab_id)
         return {
             "lab_id": lab_id,
             "lessons": lab.get("lessons") or [],
             "truth": {"agent_proposed_is_not_proof": True},
+        }
+
+    def list_lab_hypotheses(self, lab_id: str, *, limit: int = 50) -> dict[str, Any]:
+        self._require_enabled()
+        lab = self.get_agent_lab(lab_id)
+        hyps = self.store.list_research_hypotheses(lab_id=lab_id, limit=limit)
+        return {
+            "lab_id": lab_id,
+            "hypotheses": hyps,
+            "hypothesis_id": (lab.get("metadata") or {}).get("hypothesis_id"),
+            "count": len(hyps),
+        }
+
+    def get_lab_perception(self, lab_id: str) -> dict[str, Any]:
+        """Return latest research perception stored on learning-run / lab metadata."""
+        self._require_enabled()
+        lab = self.get_agent_lab(lab_id)
+        meta = dict(lab.get("metadata") or {})
+        perception = meta.get("latest_perception")
+        learning_run_id = lab.get("learning_run_id") or meta.get("learning_run_id")
+        if learning_run_id:
+            lrun = self.store.get_learning_run(str(learning_run_id))
+            if lrun:
+                perception = (lrun.get("metadata") or {}).get("latest_perception") or perception
+        return {
+            "lab_id": lab_id,
+            "perception": perception,
+            "status": "MEASURED" if perception else "UNMEASURED",
+        }
+
+    def get_research_hypothesis(self, hypothesis_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        row = self.store.get_research_hypothesis(hypothesis_id)
+        if row is None:
+            raise MarketSimError("HYPOTHESIS_NOT_FOUND", hypothesis_id, http_status=404)
+        return row
+
+    def list_strategy_families(self) -> dict[str, Any]:
+        self._require_enabled()
+        from .strategy_families import all_family_descriptors, research_generatable_families
+
+        descriptors = [d.public_dict() for d in all_family_descriptors().values()]
+        return {
+            "families": descriptors,
+            "generatable": list(research_generatable_families()),
+            "count": len(descriptors),
         }
 
     # --- Institutional core surface (lazy imports; live trading stays BLOCKED) ---

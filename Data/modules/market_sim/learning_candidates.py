@@ -18,6 +18,7 @@ from .learning_types import (
 )
 from .strategy_dsl import SUPPORTED_KINDS, parse_strategy_spec, validate_strategy_spec
 from .strategy_eval import strategy_content_hash
+from .strategy_families import family_templates
 
 
 # Structural mutation operation names (persisted on candidates)
@@ -34,58 +35,8 @@ MUTATION_OPS = (
     "CATEGORICAL_SWAP",
 )
 
-FAMILY_TEMPLATES: dict[str, dict[str, Any]] = {
-    "ma_cross": {
-        "entry_rules": {"version": 3, "kind": "ma_cross", "parameters": {"fast_ma": 10, "slow_ma": 30}},
-        "exit_rules": {"kind": "ma_cross"},
-        "parameters": {"fast_ma": 10, "slow_ma": 30, "lookback": 30},
-    },
-    "mean_reversion": {
-        "entry_rules": {
-            "version": 3,
-            "kind": "mean_reversion",
-            "parameters": {"lookback": 20, "z_entry": 1.5},
-        },
-        "exit_rules": {"kind": "mean_reversion"},
-        "parameters": {"lookback": 20, "z_entry": 1.5, "z_exit": 0.25},
-    },
-    "breakout": {
-        "entry_rules": {"version": 3, "kind": "breakout", "parameters": {"period": 20}},
-        "exit_rules": {"kind": "breakout"},
-        "parameters": {"period": 20},
-    },
-    "rsi": {
-        "entry_rules": {
-            "version": 3,
-            "kind": "rsi",
-            "parameters": {"period": 14},
-            "entry": {"oversold": 30, "overbought": 70},
-            "exit": {"overbought": 70},
-        },
-        "exit_rules": {"kind": "rsi", "overbought": 70},
-        "parameters": {"period": 14, "oversold": 30, "overbought": 70},
-    },
-    "feature_compare": {
-        "entry_rules": {
-            "version": 3,
-            "kind": "feature_compare",
-            "entry": {"left": "sma", "op": ">", "right_feature": "sma", "left_period": 10, "right_period": 30},
-            "parameters": {},
-        },
-        "exit_rules": {"kind": "feature_compare"},
-        "parameters": {"left_period": 10, "right_period": 30},
-    },
-    "composite": {
-        "entry_rules": {
-            "version": 3,
-            "kind": "composite",
-            "parameters": {"fast_ma": 10, "slow_ma": 40},
-            "filters": [{"kind": "regime_filter", "mode": "adx", "period": 14, "min_adx": 20}],
-        },
-        "exit_rules": {"kind": "ma_cross"},
-        "parameters": {"fast_ma": 10, "slow_ma": 40},
-    },
-}
+# Canonical templates — driven by strategy_families registry (Wave 3).
+FAMILY_TEMPLATES: dict[str, dict[str, Any]] = family_templates()
 
 
 def _normalize_probs(probs: dict[str, float], *, floor: float = 0.02) -> dict[str, float]:
@@ -360,6 +311,8 @@ def generate_population(
     rng: random.Random,
     elite_specs: list[dict[str, Any]] | None = None,
     prior_candidates: list[CandidateProposal] | None = None,
+    agent_proposals: list[dict[str, Any]] | None = None,
+    agent_proposal_slots: int = 0,
 ) -> list[dict[str, Any]]:
     """Generate bounded population specs (not yet versioned).
 
@@ -370,10 +323,39 @@ def generate_population(
     out: list[dict[str, Any]] = []
     elites = list(elite_specs or [])
     priors = list(prior_candidates or [])
+    seen_hashes: set[str] = set()
+
+    def _spec_hash(spec: dict[str, Any]) -> str:
+        try:
+            return strategy_content_hash(
+                parameters=dict(spec.get("parameters") or {}),
+                entry_rules=dict(spec.get("entry_rules") or {}),
+                exit_rules=dict(spec.get("exit_rules") or {}),
+                risk_rules=dict(spec.get("risk_rules") or {"max_position_pct": 25}),
+                required_timeframes=list(
+                    spec.get("required_timeframes")
+                    or (spec.get("entry_rules") or {}).get("required_timeframes")
+                    or ["1h"]
+                ),
+                brain_dependencies=list(spec.get("brain_dependencies") or []),
+            )
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _append_unique(item: dict[str, Any]) -> bool:
+        if len(out) >= size:
+            return False
+        ch = _spec_hash(item.get("spec") or {})
+        if ch and ch in seen_hashes:
+            return False
+        if ch:
+            seen_hashes.add(ch)
+        out.append(item)
+        return True
 
     # Elitism
     for i, espec in enumerate(elites[:elite_n]):
-        out.append(
+        _append_unique(
             {
                 "spec": copy.deepcopy(espec),
                 "method": ProposalMethod.ELITE.value,
@@ -383,6 +365,21 @@ def generate_population(
                 "hypothesis": f"elite preserve gen={generation}",
             }
         )
+
+    # Agent-proposed slots (bounded) — inserted early so budget is respected
+    agent_slots = max(0, min(int(agent_proposal_slots or 0), size - len(out)))
+    if agent_slots > 0 and agent_proposals:
+        merged = merge_agent_proposals_into_population(
+            [],
+            agent_proposals=agent_proposals,
+            slots=agent_slots,
+            parent_strategy_id=parent_strategy_id,
+            generation=generation,
+        )
+        for item in merged:
+            if not _append_unique(item):
+                if len(out) >= size:
+                    break
 
     # Exploration quota
     explore_n = max(1, int(round(size * float(state.exploration_rate or objective.exploration_rate))))
@@ -407,7 +404,7 @@ def generate_population(
                 fam = sample_family(state, rng)
         spec = build_family_spec(fam, rng=rng, state=state)
         _validate_or_raise(spec)
-        out.append(
+        _append_unique(
             {
                 "spec": spec,
                 "method": ProposalMethod.EXPLORATION.value,
@@ -441,7 +438,7 @@ def generate_population(
         except ValueError:
             mutated = build_family_spec(sample_family(state, rng), rng=rng, state=state)
             ops = ["CHANGE_FAMILY"]
-        out.append(
+        _append_unique(
             {
                 "spec": mutated,
                 "method": ProposalMethod.MUTATION.value,
@@ -461,7 +458,7 @@ def generate_population(
         except ValueError:
             child = build_family_spec(sample_family(state, rng), rng=rng, state=state)
             meta = {"fallback": "exploration_after_invalid_crossover"}
-        out.append(
+        _append_unique(
             {
                 "spec": child,
                 "method": ProposalMethod.CROSSOVER.value,
@@ -479,7 +476,7 @@ def generate_population(
     while len(out) < size:
         fam = sample_family(state, rng)
         spec = build_family_spec(fam, rng=rng, state=state)
-        out.append(
+        if not _append_unique(
             {
                 "spec": spec,
                 "method": ProposalMethod.SEED.value if generation == 0 else ProposalMethod.EXPLORATION.value,
@@ -488,9 +485,128 @@ def generate_population(
                 "crossover_metadata": {},
                 "hypothesis": f"seed {fam} gen={generation}",
             }
-        )
+        ):
+            # Forced append when hash collision / empty hash to avoid infinite loop
+            out.append(
+                {
+                    "spec": spec,
+                    "method": ProposalMethod.SEED.value if generation == 0 else ProposalMethod.EXPLORATION.value,
+                    "parent_refs": [{"strategy_id": parent_strategy_id, "role": "root"}],
+                    "mutations": [],
+                    "crossover_metadata": {},
+                    "hypothesis": f"seed {fam} gen={generation}",
+                }
+            )
+            if len(out) >= size:
+                break
 
     return out[:size]
+
+
+def merge_agent_proposals_into_population(
+    population: list[dict[str, Any]],
+    *,
+    agent_proposals: list[dict[str, Any]] | None,
+    slots: int,
+    parent_strategy_id: str,
+    generation: int,
+) -> list[dict[str, Any]]:
+    """Insert validated AGENT_PROPOSED specs into a population (bounded by slots).
+
+    Each agent proposal may be a full population item or a raw strategy spec
+    (family/entry_rules/...). Deduplicates by content hash against existing items.
+    """
+    out = list(population or [])
+    if not agent_proposals or slots <= 0:
+        return out
+
+    def _hash_of(spec: dict[str, Any]) -> str:
+        try:
+            return strategy_content_hash(
+                parameters=dict(spec.get("parameters") or {}),
+                entry_rules=dict(spec.get("entry_rules") or {}),
+                exit_rules=dict(spec.get("exit_rules") or {}),
+                risk_rules=dict(spec.get("risk_rules") or {"max_position_pct": 25}),
+                required_timeframes=list(
+                    spec.get("required_timeframes")
+                    or (spec.get("entry_rules") or {}).get("required_timeframes")
+                    or ["1h"]
+                ),
+                brain_dependencies=list(spec.get("brain_dependencies") or []),
+            )
+        except Exception:  # noqa: BLE001
+            return ""
+
+    seen = {_hash_of(item.get("spec") or {}) for item in out}
+    seen.discard("")
+    added = 0
+    for raw in agent_proposals:
+        if added >= slots:
+            break
+        item = dict(raw or {})
+        if "spec" in item and isinstance(item["spec"], dict):
+            spec = dict(item["spec"])
+            method = str(item.get("method") or ProposalMethod.AGENT_PROPOSED.value)
+            parent_refs = list(item.get("parent_refs") or [])
+            mutations = list(item.get("mutations") or [])
+            crossover_metadata = dict(item.get("crossover_metadata") or {})
+            hypothesis = str(item.get("hypothesis") or "")
+            meta_extra = dict(item.get("metadata") or {})
+        else:
+            spec = {
+                "family": item.get("family") or (item.get("entry_rules") or {}).get("kind"),
+                "entry_rules": dict(item.get("entry_rules") or {}),
+                "exit_rules": dict(item.get("exit_rules") or {}),
+                "parameters": dict(item.get("parameters") or {}),
+                "risk_rules": dict(item.get("risk_rules") or {"max_position_pct": 25}),
+            }
+            method = ProposalMethod.AGENT_PROPOSED.value
+            parent_refs = [{"strategy_id": parent_strategy_id, "role": "agent_author"}]
+            mutations = []
+            crossover_metadata = {}
+            hypothesis = str(item.get("hypothesis") or item.get("statement") or f"agent proposed gen={generation}")
+            meta_extra = {
+                k: v
+                for k, v in item.items()
+                if k
+                not in {
+                    "family",
+                    "entry_rules",
+                    "exit_rules",
+                    "parameters",
+                    "risk_rules",
+                    "content_hash",
+                    "hypothesis",
+                    "statement",
+                }
+            }
+            if item.get("hypothesis_id"):
+                meta_extra["hypothesis_id"] = item["hypothesis_id"]
+            if item.get("content_hash"):
+                meta_extra["agent_content_hash"] = item["content_hash"]
+        try:
+            _validate_or_raise(spec)
+        except ValueError:
+            continue
+        ch = _hash_of(spec)
+        if ch and ch in seen:
+            continue
+        if ch:
+            seen.add(ch)
+        out.append(
+            {
+                "spec": spec,
+                "method": method,
+                "parent_refs": parent_refs
+                or [{"strategy_id": parent_strategy_id, "role": "agent_author"}],
+                "mutations": mutations,
+                "crossover_metadata": crossover_metadata,
+                "hypothesis": hypothesis or f"agent proposed gen={generation}",
+                "metadata": meta_extra,
+            }
+        )
+        added += 1
+    return out
 
 
 def update_learner_from_outcomes(

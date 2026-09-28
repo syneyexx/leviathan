@@ -209,14 +209,21 @@ def should_early_stop(run: StrategyLearningRun) -> tuple[bool, str]:
 
 
 def _parent_spec_from_version(ver: Any) -> dict[str, Any]:
-    entry = dict(getattr(ver, "entry_rules", None) or ver.get("entry_rules") or {})
+    def _field(name: str) -> Any:
+        if hasattr(ver, name):
+            return getattr(ver, name)
+        if isinstance(ver, dict):
+            return ver.get(name)
+        return None
+
+    entry = dict(_field("entry_rules") or {})
     family = str(entry.get("kind") or "ma_cross")
     return {
         "family": family,
         "entry_rules": entry,
-        "exit_rules": dict(getattr(ver, "exit_rules", None) or ver.get("exit_rules") or {}),
-        "parameters": dict(getattr(ver, "parameters", None) or ver.get("parameters") or {}),
-        "risk_rules": dict(getattr(ver, "risk_rules", None) or ver.get("risk_rules") or {}),
+        "exit_rules": dict(_field("exit_rules") or {}),
+        "parameters": dict(_field("parameters") or {}),
+        "risk_rules": dict(_field("risk_rules") or {}),
     }
 
 
@@ -234,6 +241,8 @@ class AdaptiveEvolutionaryLearner:
         *,
         parent_version: Any,
         elite_specs: list[dict[str, Any]] | None = None,
+        agent_proposals: list[dict[str, Any]] | None = None,
+        agent_proposal_slots: int = 0,
     ) -> list[dict[str, Any]]:
         run = self.run
         if run.objective_spec is None:
@@ -252,8 +261,20 @@ class AdaptiveEvolutionaryLearner:
         bounded = LearningObjectiveSpec.from_dict({**obj.content_dict(), "population_size": pop_size})
         parent_spec = _parent_spec_from_version(parent_version)
         elites = list(elite_specs or [])
-        if not elites and generation == 1:
+        run_mode = str((run.metadata or {}).get("run_mode") or "SEED_EXISTING_STRATEGY")
+        # AUTONOMOUS_DISCOVERY: do not inject lineage-root hold as elite on gen 1 —
+        # elites come only from prior elite_refs (empty on gen 1 → pure exploration).
+        if not elites and generation == 1 and run_mode != "AUTONOMOUS_DISCOVERY":
             elites = [parent_spec]
+        # Budget agent slots from objective metadata when not explicitly provided
+        slots = int(agent_proposal_slots or 0)
+        if slots <= 0 and agent_proposals:
+            rate = float(
+                (obj.metadata or {}).get("agent_proposal_rate")
+                or (run.metadata or {}).get("agent_proposal_rate")
+                or 0.15
+            )
+            slots = max(0, int(round(pop_size * rate)))
         raw = generate_population(
             state=run.learner_state,
             objective=bounded,
@@ -262,6 +283,8 @@ class AdaptiveEvolutionaryLearner:
             rng=rng,
             elite_specs=elites,
             prior_candidates=run.candidates,
+            agent_proposals=agent_proposals,
+            agent_proposal_slots=slots,
         )
         # Persist RNG after proposal
         try:
@@ -346,10 +369,14 @@ class AdaptiveEvolutionaryLearner:
                 learner_state_hash=state_hash,
                 objective_hash=obj_hash,
                 hypothesis=item.get("hypothesis") or "",
+                hypothesis_id=(item.get("metadata") or {}).get("hypothesis_id"),
             )
             cand.content_hash = ver.content_hash
             cand.status = "VERSIONED"
             cand.metadata["version_id"] = ver.version_id
+            if item.get("metadata"):
+                for k, v in dict(item["metadata"]).items():
+                    cand.metadata.setdefault(k, v)
             out.append(cand)
             existing_keys.add(key)
         return out

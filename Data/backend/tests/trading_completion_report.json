@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-09-27T22:02:56+00:00",
-  "source_commit": "7497ecd4959e38350262be7cadd71a2564e9b302",
-  "source_tree": "115431c1bdcb4a576fc5037d5d215c291036bad0",
+  "generated_at": "2026-09-28T15:54:46+00:00",
+  "source_commit": "21288fd8f76c93d1778260f926847dd6d6b32d3f",
+  "source_tree": "c54e2ef38876678c9f944ab18d57f225856a2ad7",
   "dirty": true,
-  "branch": "cursor/external-capability-fabric-ac82",
+  "branch": "cursor/autonomous-trading-research-loop-5483",
   "strict": false,
   "phase": "Slice16/A0-A4",
   "program": "Master Program v4.1",
@@ -27,7 +27,7 @@
     "allow_incomplete": true
   },
   "counts": {
-    "PASS": 77,
+    "PASS": 83,
     "UNMEASURED": 10,
     "FEATURE_GATED": 1,
     "NOT_TESTED_IN_CI": 1
@@ -40,11 +40,11 @@
         "migration 57 market_paper_deployments",
         "MARKET domain migration v2",
         "Data/backend/tests/test_autonomous_paper_a4_loop.py::AutonomousPaperLoopTests::test_paper_deployment_persisted_and_shadow_observe",
-        "pytest:deferred(--run-tests not set)",
+        "pytest ['Data/backend/tests/test_autonomous_paper_a4_loop.py::AutonomousPaperLoopTests::test_paper_deployment_persisted_and_shadow_observe'] exit=0",
         "file_exists:Data/modules/market_sim/autonomous_paper_loop.py:ok"
       ],
       "notes": "A3/A4 deployments durable; resume truth paper_deployment_table=PERSISTED",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -53,10 +53,10 @@
       "evidence": [
         "readiness.may_promote_to shadow_run_id / paper_deployment_id",
         "Data/backend/tests/test_autonomous_paper_a4_loop.py::AutonomousPaperLoopTests::test_a3_a4_reject_caller_booleans_require_receipts",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_autonomous_paper_a4_loop.py::AutonomousPaperLoopTests::test_a3_a4_reject_caller_booleans_require_receipts'] exit=0"
       ],
       "notes": "autonomous_paper_pass=true alone is not proof",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -65,10 +65,10 @@
       "evidence": [
         "MarketSimControlPlane.create_and_persist_paper_deployment / shadow_observe_step / autonomous_paper_step / review_deployment_drift",
         "Data/backend/tests/test_autonomous_paper_a4_loop.py::AutonomousPaperLoopTests::test_full_shadow_to_autonomous_paper_to_drift",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_autonomous_paper_a4_loop.py::AutonomousPaperLoopTests::test_full_shadow_to_autonomous_paper_to_drift'] exit=0"
       ],
       "notes": "Simulated capital only; live BLOCKED; challenger does not auto-promote",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -77,10 +77,10 @@
       "evidence": [
         "Data/modules/market_sim/sample_adequacy.py",
         "Data/backend/tests/test_autonomous_paper_a4_loop.py::AutonomousPaperLoopTests::test_sample_adequacy_rejects_tiny_samples",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_autonomous_paper_a4_loop.py::AutonomousPaperLoopTests::test_sample_adequacy_rejects_tiny_samples'] exit=0"
       ],
       "notes": "min_trades=5 is never institutional PASS",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -90,10 +90,10 @@
         "capabilities.build_mode_capability_matrix",
         "trading_action_matrix deploy_shadow_paper / autonomous_paper_step",
         "Data/backend/tests/test_autonomous_paper_a4_loop.py::CapabilityModeMatrixTests",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_autonomous_paper_a4_loop.py::CapabilityModeMatrixTests::test_mode_matrix_present_and_live_blocked'] exit=0"
       ],
       "notes": "No UI inference of AVAILABLE/PASS",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -104,10 +104,10 @@
         "exchange_calendars XAMS/XETR/XLON/XPAR/XMIL",
         "fx_convert missing rate != 1.0",
         "Data/backend/tests/test_autonomous_paper_a4_loop.py",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_autonomous_paper_a4_loop.py::AutonomousPaperLoopTests::test_dsl_new_primitives_validate', 'Data/backend/tests/test_autonomous_paper_a4_loop.py::AutonomousPaperLoopTests::test_european_venues_explicit', 'Data/backend/tests/test_autonomous_paper_a4_loop.py::AutonomousPaperLoopTests::test_fx_missing_rate_not_one', 'Data/backend/tests/test_autonomous_paper_a4_loop.py::AutonomousPaperLoopTests::test_continuous_futures_refused_for_paper'] exit=0"
       ],
       "notes": "G16 Python remains FEATURE_GATED; continuous futures not paper contracts",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -116,10 +116,10 @@
       "evidence": [
         "paper_deployment_kill_switch",
         "Data/backend/tests/test_autonomous_paper_a4_loop.py::AutonomousPaperLoopTests::test_kill_switch_blocks_autonomous_step",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_autonomous_paper_a4_loop.py::AutonomousPaperLoopTests::test_kill_switch_blocks_autonomous_step'] exit=0"
       ],
       "notes": "Kill survives via market_paper_deployments + session mirror",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -130,11 +130,25 @@
         "A5_IMPOSSIBLE",
         "capabilities live_trading=BLOCKED",
         "G48 / L15 retained",
-        "pytest:deferred(--run-tests not set)",
+        "pytest ['Data/backend/tests/test_autonomous_paper_a4_loop.py::CapabilityModeMatrixTests::test_mode_matrix_present_and_live_blocked'] exit=0",
         "file_exists:Data/modules/market_sim/trading_live_guard.py:ok"
       ],
       "notes": "A4 is ceiling; A5 impossible",
-      "strict_pass": false,
+      "strict_pass": true,
+      "operating_envelope": {}
+    },
+    {
+      "id": "AP09",
+      "status": "PASS",
+      "evidence": [
+        "LiveTradingGuard",
+        "AUTONOMOUS_DISCOVERY lab metadata live_trading BLOCKED",
+        "Data/backend/tests/test_autonomous_research_closed_loop_e2e.py::AutonomousResearchClosedLoopE2ETests::test_autonomous_discovery_lab_hypothesis_learning_loop",
+        "Data/backend/tests/test_autonomous_research_adversarial.py::LiveGuardTests::test_h_live_order_blocked",
+        "pytest ['Data/backend/tests/test_autonomous_research_adversarial.py::LiveGuardTests::test_h_live_order_blocked', 'Data/backend/tests/test_autonomous_research_closed_loop_e2e.py::AutonomousResearchClosedLoopE2ETests::test_autonomous_discovery_lab_hypothesis_learning_loop'] exit=0"
+      ],
+      "notes": "Extends AP08: discovery research path cannot place live orders",
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -145,10 +159,10 @@
         "Data/backend/tests/test_market_sim_p1_gym.py::P1AStreamingOhlcvTests",
         "Streaming peak RSS bounded vs materialize on 120k 1m bars",
         "Full 5y\u00d71m product target uses same streaming API; absolute CI fixture uses 120k for runtime",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_p1_gym.py::P1AStreamingOhlcvTests'] exit=0"
       ],
       "notes": "P1A: canonical iter_ohlcv/stream_ohlcv; memory budget proven vs load_ohlcv materialization",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -159,10 +173,10 @@
         "Data/backend/tests/test_market_sim_t1_causality.py::TimestampNormalizationTests",
         "Data/backend/tests/test_market_sim_t1_causality.py::OhlcvValidationTests",
         "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_import_seal_and_immutability",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_t1_causality.py::TimestampNormalizationTests', 'Data/backend/tests/test_market_sim_t1_causality.py::OhlcvValidationTests', 'Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_import_seal_and_immutability'] exit=0"
       ],
       "notes": "T1: YYYYMMDD + microsecond epoch normalization; quarantine import pipeline; duplicates rejected",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -172,10 +186,10 @@
         "Data/backend/tests/test_market_sim_t1_causality.py",
         "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_gap_reporting",
         "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_import_seal_and_immutability",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_gap_reporting', 'Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_import_seal_and_immutability'] exit=0"
       ],
       "notes": "T1: DatasetQualityReport with gaps/duplicates/repairs persisted on sealed dataset versions",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -189,10 +203,10 @@
         "Data/backend/tests/test_trading_lab_w13.py::PointInTimeUniverseTests",
         "Data/backend/tests/test_institutional_core_w37_w72.py::CorporateActionsW59Tests",
         "Data/backend/tests/test_corporate_actions_engine_w4.py::CorporateActionLedgerTests",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_corporate_actions_engine_w4.py::CorporateActionLedgerTests', 'Data/backend/tests/test_trading_lab_w13.py::PointInTimeUniverseTests'] exit=0"
       ],
       "notes": "PIT CA model + WalletLedger/engine auto-apply for SPLIT/DIVIDEND_CASH/SYMBOL_CHANGE. MERGER/SPINOFF/DELISTING remain NOT_IMPLEMENTED fail-closed.",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -202,10 +216,10 @@
         "Data/backend/tests/test_market_sim_t1_causality.py",
         "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests",
         "Data/backend/tests/test_market_sim_t1_causality.py::DataHashPrepareTests",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests', 'Data/backend/tests/test_market_sim_t1_causality.py::DataHashPrepareTests'] exit=0"
       ],
       "notes": "T1: sealed dataset versions immutable; corrections create new version/hash; prepare refuses hash mismatch",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -216,10 +230,10 @@
         "Data/backend/tests/test_market_sim_p1_gym.py::P1ASplitManifestTests",
         "Sealed datasets attach frozen chronological TRAIN/VAL/SEALED manifest",
         "Frozen manifests refuse mutation (SPLIT_MANIFEST_FROZEN)",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_p1_gym.py::P1ASplitManifestTests'] exit=0"
       ],
       "notes": "P1A: chronological TRAIN/VAL/SEALED; embargo_bars; frozen on seal",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -327,10 +341,10 @@
         "Data/backend/tests/test_market_sim_t1_causality.py::EpistemicFirewallTests",
         "Data/backend/tests/test_market_sim_t1_causality.py::BrainCausalBoundaryTests",
         "Data/backend/tests/test_market_sim_t1_causality.py::StrategyMemoryCausalityTests",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_t1_causality.py::MarketViewTests', 'Data/backend/tests/test_market_sim_t1_causality.py::EpistemicFirewallTests', 'Data/backend/tests/test_market_sim_t1_causality.py::BrainCausalBoundaryTests', 'Data/backend/tests/test_market_sim_t1_causality.py::StrategyMemoryCausalityTests'] exit=0"
       ],
       "notes": "T1: MarketView + EpistemicFirewall; available_at <= as_of; sealed holdout blocked during research",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -341,10 +355,10 @@
         "Data/backend/tests/test_streaming_soak_w19.py::BoundedStreamingSoakTests::test_equity_5y_1m_equivalent_stream_no_oom",
         "Streamed 500k bars (~equity 5y\u00d71m session minutes) with flat RSS (no OOM)",
         "Crypto 24/7 5y\u00d71m (~2.6M bars): NOT_TESTED_AT_FULL_SCALE",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_streaming_soak_w19.py::BoundedStreamingSoakTests::test_equity_5y_1m_equivalent_stream_no_oom'] exit=0"
       ],
       "notes": "Equity-session 5y\u00d71m-equivalent streaming proven no OOM. Crypto continuous 5y\u00d71m remains NOT_TESTED_AT_FULL_SCALE.",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -355,10 +369,10 @@
         "Data/modules/market_sim/fill_model.py FillModel shim over NextBarFillModel",
         "Data/backend/tests/test_kernel_parity_dr_w_cont.py::KernelParityG14Tests",
         "Data/backend/tests/test_market_sim_p0_kernel.py::test_step_once_has_no_legacy_fill_import",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_kernel_parity_dr_w_cont.py::KernelParityG14Tests'] exit=0"
       ],
       "notes": "Kernel v2 (NextBarFillModel+WalletLedger) vs legacy FillModel shim parity report \u2014 market-order fill agreement proven.",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -371,10 +385,10 @@
         "Data/backend/tests/test_market_sim_t2_market_state.py",
         "Data/backend/tests/test_market_sim_p2_strategies.py::P2AStrategyDslTests",
         "DSL kinds: breakout, rsi, feature_compare, ma_cross, mean_reversion + regime_filter",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_t2_market_state.py', 'Data/backend/tests/test_market_sim_p2_strategies.py::P2AStrategyDslTests'] exit=0"
       ],
       "notes": "P2A: Strategy Spec DSL v2 over FeatureEngine; legacy ma_cross/mean_reversion preserved",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -402,10 +416,10 @@
         "Data/modules/market_sim/strategy_lineage.py::attach_lineage_metadata / lineage_chain / assert_version_immutable",
         "create_strategy + version_strategy attach parent_version / parent_content_hash / immutable",
         "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_strategy_lineage_metadata",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_strategy_lineage_metadata'] exit=0"
       ],
       "notes": "P2C: lineage metadata on every version; content-addressed immutability",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -418,10 +432,10 @@
         "Data/backend/tests/test_metrics_l1_provenance_w_cont.py::MetricsBootstrapCITests",
         "Data/backend/tests/test_statistical_reference_w7.py::StatisticalReferenceTests::test_bootstrap_reference_vector",
         "bootstrap labeled APPROXIMATE; qualification_authority=false until circular-block validated",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_metrics_l1_provenance_w_cont.py::MetricsBootstrapCITests', 'Data/backend/tests/test_market_sim_p0_kernel.py::MetricKeyAlignmentTests'] exit=0"
       ],
       "notes": "Ledger-derived metrics + block-bootstrap CIs wired into compute_metrics. Method remains APPROXIMATE without qualification authority.",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -432,10 +446,10 @@
         "save_experiment persists strategy_version on upsert",
         "Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_append_trial_ledger",
         "Data/backend/tests/test_market_sim_characterization.py::D14TrialLedgerCharacterization",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_characterization.py::D14TrialLedgerCharacterization'] exit=0"
       ],
       "notes": "P2B: append-only trial ledger + strategy_version persistence (D14 fixed)",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -449,10 +463,10 @@
         "Data/backend/tests/test_robustness_harness_w8.py",
         "Data/backend/tests/test_metrics_l1_provenance_w_cont.py::CpcvScoringTests",
         "Data/backend/tests/test_statistical_reference_w7.py::test_cpcv_no_overlap",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_metrics_l1_provenance_w_cont.py::CpcvScoringTests', 'Data/backend/tests/test_robustness_harness_w8.py', 'Data/backend/tests/test_statistical_reference_w7.py::StatisticalReferenceTests::test_cpcv_no_overlap'] exit=0"
       ],
       "notes": "WFA + purge/embargo + CPCV geometry+OOS scoring + real robustness matrix. Aggregate OOS Sharpe measured; selection bias still requires Trial Ledger.",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -464,10 +478,10 @@
         "Data/backend/tests/test_market_sim_p1_gym.py::P1ASealedAttemptTests",
         "Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_acceptance_from_run_ids",
         "Acceptance reads run.metrics (kernel); never request payload",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_p1_gym.py::P1ASealedAttemptTests', 'Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_acceptance_from_run_ids'] exit=0"
       ],
       "notes": "P1A sealed attempts + P2B acceptance-from-run-IDs",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -478,10 +492,10 @@
         "MultiAgentEngine.prepare hydrates StrategyMemory via list_strategy_memories with causal as_of",
         "Data/backend/tests/test_market_sim_characterization.py::D15MemoryCharacterization",
         "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_strategy_memory_as_of_causal",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_characterization.py::D15MemoryCharacterization', 'Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_strategy_memory_as_of_causal'] exit=0"
       ],
       "notes": "P2C: durable StrategyMemory hydrate on prepare; as_of causal filter (D15)",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -492,10 +506,10 @@
         "Data/backend/tests/test_market_sim_characterization.py::D22BrainAsOfCharacterization",
         "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_brain_as_of_gate_evidence",
         "StrategyMemory list_strategy_memories(as_of_ts) causal filter",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_characterization.py::D22BrainAsOfCharacterization'] exit=0"
       ],
       "notes": "P3B: causal Brain/Memory as_of (D22)",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -510,10 +524,10 @@
         "Data/backend/tests/test_trading_orchestra.py::DeliberationTests",
         "Data/backend/tests/test_market_sim_p3_campaigns.py::P3ADecisionCadenceTests",
         "Data/backend/tests/test_market_sim_characterization.py::D31CadenceCharacterization",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_trading_orchestra.py::FleetIsolationTests', 'Data/backend/tests/test_market_sim_p3_campaigns.py::P3ADecisionCadenceTests'] exit=0"
       ],
       "notes": "P3A: Trading Orchestra cadence + async DecisionRecord + Fleet TRADING executor (D17/D31)",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -524,10 +538,10 @@
         "checkpoint_iteration resume; never rewind from zero",
         "EXTERNAL_REQUIRED via market_sim.research_campaign worker; TRADING_WORKER_UNAVAILABLE without JobRuntime",
         "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_campaign_durable_resume_no_rewind",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_campaign_durable_resume_no_rewind'] exit=0"
       ],
       "notes": "P3B: durable ResearchCampaign + worker ownership",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -540,10 +554,10 @@
         "complete episodes EXTERNAL_REQUIRED via market_sim.gym_episode worker",
         "TRADING_WORKER_UNAVAILABLE when externalized without job_runtime (no FastAPI sync fallback)",
         "API: POST /api/market-sim/gym/episodes[+ /step /start]",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_p1_gym.py::P1BTradingGymTests'] exit=0"
       ],
       "notes": "P1B: TradingGym + API + worker ownership. RewardSpec completed in P1C.",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -553,10 +567,10 @@
         "Data/modules/market_sim/scorecards.py::build_scorecard / rank_scorecards / compute_penalty",
         "Penalty for causality_violations, risk_vetoes, drawdown",
         "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_scorecards_penalty_and_rank",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_scorecards_penalty_and_rank'] exit=0"
       ],
       "notes": "P3B: kernel-derived scorecards with violation penalties",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -570,10 +584,10 @@
         "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_readiness_ladder_blocks_a5",
         "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_promotion_requires_acceptance_for_a2",
         "Data/backend/tests/test_trading_orchestra.py::MandateTests",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_readiness_ladder_blocks_a5'] exit=0"
       ],
       "notes": "P3B: A0\u2013A4 ladder; A5 impossible; promotion kernel-gated",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -586,10 +600,10 @@
         "Data/backend/tests/test_market_sim_p1_gym.py::P1CRewardAndTrajectoryTests",
         "JSONL trajectory export; DatasetService bridge when bound (FILE_ONLY honest otherwise)",
         "API: POST /api/market-sim/gym/episodes/{id}/export-trajectory",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_p1_gym.py::P1CRewardAndTrajectoryTests'] exit=0"
       ],
       "notes": "P1C: kernel RewardSpec + content-addressed trajectory JSONL + DatasetService bridge",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -598,10 +612,10 @@
       "evidence": [
         "Data/modules/market_sim/sim_to_paper_gap.py::measure_sim_to_paper_gap (paper-safe; live N/A)",
         "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_sim_to_paper_gap_measured",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_sim_to_paper_gap_measured'] exit=0"
       ],
       "notes": "P4B: sim-to-paper gap report; live gap N/A while live BLOCKED",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -612,10 +626,10 @@
         "Data/modules/market_sim/readiness.py::may_promote_to",
         "A2+ requires kernel acceptance; A5 impossible",
         "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_promotion_requires_acceptance_for_a2",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_promotion_requires_acceptance_for_a2'] exit=0"
       ],
       "notes": "P3B: kernel-owned promotion; live never enabled",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -627,10 +641,10 @@
         "Per-session WalletLedger isolation on LocalPaperBroker",
         "Data/backend/tests/test_market_sim_p4_paper.py::P4APaperIsolationTests",
         "Data/backend/tests/test_market_sim_characterization.py::D18PaperCharacterization",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_p4_paper.py::P4APaperIsolationTests'] exit=0"
       ],
       "notes": "P4A: PaperForwardRunner + isolated paper accounting (D18)",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -640,10 +654,10 @@
         "Data/modules/market_sim/sim_to_paper_gap.py::measure_sim_to_paper_gap",
         "Gap status MEASURED/UNMEASURED honest; no fabricated precision",
         "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_sim_to_paper_gap_measured",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_sim_to_paper_gap_measured'] exit=0"
       ],
       "notes": "P4B: sim-to-paper gap measurement foundation",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -654,10 +668,10 @@
         "SimulationEngine / MultiAgentEngine already use RiskGuard",
         "Data/backend/tests/test_market_sim_p4_paper.py::P4APaperIsolationTests::test_risk_guard_blocks_paper_order",
         "Data/backend/tests/test_market_sim_characterization.py::D18PaperCharacterization::test_d18_paper_place_order_uses_riskguard",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_p4_paper.py::P4APaperIsolationTests::test_risk_guard_blocks_paper_order'] exit=0"
       ],
       "notes": "P4A: RiskGuard on paper path (D18)",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -668,10 +682,10 @@
         "LIVE_BROKER_UNSUPPORTED for live/real/production ids",
         "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_live_broker_unsupported",
         "LiveTradingGuard remains BLOCKED",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_live_broker_unsupported'] exit=0"
       ],
       "notes": "P4B: live broker explicitly UNSUPPORTED",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -683,10 +697,10 @@
         "Data/backend/tests/test_institutional_core_w37_w72.py::AuditIntegrityW61Tests",
         "Data/backend/tests/test_institutional_runtime_w73_plus.py",
         "Data/backend/tests/test_institutional_migration_w55.py",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_institutional_core_w37_w72.py::AuditIntegrityW61Tests'] exit=0"
       ],
       "notes": "Reconciled from existing HashChainedAuditLog + durable verify_audit_chain tests. Gate ledger was stale NOT_STARTED.",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -698,10 +712,10 @@
         "main.py wires gateway into market_sim router",
         "Data/backend/tests/test_market_sim_characterization.py::D16GatewayCharacterization",
         "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_routes_import_gateway",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_characterization.py::D16GatewayCharacterization'] exit=0"
       ],
       "notes": "P4B: mutation routes via ExecutionGateway (D16)",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -713,10 +727,10 @@
         "Data/backend/tests/test_market_sim_characterization.py::D25WorkerClaimCharacterization",
         "Data/backend/tests/test_market_sim_characterization.py::D26JobRuntimeCharacterization",
         "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_claim_begin_immediate",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_characterization.py::D25WorkerClaimCharacterization'] exit=0"
       ],
       "notes": "P4B: JobStore leases + BEGIN IMMEDIATE claim (D25/D26)",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -726,10 +740,10 @@
         "Single leviathan.db; MigrationRunner contiguous versions through 48",
         "Data/backend/tests/test_migrations.py",
         "Data/backend/tests/test_market_sim_characterization.py::D21MigrationHeadCharacterization",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_migrations.py'] exit=0"
       ],
       "notes": "Canonical SQLite + contiguous migrations",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -740,10 +754,10 @@
         "AlpacaPaperBroker uses secret:LEVIATHAN_ALPACA_PAPER_* refs",
         "Data/backend/tests/test_market_sim_characterization.py::D19SecretsCharacterization",
         "Data/modules/security/secrets_broker.py::SecretsBroker",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_characterization.py::D19SecretsCharacterization'] exit=0"
       ],
       "notes": "Trading paper broker credentials leased via SecretsBroker; plaintext not in public lease payloads. Live money remains BLOCKED.",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -754,10 +768,10 @@
         "No hardcoded agent-alpha default roster; engine single|multi explicit",
         "Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization",
         "PaperTradingPage uses api.listPaperSessions / createPaperSession / capabilities",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization'] exit=0"
       ],
       "notes": "P4C: TradingCenter uses real backend state (D27)",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -767,10 +781,10 @@
         "SimulatiePage exposes initialCash, engine, decisionCadence, seed, speed",
         "Default engine=single (empty agents); multi-agent opt-in",
         "Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization::test_d27_desired_simulatie_exposes_run_builder_options",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization::test_d27_desired_simulatie_exposes_run_builder_options'] exit=0"
       ],
       "notes": "P4C: run builder options (D27)",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -809,10 +823,10 @@
         "Data/backend/tests/test_market_sim_characterization.py \u2014 D1\u2013D31 converted where fixed",
         "P0\u2013P4 regression files: test_market_sim_p0_kernel.py \u2026 p4_paper.py",
         "282 trading suite tests passed (6 xfailed remaining defects)",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_characterization.py'] exit=0"
       ],
       "notes": "Slice 16: characterization suite green with honest xfails",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -824,10 +838,10 @@
         "Data/modules/market_sim/stats_inferential.py::deflated_sharpe_ratio APPROXIMATE (qualification_authority=false)",
         "Data/modules/market_sim/stats_inferential.py::probability_of_backtest_overfitting APPROXIMATE fallback for sharpe vectors",
         "Data/backend/tests/test_statistical_reference_w7.py::StatisticalReferenceTests",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_statistical_reference_w7.py::StatisticalReferenceTests'] exit=0"
       ],
       "notes": "FDR MEASURED; CSCV PBO MEASURED (diagnostic, qualification_authority=false until policy freezes thresholds); DSR remains APPROXIMATE diagnostic without qualification authority.",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -848,10 +862,10 @@
         "readiness_ladder A5=IMPOSSIBLE",
         "normalize_autonomy('A5') raises A5_IMPOSSIBLE",
         "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_readiness_ladder_blocks_a5",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_readiness_ladder_blocks_a5'] exit=0"
       ],
       "notes": "Live money blocked; A5 impossible",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -876,10 +890,10 @@
         "Data/modules/market_sim/institutional_core/resilience.py::build_backup_manifest / verify_restore",
         "Data/backend/tests/test_institutional_core_w37_w72.py::ResilienceW64Tests",
         "Data/backend/tests/test_backup_truth_w178.py",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_institutional_core_w37_w72.py::ResilienceW64Tests'] exit=0"
       ],
       "notes": "Reconciled from executable backup manifest + restore verification. Platform backup module also covered by backup_truth tests.",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -890,10 +904,10 @@
         "Data/backend/tests/test_execution_workload_class.py",
         "Heavy market_sim.advance externalized from FastAPI request thread",
         "Data/backend/tests/test_execution_fabric_workflows.py",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_execution_workload_class.py'] exit=0"
       ],
       "notes": "Interactive-priority isolation via execution fabric workload_class; trading heavy work EXTERNAL.",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -921,10 +935,10 @@
         "Data/modules/market_sim/engine.py::prepare attaches metadata.full_provenance",
         "Data/backend/tests/test_market_sim_p0_kernel.py::test_run_input_fingerprint_stable",
         "Data/backend/tests/test_metrics_l1_provenance_w_cont.py::ProvenanceFingerprintTests",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_metrics_l1_provenance_w_cont.py::ProvenanceFingerprintTests'] exit=0"
       ],
       "notes": "Canonical full_provenance_fingerprint composed from input fingerprint + dataset/split/objective/strategy/trial lineage.",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -934,10 +948,10 @@
         "Data/modules/market_sim/institutional_core/resilience.py::backup_sqlite_database / restore_and_verify_institutional",
         "Data/backend/tests/test_kernel_parity_dr_w_cont.py::DisasterRecoveryTempTargetG54Tests",
         "Temp-target restore with measured RTO; truth.not_production_dr_claim=true",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_kernel_parity_dr_w_cont.py::DisasterRecoveryTempTargetG54Tests'] exit=0"
       ],
       "notes": "Temp-target local SQLite backup/restore verified. Explicitly not a production DR SLA claim.",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -947,10 +961,10 @@
         "Data/modules/market_sim/providers/__init__.py license_state / license_note on provider results",
         "Dataset provenance_json on sealed versions",
         "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_import_seal_and_immutability'] exit=0"
       ],
       "notes": "Provider license_state + dataset provenance_json persisted; operator-supplied vs public terms labeled.",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -961,10 +975,10 @@
         "Data/modules/market_sim/epistemic.py available_at boundary",
         "Data/backend/tests/test_calendar_fail_closed_w2.py",
         "Data/backend/tests/test_research_integrity_w1.py",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_calendar_fail_closed_w2.py'] exit=0"
       ],
       "notes": "Canonical timeutil + calendar fail-closed UNKNOWN; epistemic available_at enforced.",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -988,10 +1002,10 @@
         "Data/modules/market_sim/institutional_ops.py observability_snapshot",
         "MarketSimControlPlane lifecycle ring (G49)",
         "Data/backend/tests/test_trading_observability_w18.py",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_trading_observability_w18.py::TradingObservabilityTests'] exit=0"
       ],
       "notes": "Operational telemetry via observability snapshot + bounded lifecycle events; no fake zero when unavailable.",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -1016,10 +1030,10 @@
         "Data/backend/tests/test_migrations.py",
         "Data/backend/tests/test_institutional_migration_w55.py",
         "upgrade_leviathan_databases.bat operational entrypoint",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_institutional_migration_w55.py'] exit=0"
       ],
       "notes": "Trading compatibility/migration posture covered by institutional migration tests + three-DB upgrade path.",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -1028,10 +1042,10 @@
       "evidence": [
         "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g61_items_have_provenance_and_causal_available_at",
         "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g61_production_fetch_path_is_provider_io_only",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g61_items_have_provenance_and_causal_available_at', 'Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g61_production_fetch_path_is_provider_io_only'] exit=0"
       ],
       "notes": "Frontier Program F1/F4 \u2014 offline evidence only; live feed fetch through provider_io not exercised in CI",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -1041,10 +1055,10 @@
         "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g62_poison_future_article_invisible_before_available_at",
         "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g62_signal_as_of_equals_item_available_at",
         "Data/backend/tests/test_market_sim_characterization.py::D22BrainAsOfCharacterization",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g62_poison_future_article_invisible_before_available_at', 'Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g62_signal_as_of_equals_item_available_at', 'Data/backend/tests/test_market_sim_characterization.py::D22BrainAsOfCharacterization'] exit=0"
       ],
       "notes": "MarketView/strategy-feature reachability for news is not yet wired (news signals are consumed only by trade agents) \u2014 PARTIAL scope, see notes in frontier_program.md",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -1053,10 +1067,10 @@
       "evidence": [
         "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g63_article_text_is_reference_context_and_schema_is_enforced",
         "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g63_schema_repair_then_honest_failure",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g63_article_text_is_reference_context_and_schema_is_enforced', 'Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g63_schema_repair_then_honest_failure'] exit=0"
       ],
       "notes": "Injection corpus is a 1-item corpus today; extend in F4b",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -1065,10 +1079,10 @@
       "evidence": [
         "Data/backend/tests/test_trading_orchestra.py::FleetIsolationTests",
         "Data/backend/tests/test_trading_orchestra.py::MandateTests::test_mandate_can_never_enable_live",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_trading_orchestra.py::FleetIsolationTests', 'Data/backend/tests/test_trading_orchestra.py::MandateTests'] exit=0"
       ],
       "notes": "Frontier Program F1",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -1077,10 +1091,10 @@
       "evidence": [
         "Data/backend/tests/test_trading_orchestra.py::DeliberationTests::test_g65_round_links_proposal_critique_risk_intent",
         "Data/backend/tests/test_trading_orchestra.py::MigrationAndSchemaTests::test_g65_decisions_are_append_only",
-        "pytest:deferred(--run-tests not set)"
+        "pytest ['Data/backend/tests/test_trading_orchestra.py::DeliberationTests::test_g65_round_links_proposal_critique_risk_intent', 'Data/backend/tests/test_trading_orchestra.py::MigrationAndSchemaTests::test_g65_decisions_are_append_only'] exit=0"
       ],
       "notes": "fill and post_mortem links exist as stages; paper routing (fill) is not produced by the orchestra yet (execution_agent records intents only)",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -1096,18 +1110,45 @@
       "operating_envelope": {}
     },
     {
+      "id": "G67",
+      "status": "PASS",
+      "evidence": [
+        "research_perception as_of bound",
+        "render_chart_snapshot future bar refuse",
+        "derive_expectancy_metrics / ranks_by_expectancy_not_win_rate",
+        "LiveTradingGuard",
+        "Data/backend/tests/test_autonomous_research_adversarial.py",
+        "pytest ['Data/backend/tests/test_autonomous_research_adversarial.py'] exit=0"
+      ],
+      "notes": "A\u2013J adversarial suite for closed-loop research honesty",
+      "strict_pass": true,
+      "operating_envelope": {}
+    },
+    {
+      "id": "G68",
+      "status": "PASS",
+      "evidence": [
+        "review_deployment_drift spawn_research_lab",
+        "Data/backend/tests/test_autonomous_research_closed_loop_e2e.py::AutonomousResearchClosedLoopE2ETests::test_drift_ticket_spawns_linked_discovery_lab",
+        "pytest ['Data/backend/tests/test_autonomous_research_closed_loop_e2e.py::AutonomousResearchClosedLoopE2ETests::test_drift_ticket_spawns_linked_discovery_lab'] exit=0"
+      ],
+      "notes": "Continual research requester; live remains BLOCKED; does not auto-promote",
+      "strict_pass": true,
+      "operating_envelope": {}
+    },
+    {
       "id": "L01",
       "status": "PASS",
       "evidence": [
         "Data/modules/market_sim/policy.py::DslStrategyPolicy",
         "Data/modules/market_sim/service.py::run_gym_episode_on_worker",
         "Data/backend/tests/test_strategy_learning.py::PolicyExecutionTests",
-        "pytest:deferred(--run-tests not set)",
+        "pytest ['Data/backend/tests/test_strategy_learning.py::PolicyExecutionTests'] exit=0",
         "file_exists:Data/modules/market_sim/policy.py:ok",
         "file_exists:Data/modules/market_sim/learning.py:ok"
       ],
       "notes": "W25 Strategy Learning Loop",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -1116,12 +1157,12 @@
       "evidence": [
         "Data/modules/market_sim/learning_candidates.py::update_learner_from_outcomes",
         "Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests::test_generation_2_depends_on_generation_1_outcomes",
-        "pytest:deferred(--run-tests not set)",
+        "pytest ['Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests'] exit=0",
         "file_exists:Data/modules/market_sim/policy.py:ok",
         "file_exists:Data/modules/market_sim/learning.py:ok"
       ],
       "notes": "W25 Strategy Learning Loop",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -1131,12 +1172,12 @@
         "migration 54 market_sim_learning_runs",
         "Data/modules/market_sim/store.py::upsert_learning_run",
         "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_create_start_learning_run_end_to_end",
-        "pytest:deferred(--run-tests not set)",
+        "pytest ['Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_create_start_learning_run_end_to_end'] exit=0",
         "file_exists:Data/modules/market_sim/policy.py:ok",
         "file_exists:Data/modules/market_sim/learning.py:ok"
       ],
       "notes": "W25 Strategy Learning Loop",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -1144,12 +1185,12 @@
       "status": "PASS",
       "evidence": [
         "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_crash_resume_no_duplicate_versions",
-        "pytest:deferred(--run-tests not set)",
+        "pytest ['Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_crash_resume_no_duplicate_versions'] exit=0",
         "file_exists:Data/modules/market_sim/policy.py:ok",
         "file_exists:Data/modules/market_sim/learning.py:ok"
       ],
       "notes": "W25 Strategy Learning Loop",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -1159,12 +1200,12 @@
         "Data/modules/market_sim/learning.py::materialize_candidates",
         "version_strategy lineage_metadata",
         "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests",
-        "pytest:deferred(--run-tests not set)",
+        "pytest ['Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_create_start_learning_run_end_to_end'] exit=0",
         "file_exists:Data/modules/market_sim/policy.py:ok",
         "file_exists:Data/modules/market_sim/learning.py:ok"
       ],
       "notes": "W25 Strategy Learning Loop",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -1173,12 +1214,12 @@
       "evidence": [
         "append_trial in learning_runtime",
         "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_create_start_learning_run_end_to_end",
-        "pytest:deferred(--run-tests not set)",
+        "pytest ['Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_create_start_learning_run_end_to_end'] exit=0",
         "file_exists:Data/modules/market_sim/policy.py:ok",
         "file_exists:Data/modules/market_sim/learning.py:ok"
       ],
       "notes": "W25 Strategy Learning Loop",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -1188,12 +1229,12 @@
         "learning_runtime VAL stage",
         "learner updates TRAIN-only",
         "Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests::test_sealed_update_forbidden",
-        "pytest:deferred(--run-tests not set)",
+        "pytest ['Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests::test_sealed_update_forbidden'] exit=0",
         "file_exists:Data/modules/market_sim/policy.py:ok",
         "file_exists:Data/modules/market_sim/learning.py:ok"
       ],
       "notes": "W25 Strategy Learning Loop",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -1202,12 +1243,12 @@
       "evidence": [
         "reject_sealed_learner_update",
         "Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests::test_sealed_update_forbidden",
-        "pytest:deferred(--run-tests not set)",
+        "pytest ['Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests::test_sealed_update_forbidden'] exit=0",
         "file_exists:Data/modules/market_sim/policy.py:ok",
         "file_exists:Data/modules/market_sim/learning.py:ok"
       ],
       "notes": "W25 Strategy Learning Loop",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -1216,12 +1257,12 @@
       "evidence": [
         "failure_statistics in update_learner_from_outcomes",
         "Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests::test_state_changes_after_generation_update",
-        "pytest:deferred(--run-tests not set)",
+        "pytest ['Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests::test_state_changes_after_generation_update'] exit=0",
         "file_exists:Data/modules/market_sim/policy.py:ok",
         "file_exists:Data/modules/market_sim/learning.py:ok"
       ],
       "notes": "W25 Strategy Learning Loop",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -1230,12 +1271,12 @@
       "evidence": [
         "family_probabilities update",
         "Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests",
-        "pytest:deferred(--run-tests not set)",
+        "pytest ['Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests'] exit=0",
         "file_exists:Data/modules/market_sim/policy.py:ok",
         "file_exists:Data/modules/market_sim/learning.py:ok"
       ],
       "notes": "W25 Strategy Learning Loop",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -1245,12 +1286,12 @@
         "DslStrategyPolicy emits GymAction intents only",
         "gym step uses engine RiskGuard path",
         "Data/backend/tests/test_strategy_learning.py::PolicyExecutionTests",
-        "pytest:deferred(--run-tests not set)",
+        "pytest ['Data/backend/tests/test_strategy_learning.py::PolicyExecutionTests'] exit=0",
         "file_exists:Data/modules/market_sim/policy.py:ok",
         "file_exists:Data/modules/market_sim/learning.py:ok"
       ],
       "notes": "W25 Strategy Learning Loop",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -1259,12 +1300,12 @@
       "evidence": [
         "market_sim.learning_run capability",
         "Data/modules/workers/entrypoints/market_sim.py::_handle_learning_run",
-        "pytest:deferred(--run-tests not set)",
+        "pytest ['Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests'] exit=0",
         "file_exists:Data/modules/market_sim/policy.py:ok",
         "file_exists:Data/modules/market_sim/learning.py:ok"
       ],
       "notes": "JobRuntime EXTERNAL_REQUIRED when bound; inline worker path for tests",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -1273,12 +1314,12 @@
       "evidence": [
         "Data/frontend/src/pages/trading/ResearchLabPage.tsx",
         "Data/frontend/src/api/domains/marketSimLab.ts",
-        "pytest:deferred(--run-tests not set)",
+        "pytest ['Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests'] exit=0",
         "file_exists:Data/modules/market_sim/policy.py:ok",
         "file_exists:Data/modules/market_sim/learning.py:ok"
       ],
       "notes": "UI binds marketSimLabLearning/Generations/Candidates; no mock KPIs",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -1288,12 +1329,12 @@
         "AcceptanceCriteria fail-closed",
         "Data/backend/tests/test_strategy_learning.py::FitnessHonestyTests",
         "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_no_strategy_qualified_is_valid_completion",
-        "pytest:deferred(--run-tests not set)",
+        "pytest ['Data/backend/tests/test_strategy_learning.py::FitnessHonestyTests', 'Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_no_strategy_qualified_is_valid_completion'] exit=0",
         "file_exists:Data/modules/market_sim/policy.py:ok",
         "file_exists:Data/modules/market_sim/learning.py:ok"
       ],
       "notes": "W25 Strategy Learning Loop",
-      "strict_pass": false,
+      "strict_pass": true,
       "operating_envelope": {}
     },
     {
@@ -1303,12 +1344,53 @@
         "LiveTradingGuard",
         "lab overview truth.live_trading=BLOCKED",
         "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests",
-        "pytest:deferred(--run-tests not set)",
+        "pytest ['Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_create_start_learning_run_end_to_end'] exit=0",
         "file_exists:Data/modules/market_sim/policy.py:ok",
         "file_exists:Data/modules/market_sim/learning.py:ok"
       ],
       "notes": "Learning never enables live; A5 impossible",
-      "strict_pass": false,
+      "strict_pass": true,
+      "operating_envelope": {}
+    },
+    {
+      "id": "L16",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/strategy_families.py",
+        "Data/backend/tests/test_strategy_families_registry.py",
+        "pytest ['Data/backend/tests/test_strategy_families_registry.py::StrategyFamiliesRegistryTests'] exit=0",
+        "file_exists:Data/modules/market_sim/strategy_families.py:ok"
+      ],
+      "notes": "Single registry source for learning_types / FAMILY_TEMPLATES / generatable set",
+      "strict_pass": true,
+      "operating_envelope": {}
+    },
+    {
+      "id": "L17",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/research_hypothesis.py",
+        "MARKET domain migration v7 market_research_hypotheses",
+        "Data/backend/tests/test_research_hypothesis_w1.py",
+        "pytest ['Data/backend/tests/test_research_hypothesis_w1.py::ResearchHypothesisW1Tests'] exit=0",
+        "file_exists:Data/modules/market_sim/research_hypothesis.py:ok"
+      ],
+      "notes": "Public structured reasoning only; falsification frozen after create",
+      "strict_pass": true,
+      "operating_envelope": {}
+    },
+    {
+      "id": "L18",
+      "status": "PASS",
+      "evidence": [
+        "create_agent_lab AUTONOMOUS_DISCOVERY",
+        "research_lineage_root",
+        "heuristic research cycle",
+        "Data/backend/tests/test_autonomous_research_closed_loop_e2e.py",
+        "pytest ['Data/backend/tests/test_autonomous_research_closed_loop_e2e.py::AutonomousResearchClosedLoopE2ETests::test_autonomous_discovery_lab_hypothesis_learning_loop'] exit=0"
+      ],
+      "notes": "Product machinery only \u2014 does not claim market edge; sealed path optional",
+      "strict_pass": true,
       "operating_envelope": {}
     }
   ],

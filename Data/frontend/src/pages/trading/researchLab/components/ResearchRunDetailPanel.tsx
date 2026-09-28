@@ -107,6 +107,10 @@ export function ResearchRunDetailPanel({
 
         <dl className="lv-rl-dl">
           <div>
+            <dt>Run mode</dt>
+            <dd>{String(lab.run_mode || meta.run_mode || "—")}</dd>
+          </div>
+          <div>
             <dt>Source / dataset</dt>
             <dd>{source}</dd>
           </div>
@@ -116,6 +120,12 @@ export function ResearchRunDetailPanel({
               {familyHint}
               {lab.strategy_version != null ? ` · v${String(lab.strategy_version)}` : ""}
               <div style={{ color: "rgba(232,228,220,0.4)", fontSize: 10, marginTop: 2 }}>{strategy}</div>
+            </dd>
+          </div>
+          <div>
+            <dt>Research objective</dt>
+            <dd>
+              {String(lab.research_objective || meta.research_objective || "") || hyp || "—"}
             </dd>
           </div>
           <div>

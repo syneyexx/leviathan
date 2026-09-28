@@ -1508,9 +1508,18 @@ def build_market_sim_router(
     @router.post("/api/market-sim/lab/runs")
     def lab_create(payload: dict[str, Any]) -> dict:
         try:
+            run_mode = str(
+                payload.get("runMode")
+                or payload.get("run_mode")
+                or "SEED_EXISTING_STRATEGY"
+            )
+            raw_strategy = payload.get("strategyId") if "strategyId" in payload else payload.get("strategy_id")
+            strategy_id = str(raw_strategy).strip() if raw_strategy else None
+            if not strategy_id:
+                strategy_id = None
             lab = service.create_agent_lab(
                 name=str(payload.get("name") or ""),
-                strategy_id=str(payload.get("strategyId") or payload.get("strategy_id") or ""),
+                strategy_id=strategy_id,
                 source_id=str(payload.get("sourceId") or payload.get("source_id") or ""),
                 strategy_version=payload.get("strategyVersion") or payload.get("strategy_version"),
                 max_candidates=int(payload.get("maxCandidates") or payload.get("max_candidates") or 10),
@@ -1522,6 +1531,25 @@ def build_market_sim_router(
                 metadata=payload.get("metadata"),
                 learning=payload.get("learning"),
                 enable_learning=bool(payload.get("enableLearning", payload.get("enable_learning", True))),
+                run_mode=run_mode,
+                research_objective=str(
+                    payload.get("researchObjective") or payload.get("research_objective") or ""
+                ),
+                enable_chart_vision=bool(
+                    payload.get("enableChartVision", payload.get("enable_chart_vision", False))
+                ),
+                model_budget=int(payload.get("modelBudget") or payload.get("model_budget") or 6),
+                agent_proposal_rate=(
+                    float(payload["agentProposalRate"])
+                    if payload.get("agentProposalRate") is not None
+                    else (
+                        float(payload["agent_proposal_rate"])
+                        if payload.get("agent_proposal_rate") is not None
+                        else None
+                    )
+                ),
+                research_scope=payload.get("researchScope") or payload.get("research_scope"),
+                dataset_bundle=payload.get("datasetBundle") or payload.get("dataset_bundle"),
             )
             return {"lab": lab}
         except MarketSimError as exc:
@@ -1538,6 +1566,34 @@ def build_market_sim_router(
     def lab_get(lab_id: str) -> dict:
         try:
             return {"lab": service.get_agent_lab(lab_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/lab/runs/{lab_id}/hypotheses")
+    def lab_hypotheses(lab_id: str, limit: int = Query(50, ge=1, le=200)) -> dict:
+        try:
+            return service.list_lab_hypotheses(lab_id, limit=limit)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/lab/runs/{lab_id}/perception")
+    def lab_perception(lab_id: str) -> dict:
+        try:
+            return service.get_lab_perception(lab_id)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/lab/hypotheses/{hypothesis_id}")
+    def lab_hypothesis_get(hypothesis_id: str) -> dict:
+        try:
+            return {"hypothesis": service.get_research_hypothesis(hypothesis_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/strategy-families")
+    def strategy_families() -> dict:
+        try:
+            return service.list_strategy_families()
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 
@@ -1587,6 +1643,13 @@ def build_market_sim_router(
     def lab_candidates(lab_id: str) -> dict:
         try:
             return service.get_lab_candidates(lab_id)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/lab/runs/{lab_id}/candidates/{candidate_id}/explain")
+    def lab_candidate_explain(lab_id: str, candidate_id: str) -> dict:
+        try:
+            return service.explain_lab_candidate(lab_id, candidate_id)
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 
