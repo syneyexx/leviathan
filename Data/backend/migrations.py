@@ -4284,6 +4284,7 @@ def _m59_coding_semantic_map_cache_ext(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE coding_semantic_map_cache ADD COLUMN {name} {decl}")
 
 
+def _m55_institutional_core(conn: sqlite3.Connection) -> None:
     """Institutional core additive tables (instruments, breaks, audit, exceptions)."""
     conn.execute(
         """

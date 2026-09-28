@@ -135,22 +135,21 @@ class CodingEntrypointNoDualClaimTests(unittest.TestCase):
             def run_round(self, session_id, approval_ids=None):
                 from Data.modules.coding.types import LoopResult
 
-                s = store.get_session(session_id)
                 store.update_session(session_id, status=SessionStatus.COMPLETED, round_count=1)
                 s2 = store.get_session(session_id)
-                return LoopResult(status=SessionStatus.COMPLETED, session=s2, error=None)
+                return LoopResult(session=s2, status=SessionStatus.COMPLETED, error=None)
 
-        class Plane:
-            store = store
-            loop = FakeLoop()
-            job_runtime = runtime
-            settings = None
+        plane = mock.Mock()
+        plane.store = store
+        plane.loop = FakeLoop()
+        plane.job_runtime = runtime
+        plane.settings = None
 
         ctx = {
             "job_store": job_store,
             "job_runtime": runtime,
             "worker_id": "coding-test-1",
-            "coding_service": Plane(),
+            "coding_service": plane,
         }
         with mock.patch.dict(os.environ, {"LEVIATHAN_WORKER_ID": "coding-test-1"}, clear=False):
             out = process_coding_job(ctx, claimed)
@@ -230,6 +229,9 @@ class ApprovalResumeEnqueueTests(unittest.TestCase):
             workspace_root=str(ws),
             mission=Mission.SCAFFOLD,
             status=SessionStatus.WAITING_APPROVAL,
+        )
+        store.update_session(
+            session.session_id,
             pending_capability={"capability_id": "file.write", "arguments": {"path": "a.py"}},
         )
         boom = mock.Mock(side_effect=AssertionError("run_round must not run on API"))
@@ -237,7 +239,7 @@ class ApprovalResumeEnqueueTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"LEVIATHAN_WORKERS_EXTERNALIZE_API": "1"}, clear=False):
             plane.start_turn(session.session_id, approval_id="apr-1")
         boom.assert_not_called()
-        jobs = [j for j in job_store.list_jobs(limit=20) if j.capability_id == "coding.advance"]
+        jobs = [j for j in job_store.list(limit=20) if j.capability_id == "coding.advance"]
         self.assertTrue(jobs)
         self.assertEqual(jobs[0].arguments.get("approval_id"), "apr-1")
 
@@ -303,11 +305,13 @@ class SemanticMapExternalTests(unittest.TestCase):
 
 class ProcessAndSearchTests(unittest.TestCase):
     def test_argv_metacharacters_remain_data(self) -> None:
+        import sys
+
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         cwd = Path(tmp.name)
         result = run_argv(
-            ["python", "-c", "print('; rm -rf /')"],
+            [sys.executable, "-c", "print('; rm -rf /')"],
             cwd=cwd,
             timeout_seconds=10,
         )
@@ -315,10 +319,12 @@ class ProcessAndSearchTests(unittest.TestCase):
         self.assertIn("; rm -rf /", result.stdout)
 
     def test_timeout_status(self) -> None:
+        import sys
+
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         result = run_argv(
-            ["python", "-c", "import time; time.sleep(5)"],
+            [sys.executable, "-c", "import time; time.sleep(5)"],
             cwd=Path(tmp.name),
             timeout_seconds=0.3,
         )

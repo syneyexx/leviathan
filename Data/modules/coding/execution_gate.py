@@ -72,19 +72,29 @@ def allow_inprocess_execution(settings: Any | None = None) -> bool:
     """
     if not inprocess_execution_explicitly_allowed():
         return False
-    runner = None
-    raw_env = os.environ.get(RUNNER_ENV)
+
+    def _as_runner_text(value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        # Ignore MagicMock / non-string settings attributes.
+        return None
+
+    runner_text: str | None = None
     if settings is not None:
         coding = getattr(settings, "coding", None)
-        runner = getattr(coding, "runner", None) if coding is not None else None
-        if runner is None:
-            runner = getattr(settings, "runner", None)
-    if runner is None:
+        if coding is not None:
+            runner_text = _as_runner_text(getattr(coding, "runner", None))
+        if runner_text is None:
+            runner_text = _as_runner_text(getattr(settings, "runner", None))
+
+    raw_env = os.environ.get(RUNNER_ENV)
+    if runner_text is None:
         if raw_env is None or str(raw_env).strip() == "":
-            # Unset: under pytest allow test harness; otherwise fabric.
             return pytest_session_active()
-        runner = normalize_runner_value(raw_env)
-    if runner_requests_inprocess(str(runner)):
+        runner_text = normalize_runner_value(raw_env)
+    if runner_requests_inprocess(str(runner_text)):
         return True
     return False
 

@@ -16,8 +16,34 @@ def run(
     Exit code is the sole success authority. Process-tree kill on timeout/cancel.
     """
     from Data.modules.coding.verify_ops import run_verification
+    from Data.modules.common.paths import PathEscapeError
 
     root = workspace_root or cwd or str(Path.cwd())
+    # Pre-confine cwd so path escapes match legacy error shape for callers.
+    if workspace_root:
+        try:
+            from Data.modules.coding.workspace import confine
+
+            confine(Path(workspace_root), cwd or ".")
+        except PathEscapeError as exc:
+            return {
+                "passed": False,
+                "exit_code": 126,
+                "stdout": "",
+                "stderr": str(exc),
+                "argv": [],
+                "cwd": str(cwd or ""),
+                "status": "REJECTED",
+                "error": f"path_escape: {exc}",
+                "process_killed": False,
+                "executed": False,
+                "capability": "coding.run_tests",
+                "truth": {
+                    "configuration_is_not_enforcement_proof": True,
+                    "exit_code_is_authority": True,
+                },
+            }
+
     result = run_verification(
         phase="test",
         workspace_root=root,
