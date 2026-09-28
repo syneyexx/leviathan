@@ -978,6 +978,13 @@ class Settings:
             raise ConfigurationError(
                 "LEVIATHAN_LOOPBACK_ONLY=true requires LEVIATHAN_HOST to be a loopback address"
             )
+        if not loopback_only:
+            operator_token = (_env_raw("LEVIATHAN_OPERATOR_TOKEN", "") or "").strip()
+            if not operator_token:
+                raise ConfigurationError(
+                    "LEVIATHAN_LOOPBACK_ONLY=false requires a non-empty "
+                    "LEVIATHAN_OPERATOR_TOKEN for mutation authentication"
+                )
 
         base_url = (_env_raw("LEVIATHAN_LLM_BASE_URL", "http://127.0.0.1:1234/v1") or "").strip().rstrip("/")
         if not base_url:

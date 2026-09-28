@@ -209,6 +209,9 @@ class TeamOrchestrator:
         self.quality_store = quality_store
         self._clock = clock or time.monotonic
         self._runs: dict[str, TeamRunState] = {}
+        # Per-run executor bindings — never mutate the process-default _executor
+        # from request handlers (avoids cross-request context bleed).
+        self._run_executors: dict[str, SpecialistExecutor] = {}
 
     def get(self, run_id: str) -> TeamRunState | None:
         return self._runs.get(run_id)
@@ -228,6 +231,7 @@ class TeamOrchestrator:
         parent_capabilities: Sequence[str] | None = None,
         artifact_revision: str | None = None,
         profile: TeamTaskProfile | None = None,
+        specialist_executor: SpecialistExecutor | None = None,
     ) -> TeamRunState:
         rid = run_id or f"team:{uuid.uuid4().hex[:12]}"
         now = _utc_now()
@@ -279,6 +283,8 @@ class TeamOrchestrator:
             request_text=request_text or "",
         )
         self._runs[rid] = state
+        if specialist_executor is not None:
+            self._run_executors[rid] = specialist_executor
         if self.quality_store is not None:
             self.quality_store.save_contract(qc)
         state.emit(
@@ -731,9 +737,13 @@ class TeamOrchestrator:
             assignments = assignments[:max_fan]
         return assignments
 
+    def _executor_for(self, state: TeamRunState) -> SpecialistExecutor:
+        return self._run_executors.get(state.run_id) or self._executor
+
     def _execute_ready_assignments(self, state: TeamRunState) -> None:
         completed_ids = {a.task_id for a in state.assignments if a.status == "completed"}
         sequential = state.policy.single_model_sequential or not state.policy.allow_parallel_workers
+        executor = self._executor_for(state)
         for a in state.assignments:
             if a.status not in {"pending", "ready"}:
                 continue
@@ -745,7 +755,7 @@ class TeamOrchestrator:
             a.status = "running"
             state.emit("assignment_started", f"{a.role.value} started", {"task_id": a.task_id})
             try:
-                result = self._executor(a, state)
+                result = executor(a, state)
                 self.apply_specialist_result(
                     state.run_id, a.task_id, result, graph_revision=state.graph_revision
                 )

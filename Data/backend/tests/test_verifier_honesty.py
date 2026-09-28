@@ -36,6 +36,34 @@ class VerifierHonestyTests(unittest.TestCase):
         self.assertTrue(report["allow_incomplete"])
         self.assertEqual(report["exit_code"], 0)
 
+    def test_frontier_allow_incomplete_does_not_claim_definition_of_done(self) -> None:
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "verify_frontier_reasoning.py"),
+                "--allow-f0-skeleton-only",
+                "--write-report",
+            ],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        report = json.loads(
+            (ROOT / "Data" / "backend" / "tests" / "frontier_reasoning_completion_report.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertTrue(report["process_exit_success"])
+        self.assertTrue(report["structural_baseline_ok"])
+        self.assertTrue(report["allowed_incomplete"])
+        self.assertFalse(report["all_required_rounds_passed"])
+        self.assertFalse(report["program_complete"])
+        self.assertFalse(report["definition_of_done"])
+        self.assertTrue(report["truth"]["process_success_is_not_program_complete"])
+        self.assertTrue(report["truth"]["allowed_incomplete_is_not_definition_of_done"])
+
     def test_frontier_without_allow_exits_nonzero_when_gates_open(self) -> None:
         proc = subprocess.run(
             [sys.executable, str(ROOT / "scripts" / "verify_frontier_reasoning.py")],
