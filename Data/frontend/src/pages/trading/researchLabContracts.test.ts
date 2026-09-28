@@ -51,7 +51,11 @@ describe("Research Lab page contracts", () => {
     expect(page).toContain("ResearchLabCreateModal");
     expect(page).toContain("No research runs");
     expect(page).toContain("market simulation");
+    expect(page).toContain("HYPOTHESES");
+    expect(page).toContain("EXPERIMENTS");
     expect(vm).toContain("actionAvailability");
+    expect(css).toContain(".lv-rl-charts-3");
+    expect(css).toContain(".lv-rl-footer-quote");
   });
 
   it("does not invent fake metrics or demo run ids", () => {

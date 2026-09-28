@@ -7,7 +7,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const modulesSrc = readFileSync(join(here, "ModulesPage.tsx"), "utf8");
 const hookSrc = readFileSync(join(here, "modules", "useModulesWorkspace.ts"), "utf8");
 const viewSrc = readFileSync(join(here, "modules", "viewModels.ts"), "utf8");
-const skillsSrc = readFileSync(join(here, "SkillsPage.tsx"), "utf8");
+const skillsEntry = readFileSync(join(here, "SkillsPage.tsx"), "utf8");
+const skillsPage = readFileSync(join(here, "skills/SkillsPage.tsx"), "utf8");
+const skillsHook = readFileSync(join(here, "skills/hooks/useSkillsPage.ts"), "utf8");
 const chatSrc = readFileSync(join(here, "..", "ChatPage.tsx"), "utf8");
 const combined = `${modulesSrc}\n${hookSrc}\n${viewSrc}`;
 
@@ -60,13 +62,27 @@ describe("ModulesPage external fabric lifecycle", () => {
 });
 
 describe("SkillsPage catalog bounds", () => {
+  it("re-exports the rebuilt Skills page module", () => {
+    expect(skillsEntry).toContain('from "./skills/SkillsPage"');
+  });
+
   it("searches with limit/offset and loads instructions on demand", () => {
-    expect(skillsSrc).toContain("listSkills");
-    expect(skillsSrc).toMatch(/limit\s*=\s*40/);
-    expect(skillsSrc).toContain("offset");
-    expect(skillsSrc).toContain("include_catalog");
-    expect(skillsSrc).toContain("getSkill");
-    expect(skillsSrc).toMatch(/instructions load on demand/i);
+    expect(skillsHook).toContain("listSkills");
+    expect(skillsHook).toMatch(/PAGE_LIMIT\s*=\s*40/);
+    expect(skillsHook).toContain("offset");
+    expect(skillsHook).toContain("include_catalog");
+    expect(skillsHook).toContain("getSkill");
+    expect(skillsHook).toContain("classification");
+    expect(skillsPage).toMatch(/Load Instructions|loadInstructions/);
+    expect(skillsPage + skillsHook).toMatch(/on demand|Load Instructions/i);
+  });
+
+  it("wires enable/disable/test without fabricating screenshot metrics", () => {
+    expect(skillsHook).toContain("setSkillEnabled");
+    expect(skillsHook).toContain("testSkill");
+    expect(skillsHook).toContain("executeSkill");
+    expect(skillsPage).not.toMatch(/128 Total Skills/);
+    expect(skillsPage).not.toMatch(/Research Synthesis/);
   });
 });
 

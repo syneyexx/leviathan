@@ -188,15 +188,53 @@ class ExternalModulesSkillsRouteTests(unittest.TestCase):
             names = [s.get("name") for s in skill_body.get("skills") or []]
             self.assertIn("demo-scroll", names)
             self.assertNotIn("catalog-only-skill", names)
+            totals = skill_body.get("totals") or {}
+            self.assertIn("installed", totals)
+            self.assertIn("catalog", totals)
+            self.assertIn("available", totals)
+            self.assertIn("agent_skills", totals)
+            self.assertIsNone(totals.get("agent_skills"))
+            self.assertIsNone(totals.get("updates_available"))
+            # List rows must not include instruction bodies.
+            for row in skill_body.get("skills") or []:
+                self.assertNotIn("instructions", row)
 
             catalog = client.get("/api/skills", params={"include_catalog": True, "limit": 50})
             self.assertEqual(catalog.status_code, 200)
             cat_names = [s.get("name") for s in catalog.json().get("skills") or []]
             self.assertIn("catalog-only-skill", cat_names)
 
+            all_skills = client.get("/api/skills", params={"classification": "all", "limit": 50})
+            self.assertEqual(all_skills.status_code, 200)
+            all_names = [s.get("name") for s in all_skills.json().get("skills") or []]
+            self.assertIn("demo-scroll", all_names)
+            self.assertIn("catalog-only-skill", all_names)
+
+            core_only = client.get("/api/skills", params={"classification": "core", "enabled_only": False})
+            self.assertEqual(core_only.status_code, 200)
+            core_names = [s.get("name") for s in core_only.json().get("skills") or []]
+            self.assertIn("demo-scroll", core_names)
+            self.assertNotIn("catalog-only-skill", core_names)
+
             one = client.get("/api/skills/skill:demo")
             self.assertEqual(one.status_code, 200)
             self.assertEqual(one.json()["skill"]["skill_id"], "skill:demo")
+            self.assertIn("compatibility", one.json()["skill"])
+            self.assertIn("declarations", one.json()["skill"])
+            self.assertNotIn("instructions", one.json()["skill"])
+
+            tested = client.post("/api/skills/skill:demo/test")
+            self.assertEqual(tested.status_code, 200)
+            test_body = tested.json()
+            self.assertIn("result", test_body)
+            self.assertIn("checks", test_body["result"])
+            self.assertTrue(test_body["result"].get("truth", {}).get("not_mocked_pass"))
+
+            # Instruction-only execute must fail truthfully (no required caps).
+            executed_skill = client.post("/api/skills/skill:demo/execute", json={})
+            self.assertEqual(executed_skill.status_code, 422)
+            detail = (executed_skill.json() or {}).get("detail") or ""
+            self.assertIn("executable capability", str(detail).lower())
 
             disabled = client.post("/api/skills/skill:demo/enable", json={"enabled": False})
             self.assertEqual(disabled.status_code, 200)
