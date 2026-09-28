@@ -2657,6 +2657,7 @@ app.include_router(
         voice_stub=voice_stub,
         execution_gateway=execution_gateway,
         observability=observability,
+        job_runtime=job_runtime,
     )
 )
 app.include_router(

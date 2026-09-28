@@ -350,9 +350,42 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
         pool_id="market_sim",
         entrypoint="Data.modules.workers.entrypoints.market_sim",
         default_count=1,
-        job_kinds=("market_sim.",),
-        resource_classes=("CPU_HEAVY",),
-        description="Market simulation advancement",
+        job_kinds=(
+            "market_sim.",
+            "market_sim.data.scan",
+            "market_sim.data.import",
+            "market_sim.data.validate",
+            "market_sim.data.profile",
+            "market_sim.data.convert",
+            "market_sim.assurance.scan",
+        ),
+        resource_classes=("CPU_HEAVY", "MEMORY_HEAVY", "IO_HEAVY"),
+        description=(
+            "MarketSim domain owner — simulation slices, research/learning, "
+            "qualification, market-data scan/import/validate/profile/convert, "
+            "portfolio ticks, institutional assurance"
+        ),
+        max_count=2,
+    ),
+    "voice": PoolDefinition(
+        pool_id="voice",
+        entrypoint="Data.modules.workers.entrypoints.voice",
+        default_count=1,
+        job_kinds=(
+            "voice.",
+            "voice.start_session",
+            "voice.transcribe",
+            "voice.synthesize",
+            "voice.barge_in",
+            "voice.preprocess",
+            "voice.postprocess",
+        ),
+        resource_classes=("CPU_LIGHT", "CPU_HEAVY", "MEMORY_HEAVY", "MODEL_INFERENCE"),
+        description=(
+            "Singleton realtime voice transport/session owner — ASR/TTS/"
+            "preprocess/postprocess. No horizontal scale until session affinity."
+        ),
+        max_count=1,
     ),
     "backup": PoolDefinition(
         pool_id="backup",

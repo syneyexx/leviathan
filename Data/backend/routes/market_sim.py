@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from Data.modules.execution import CapabilityCatalog, CapabilityRequest, ExecutionGateway
@@ -352,38 +352,90 @@ def build_market_sim_router(
         return {"sources": sources}
 
     @router.post("/api/market-sim/data/scan")
-    def scan_data() -> dict:
+    def scan_data(response: Response) -> dict:
+        """Enqueue bounded market-data scan — never recurse inside FastAPI."""
         try:
-            sources = service.scan_market_data()
+            job = service.enqueue_market_data_scan(requested_by="api.market_sim.data.scan")
         except MarketSimError as exc:
             raise_market_sim_error(exc)
-        return {"sources": sources}
+        response.status_code = 202
+        return {
+            "queued": True,
+            "job": job.public_dict(),
+            "job_id": job.job_id,
+            "sources": None,
+            "truth": {
+                "executed_via": "market_sim_worker",
+                "no_fastapi_recursive_scan": True,
+            },
+        }
 
     @router.post("/api/market-sim/data/register")
-    def register_data(payload: RegisterDataRequest) -> dict:
+    def register_data(payload: RegisterDataRequest, response: Response) -> dict:
+        """Registration with deep validation is external (same as validate/import)."""
+        if getattr(service, "job_runtime", None) is None:
+            raise_market_sim_error(
+                MarketSimError(
+                    "MARKET_DATA_WORKER_UNAVAILABLE",
+                    "JobRuntime required for deep market-data registration",
+                    http_status=503,
+                )
+            )
         try:
-            source = service.register_market_data(
-                payload.path,
-                symbol=payload.symbol,
-                timeframe=payload.timeframe,
+            job = service.job_runtime.enqueue(
+                capability_id="market_sim.data.validate",
+                arguments={
+                    "relative_path": payload.path,
+                    "symbol": payload.symbol,
+                    "timeframe": payload.timeframe,
+                    "register": True,
+                },
+                requested_by="api.market_sim.data.register",
+                domain="market_sim",
+                domain_entity_type="market_data_register",
+                domain_entity_id=payload.path,
+                worker_pool="market_sim",
+                resource_class="IO_HEAVY",
+                latency_class="batch",
             )
         except MarketSimError as exc:
             raise_market_sim_error(exc)
-        return {"source": source}
+        except Exception as exc:  # noqa: BLE001
+            raise_market_sim_error(
+                MarketSimError("MARKET_DATA_WORKER_UNAVAILABLE", str(exc)[:300], http_status=503)
+            )
+        response.status_code = 202
+        return {
+            "queued": True,
+            "job": job.public_dict(),
+            "job_id": job.job_id,
+            "truth": {"executed_via": "market_sim_worker", "deep_validate_is_external": True},
+        }
 
     @router.post("/api/market-sim/data/import")
-    def import_dataset(payload: ImportDatasetRequest) -> dict:
+    def import_dataset(payload: ImportDatasetRequest, response: Response) -> dict:
         try:
-            return service.import_market_dataset(
+            job = service.enqueue_market_data_import(
                 payload.path,
                 symbol=payload.symbol,
                 timeframe=payload.timeframe,
                 seal=payload.seal,
                 role=payload.role,
                 provider=payload.provider,
+                requested_by="api.market_sim.data.import",
             )
         except MarketSimError as exc:
             raise_market_sim_error(exc)
+        response.status_code = 202
+        return {
+            "queued": True,
+            "job": job.public_dict(),
+            "job_id": job.job_id,
+            "truth": {
+                "executed_via": "market_sim_worker",
+                "no_fastapi_heavy_import": True,
+            },
+        }
 
     @router.get("/api/market-sim/datasets")
     def list_datasets(
@@ -1124,11 +1176,24 @@ def build_market_sim_router(
             raise_market_sim_error(exc)
 
     @router.post("/api/market-sim/portfolios/{portfolio_id}/tick")
-    def portfolio_tick(portfolio_id: str) -> dict:
+    def portfolio_tick(portfolio_id: str, response: Response) -> dict:
         try:
-            return service.portfolio_tick(portfolio_id)
+            job = service.enqueue_portfolio_tick(
+                portfolio_id, requested_by="api.market_sim.portfolio_tick"
+            )
         except MarketSimError as exc:
             raise_market_sim_error(exc)
+        response.status_code = 202
+        return {
+            "queued": True,
+            "job": job.public_dict(),
+            "job_id": job.job_id,
+            "truth": {
+                "executed_via": "market_sim_worker",
+                "paper_only": True,
+                "no_hot_self_enqueue_from_api": True,
+            },
+        }
 
     # --- Experiments ---
 
@@ -1364,16 +1429,24 @@ def build_market_sim_router(
             raise_market_sim_error(exc)
 
     @router.post("/api/market-sim/scan-batch")
-    def scan_batch(payload: ScanBatchRequest) -> dict:
+    def scan_batch(payload: ScanBatchRequest, response: Response) -> dict:
         try:
-            return service.scan_batch(
+            job = service.enqueue_scan_batch(
                 symbols=payload.symbols,
                 provider_id=payload.providerId,
                 timeframe=payload.timeframe,
                 limit=payload.limit,
+                requested_by="api.market_sim.scan_batch",
             )
         except MarketSimError as exc:
             raise_market_sim_error(exc)
+        response.status_code = 202
+        return {
+            "queued": True,
+            "job": job.public_dict(),
+            "job_id": job.job_id,
+            "truth": {"executed_via": "market_sim_worker", "provider_io_owns_remote_fetch": True},
+        }
 
     # --- W17 Trading Lab surface (typed real endpoints; no mock KPIs) ---
 
@@ -1708,10 +1781,29 @@ def build_market_sim_router(
 
     @router.get("/api/market-sim/institutional/assurance")
     def institutional_assurance() -> dict:
+        """Cheap cached read — does not run the heavy assurance scan."""
         try:
-            return service.institutional_assurance()
+            return service.institutional_assurance_cached()
         except MarketSimError as exc:
             raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/institutional/assurance")
+    def institutional_assurance_run(response: Response) -> dict:
+        try:
+            job = service.enqueue_assurance_scan(requested_by="api.market_sim.assurance")
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+        response.status_code = 202
+        return {
+            "queued": True,
+            "job": job.public_dict(),
+            "job_id": job.job_id,
+            "truth": {
+                "executed_via": "market_sim_worker",
+                "not_qualification_authority": True,
+                "live_trading_blocked": True,
+            },
+        }
 
     @router.get("/api/market-sim/institutional/multi-asset")
     def institutional_multi_asset() -> dict:

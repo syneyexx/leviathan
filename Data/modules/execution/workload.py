@@ -89,6 +89,7 @@ _EXTERNAL_REQUIRED_PREFIXES: tuple[str, ...] = (
     "mcp.call",
     "document_ai.",
     "ocr.",
+    "voice.",
 )
 
 # Cheap control-plane / trivial capabilities.
@@ -111,7 +112,6 @@ KNOWN_INLINE_SAFE: frozenset[str] = frozenset(
 _EXTERNAL_PREFERRED_PREFIXES: tuple[str, ...] = (
     "browser.",
     "media.",
-    "voice.",
 )
 
 
@@ -219,6 +219,7 @@ def classify_capability(
             "module_runtime",
             "agent_signals",
             "scheduler",
+            "voice",
         }
         if worker_kind in heavy_kinds:
             return ExecutionWorkloadClass.EXTERNAL_REQUIRED

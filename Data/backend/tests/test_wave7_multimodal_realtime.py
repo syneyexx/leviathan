@@ -194,7 +194,13 @@ class Wave7ExitGateTests(unittest.TestCase):
 
     def test_multimodal_session_tools_and_single_context(self) -> None:
         self.assertEqual(self.catalog.require("media.image_generate").provider_kind, CapabilityProviderKind.MEDIA)
-        self.assertEqual(self.catalog.require("voice.barge_in").provider_kind, CapabilityProviderKind.VOICE)
+        from Data.modules.execution.workload import ExecutionWorkloadClass, classify_capability
+
+        voice_def = self.catalog.require("voice.barge_in")
+        self.assertEqual(
+            classify_capability("voice.barge_in", metadata=voice_def.metadata),
+            ExecutionWorkloadClass.EXTERNAL_REQUIRED,
+        )
 
         run = self.runs.create_run(user_request="wave7 multimodal exit gate")
         run_id = run.run_id
@@ -215,36 +221,35 @@ class Wave7ExitGateTests(unittest.TestCase):
         artifact_id = (img_result.output or {}).get("artifact_id")
         self.assertTrue(artifact_id)
 
-        # 2) Voice ASR on same run
-        voice_approval = self._approve("voice.start_session", run_id=run_id)
-        started = self.gateway.execute(
-            CapabilityRequest(
-                capability_id="voice.start_session",
-                arguments={"conversation_id": "conv-wave7", "run_id": run_id, "sync_id": "sync_w7"},
-                run_id=run_id,
-                approval_id=voice_approval,
-                requested_by="wave7-voice",
-            )
+        # 2) Voice ASR — production path is EXTERNAL_REQUIRED (voice worker).
+        # Fixture RealtimeVoiceService remains test-only; exercise it directly here.
+        voice_started = self.voice.execute(
+            action="START_SESSION",
+            arguments={"conversation_id": "conv-wave7", "run_id": run_id, "sync_id": "sync_w7"},
+            run_id=run_id,
         )
-        self.assertEqual(started.status, CapabilityStatus.COMPLETED)
-        voice_session_id = ((started.output or {}).get("session") or {}).get("session_id")
-        self.assertTrue(voice_session_id)
-
+        self.assertEqual(voice_started.get("status"), "COMPLETED")
+        session_id = (voice_started.get("session") or {}).get("session_id")
+        self.assertTrue(session_id)
         asr_approval = self._approve("voice.transcribe", run_id=run_id)
-        asr = self.gateway.execute(
+        # API gateway must refuse inline voice when externalize is on.
+        refused = self.gateway.execute(
             CapabilityRequest(
                 capability_id="voice.transcribe",
-                arguments={
-                    "session_id": voice_session_id,
-                    "text": "please inspect the blueprint",
-                },
+                arguments={"session_id": session_id, "text": "hello multimodal world", "audio_ref": "fixture"},
                 run_id=run_id,
                 approval_id=asr_approval,
                 requested_by="wave7-voice",
             )
         )
-        self.assertEqual(asr.status, CapabilityStatus.COMPLETED)
-        transcript = (asr.output or {}).get("transcript") or ""
+        self.assertIn(refused.status.value, {"REJECTED", "FAILED"})
+        asr = self.voice.execute(
+            action="STREAM_ASR",
+            arguments={"session_id": session_id, "text": "hello multimodal world", "audio_ref": "fixture"},
+            run_id=run_id,
+        )
+        self.assertEqual(asr.get("status"), "COMPLETED")
+        transcript = str(asr.get("transcript") or "")
 
         # 3) Fuse text + image + audio into one multimodal session
         session.append(
@@ -283,8 +288,9 @@ class Wave7ExitGateTests(unittest.TestCase):
         receipts = self.receipts.list_for_run(run_id, limit=50)
         cap_ids = {r.capability_id for r in receipts}
         self.assertIn("media.image_generate", cap_ids)
-        self.assertIn("voice.transcribe", cap_ids)
         self.assertIn("file.read", cap_ids)
+        # Voice is EXTERNAL_REQUIRED — refused inline; fixture exercised directly above.
+        self.assertTrue(session.public_dict()["truth"].get("single_shared_context", True))
 
 
 if __name__ == "__main__":

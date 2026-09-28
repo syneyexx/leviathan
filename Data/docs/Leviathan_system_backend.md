@@ -516,9 +516,12 @@ FastAPI Model Control Plane
   enqueue façade + singleton worker executor;
 - `durable_requests.py`, `latency.py` — durable request/latency support.
 
-Specialist pools (`embedding`, `rerank`, `document_ai`, Voice ASR/TTS) retain
-semantic ownership and call the canonical Model Control Plane / managed serving
-plane for local model inference — they are not absorbed into `model_runtime`.
+Specialist pools (`embedding`, `rerank`, `document_ai`, singleton `voice`) retain
+semantic ownership of their domains. Voice ASR/TTS execute on the `voice` pool;
+Model Control Plane remains local model selection/routing/residency/inference
+authority — Voice does not create a second model router. Embedding/rerank/
+document_ai call the canonical Model Control Plane / managed serving plane for
+local model inference — they are not absorbed into `model_runtime`.
 
 Capability truth: DECLARED CONFIG ≠ VERIFIED SUPPORT. Inference-based probes and
 benchmarks enqueue `model_runtime.probe` / `model_runtime.benchmark` and report
@@ -991,7 +994,12 @@ MCP tools still enter the same capability/approval/observation architecture. MCP
 
 - `Data/modules/browser/` + `Data/backend/routes/browser.py`, `browser_qa.py` — browser capability/QA boundaries;
 - `Data/modules/media/` + `Data/backend/routes/media.py` — media capability boundary; disconnected platforms stay NOT CONNECTED/UNAVAILABLE;
-- `Data/modules/voice/` + `Data/backend/routes/voice.py` — realtime voice boundary;
+- `Data/modules/voice/` + `Data/backend/routes/voice.py` — **realtime voice transport**;
+- `Data/modules/workers/entrypoints/voice.py` — singleton `voice` Worker Fabric pool (`default_count=1`, `max_count=1`);
+- `voice.*` production capabilities are `EXTERNAL_REQUIRED` → `voice` (no general fallback, no FastAPI ASR/TTS);
+- production ASR/TTS backends are measured/configured only; fixture backends are test/dev-only and never claim `PRODUCTION_CAPABLE` / READY;
+- Voice remains transport: audio → ASR → existing conversation / CognitiveRuntime → TTS. No parallel voice memory/assistant;
+- remote voice network I/O belongs to `provider_io`; local model inference to Model Control Plane;
 - `Data/modules/provider_io/` — controlled remote HTTP/provider/market-data/chat I/O, credentials, readiness and streams;
 - `Data/modules/model_download/` — model-download worker boundary;
 - `Data/modules/isolation/` — sandbox/isolation guard;
@@ -1015,7 +1023,7 @@ Important files:
 
 - `data_store.py` — `MarketDataStore`, canonical indexed historical market-file registry; large market files stay on disk;
 - `dataset_pipeline.py` — market-data import/quality/version preparation around `MarketDataStore`;
-- `ohlcv.py` — OHLCV loading/validation/normalization;
+- `ohlcv.py` — streaming OHLCV validation/normalization (prefer `iter_ohlcv`; `load_ohlcv` is small-fixture only);
 - `causality.py` — `SimulationClock`, `MarketView`, as-of firewall;
 - `features.py` — canonical FeatureEngine;
 - `regimes.py` — deterministic trend/volatility/correlation/changepoint regimes; HMM stays feature-gated until real support exists;
@@ -1024,6 +1032,8 @@ Important files:
 - `universe.py`, `exchange_calendars.py`, `instruments.py` — point-in-time universe, session calendars and instrument/session rules;
 - `Data/modules/provider_io/adapters/market_stream.py` — external/current market-feed stream ordering, stable feed identity and gap recovery;
 - `paper_deployment.py` — paper-forward feed-health representation used by deployments.
+
+**Execution ownership:** market-data scan/import/validate/profile/convert are `market_sim.data.*` (`EXTERNAL_REQUIRED` → `market_sim` pool). FastAPI validates/enqueues only — no recursive `markets_root` scan or heavy import in the request thread. Scans are bounded/checkpointed, symlink-escape-safe, and deterministically ordered. Remote bar fetch remains `provider_io`; long-lived feeds remain `market_feed`. Institutional assurance heavy scans are `market_sim.assurance.scan` (not QualificationAuthority). **Live trading remains BLOCKED.**
 
 Historical perception may only use `timestamp <= as_of`. Unknown calendars/data/features fail closed or stay UNMEASURED; OHLCV is never promoted to fake L2/L3 order-book truth.
 

@@ -1367,15 +1367,15 @@ def build_default_catalog() -> CapabilityCatalog:
             },
         )
     )
-    # Wave 7 — voice capabilities (fixture RealtimeVoiceService via ExecutionGateway).
+    # Voice — EXTERNAL_REQUIRED on singleton voice worker (transport only; not intelligence).
     catalog.register(
         CapabilityDefinition(
             id="voice.start_session",
             name="Voice Start Session",
-            description="Start a realtime voice session bound to shared conversation/run context.",
+            description="Start a realtime voice session bound to shared conversation/run context (voice worker).",
             side_effects=(SideEffect.EXECUTE,),
-            provider_kind=CapabilityProviderKind.VOICE,
-            provider_ref="START_SESSION",
+            provider_kind=CapabilityProviderKind.EXTERNAL,
+            provider_ref="voice.worker",
             input_schema={
                 "type": "object",
                 "required": [],
@@ -1393,6 +1393,7 @@ def build_default_catalog() -> CapabilityCatalog:
                 "domains": ["voice"],
                 "aliases": ["start voice", "voice session"],
                 "worker_kind": "voice",
+                "execution_class": "EXTERNAL_REQUIRED",
             },
         )
     )
@@ -1400,10 +1401,10 @@ def build_default_catalog() -> CapabilityCatalog:
         CapabilityDefinition(
             id="voice.transcribe",
             name="Voice Transcribe",
-            description="Streaming ASR with partials + VAD (fixture backend).",
+            description="Streaming/batch ASR on the voice worker (real backend or honest UNAVAILABLE).",
             side_effects=(SideEffect.READ, SideEffect.EXECUTE),
-            provider_kind=CapabilityProviderKind.VOICE,
-            provider_ref="STREAM_ASR",
+            provider_kind=CapabilityProviderKind.EXTERNAL,
+            provider_ref="voice.worker",
             input_schema={
                 "type": "object",
                 "required": [],
@@ -1422,6 +1423,7 @@ def build_default_catalog() -> CapabilityCatalog:
                 "domains": ["voice"],
                 "aliases": ["speech to text", "transcribe"],
                 "worker_kind": "voice",
+                "execution_class": "EXTERNAL_REQUIRED",
             },
         )
     )
@@ -1429,10 +1431,10 @@ def build_default_catalog() -> CapabilityCatalog:
         CapabilityDefinition(
             id="voice.synthesize",
             name="Voice Synthesize",
-            description="Streaming TTS with persona params (fixture backend).",
+            description="Streaming/batch TTS on the voice worker (real backend or honest UNAVAILABLE).",
             side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
-            provider_kind=CapabilityProviderKind.VOICE,
-            provider_ref="STREAM_TTS",
+            provider_kind=CapabilityProviderKind.EXTERNAL,
+            provider_ref="voice.worker",
             input_schema={
                 "type": "object",
                 "required": ["text"],
@@ -1448,6 +1450,7 @@ def build_default_catalog() -> CapabilityCatalog:
                 "domains": ["voice"],
                 "aliases": ["text to speech", "speak"],
                 "worker_kind": "voice",
+                "execution_class": "EXTERNAL_REQUIRED",
             },
         )
     )
@@ -1455,10 +1458,10 @@ def build_default_catalog() -> CapabilityCatalog:
         CapabilityDefinition(
             id="voice.barge_in",
             name="Voice Barge-In",
-            description="Cancel in-flight ASR/LLM/TTS generation on user interruption.",
+            description="Cancel in-flight ASR/TTS generation on user interruption (voice worker).",
             side_effects=(SideEffect.EXECUTE,),
-            provider_kind=CapabilityProviderKind.VOICE,
-            provider_ref="BARGE_IN",
+            provider_kind=CapabilityProviderKind.EXTERNAL,
+            provider_ref="voice.worker",
             input_schema={
                 "type": "object",
                 "required": ["session_id"],
@@ -1471,6 +1474,56 @@ def build_default_catalog() -> CapabilityCatalog:
                 "domains": ["voice"],
                 "aliases": ["interrupt", "stop speaking"],
                 "worker_kind": "voice",
+                "execution_class": "EXTERNAL_REQUIRED",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="voice.preprocess",
+            name="Voice Preprocess",
+            description="Heavy voice audio preprocess (validate/bounds) on the voice worker.",
+            side_effects=(SideEffect.READ, SideEffect.EXECUTE),
+            provider_kind=CapabilityProviderKind.EXTERNAL,
+            provider_ref="voice.worker",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {
+                    "audio_ref": {"type": "string"},
+                    "path": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("voice.asr",),
+            metadata={
+                "tags": ["voice", "preprocess", "audio"],
+                "domains": ["voice"],
+                "worker_kind": "voice",
+                "execution_class": "EXTERNAL_REQUIRED",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="voice.postprocess",
+            name="Voice Postprocess",
+            description="Bounded transcript/audio postprocess on the voice worker.",
+            side_effects=(SideEffect.EXECUTE,),
+            provider_kind=CapabilityProviderKind.EXTERNAL,
+            provider_ref="voice.worker",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {"text": {"type": "string"}},
+            },
+            output_schema={"type": "object"},
+            required_permissions=("voice.tts",),
+            metadata={
+                "tags": ["voice", "postprocess"],
+                "domains": ["voice"],
+                "worker_kind": "voice",
+                "execution_class": "EXTERNAL_REQUIRED",
             },
         )
     )
@@ -2418,6 +2471,99 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         },
         permissions=("process.execute", "filesystem.read"),
         tags=["market_sim", "scan", "batch"],
+        domains=["market_sim"],
+    )
+    _ext(
+        cap_id="market_sim.data.scan",
+        name="Market Data Directory Scan",
+        description="Bounded/checkpointed markets_root discovery on the market_sim worker.",
+        side_effects=(SideEffect.READ, SideEffect.WRITE, SideEffect.EXECUTE),
+        worker_kind="market_sim",
+        properties={
+            "max_entries": {"type": "integer"},
+            "cursor": {"type": "object"},
+            "register": {"type": "boolean"},
+        },
+        permissions=("process.execute", "filesystem.read"),
+        tags=["market_sim", "market_data", "scan"],
+        domains=["market_sim"],
+    )
+    _ext(
+        cap_id="market_sim.data.import",
+        name="Market Data Import",
+        description="Streaming quarantine→validate→hash→register import on the market_sim worker.",
+        side_effects=(SideEffect.READ, SideEffect.WRITE, SideEffect.EXECUTE),
+        worker_kind="market_sim",
+        properties={
+            "path": {"type": "string"},
+            "symbol": {"type": "string"},
+            "timeframe": {"type": "string"},
+            "seal": {"type": "boolean"},
+            "role": {"type": "string"},
+            "provider": {"type": "string"},
+        },
+        permissions=("process.execute", "filesystem.read", "filesystem.write"),
+        tags=["market_sim", "market_data", "import"],
+        domains=["market_sim"],
+    )
+    _ext(
+        cap_id="market_sim.data.validate",
+        name="Market Data Validate",
+        description="Streaming OHLCV validation/quality on the market_sim worker.",
+        side_effects=(SideEffect.READ, SideEffect.EXECUTE),
+        worker_kind="market_sim",
+        properties={
+            "path": {"type": "string"},
+            "source_id": {"type": "string"},
+            "relative_path": {"type": "string"},
+        },
+        permissions=("process.execute", "filesystem.read"),
+        tags=["market_sim", "market_data", "validate"],
+        domains=["market_sim"],
+    )
+    _ext(
+        cap_id="market_sim.data.profile",
+        name="Market Data Profile",
+        description="Streaming/online market-data profile on the market_sim worker.",
+        side_effects=(SideEffect.READ, SideEffect.EXECUTE),
+        worker_kind="market_sim",
+        properties={
+            "path": {"type": "string"},
+            "source_id": {"type": "string"},
+            "relative_path": {"type": "string"},
+        },
+        permissions=("process.execute", "filesystem.read"),
+        tags=["market_sim", "market_data", "profile"],
+        domains=["market_sim"],
+    )
+    _ext(
+        cap_id="market_sim.data.convert",
+        name="Market Data Convert",
+        description="Streaming CSV→analytical/Parquet conversion on the market_sim worker.",
+        side_effects=(SideEffect.READ, SideEffect.WRITE, SideEffect.EXECUTE),
+        worker_kind="market_sim",
+        properties={
+            "path": {"type": "string"},
+            "source_id": {"type": "string"},
+            "relative_path": {"type": "string"},
+            "output_format": {"type": "string"},
+        },
+        permissions=("process.execute", "filesystem.read", "filesystem.write"),
+        tags=["market_sim", "market_data", "convert"],
+        domains=["market_sim"],
+    )
+    _ext(
+        cap_id="market_sim.assurance.scan",
+        name="Institutional Assurance Scan",
+        description=(
+            "Bounded institutional assurance scan on the market_sim worker "
+            "(PASS/FAIL/UNMEASURED; not QualificationAuthority)."
+        ),
+        side_effects=(SideEffect.READ, SideEffect.EXECUTE),
+        worker_kind="market_sim",
+        properties={"scope": {"type": "string"}},
+        permissions=("process.execute", "filesystem.read"),
+        tags=["market_sim", "assurance", "institutional"],
         domains=["market_sim"],
     )
     # Approval-identity capability for mandate loosening (control-plane; not a worker job).
