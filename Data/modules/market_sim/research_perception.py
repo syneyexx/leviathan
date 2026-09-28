@@ -133,14 +133,6 @@ def _from_feature(fv: FeatureValue | None, *, version: str | None = None) -> Mea
     )
 
 
-def _bar_ts(bar: Any) -> str:
-    if isinstance(bar, Bar):
-        return bar.ts
-    if isinstance(bar, Mapping):
-        return str(bar.get("ts") or bar.get("timestamp") or bar.get("time") or "")
-    return str(getattr(bar, "ts", "") or "")
-
-
 def _coerce_bar(raw: Any) -> Bar | None:
     if isinstance(raw, Bar):
         return raw
