@@ -6,6 +6,7 @@ tools via ExecutionGateway, and keeps a single context/run history.
 
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
