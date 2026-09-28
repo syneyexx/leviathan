@@ -2266,16 +2266,28 @@ async def lifespan(_: FastAPI):
         )
     # job_runtime background worker started above only when not externalized
     system_telemetry_sampler.start()
-    # Round 6: periodic serving reconcile so crashed workers become DEAD without a manual API call.
+    # Round 6 / model_runtime wave: process reconcile is owned by the model_runtime
+    # singleton worker. FastAPI may enqueue reconcile when externalized; it must
+    # not poll/kill PIDs from an API daemon thread.
     import asyncio
 
     serving_reconcile_task = None
     if settings.features.model_serving:
 
         async def _serving_reconcile_loop() -> None:
+            from Data.modules.model_runtime.execution_gate import production_requires_external
+
             while True:
                 try:
                     await asyncio.sleep(15.0)
+                    if production_requires_external(settings):
+                        client = getattr(model_plane, "model_runtime_client", lambda: None)()
+                        if client is not None:
+                            try:
+                                client.submit_reconcile(requested_by="api_heartbeat")
+                            except Exception:  # noqa: BLE001
+                                pass
+                        continue
                     model_plane.reconcile_serving_workers()
                 except asyncio.CancelledError:
                     raise

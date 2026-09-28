@@ -2746,6 +2746,109 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         extra_meta={"idempotent": True},
     )
     _ext(
+        cap_id="model_runtime.load",
+        name="Model Runtime Load",
+        description=(
+            "Start managed local model serving via model_runtime singleton "
+            "(ServingSupervisor). FastAPI must not Popen."
+        ),
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="model_runtime",
+        required_args=["model_id"],
+        properties={
+            "model_id": {"type": "string"},
+            "options": {"type": "object"},
+            "confirm_oom": {"type": "boolean"},
+        },
+        permissions=("process.execute",),
+        tags=["model", "runtime", "serving", "load"],
+        domains=["model_runtime", "models"],
+        extra_meta={"idempotent": True, "compute_tier_hint": 3},
+    )
+    _ext(
+        cap_id="model_runtime.unload",
+        name="Model Runtime Unload",
+        description="Drain and stop a managed serving worker (generation-fenced).",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="model_runtime",
+        required_args=["model_id"],
+        properties={
+            "model_id": {"type": "string"},
+            "serving_generation": {"type": "integer"},
+            "force": {"type": "boolean"},
+        },
+        permissions=("process.execute",),
+        tags=["model", "runtime", "serving", "unload"],
+        domains=["model_runtime", "models"],
+        extra_meta={"idempotent": True},
+    )
+    _ext(
+        cap_id="model_runtime.reconcile",
+        name="Model Runtime Reconcile",
+        description="PID-safe reconcile of managed serving children (model_runtime owned).",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="model_runtime",
+        properties={},
+        permissions=("process.execute",),
+        tags=["model", "runtime", "reconcile"],
+        domains=["model_runtime", "models"],
+        extra_meta={"idempotent": True},
+    )
+    _ext(
+        cap_id="model_runtime.benchmark",
+        name="Model Runtime Benchmark",
+        description="External measured latency/throughput probe — raw metrics only.",
+        side_effects=(SideEffect.EXECUTE,),
+        worker_kind="model_runtime",
+        required_args=["model_id"],
+        properties={
+            "model_id": {"type": "string"},
+            "warmup": {"type": "integer"},
+            "iterations": {"type": "integer"},
+            "prompt": {"type": "string"},
+            "max_tokens": {"type": "integer"},
+        },
+        permissions=("process.execute",),
+        tags=["model", "runtime", "benchmark"],
+        domains=["model_runtime", "models"],
+        extra_meta={"idempotent": False, "compute_tier_hint": 3},
+    )
+    _ext(
+        cap_id="model_runtime.probe",
+        name="Model Runtime Capability Probe",
+        description="Inference-based capability probes on model_runtime (not FastAPI).",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="model_runtime",
+        required_args=["model_id"],
+        properties={
+            "model_id": {"type": "string"},
+            "capabilities": {"type": "array"},
+            "timeout_seconds": {"type": "number"},
+        },
+        permissions=("process.execute",),
+        tags=["model", "runtime", "probe"],
+        domains=["model_runtime", "models"],
+        extra_meta={"idempotent": True, "compute_tier_hint": 3},
+    )
+    _ext(
+        cap_id="model_runtime.inference_test",
+        name="Model Runtime Inference Test",
+        description="Direct API inference-test executed outside FastAPI.",
+        side_effects=(SideEffect.EXECUTE,),
+        worker_kind="model_runtime",
+        required_args=["model_id"],
+        properties={
+            "model_id": {"type": "string"},
+            "prompt": {"type": "string"},
+            "max_tokens": {"type": "integer"},
+            "stream": {"type": "boolean"},
+        },
+        permissions=("process.execute",),
+        tags=["model", "runtime", "inference_test"],
+        domains=["model_runtime", "models"],
+        extra_meta={"idempotent": False, "compute_tier_hint": 3},
+    )
+    _ext(
         cap_id="mcp.call",
         name="MCP Tool Call",
         description="Long MCP tools/call execution in mcp_execution workers.",

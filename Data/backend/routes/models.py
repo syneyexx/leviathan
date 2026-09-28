@@ -520,6 +520,38 @@ def build_models_router(plane: ModelControlPlane) -> APIRouter:
     @router.post("/api/models/{model_id:path}/probe")
     async def probe_model(model_id: str, payload: ProbeRequest | None = None) -> dict:
         try:
+            if hasattr(plane, "_externalize_runtime") and plane._externalize_runtime():
+                client = plane.model_runtime_client()
+                if client is None:
+                    raise ModelControlError(
+                        code="MODEL_RUNTIME_UNAVAILABLE",
+                        message="model_runtime client unbound",
+                        model_id=model_id,
+                        http_status=503,
+                        retryable=True,
+                    )
+                job = client.submit_probe(
+                    model_id=model_id,
+                    capabilities=payload.capabilities if payload else None,
+                    timeout_seconds=payload.timeoutSeconds if payload else 15.0,
+                )
+                return {
+                    "queued": True,
+                    "job": {
+                        "jobId": getattr(job, "job_id", None),
+                        "state": getattr(getattr(job, "state", None), "value", None)
+                        or str(getattr(job, "state", "")),
+                        "capabilityId": "model_runtime.probe",
+                    },
+                    "modelId": model_id,
+                    "results": [
+                        c.public_dict() for c in plane.probes.list_for_model(model_id)
+                    ],
+                    "truth": {
+                        "old_evidence_preserved": True,
+                        "inference_probe_external": True,
+                    },
+                }
             results = await plane.probes.probe(
                 model_id,
                 capabilities=payload.capabilities if payload else None,
@@ -532,6 +564,29 @@ def build_models_router(plane: ModelControlPlane) -> APIRouter:
     @router.post("/api/models/{model_id:path}/benchmark")
     async def benchmark_model(model_id: str) -> dict:
         try:
+            if hasattr(plane, "_externalize_runtime") and plane._externalize_runtime():
+                client = plane.model_runtime_client()
+                if client is None:
+                    raise ModelControlError(
+                        code="MODEL_RUNTIME_UNAVAILABLE",
+                        message="model_runtime client unbound",
+                        model_id=model_id,
+                        http_status=503,
+                        retryable=True,
+                    )
+                job = client.submit_benchmark(model_id=model_id)
+                return {
+                    "queued": True,
+                    "job": {
+                        "jobId": getattr(job, "job_id", None),
+                        "state": getattr(getattr(job, "state", None), "value", None)
+                        or str(getattr(job, "state", "")),
+                        "capabilityId": "model_runtime.benchmark",
+                    },
+                    "modelId": model_id,
+                    "status": "QUEUED",
+                    "truth": {"benchmark_external": True, "no_fabricated_score": True},
+                }
             result = await plane.benchmarks.quick_benchmark(model_id)
         except ModelControlError as exc:
             raise_model_error(exc)
@@ -541,6 +596,33 @@ def build_models_router(plane: ModelControlPlane) -> APIRouter:
     async def test_model_inference(model_id: str, payload: InferenceTestRequest) -> dict:
         """Exercise real gateway + provider inference (no fabricated output)."""
         try:
+            if hasattr(plane, "_externalize_runtime") and plane._externalize_runtime():
+                client = plane.model_runtime_client()
+                if client is None:
+                    raise ModelControlError(
+                        code="MODEL_RUNTIME_UNAVAILABLE",
+                        message="model_runtime client unbound",
+                        model_id=model_id,
+                        http_status=503,
+                        retryable=True,
+                    )
+                job = client.submit_inference_test(
+                    model_id=model_id,
+                    prompt=payload.prompt,
+                    max_tokens=payload.maxTokens,
+                    stream=payload.stream,
+                )
+                return {
+                    "queued": True,
+                    "job": {
+                        "jobId": getattr(job, "job_id", None),
+                        "state": getattr(getattr(job, "state", None), "value", None)
+                        or str(getattr(job, "state", "")),
+                        "capabilityId": "model_runtime.inference_test",
+                    },
+                    "modelId": model_id,
+                    "truth": {"inference_test_external": True},
+                }
             result = await plane.test_inference(
                 model_id,
                 prompt=payload.prompt,

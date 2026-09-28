@@ -42,6 +42,11 @@ from .serving import (
     reset_serving_supervisor_for_tests,
 )
 from .streaming import chat_truth, sse_encode
+from .facade import (
+    ModelRuntimeClient,
+    get_model_runtime_client,
+    reset_model_runtime_client_for_tests,
+)
 
 # ManagedLocalServingAdapter imported lazily by providers to avoid circular imports
 # with Data.modules.models. Re-export via attribute for convenience.
@@ -69,6 +74,7 @@ __all__ = [
     "LatencyTimer",
     "LLMUnavailable",
     "ManagedLocalServingAdapter",
+    "ModelRuntimeClient",
     "OpenAICompatibleDialect",
     "OpenAICompatibleLLM",
     "OpenAIReasoningDialect",
@@ -87,11 +93,13 @@ __all__ = [
     "enforce_context_bounds",
     "enforce_structured_response",
     "get_durable_request_ledger",
+    "get_model_runtime_client",
     "get_provider_dialect",
     "get_serving_supervisor",
     "probe_tool_calling_transport",
     "record_tool_calling_response",
     "reset_durable_request_ledger_for_tests",
+    "reset_model_runtime_client_for_tests",
     "reset_serving_supervisor_for_tests",
     "sse_encode",
 ]

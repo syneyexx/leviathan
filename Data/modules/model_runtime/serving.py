@@ -7,7 +7,6 @@ supervises local OpenAI-compatible serving processes (vLLM-class / llama.cpp).
 from __future__ import annotations
 
 import os
-import signal
 import subprocess
 import threading
 import time
@@ -55,9 +54,24 @@ class ServingWorker:
     last_error: str | None = None
     health_score: float | None = None  # 0..1; None = unmeasured
     revision_id: str | None = None
+    serving_generation: int = 0
+    managed_by_leviathan: bool = True
+    restart_count: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def public_dict(self) -> dict[str, Any]:
+        # Never expose full command lines / secrets.
+        safe_meta = {
+            k: v
+            for k, v in dict(self.metadata).items()
+            if k
+            not in {
+                "env",
+                "full_command",
+                "api_key",
+                "command_argv",
+            }
+        }
         return {
             "worker_id": self.worker_id,
             "provider_id": self.provider_id,
@@ -71,12 +85,16 @@ class ServingWorker:
             "last_error": self.last_error,
             "health_score": self.health_score,
             "revision_id": self.revision_id,
-            "metadata": dict(self.metadata),
+            "servingGeneration": self.serving_generation,
+            "managedByLeviathan": self.managed_by_leviathan,
+            "restartCount": self.restart_count,
+            "metadata": safe_meta,
             "truth": {
                 "dead_is_not_ready": self.state != WorkerState.READY,
                 "unavailable_is_not_healthy": self.state
                 not in (WorkerState.READY, WorkerState.DRAINING),
                 "unmeasured_health_is_visible": self.health_score is None,
+                "process_existence_is_not_ready": True,
             },
         }
 
@@ -103,10 +121,30 @@ class ServingSupervisor:
         self._inproc_loaded: dict[str, dict[str, Any]] = {}
         self._stderr_tails: dict[str, str] = {}
         self._stderr_threads: dict[str, threading.Thread] = {}
+        self._generation_counter = 0
+        self._start_attempts: dict[str, list[float]] = {}
         self.registry_path = Path(registry_path) if registry_path else None
         if self.registry_path is not None:
             self.registry_path.parent.mkdir(parents=True, exist_ok=True)
             self.reconcile_persisted_orphans()
+
+    def _next_generation(self) -> int:
+        self._generation_counter += 1
+        return self._generation_counter
+
+    def _record_start_attempt(self, model_id: str) -> int:
+        now = time.monotonic()
+        window = self._start_attempts.setdefault(model_id, [])
+        window.append(now)
+        # Keep 5 minutes of attempts for crash-loop detection.
+        self._start_attempts[model_id] = [t for t in window if now - t < 300.0]
+        return len(self._start_attempts[model_id])
+
+    def crash_loop_detected(self, model_id: str, *, threshold: int = 5) -> bool:
+        attempts = self._start_attempts.get(model_id) or []
+        now = time.monotonic()
+        recent = [t for t in attempts if now - t < 300.0]
+        return len(recent) >= threshold
 
     def list_workers(self) -> list[ServingWorker]:
         with self._lock:
@@ -131,7 +169,14 @@ class ServingSupervisor:
         backend_kind: str = "inproc",
     ) -> ServingWorker:
         """Test/dev backend: no external binary; load is in-process residency."""
+        from Data.modules.model_runtime.execution_gate import allow_process_ownership
+
+        if not allow_process_ownership():
+            from Data.modules.model_runtime.execution_gate import refuse_inline_serving
+
+            refuse_inline_serving(reason="inproc_banned_in_production_api")
         worker_id = str(uuid.uuid4())
+        generation = self._next_generation()
         worker = ServingWorker(
             worker_id=worker_id,
             provider_id=provider_id,
@@ -144,7 +189,14 @@ class ServingSupervisor:
             last_health_at=_utc_now(),
             health_score=1.0,
             revision_id=revision_id or f"inproc:{model_id}",
-            metadata={"managed": True, "inproc": True},
+            serving_generation=generation,
+            managed_by_leviathan=True,
+            metadata={
+                "managed": True,
+                "inproc": True,
+                "serving_generation": generation,
+                "fixture_only": True,
+            },
         )
         with self._lock:
             self._workers[worker_id] = worker
@@ -166,9 +218,42 @@ class ServingSupervisor:
         env: dict[str, str] | None = None,
         ready_check: Callable[[], bool] | None = None,
         ready_timeout_seconds: float = 30.0,
+        managed_by_leviathan: bool = True,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> ServingWorker:
         """Start a managed serving binary. Missing binary → UNAVAILABLE, not READY."""
+        from Data.modules.model_runtime.env_policy import build_serving_child_env
+        from Data.modules.model_runtime.execution_gate import (
+            allow_process_ownership,
+            refuse_inline_serving,
+        )
+        from Data.modules.model_runtime.process_control import spawn_owned_process
+
+        if not allow_process_ownership():
+            refuse_inline_serving(reason="subprocess_spawn_banned_in_api")
+
         worker_id = str(uuid.uuid4())
+        generation = self._next_generation()
+        attempts = self._record_start_attempt(model_id)
+        if self.crash_loop_detected(model_id):
+            worker = ServingWorker(
+                worker_id=worker_id,
+                provider_id=provider_id,
+                model_id=model_id,
+                backend_kind=backend_kind,
+                endpoint=endpoint,
+                state=WorkerState.UNAVAILABLE,
+                last_error="CRASH_LOOP — repeated rapid start failures; operator action required",
+                revision_id=revision_id,
+                serving_generation=generation,
+                managed_by_leviathan=managed_by_leviathan,
+                restart_count=attempts,
+                metadata={"crash_loop": True, "start_attempts": attempts},
+            )
+            with self._lock:
+                self._workers[worker_id] = worker
+            return worker
+
         if not command:
             worker = ServingWorker(
                 worker_id=worker_id,
@@ -179,21 +264,17 @@ class ServingSupervisor:
                 state=WorkerState.UNAVAILABLE,
                 last_error="empty command — serving binary not configured",
                 revision_id=revision_id,
+                serving_generation=generation,
+                managed_by_leviathan=managed_by_leviathan,
             )
             with self._lock:
                 self._workers[worker_id] = worker
             return worker
 
+        # argv only — never shell=True. Bounded env — never full host secrets.
+        child_env = build_serving_child_env(env)
         try:
-            # MODEL-001: stderr=PIPE must be drained continuously or the child
-            # deadlocks once the OS pipe buffer fills.
-            proc = subprocess.Popen(
-                command,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                env={**os.environ, **(env or {})},
-                start_new_session=True,
-            )
+            proc = spawn_owned_process(list(command), env=child_env)
         except FileNotFoundError as exc:
             worker = ServingWorker(
                 worker_id=worker_id,
@@ -204,6 +285,8 @@ class ServingSupervisor:
                 state=WorkerState.UNAVAILABLE,
                 last_error=f"serving binary not found: {exc}",
                 revision_id=revision_id,
+                serving_generation=generation,
+                managed_by_leviathan=managed_by_leviathan,
             )
             with self._lock:
                 self._workers[worker_id] = worker
@@ -218,6 +301,8 @@ class ServingSupervisor:
                 state=WorkerState.UNAVAILABLE,
                 last_error=str(exc),
                 revision_id=revision_id,
+                serving_generation=generation,
+                managed_by_leviathan=managed_by_leviathan,
             )
             with self._lock:
                 self._workers[worker_id] = worker
@@ -235,7 +320,14 @@ class ServingSupervisor:
             pid=proc.pid,
             started_at=_utc_now(),
             revision_id=revision_id,
-            metadata={"command": command[:1]},
+            serving_generation=generation,
+            managed_by_leviathan=managed_by_leviathan,
+            restart_count=max(0, attempts - 1),
+            metadata={
+                "command": command[:1],
+                "serving_generation": generation,
+                "launch_fingerprint": f"{generation}:{proc.pid}:{endpoint}",
+            },
         )
         with self._lock:
             self._workers[worker_id] = worker
@@ -243,6 +335,19 @@ class ServingSupervisor:
 
         deadline = time.monotonic() + ready_timeout_seconds
         while time.monotonic() < deadline:
+            if cancel_check is not None and cancel_check():
+                from Data.modules.model_runtime.process_control import (
+                    terminate_owned_process,
+                )
+
+                terminate_owned_process(proc)
+                worker.state = WorkerState.STOPPED
+                worker.last_error = "MODEL_LOAD_CANCELLED during STARTING"
+                worker.pid = None
+                with self._lock:
+                    self._processes.pop(worker_id, None)
+                self._persist_registry()
+                return worker
             if proc.poll() is not None:
                 err = self._stderr_tail(worker_id) or ""
                 if not err:
@@ -315,34 +420,55 @@ class ServingSupervisor:
         with self._lock:
             return str(self._stderr_tails.get(worker_id) or "")
 
-    def stop(self, worker_id: str, *, drain: bool = True) -> ServingWorker:
+    def stop(
+        self,
+        worker_id: str,
+        *,
+        drain: bool = True,
+        expected_generation: int | None = None,
+        force: bool = False,
+    ) -> ServingWorker:
+        from Data.modules.model_runtime.process_control import terminate_owned_process
+
         with self._lock:
             worker = self._workers.get(worker_id)
             if worker is None:
                 raise KeyError(worker_id)
+            if not worker.managed_by_leviathan:
+                worker.last_error = (
+                    "refusing to stop operator-owned / unmanaged serving process"
+                )
+                return worker
+            if (
+                expected_generation is not None
+                and worker.serving_generation
+                and int(expected_generation) != int(worker.serving_generation)
+            ):
+                worker.last_error = (
+                    f"stale unload generation {expected_generation} "
+                    f"(current={worker.serving_generation}); not stopped"
+                )
+                return worker
             if drain and worker.state == WorkerState.READY:
                 worker.state = WorkerState.DRAINING
             proc = self._processes.pop(worker_id, None)
             self._inproc_loaded.pop(worker_id, None)
+            stop_meta: dict[str, Any] = {"forced": False}
             if proc is not None and proc.poll() is None:
-                try:
-                    os.killpg(proc.pid, signal.SIGTERM)
-                except (ProcessLookupError, PermissionError, OSError):
-                    try:
-                        proc.terminate()
-                    except Exception:  # noqa: BLE001
-                        pass
-                try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    try:
-                        os.killpg(proc.pid, signal.SIGKILL)
-                    except (ProcessLookupError, PermissionError, OSError):
-                        proc.kill()
+                stop_meta = terminate_owned_process(
+                    proc,
+                    graceful_timeout_seconds=0.1 if force else 5.0,
+                    force_timeout_seconds=3.0,
+                )
             worker.state = WorkerState.STOPPED
             worker.pid = None
             worker.health_score = 0.0
             worker.last_health_at = _utc_now()
+            if stop_meta.get("forced"):
+                worker.metadata = {
+                    **dict(worker.metadata or {}),
+                    "forced": True,
+                }
             self._persist_registry()
             return worker
 
@@ -452,6 +578,8 @@ class ServingSupervisor:
                     health_score=0.0,
                     last_health_at=_utc_now(),
                     revision_id=entry.get("revision_id"),
+                    serving_generation=int(entry.get("serving_generation") or 0),
+                    managed_by_leviathan=bool(entry.get("managed_by_leviathan", True)),
                     metadata={
                         "orphan_reconciled": True,
                         "prior_state": state,
@@ -474,6 +602,8 @@ class ServingSupervisor:
                     health_score=None,
                     last_health_at=_utc_now(),
                     revision_id=entry.get("revision_id"),
+                    serving_generation=int(entry.get("serving_generation") or 0),
+                    managed_by_leviathan=bool(entry.get("managed_by_leviathan", True)),
                     metadata={
                         "orphan_reconciled": True,
                         "adopted": True,
@@ -509,6 +639,8 @@ class ServingSupervisor:
                         "pid": w.pid,
                         "started_at": w.started_at,
                         "revision_id": w.revision_id,
+                        "serving_generation": w.serving_generation,
+                        "managed_by_leviathan": w.managed_by_leviathan,
                         "pid_fingerprint": _pid_fingerprint(w.pid) if w.pid else "",
                     }
                 )

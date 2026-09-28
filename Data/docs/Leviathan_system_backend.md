@@ -484,15 +484,49 @@ Do not abbreviate Model Control Plane as MCP: in this repository **MCP means Mod
 
 ## 10.2 Model runtime — `Data/modules/model_runtime/`
 
-- `openai_compatible.py` — provider chat/completion transport;
+Ownership split (production externalization wave):
+
+```
+FastAPI Model Control Plane
+  registry / routing / residency policy / placement / enqueue / status
+        |
+        +-- model_download worker
+        |     acquisition + streaming hash + GGUF/safetensors header verify
+        |
+        +-- model_runtime singleton worker (max_count=1)
+              ServingSupervisor ownership
+              load / unload / reconcile / benchmark / probe / inference_test
+                    |
+                    v
+              managed serving child (llama.cpp / vLLM / …)
+              = actual local inference compute
+```
+
+- `openai_compatible.py` — provider chat/completion transport (HTTP relay to managed
+  local endpoint is allowed from Control Plane; tensor compute stays external);
 - `dialect.py` — provider feature adaptation without silent feature dropping;
 - `inference_contract.py` — tool/schema/context contract and repair/fail-closed logic;
 - `streaming.py` — separated content/reasoning/tool frames;
-- `serving.py` — serving supervision/cancel;
-- `managed_adapter.py`, `launch_strategy.py`, `process_control.py`, `port_allocator.py`, `llama_cpp_command.py` — managed process boundaries;
+- `serving.py` — ServingSupervisor (STARTING/READY/DRAINING/UNHEALTHY/DEAD/STOPPED/
+  UNAVAILABLE); process ownership lives in `model_runtime`, not FastAPI;
+- `managed_adapter.py`, `launch_strategy.py`, `process_control.py`, `env_policy.py`,
+  `port_allocator.py`, `llama_cpp_command.py` — managed process boundaries
+  (argv arrays only, bounded env, Windows-safe process-tree terminate);
+- `facade.py` / `executor.py` / `execution_gate.py` / `readiness.py` — JobRuntime
+  enqueue façade + singleton worker executor;
 - `durable_requests.py`, `latency.py` — durable request/latency support.
 
-Cognition uses `Data/modules/cognition/model_adapter.py`; trading agents use `Data/modules/market_sim/orchestra/model_adapter.py`. Neither should instantiate a private provider client.
+Specialist pools (`embedding`, `rerank`, `document_ai`, Voice ASR/TTS) retain
+semantic ownership and call the canonical Model Control Plane / managed serving
+plane for local model inference — they are not absorbed into `model_runtime`.
+
+Capability truth: DECLARED CONFIG ≠ VERIFIED SUPPORT. Inference-based probes and
+benchmarks enqueue `model_runtime.probe` / `model_runtime.benchmark` and report
+measured evidence only (no fabricated scores / tokens-per-second).
+
+Cognition uses `Data/modules/cognition/model_adapter.py`; trading agents use
+`Data/modules/market_sim/orchestra/model_adapter.py`. Neither should instantiate
+a private provider client.
 
 ---
 
@@ -568,7 +602,7 @@ Important invariants:
 
 ## 12.2 Worker Fabric
 
-`Data/modules/workers/` is the external execution plane. Domain entrypoints include agents, coding, research, memory, brain_compute, datasets/documents, embeddings/reranking, evaluation/training, market simulation, MCP, model downloads, provider I/O, source ingestion, **file_io** (generic heavy filesystem reads/writes/copies/hashes/CSV/Parquet/scans), scheduler/workflows, maintenance/backup, telemetry and DB commit.
+`Data/modules/workers/` is the external execution plane. Domain entrypoints include agents, coding, research, memory, brain_compute, datasets/documents, embeddings/reranking, evaluation/training, market simulation, MCP, model downloads, **model_runtime** (singleton managed serving lifecycle / probes / benchmarks), provider I/O, source ingestion, **file_io** (generic heavy filesystem reads/writes/copies/hashes/CSV/Parquet/scans), scheduler/workflows, maintenance/backup, telemetry and DB commit.
 
 Generic heavy filesystem jobs (`file.read` when oversized, `file.write` when oversized, `file.copy`, `file.hash`, `file.parse_csv`, `file.profile_csv`, `file.process_parquet`, `filesystem.scan`, recursive `workspace.list`) enqueue with `worker_pool=file_io`. API-local JobRuntime only claims `general`/unassigned jobs and cannot steal specialist file_io work. Small interactive file operations remain INLINE_SAFE in the control plane.
 
@@ -1310,8 +1344,8 @@ This table is the fastest entry point for Cursor when locating ownership.
 | `media/` | media capability boundary |
 | `memory/` | durable scoped MemoryStore |
 | `metrics/` | metrics/time series |
-| `model_download/` | model acquisition worker boundary |
-| `model_runtime/` | provider inference/serving/streaming |
+| `model_download/` | model acquisition + large artifact verification |
+| `model_runtime/` | managed serving lifecycle + probes/benchmarks + inference transport |
 | `models/` | Model Control Plane |
 | `module_manager/` | ModuleManager + generic external capability fabric/install authority |
 | `native/` | Python-facing native runtime boundary |
