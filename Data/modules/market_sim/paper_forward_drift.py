@@ -413,14 +413,16 @@ def persist_drift_lesson(
     strategy_memory_writer: Callable[[dict[str, Any]], Any] | None = None,
     research_requester: Callable[[str], Any] | None = None,
 ) -> dict[str, Any]:
-    """Persist drift as PAPER_OBSERVED StrategyMemory + optional research request.
+    """Persist drift as AGENT_PROPOSED StrategyMemory + optional research request.
 
-    Does not auto-disable strategies. Does not promote to verified knowledge.
+    Does not auto-disable strategies. Does not promote to VALIDATED / verified knowledge.
+    PAPER_OBSERVED remains the observation class; lesson trust starts AGENT_PROPOSED.
     """
     out: dict[str, Any] = {
         "memoryId": None,
         "researchRequest": None,
         "status": review.get("status"),
+        "lessonTrust": "AGENT_PROPOSED",
     }
     ticket = review.get("continualResearch")
     if not ticket:
@@ -428,18 +430,34 @@ def persist_drift_lesson(
     if strategy_memory_writer is not None:
         try:
             from Data.modules.market_sim.experiments import build_strategy_memory_record
+            from Data.modules.market_sim.lesson_trust import new_agent_proposed_lesson
 
-            mem = build_strategy_memory_record(
-                strategy_id=str(ticket.get("strategyId") or "unknown"),
-                strategy_version=None,
-                outcome_summary=(
+            lesson = new_agent_proposed_lesson(
+                claim=(
                     f"PAPER_DRIFT: {ticket.get('reason')} — "
                     f"{ticket.get('researchQuestion') or ''}"
                 )[:2000],
+                evidence_refs=[str(ticket.get("ticketId") or "paper_drift")],
+                applies_to=[str(ticket.get("strategyId") or "unknown")],
+                confidence=0.25,
+                created_at=_utc_now(),
+                metadata={
+                    "origin": "PAPER_FORWARD_DRIFT",
+                    "driftSignals": ticket.get("signals") or [],
+                    "ticketId": ticket.get("ticketId"),
+                    "measurement_state": "PAPER_OBSERVED",
+                    "does_not_auto_disable": True,
+                },
+            )
+            out["lesson"] = lesson
+            mem = build_strategy_memory_record(
+                strategy_id=str(ticket.get("strategyId") or "unknown"),
+                strategy_version=None,
+                outcome_summary=str(lesson["claim"])[:2000],
                 rejected=False,
                 available_at=_utc_now(),
                 origin="PAPER_FORWARD_DRIFT",
-                epistemic_state="PAPER_OBSERVED",
+                epistemic_state="AGENT_PROPOSED",
                 validation_stage="PAPER_FORWARD",
                 extra_metadata={
                     "driftSignals": ticket.get("signals") or [],
@@ -447,6 +465,8 @@ def persist_drift_lesson(
                     "strategyVersionLabel": ticket.get("strategyVersion"),
                     "measurement_state": "PAPER_OBSERVED",
                     "does_not_auto_disable": True,
+                    "trust": lesson["trust"],
+                    "lesson_id": lesson["lesson_id"],
                 },
             )
             saved = strategy_memory_writer(mem)

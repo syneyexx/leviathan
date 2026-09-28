@@ -1,4 +1,4 @@
-import { asRecord, type LabRunRecord } from "../viewModels";
+import { asRecord, familyLabelMap, type LabRunRecord } from "../viewModels";
 
 function listField(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
@@ -8,10 +8,13 @@ function listField(v: unknown): string[] {
 export function ResearchLabHypothesesPanel({
   hypotheses,
   loading,
+  strategyFamilies,
 }: {
   hypotheses: LabRunRecord[];
   loading?: boolean;
+  strategyFamilies?: Record<string, unknown>[];
 }) {
+  const labels = familyLabelMap(strategyFamilies);
   if (loading) {
     return (
       <div className="lv-rl-skel">
@@ -78,7 +81,7 @@ export function ResearchLabHypothesesPanel({
                   {families.length ? (
                     <div>
                       <dt>Family preferences</dt>
-                      <dd>{families.join(", ")}</dd>
+                      <dd>{families.map((f) => labels[f] || f).join(", ")}</dd>
                     </div>
                   ) : null}
                   {scope ? (

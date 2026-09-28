@@ -389,13 +389,23 @@ def store_lesson(
     applies_to: list[str] | None = None,
     confidence: float = 0.0,
 ) -> LabLesson:
-    lesson = LabLesson(
-        lesson_id=str(uuid.uuid4()),
+    """Append an AGENT_PROPOSED lesson — never starts as VALIDATED."""
+    from .lesson_trust import new_agent_proposed_lesson
+
+    raw = new_agent_proposed_lesson(
         claim=claim,
-        evidence_refs=list(evidence_refs),
+        evidence_refs=evidence_refs,
         applies_to=list(applies_to or []),
-        trust=LessonTrust.AGENT_PROPOSED.value,
         confidence=float(confidence),
+    )
+    lesson = LabLesson(
+        lesson_id=str(raw["lesson_id"]),
+        claim=str(raw["claim"]),
+        evidence_refs=list(raw.get("evidence_refs") or []),
+        applies_to=list(raw.get("applies_to") or []),
+        trust=LessonTrust.AGENT_PROPOSED.value,
+        confidence=float(raw.get("confidence") or 0.0),
+        metadata=dict(raw.get("metadata") or {}),
     )
     lab.lessons.append(lesson)
     return lesson

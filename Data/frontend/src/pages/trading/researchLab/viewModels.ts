@@ -356,11 +356,24 @@ export function derivePhases(learning: LearningRecord | null | undefined): Phase
   });
 }
 
+export function familyLabelMap(
+  families: Array<Record<string, unknown>> | null | undefined,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const f of families || []) {
+    const id = String(f.family_id || f.familyId || f.id || "").trim();
+    const label = String(f.label || f.name || id).trim();
+    if (id) out[id] = label || id;
+  }
+  return out;
+}
+
 export function deriveOverview(
   learning: LearningRecord | null | undefined,
   candidates: CandidateRecord[],
   generations: GenerationRecord[],
   familyProbs: Record<string, number>,
+  familyLabels?: Record<string, string> | null,
 ): OverviewModel {
   const learnerState = asRecord(learning?.learner_state) || {};
   const mutationRates = asRecord(learnerState.mutation_rates) || {};
@@ -382,9 +395,10 @@ export function deriveOverview(
     if (div != null) diversitySeries.push(div);
   }
 
+  const labels = familyLabels || {};
   const famEntries = Object.entries(familyProbs).filter(([, v]) => Number(v) > 0);
-  const familySlices = famEntries.map(([label, value], i) => ({
-    label,
+  const familySlices = famEntries.map(([id, value], i) => ({
+    label: labels[id] || id,
     value: Number(value),
     color: FAMILY_COLORS[i % FAMILY_COLORS.length],
   }));

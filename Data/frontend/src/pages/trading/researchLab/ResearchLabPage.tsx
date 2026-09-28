@@ -123,6 +123,7 @@ export function ResearchLabPage() {
                     <ResearchLabHypothesesPanel
                       hypotheses={state.hypotheses}
                       loading={centerBusy && state.hypotheses.length === 0}
+                      strategyFamilies={state.strategyFamilies}
                     />
                   ) : null}
                   {state.tab === "perception" ? (

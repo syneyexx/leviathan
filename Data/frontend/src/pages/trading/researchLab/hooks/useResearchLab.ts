@@ -6,6 +6,7 @@ import {
   countRunsByStatus,
   deriveEvents,
   deriveOverview,
+  familyLabelMap,
   derivePhases,
   resolveRunStatus,
   type CandidateRecord,
@@ -271,11 +272,12 @@ export function useResearchLab() {
       if (opts?.quiet) patch({ refreshing: true });
       else patch({ loading: true });
       try {
-        const [ov, tr, cost, labList] = await Promise.all([
+        const [ov, tr, cost, labList, families] = await Promise.all([
           api.marketSimLabOverview(),
           api.marketSimLabTrials({ limit: 40 }),
           api.marketSimLabCostPack({ feeBps: 5, slippageBps: 2, seed: 7 }),
           api.marketSimLabListRuns(50),
+          api.marketSimStrategyFamilies().catch(() => ({ families: [] as Record<string, unknown>[] })),
         ]);
         if (!mountedRef.current) return;
         let labs = (labList.labs || []) as LabRunRecord[];
@@ -319,6 +321,7 @@ export function useResearchLab() {
           labs,
           selectedLabId: nextId,
           selectedLab,
+          strategyFamilies: families.families || [],
           error: null,
           loading: false,
           refreshing: false,
@@ -544,8 +547,15 @@ export function useResearchLab() {
   }, [shouldPoll, state.selectedLabId, refresh]);
 
   const overviewModel = useMemo(
-    () => deriveOverview(state.learning, state.candidates, state.generations, state.familyProbs),
-    [state.learning, state.candidates, state.generations, state.familyProbs],
+    () =>
+      deriveOverview(
+        state.learning,
+        state.candidates,
+        state.generations,
+        state.familyProbs,
+        familyLabelMap(state.strategyFamilies),
+      ),
+    [state.learning, state.candidates, state.generations, state.familyProbs, state.strategyFamilies],
   );
 
   const phases = useMemo(() => derivePhases(state.learning), [state.learning]);

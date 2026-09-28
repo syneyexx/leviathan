@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from .agent_lab import AcceptanceCriteria, LabLesson, LessonTrust, LabOutcome
+from .agent_lab import AcceptanceCriteria, LabOutcome
 from .learning import (
     AdaptiveEvolutionaryLearner,
     assert_objective_immutable,
@@ -40,9 +40,31 @@ def load_learning_run(store: Any, learning_run_id: str) -> StrategyLearningRun:
 def _emit(plane: Any, kind: str, payload: dict[str, Any]) -> None:
     if hasattr(plane, "_emit_event"):
         try:
-            plane._emit_event(kind, payload)  # noqa: SLF001
+            plane._emit_event(_normalize_research_event_kind(kind), payload)  # noqa: SLF001
         except Exception:  # noqa: BLE001
             pass
+
+
+def _normalize_research_event_kind(kind: str) -> str:
+    """Align research_cycle.* cycle events to research.* observability names."""
+    text = str(kind or "").strip()
+    if text.startswith("research_cycle."):
+        suffix = text[len("research_cycle.") :]
+        # Map common cycle stages onto research.* namespace
+        mapping = {
+            "perception": "research.perception",
+            "chart": "research.chart",
+            "hypothesis": "research.hypothesis.proposed",
+            "hypothesis_fallback": "research.hypothesis.fallback",
+            "critic": "research.critic",
+            "author": "research.candidate.proposed",
+            "author_fallback": "research.candidate.fallback",
+            "author_skipped": "research.candidate.skipped",
+            "analyst": "research.analyst",
+            "analyst_failed": "research.analyst.failed",
+        }
+        return mapping.get(suffix, f"research.cycle.{suffix}")
+    return text
 
 
 def _resolve_model_complete(plane: Any) -> Any | None:
@@ -1557,19 +1579,33 @@ def _maybe_add_lesson(
     lab = plane.store.get_agent_lab(run.lab_id)
     if not lab:
         return
+    from .lesson_trust import new_agent_proposed_lesson
+
     lessons = list(lab.get("lessons") or [])
-    lesson = LabLesson(
+    # Lessons always start AGENT_PROPOSED — VALIDATED only via measured repeated evidence.
+    lesson = new_agent_proposed_lesson(
         lesson_id=f"lesson-{run.learning_run_id[:8]}-{len(lessons)}",
         claim=claim,
         evidence_refs=evidence_refs,
         applies_to=applies_to,
-        trust=LessonTrust.AGENT_PROPOSED.value,
         confidence=0.3,
         created_at=utc_now(),
+        metadata={"learning_run_id": run.learning_run_id, "origin": "learning_postmortem"},
     )
-    lessons.append(lesson.public_dict())
+    lessons.append(lesson)
     lab["lessons"] = lessons
     plane.store.upsert_agent_lab(lab)
+    _emit(
+        plane,
+        "research.lesson.recorded",
+        {
+            "lab_id": run.lab_id,
+            "learning_run_id": run.learning_run_id,
+            "lesson_id": lesson["lesson_id"],
+            "trust": lesson["trust"],
+            "applies_to": list(applies_to)[:8],
+        },
+    )
     # Also durable StrategyMemory (AGENT_PROPOSED) — available_at = when learned.
     try:
         from .experiments import build_strategy_memory_record
@@ -1592,7 +1628,8 @@ def _maybe_add_lesson(
                 extra_metadata={
                     "learning_run_id": run.learning_run_id,
                     "evidence_refs": list(evidence_refs)[:12],
-                    "lesson_id": lesson.lesson_id,
+                    "lesson_id": lesson["lesson_id"],
+                    "trust": lesson["trust"],
                 },
             )
         )
