@@ -91,6 +91,30 @@ class ProviderExecutionClient:
         else:
             cap_id = f"provider.{capability}"
 
+        # Fail closed when the owning specialist pool has no READY workers.
+        db_path = getattr(getattr(self.job_runtime, "store", None), "path", None)
+        owning_pool = pool_for_capability(cap_id)
+        if owning_pool == "market_feed":
+            from Data.modules.provider_io.market_feed_readiness import market_feed_workers_ready
+
+            if not market_feed_workers_ready(db_path):
+                raise ProviderError(
+                    ProviderErrorCode.PROVIDER_EXECUTION_UNAVAILABLE,
+                    "market_feed workers unavailable; refusing Control Plane stream fallback",
+                    provider=provider,
+                    retryable=True,
+                )
+        else:
+            from Data.modules.provider_io.readiness import provider_io_workers_ready
+
+            if not provider_io_workers_ready(db_path):
+                raise ProviderError(
+                    ProviderErrorCode.PROVIDER_EXECUTION_UNAVAILABLE,
+                    "provider_io workers unavailable; refusing Control Plane network fallback",
+                    provider=provider,
+                    retryable=True,
+                )
+
         # Prefer exact registered capabilities.
         known = {
             "provider.http",

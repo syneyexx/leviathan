@@ -281,20 +281,18 @@ class OllamaAdapter:
         }
 
     async def pull(self, repository: str, *, revision: str | None = None) -> dict[str, Any]:
-        name = repository if not revision else f"{repository}:{revision}"
-        try:
-            async with httpx.AsyncClient(timeout=None) as client:
-                response = await client.post(
-                    f"{self.endpoint}/api/pull",
-                    headers=self._headers(),
-                    json={"name": name, "stream": False},
-                )
-                response.raise_for_status()
-                return response.json() if response.content else {"status": "success"}
-        except httpx.HTTPError as exc:
-            raise ModelControlError(
-                code=PROVIDER_OFFLINE,
-                message=f"Ollama pull failed: {exc}",
-                provider_id=self.provider_id,
-                http_status=503,
-            ) from exc
+        """Deprecated Control Plane path — bulk Ollama pull belongs to model_download.
+
+        Callers must use ``DownloadManager.start_ollama_pull`` / model_download workers.
+        """
+        del revision
+        raise ModelControlError(
+            code="MODEL_DOWNLOAD_EXECUTION_UNAVAILABLE",
+            message=(
+                f"Ollama pull for {repository!r} must run via model_download workers; "
+                "Control Plane adapters do not perform bulk model acquisition."
+            ),
+            provider_id=self.provider_id,
+            http_status=503,
+            retryable=True,
+        )

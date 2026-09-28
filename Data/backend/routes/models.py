@@ -314,10 +314,18 @@ def build_models_router(plane: ModelControlPlane) -> APIRouter:
                         message="path is required for local_file import",
                         http_status=422,
                     )
-                model = plane.imports.import_local_path(
-                    payload.path, display_name=payload.displayName
+                # Large model files (.gguf / .safetensors) enqueue to model_download;
+                # Control Plane never hashes/reads whole model files synchronously.
+                result = plane.imports.enqueue_local_import(
+                    payload.path,
+                    display_name=payload.displayName,
+                    requested_by="api",
                 )
-                return {"model": model.public_dict()}
+                if "model" in result and result.get("executed_via") == "inline_dev":
+                    return {"model": result["model"]}
+                # 202-style queued response (FastAPI route stays 200 with queued body
+                # for compatibility; state=queued signals async acquisition).
+                return {"import": result, "queued": True}
             if source == "huggingface":
                 if not payload.repositoryId:
                     raise ModelControlError(

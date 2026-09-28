@@ -639,6 +639,50 @@ ArtifactStore `create_from_bytes` is bounded. Larger artifacts use `create_from_
 
 Local dataset publish remains prepare → verify → atomic replace → metadata. Remote Hugging Face dataset upload is not implemented.
 
+## 12.5 Provider I/O, market feeds, and model acquisition
+
+FastAPI remains the control plane: authorize, enqueue, await bounded interactive results, and relay client-facing streams. It never owns remote provider sockets, long-lived market WebSockets, or bulk model acquisition.
+
+```text
+FastAPI control plane
+        |
+ authorize / enqueue
+        v
+   JobRuntime
+        |
+ +------+------+----------------+
+ |             |                |
+ v             v                v
+provider_io  market_feed   model_download
+bounded      long-lived    HF / Ollama /
+remote HTTP  market WS     large local import
+LLM/search/  reconnect/    stream/verify
+market REST  gaps          register
+```
+
+| Work | Owner | Capability |
+|---|---|---|
+| Generic remote HTTP / SaaS / API | `provider_io` | `provider.http` |
+| Remote LLM complete / stream | `provider_io` | `provider.chat.complete` / `provider.chat.stream` |
+| Bounded market REST fetch | `provider_io` | `provider.market.fetch` |
+| HF metadata list | `provider_io` | `provider.hf.list` |
+| Alpaca paper | `provider_io` | `provider.alpaca.paper` |
+| Long-lived market WebSocket | `market_feed` | `provider.market.stream` / `.stop` |
+| HF / Ollama model download | `model_download` | `model_download.start` |
+| Large local model import/verify | `model_download` | `model_import.local` |
+
+**Local vs remote model endpoints.** Trusted local/managed serving (`127.0.0.1`, configured private-host / model base_url authority) may use Model Control Plane / `OpenAICompatibleLLM`. Remote SaaS endpoints must go through `provider_io`. Callers cannot forge `allow_private_hosts` from job payloads — trust is configuration-owned (`Data/modules/provider_io/endpoint_locality.py`, `private_host_authority.py`).
+
+**Semantic ownership stays domain-owned.** Embedding/rerank workers remain semantic batch authorities; when a remote embedding/rerank backend exists, network I/O is `provider_io`. Research remains search/crawl orchestration; remote search SaaS HTTP is `provider_io`. MarketSim remains market/trading semantic authority; `provider_io` / `market_feed` only perform network I/O.
+
+**Scheduler** determines occurrence then **enqueues only** into the specialist pool resolved by `pool_for_capability` — never `worker_pool="general"` for specialist caps, and never executes the heavy target inline.
+
+**Fail-closed.** Missing JobRuntime / specialist workers / saturated queue → typed `PROVIDER_EXECUTION_UNAVAILABLE` / `MODEL_DOWNLOAD_EXECUTION_UNAVAILABLE` / capacity errors (HTTP 503). No Control Plane `httpx` / WebSocket fallback.
+
+**Model import.** `POST /api/models/import` with `source=local_file` validates path lightly and enqueues `model_import.local`. The `model_download` worker streams SHA-256, performs bounded GGUF/safetensors header validation, detects mid-import file changes (`MODEL_CHANGED_DURING_IMPORT`), and registers through ModelStore/Registry. Import means register-in-place under allowed roots — not a speculative 30 GB copy. Never `path.read_bytes()` on whole models.
+
+Canonical modules: `Data/modules/provider_io/`, `Data/modules/model_download/`, market stream adapter under `provider_io/adapters/market_stream.py`, Model Control Plane under `Data/modules/models/`.
+
 ---
 
 # 13. Agent system and Signal Fabric

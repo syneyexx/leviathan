@@ -73,6 +73,7 @@ EXTERNAL_WORKER_CAPABILITIES: frozenset[str] = frozenset(
         "provider.alpaca.paper",
         "provider.hf.list",
         "model_download.start",
+        "model_import.local",
         "mcp.call",
         "research.fetch_url",
         "research.report.generate",

@@ -142,8 +142,9 @@ class ModelControlPlane:
         self._llm: Any | None = None
 
     def bind_job_runtime(self, job_runtime: Any | None) -> None:
-        """Attach Job Kernel so model downloads enqueue to model_download workers."""
+        """Attach Job Kernel so model downloads/imports enqueue to model_download workers."""
         self.downloads.bind_job_runtime(job_runtime)
+        self.imports.bind_job_runtime(job_runtime)
 
     def bind_llm(self, llm: Any) -> None:
         """Attach shared OpenAICompatibleLLM transport for inference sessions."""

@@ -77,6 +77,7 @@ _EXTERNAL_REQUIRED_PREFIXES: tuple[str, ...] = (
     "evaluation.",
     "training.",
     "model_download.",
+    "model_import.",
     "backup.",
     "maintenance.",
     "market_sim.",
