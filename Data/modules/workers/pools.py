@@ -42,6 +42,32 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
         job_kinds=(),
         description="General capability jobs not owned by a specialist pool",
     ),
+    "file_io": PoolDefinition(
+        pool_id="file_io",
+        entrypoint="Data.modules.workers.entrypoints.file_io",
+        default_count=1,
+        job_kinds=(
+            "file.read",
+            "file.write",
+            "file.copy",
+            "file.hash",
+            "file.inspect_csv",
+            "file.parse_csv",
+            "file.profile_csv",
+            "file.process_parquet",
+            "file.list",
+            "workspace.list",
+            "workspace.search",
+            "filesystem.scan",
+        ),
+        resource_classes=("IO_HEAVY", "MEMORY_HEAVY", "CPU_HEAVY"),
+        description=(
+            "Generic heavy filesystem I/O — large reads/writes/copies/hashes, "
+            "CSV/Parquet processing, recursive directory scans. Not dataset or "
+            "source_ingestion domain ownership."
+        ),
+        max_count=2,
+    ),
     "scheduler": PoolDefinition(
         pool_id="scheduler",
         entrypoint="Data.modules.workers.entrypoints.scheduler",

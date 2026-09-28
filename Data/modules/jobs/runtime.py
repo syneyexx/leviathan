@@ -305,6 +305,9 @@ class JobRuntime:
                 worker_id=self.worker_id,
                 lease_ttl_seconds=self.lease_ttl_seconds,
                 exclude_capability_ids=EXTERNAL_WORKER_CAPABILITIES,
+                # API-local runtime only claims general/unassigned work.
+                # Specialist pools (file_io, research, dataset, …) own their jobs.
+                worker_pool="general",
             )
             if job is None:
                 return None

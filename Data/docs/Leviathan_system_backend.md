@@ -464,7 +464,34 @@ Cognition uses `Data/modules/cognition/model_adapter.py`; trading agents use `Da
 - `manifest.py`, `metadata.py` — capability metadata;
 - `receipts.py` — receipts;
 - `types.py` — request/result/risk contracts;
-- `workload.py` — INLINE_SAFE / EXTERNAL_PREFERRED / EXTERNAL_REQUIRED.
+- `workload.py` — INLINE_SAFE / EXTERNAL_PREFERRED / EXTERNAL_REQUIRED plus
+  request-aware escalation via `classify_request_workload` (after path confinement);
+- `file_io_thresholds.py` — centralized inline ceilings for reads/writes/hashes/copies/CSV/scans;
+- `file_io_dispatch.py` — canonical enqueue helper for escalated filesystem jobs onto `file_io`.
+
+### Size-aware filesystem classification
+
+Static capability class remains the baseline (`file.read` / `file.write` /
+`file.inspect_csv` / `workspace.list` stay INLINE_SAFE for small coding-agent
+work). After schema validation and filesystem path confinement, the gateway
+runs request-aware classification:
+
+| Request | Class |
+|---|---|
+| ≤ ~1 MiB text read / write / hash / copy | INLINE_SAFE |
+| ≤ ~2 MiB CSV sample inspect | INLINE_SAFE |
+| non-recursive directory list ≤ 200 entries | INLINE_SAFE |
+| over-threshold file / recursive list / full CSV parse-profile / parquet / filesystem.scan | EXTERNAL_REQUIRED |
+
+Escalation never downgrades an already EXTERNAL_REQUIRED capability. Escalated
+generic filesystem work is owned by the Worker Fabric `file_io` pool (not
+`general`). Domain workers (`dataset`, `source_ingestion`, `knowledge_prepare`,
+…) keep semantic ownership; `file_io` only owns generic capability filesystem
+jobs. Large results spill to ArtifactStore; JobStore retains metadata/preview/refs.
+
+Security ordering is mandatory: confine paths → cheap metadata → classify →
+authorize → inline dispatch or durable enqueue. Approval context survives queue
+serialization for WRITE side effects.
 
 A model stating “I ran tool X” is not evidence. ExecutionGateway result/ObservationStore/receipt is the authority.
 
@@ -497,7 +524,9 @@ Important invariants:
 
 ## 12.2 Worker Fabric
 
-`Data/modules/workers/` is the external execution plane. Domain entrypoints include agents, coding, research, datasets/documents, embeddings/reranking, evaluation/training, market simulation, MCP, model downloads, provider I/O, source ingestion, scheduler/workflows, maintenance/backup, telemetry and DB commit.
+`Data/modules/workers/` is the external execution plane. Domain entrypoints include agents, coding, research, datasets/documents, embeddings/reranking, evaluation/training, market simulation, MCP, model downloads, provider I/O, source ingestion, **file_io** (generic heavy filesystem reads/writes/copies/hashes/CSV/Parquet/scans), scheduler/workflows, maintenance/backup, telemetry and DB commit.
+
+Generic heavy filesystem jobs (`file.read` when oversized, `file.write` when oversized, `file.copy`, `file.hash`, `file.parse_csv`, `file.profile_csv`, `file.process_parquet`, `filesystem.scan`, recursive `workspace.list`) enqueue with `worker_pool=file_io`. API-local JobRuntime only claims `general`/unassigned jobs and cannot steal specialist file_io work. Small interactive file operations remain INLINE_SAFE in the control plane.
 
 Crash forensics are durable and bounded: each process generation gets a unique log; unexpected exits publish structured metadata plus a human terminal summary; restart does not truncate predecessor evidence.
 

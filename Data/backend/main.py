@@ -2532,6 +2532,9 @@ app.include_router(
     build_functions_router(
         function_registry=function_registry,
         function_runtime=function_runtime,
+        job_runtime=job_runtime,
+        filesystem_root=getattr(execution_gateway, "filesystem_root", None)
+        or getattr(settings.coding, "workspace", None),
     )
 )
 app.include_router(

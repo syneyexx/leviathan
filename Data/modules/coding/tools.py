@@ -108,15 +108,25 @@ def enforce_capability(
                     )
 
         # ENFORCE-2: existing files > 80 lines must use file.patch.
+        # Bound the probe — do not load multi-GB files into memory for a line count.
         if capability_id == "file.write" and exists and target is not None:
             try:
-                line_count = len(target.read_text(encoding="utf-8", errors="replace").splitlines())
+                line_count = 0
+                with target.open("rb") as handle:
+                    while line_count <= MUST_PATCH_LINE_THRESHOLD + 1:
+                        chunk = handle.read(65536)
+                        if not chunk:
+                            break
+                        line_count += chunk.count(b"\n")
+                        # Huge files definitely need patch semantics.
+                        if handle.tell() > 2_000_000 and line_count > MUST_PATCH_LINE_THRESHOLD:
+                            break
             except OSError:
                 line_count = 0
             if line_count > MUST_PATCH_LINE_THRESHOLD:
                 raise CodingError(
                     "must_patch",
-                    f"file.write refused for existing file with {line_count} lines; use file.patch",
+                    f"file.write refused for existing file with {line_count}+ lines; use file.patch",
                     http_status=409,
                     details={"path": rel, "lines": line_count, "reason": "must_patch"},
                 )
