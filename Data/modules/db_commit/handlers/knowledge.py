@@ -1,13 +1,18 @@
-"""Knowledge domain commit handlers."""
+"""Knowledge domain commit handlers — typed COMMIT_WRITE only (no arbitrary SQL)."""
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 from Data.modules.db_commit.handlers.registry import FunctionHandler
 from Data.modules.db_commit.types import CommitIntent, CommitReceipt, CommitReceiptStatus, utc_now
+from Data.modules.knowledge.store import (
+    DocumentMissingError,
+    KnowledgeStore,
+    StaleKnowledgeGenerationError,
+)
+from Data.modules.knowledge.types import IngestStatus
 
 
 def handlers() -> list[FunctionHandler]:
@@ -19,8 +24,23 @@ def handlers() -> list[FunctionHandler]:
         ),
         FunctionHandler(
             operation="knowledge.commit_embeddings",
-            fn=_commit_embeddings,
+            fn=_commit_embeddings_legacy,
             required_payload_keys=("document_id", "embeddings"),
+        ),
+        FunctionHandler(
+            operation="knowledge.upsert_chunk_embeddings",
+            fn=_upsert_chunk_embeddings,
+            required_payload_keys=("document_id", "embeddings"),
+        ),
+        FunctionHandler(
+            operation="knowledge.replace_chunks",
+            fn=_replace_chunks,
+            required_payload_keys=("document_id", "expected_content_hash", "chunks"),
+        ),
+        FunctionHandler(
+            operation="knowledge.finalize_document",
+            fn=_finalize_document,
+            required_payload_keys=("document_id",),
         ),
         FunctionHandler(
             operation="knowledge.commit_document_batch",
@@ -28,6 +48,38 @@ def handlers() -> list[FunctionHandler]:
             required_payload_keys=("documents",),
         ),
     ]
+
+
+def _store(db_path: Path) -> KnowledgeStore:
+    store = KnowledgeStore(db_path)
+    store.initialize_schema()
+    return store
+
+
+def _reject(
+    intent: CommitIntent,
+    *,
+    entity_id: str,
+    error_code: str,
+    error_message: str,
+) -> CommitReceipt:
+    return CommitReceipt(
+        commit_id=intent.commit_id,
+        idempotency_key=intent.idempotency_key,
+        domain="knowledge",
+        operation=intent.operation,
+        status=CommitReceiptStatus.REJECTED.value,
+        entity_type=intent.entity_type or "knowledge_document",
+        entity_id=entity_id,
+        payload_hash=intent.payload_hash,
+        applied_at=utc_now(),
+        producer_job_id=intent.source_job_id,
+        trace_id=intent.trace_id,
+        batch_index=intent.batch_index,
+        batch_count=intent.batch_count,
+        error_code=error_code,
+        error_message=error_message[:500],
+    )
 
 
 def _commit_prepared(
@@ -63,8 +115,8 @@ def _commit_prepared(
             job_id=intent.source_job_id or None,
         )
 
-    committer = KnowledgeCommitter(db_path)
-    # Direct domain commit — already inside the single writer process.
+    store = _store(db_path)
+    committer = KnowledgeCommitter(db_path, knowledge_store=store)
     kr = committer.commit(artifact, idempotency_key=intent.idempotency_key)
     status = (
         CommitReceiptStatus.REJECTED.value
@@ -92,34 +144,51 @@ def _commit_prepared(
     )
 
 
-def _commit_embeddings(
+def _replace_chunks(
     intent: CommitIntent,
     payload: dict[str, Any],
     db_path: Path,
     settings: Any,
 ) -> CommitReceipt:
-    from Data.modules.knowledge.store import KnowledgeStore
-
-    store = KnowledgeStore(db_path)
-    store.initialize_schema()
+    store = _store(db_path)
     document_id = str(payload["document_id"])
-    embeddings = list(payload.get("embeddings") or [])
-    applied = 0
-    # Bounded batches — prepare outside; mutate in small transactions via store helpers.
-    if hasattr(store, "persist_embedding_batch"):
-        applied = int(store.persist_embedding_batch(document_id, embeddings) or 0)
-    else:
-        # Fallback: store embeddings metadata as document metadata patch (idempotent key).
-        with store.connect() as conn:
-            conn.execute(
-                """
-                UPDATE knowledge_documents
-                SET updated_at = COALESCE(updated_at, datetime('now'))
-                WHERE id = ?
-                """,
-                (document_id,),
-            )
-            applied = len(embeddings)
+    expected = str(payload.get("expected_content_hash") or "")
+    chunks = list(payload.get("chunks") or [])
+    title = str(payload.get("title") or "")
+    source = str(payload.get("source") or "manual")
+    finalize = bool(payload.get("finalize", True))
+    fts_body = str(payload.get("document_content_for_fts") or "")
+    try:
+        result = store.apply_replace_chunks(
+            document_id=document_id,
+            expected_content_hash=expected,
+            title=title,
+            chunks=chunks,
+            source=source,
+            finalize=finalize,
+            document_content_for_fts=fts_body,
+        )
+    except StaleKnowledgeGenerationError as exc:
+        return _reject(
+            intent,
+            entity_id=document_id,
+            error_code="KNOWLEDGE_STALE_GENERATION",
+            error_message=str(exc),
+        )
+    except DocumentMissingError as exc:
+        return _reject(
+            intent,
+            entity_id=document_id,
+            error_code="KNOWLEDGE_STALE_GENERATION",
+            error_message=f"document missing/deleted: {exc}",
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _reject(
+            intent,
+            entity_id=document_id,
+            error_code="KNOWLEDGE_COMMIT_FAILED",
+            error_message=str(exc),
+        )
     return CommitReceipt(
         commit_id=intent.commit_id,
         idempotency_key=intent.idempotency_key,
@@ -130,10 +199,144 @@ def _commit_embeddings(
         entity_id=document_id,
         payload_hash=intent.payload_hash,
         applied_at=utc_now(),
-        record_count=applied,
+        record_count=int(result.get("chunks") or 0),
         producer_job_id=intent.source_job_id,
         trace_id=intent.trace_id,
-        result={"document_id": document_id, "embeddings": applied},
+        batch_index=intent.batch_index,
+        batch_count=intent.batch_count,
+        result=result,
+    )
+
+
+def _upsert_chunk_embeddings(
+    intent: CommitIntent,
+    payload: dict[str, Any],
+    db_path: Path,
+    settings: Any,
+) -> CommitReceipt:
+    store = _store(db_path)
+    document_id = str(payload["document_id"])
+    embeddings = list(payload.get("embeddings") or [])
+    expected = payload.get("expected_content_hash")
+    finalize = bool(payload.get("finalize", False))
+    try:
+        applied = store.persist_embedding_batch(
+            document_id,
+            embeddings,
+            expected_content_hash=str(expected) if expected else None,
+            finalize=finalize,
+        )
+    except StaleKnowledgeGenerationError as exc:
+        return _reject(
+            intent,
+            entity_id=document_id,
+            error_code="KNOWLEDGE_STALE_GENERATION",
+            error_message=str(exc),
+        )
+    except DocumentMissingError as exc:
+        return _reject(
+            intent,
+            entity_id=document_id,
+            error_code="KNOWLEDGE_STALE_GENERATION",
+            error_message=str(exc),
+        )
+    except ValueError as exc:
+        code = "EMBEDDING_DIMENSION_MISMATCH" if "DIMENSION" in str(exc).upper() else "EMBEDDING_FAILED"
+        return _reject(intent, entity_id=document_id, error_code=code, error_message=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        return _reject(
+            intent,
+            entity_id=document_id,
+            error_code="KNOWLEDGE_COMMIT_FAILED",
+            error_message=str(exc),
+        )
+    return CommitReceipt(
+        commit_id=intent.commit_id,
+        idempotency_key=intent.idempotency_key,
+        domain="knowledge",
+        operation=intent.operation,
+        status=CommitReceiptStatus.APPLIED.value,
+        entity_type="knowledge_document",
+        entity_id=document_id,
+        payload_hash=intent.payload_hash,
+        applied_at=utc_now(),
+        record_count=int(applied),
+        producer_job_id=intent.source_job_id,
+        trace_id=intent.trace_id,
+        batch_index=intent.batch_index,
+        batch_count=intent.batch_count,
+        result={"document_id": document_id, "embeddings": applied, "finalized": finalize},
+    )
+
+
+def _commit_embeddings_legacy(
+    intent: CommitIntent,
+    payload: dict[str, Any],
+    db_path: Path,
+    settings: Any,
+) -> CommitReceipt:
+    """Compat alias → knowledge.upsert_chunk_embeddings."""
+    return _upsert_chunk_embeddings(intent, payload, db_path, settings)
+
+
+def _finalize_document(
+    intent: CommitIntent,
+    payload: dict[str, Any],
+    db_path: Path,
+    settings: Any,
+) -> CommitReceipt:
+    store = _store(db_path)
+    document_id = str(payload["document_id"])
+    expected = payload.get("expected_content_hash")
+    status_raw = str(payload.get("status") or IngestStatus.READY.value)
+    try:
+        status = IngestStatus(status_raw)
+    except ValueError:
+        status = IngestStatus.READY
+    try:
+        record = store.finalize_document(
+            document_id,
+            expected_content_hash=str(expected) if expected else None,
+            status=status,
+            title=str(payload.get("title") or ""),
+            content_for_fts=str(payload.get("content_for_fts") or ""),
+            error=payload.get("error"),
+        )
+    except StaleKnowledgeGenerationError as exc:
+        return _reject(
+            intent,
+            entity_id=document_id,
+            error_code="KNOWLEDGE_STALE_GENERATION",
+            error_message=str(exc),
+        )
+    except DocumentMissingError as exc:
+        return _reject(
+            intent,
+            entity_id=document_id,
+            error_code="KNOWLEDGE_STALE_GENERATION",
+            error_message=str(exc),
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _reject(
+            intent,
+            entity_id=document_id,
+            error_code="KNOWLEDGE_COMMIT_FAILED",
+            error_message=str(exc),
+        )
+    return CommitReceipt(
+        commit_id=intent.commit_id,
+        idempotency_key=intent.idempotency_key,
+        domain="knowledge",
+        operation=intent.operation,
+        status=CommitReceiptStatus.APPLIED.value,
+        entity_type="knowledge_document",
+        entity_id=document_id,
+        payload_hash=intent.payload_hash,
+        applied_at=utc_now(),
+        record_count=1,
+        producer_job_id=intent.source_job_id,
+        trace_id=intent.trace_id,
+        result={"document_id": document_id, "status": record.status.value},
     )
 
 
@@ -143,10 +346,8 @@ def _commit_document_batch(
     db_path: Path,
     settings: Any,
 ) -> CommitReceipt:
-    from Data.modules.knowledge.store import KnowledgeStore
-
-    store = KnowledgeStore(db_path)
-    store.initialize_schema()
+    """Stage bounded document metadata only — never chunk/embed inside db_commit."""
+    store = _store(db_path)
     docs = list(payload.get("documents") or [])
     max_rows = int(getattr(settings, "max_batch_rows", 1000) or 1000)
     start = int(intent.batch_index) * max_rows
@@ -158,19 +359,13 @@ def _commit_document_batch(
         content = str(doc.get("content") or "")
         source = str(doc.get("source") or "batch")
         document_id = doc.get("document_id")
-        # Prefer stable ids for idempotent replay.
-        if document_id and hasattr(store, "stage_document") and hasattr(store, "prepare_staged_document"):
-            staged = store.stage_document(
-                document_id=str(document_id),
-                title=title,
-                content=content,
-                source=source,
-            )
-            record = store.prepare_staged_document(staged.document_id)
-            created.append(record.document_id)
-        else:
-            record = store.upsert_document(title=title, content=content, source=source)
-            created.append(getattr(record, "document_id", str(record)))
+        staged = store.stage_document(
+            document_id=str(document_id) if document_id else None,
+            title=title,
+            content=content,
+            source=source,
+        )
+        created.append(staged.document_id)
     return CommitReceipt(
         commit_id=intent.commit_id,
         idempotency_key=intent.idempotency_key,
@@ -186,5 +381,5 @@ def _commit_document_batch(
         trace_id=intent.trace_id,
         batch_index=intent.batch_index,
         batch_count=intent.batch_count,
-        result={"document_ids": created},
+        result={"document_ids": created, "staged_only": True},
     )

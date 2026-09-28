@@ -381,16 +381,55 @@ Cognition/perception should use Brain instead of inventing private direct retrie
 
 `Data/modules/knowledge/` owns durable documents/chunks and retrieval:
 
-- `store.py`, `types.py` — persistence/provenance;
-- `retrieval.py` — lexical+dense hybrid retrieval;
+- `store.py`, `types.py` — persistence/provenance / bounded CONTROL_WRITE staging;
+- `preparation.py` — deterministic normalize/chunk/embedding-plan (no DB mutation);
+- `execution_gate.py` — production refuses FastAPI-inline heavy Knowledge work;
+- `commit_submit.py` — typed Knowledge CommitIntent helpers;
+- `retrieval.py` — lexical+dense hybrid retrieval (bounded, synchronous);
 - `staged_retrieval.py` — staged/deep policy;
-- `embeddings.py` — embedding interface/providers;
+- `embeddings.py` — embedding interface/providers (inference owned by embedding worker);
 - `deep_recall.py` — DeepRecall;
 - `atlas.py` — Atlas;
 - `why_library.py` — Why Library;
 - `economy.py` — retrieval budgets;
 - `chunking.py`, `hashing.py`, `index_generations.py` — indexing mechanics;
-- `pipeline/artifact.py`, `curator.py`, `committer.py` — preparation/commit.
+- `pipeline/artifact.py`, `curator.py`, `committer.py` — artifact preparation/commit.
+
+### Knowledge execution topology (production)
+
+```
+FastAPI control plane
+  validate / stage (CONTROL_WRITE) / enqueue / status / bounded search
+        |
+        v
+knowledge_prepare  (EXTERNAL_REQUIRED)
+  scan / path ingest / normalize / chunk / embedding plan
+        |
+        +--> embedding.batch  (EXTERNAL_REQUIRED; actual vector inference)
+        |
+        v
+typed CommitIntent (replace_chunks / upsert_chunk_embeddings / finalize)
+        |
+        v
+db_commit singleton  (EXTERNAL_REQUIRED; only COMMIT_WRITE bulk mutator)
+        |
+        v
+canonical Knowledge SQLite  -> verify -> READY
+```
+
+Ownership:
+
+| Owner | Responsibility |
+|---|---|
+| FastAPI | auth, validation, bounded staging/metadata, enqueue, cancel, status, bounded retrieval |
+| `knowledge_prepare` | data-root scan, path ingest, normalization, chunk computation, provenance, embedding request prep |
+| `embedding` | batch embedding inference (GPU/CPU backend); no Knowledge bulk SQLite writes |
+| `db_commit` | chunk/embedding/FTS/relation bulk mutation; document finalize; single writer |
+| `KnowledgeStore` | domain model, bounded reads, staging CONTROL_WRITE, typed commit helpers, invariants |
+
+Deprecated `knowledge_commit` pool remains desired/default 0 — bulk Knowledge commit is `db_commit` only.
+
+Production never silently falls back to inline `upsert_document` / `ingest_file` / `scan_data_root` when workers are externalized. Worker unavailability fails closed (503 / typed UNAVAILABLE). Entity extraction is currently `NOT_CONFIGURED` (relation atoms remain dataset-owned); do not invent fake entities.
 
 Heavy ingest/index commits respect worker/DB-commit ownership.
 
