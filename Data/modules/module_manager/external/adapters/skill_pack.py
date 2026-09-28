@@ -89,10 +89,20 @@ class SkillPackAdapter:
         return {"ready": True, **installed}
 
     def health(self) -> ModuleHealth:
-        ready = self._state in {ExternalRuntimeState.READY, ExternalRuntimeState.INSTALLED}
+        # Report truthful lifecycle status — DISCOVERED/DISABLED are not ERROR.
+        if self._state == ExternalRuntimeState.READY:
+            status = ModuleStatus.READY
+        elif self._state == ExternalRuntimeState.INSTALLED:
+            status = ModuleStatus.INSTALLED
+        elif self._state == ExternalRuntimeState.DISABLED:
+            status = ModuleStatus.DISABLED
+        elif self._state == ExternalRuntimeState.FAILED:
+            status = ModuleStatus.FAILED
+        else:
+            status = ModuleStatus.DISCOVERED
         return ModuleHealth(
             module_id=self.ctx.module_id,
-            status=ModuleStatus.READY if ready else ModuleStatus.ERROR,
+            status=status,
             detail=f"skills={len(self._skills)}",
             telemetry={"runtime_state": self._state.value, "adapter": "SKILL_PACK"},
         )

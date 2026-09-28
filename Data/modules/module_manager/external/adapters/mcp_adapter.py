@@ -171,7 +171,12 @@ class McpAdapter:
     def health(self) -> ModuleHealth:
         bridge = self.ctx.mcp_bridge
         detail = "mcp_bridge_missing"
-        telemetry: dict[str, Any] = {"adapter": "MCP", "server_id": self._server_id}
+        telemetry: dict[str, Any] = {
+            "adapter": "MCP",
+            "server_id": self._server_id,
+            "eager_start": bool(self.config.runtime.eager_start),
+            "lazy": not bool(self.config.runtime.eager_start),
+        }
         status = ModuleStatus.ERROR
         if bridge is not None:
             try:
@@ -182,6 +187,17 @@ class McpAdapter:
                 status = ModuleStatus.READY if state in {"READY", "BUSY"} else ModuleStatus.ERROR
             except Exception as exc:  # noqa: BLE001
                 detail = str(exc)
+        # Lazy MCP: install/register is enough — disconnected is not a fatal error.
+        # COMPOSITE health must not collapse optional MCP children into ERROR.
+        if not self.config.runtime.eager_start and status not in {ModuleStatus.READY, ModuleStatus.BUSY}:
+            if self._state in {ExternalRuntimeState.READY, ExternalRuntimeState.INSTALLED, ExternalRuntimeState.RUNNING}:
+                status = ModuleStatus.READY
+                detail = detail if detail and detail != "mcp_bridge_missing" else "lazy_not_connected"
+                telemetry["connected"] = False
+            else:
+                status = ModuleStatus.DISCOVERED
+                detail = detail if detail and detail != "mcp_bridge_missing" else "lazy_discovered"
+                telemetry["connected"] = False
         return ModuleHealth(module_id=self.ctx.module_id, status=status, detail=detail, telemetry=telemetry)
 
     def logs(self, *, limit: int = 200) -> list[str]:

@@ -82,14 +82,112 @@ class CompositeAdapter:
         ready = all(r.get("ready", True) for r in results if isinstance(r, dict))
         return {"ready": ready, "children": results}
 
+    def _child_role(self, child: Any) -> str:
+        """Classify child adapters for health aggregation.
+
+        Required executable children drive composite readiness.
+        Optional skill/catalog (and lazy MCP) children must not force ERROR
+        merely for DISCOVERED / not-yet-connected lifecycle states.
+        """
+        if isinstance(child, (SkillPackAdapter, CatalogSourceAdapter)):
+            return "optional"
+        if isinstance(child, McpAdapter) and not child.config.runtime.eager_start:
+            return "optional"
+        return "required"
+
     def health(self) -> ModuleHealth:
-        child_health = [child.health().public_dict() for child in self._children]
-        ok = all(h.get("status") in {"READY", "INITIALIZED", "LOADED"} for h in child_health)
+        pairs = [(child, child.health()) for child in self._children]
+        child_health = [h.public_dict() for _, h in pairs]
+
+        healthy = {
+            ModuleStatus.READY,
+            ModuleStatus.INITIALIZED,
+            ModuleStatus.LOADED,
+            ModuleStatus.RUNNING,
+            ModuleStatus.BUSY,
+        }
+        installed_ok = healthy | {ModuleStatus.INSTALLED}
+        lifecycle_soft = installed_ok | {
+            ModuleStatus.DISCOVERED,
+            ModuleStatus.STOPPED,
+            ModuleStatus.DISABLED,
+            ModuleStatus.SHUTDOWN,
+        }
+        fatal = {ModuleStatus.FAILED, ModuleStatus.ERROR}
+
+        required: list[ModuleStatus] = []
+        optional: list[ModuleStatus] = []
+        roles: list[dict[str, Any]] = []
+        for child, health in pairs:
+            role = self._child_role(child)
+            status = health.status if isinstance(health.status, ModuleStatus) else ModuleStatus(str(health.status))
+            roles.append(
+                {
+                    "adapter": type(child).__name__,
+                    "role": role,
+                    "status": status.value,
+                }
+            )
+            if role == "required":
+                required.append(status)
+            else:
+                optional.append(status)
+
+        if any(s in fatal for s in required):
+            aggregate = ModuleStatus.FAILED
+            detail = "composite_required_child_failed"
+        elif required and all(s in healthy for s in required):
+            if any(s in fatal for s in optional):
+                aggregate = ModuleStatus.DEGRADED
+                detail = "composite_optional_child_failed"
+            else:
+                aggregate = ModuleStatus.READY
+                detail = "composite"
+        elif required and all(s in installed_ok for s in required):
+            aggregate = ModuleStatus.INSTALLED
+            detail = "composite_installed"
+        elif required and all(s in lifecycle_soft for s in required):
+            # Executable surface not ready yet — report lifecycle truth, not ERROR.
+            if all(s == ModuleStatus.DISCOVERED for s in required):
+                aggregate = ModuleStatus.DISCOVERED
+            elif any(s == ModuleStatus.STOPPED for s in required):
+                aggregate = ModuleStatus.STOPPED
+            elif any(s == ModuleStatus.DISABLED for s in required):
+                aggregate = ModuleStatus.DISABLED
+            else:
+                aggregate = ModuleStatus.DISCOVERED
+            detail = "composite_lifecycle"
+        elif not required:
+            # Skill/catalog-only composite: optional children define status.
+            if optional and all(s in healthy for s in optional):
+                aggregate = ModuleStatus.READY
+                detail = "composite"
+            elif optional and all(s in installed_ok for s in optional):
+                aggregate = ModuleStatus.INSTALLED
+                detail = "composite_installed"
+            elif optional and any(s in fatal for s in optional):
+                aggregate = ModuleStatus.FAILED
+                detail = "composite_optional_only_failed"
+            else:
+                aggregate = ModuleStatus.DISCOVERED
+                detail = "composite_lifecycle"
+        else:
+            aggregate = ModuleStatus.DEGRADED
+            detail = "composite_partial"
+
         return ModuleHealth(
             module_id=self.ctx.module_id,
-            status=ModuleStatus.READY if ok else ModuleStatus.ERROR,
-            detail="composite",
-            telemetry={"adapter": "COMPOSITE", "children": child_health},
+            status=aggregate,
+            detail=detail,
+            telemetry={
+                "adapter": "COMPOSITE",
+                "children": child_health,
+                "child_roles": roles,
+                "truth": {
+                    "optional_discovered_is_not_fatal": True,
+                    "required_failure_is_fatal": True,
+                },
+            },
         )
 
     def logs(self, *, limit: int = 200) -> list[str]:
