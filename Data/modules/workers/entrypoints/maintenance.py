@@ -318,24 +318,23 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
 
     cap = str(getattr(job, "capability_id", "") or "maintenance.reconcile")
     args = dict(getattr(job, "arguments", None) or {})
-    settings = ctx["settings"]
     worker_id = str(ctx.get("worker_id") or "")
 
     try:
         if cap.endswith(".reconcile") or cap == "maintenance.reconcile":
             result = _reconcile(ctx, args)
         elif "integrity" in cap:
-            result = _integrity(settings, args)
+            result = _integrity(ctx["settings"], args)
         elif "vacuum" in cap:
-            result = _vacuum(settings, args)
+            result = _vacuum(ctx["settings"], args)
         elif "analyze" in cap:
-            result = _analyze(settings, args)
+            result = _analyze(ctx["settings"], args)
         elif "checkpoint" in cap:
-            result = _checkpoint(settings, args)
+            result = _checkpoint(ctx["settings"], args)
         elif "backup.restore" in cap or cap.endswith(".restore"):
             result = _restore(ctx, args)
         elif "migration_verify" in cap:
-            result = _migration_verify(settings, args)
+            result = _migration_verify(ctx["settings"], args)
         elif "import" in cap:
             result = _refuse_raw_import(args)
         elif "artifacts.cleanup" in cap or "cache.cleanup" in cap or "orphans.cleanup" in cap or "db.cleanup" in cap:
