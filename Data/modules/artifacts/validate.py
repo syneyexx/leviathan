@@ -29,6 +29,21 @@ def reopen_artifact(store: ArtifactStore, artifact_id: str) -> dict[str, Any]:
             "error": "artifact file missing on disk",
             "truth": {"file_created_is_not_validation": True},
         }
+    size = path.stat().st_size
+    from .store import MAX_INLINE_ARTIFACT_BYTES
+
+    if size > MAX_INLINE_ARTIFACT_BYTES:
+        return {
+            "artifact_id": artifact_id,
+            "ok": False,
+            "error": "artifact too large for inline reopen",
+            "code": "ARTIFACT_VERIFY_EXTERNAL_REQUIRED",
+            "size_bytes": size,
+            "truth": {
+                "file_created_is_not_validation": True,
+                "inline_bytes_refused": True,
+            },
+        }
     data = path.read_bytes()
     hash_ok = sha256_bytes(data) == record.content_hash
     structural = validate_artifact_bytes(

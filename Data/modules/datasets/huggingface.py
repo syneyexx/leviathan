@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -56,6 +56,48 @@ def hf_download_workers() -> int:
 
 def hf_parquet_batch_rows() -> int:
     return _env_int("LEVIATHAN_HF_PARQUET_BATCH_ROWS", 16_384, minimum=512, maximum=65_536)
+
+
+def hf_http_timeout() -> httpx.Timeout:
+    """Bounded connect/read/write/pool timeouts. Never ``timeout=None``."""
+    connect = float(_env_int("LEVIATHAN_HF_CONNECT_TIMEOUT_S", 10, minimum=1, maximum=60))
+    read = float(_env_int("LEVIATHAN_HF_READ_TIMEOUT_S", 120, minimum=5, maximum=600))
+    write = float(_env_int("LEVIATHAN_HF_WRITE_TIMEOUT_S", 30, minimum=1, maximum=120))
+    pool = float(_env_int("LEVIATHAN_HF_POOL_TIMEOUT_S", 10, minimum=1, maximum=60))
+    return httpx.Timeout(connect=connect, read=read, write=write, pool=pool)
+
+
+def assert_public_hf_url(url: str) -> None:
+    """Allow only HTTPS Hugging Face hosts. Reject private-network redirects."""
+    parsed = urlsplit(url)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme != "https" or not host or parsed.username or parsed.password:
+        raise DatasetError(
+            "Hugging Face URL refused",
+            code="hf_host_refused",
+            http_status=400,
+        )
+    if host == "huggingface.co" or host.endswith(".huggingface.co"):
+        return
+    raise DatasetError(
+        "Hugging Face URL host refused",
+        code="hf_host_refused",
+        http_status=400,
+    )
+
+
+def _assert_hf_request(request: httpx.Request) -> None:
+    assert_public_hf_url(str(request.url))
+
+
+def hf_http_client(*, transport: httpx.BaseTransport | None = None) -> httpx.Client:
+    return httpx.Client(
+        timeout=hf_http_timeout(),
+        follow_redirects=True,
+        max_redirects=5,
+        transport=transport,
+        event_hooks={"request": [_assert_hf_request]},
+    )
 
 
 # --- File classification ---------------------------------------------------
@@ -633,7 +675,7 @@ def _list_hf_tree_http(
 ) -> list[dict[str, Any]]:
     rev = quote(revision.strip() or "main", safe="")
     owns = client is None
-    client = client or httpx.Client(timeout=60.0, follow_redirects=True)
+    client = client or hf_http_client()
     headers = _auth_headers(token)
     try:
         collected: list[dict[str, Any]] = []
@@ -643,7 +685,23 @@ def _list_hf_tree_http(
             if prefix:
                 url = f"{url}/{quote(prefix, safe='/')}"
             params = {"recursive": "1"} if recursive and not prefix else None
+            assert_public_hf_url(url)
             response = client.get(url, headers=headers, params=params)
+            if response.status_code in {401, 403}:
+                raise DatasetError(
+                    "Hugging Face authentication failed"
+                    if response.status_code == 401
+                    else "Hugging Face access denied",
+                    code="hf_auth" if response.status_code == 401 else "hf_forbidden",
+                    http_status=response.status_code,
+                )
+            if response.status_code == 429:
+                raise DatasetError(
+                    "Hugging Face rate limited",
+                    code="hf_rate_limited",
+                    http_status=429,
+                    details={"retryAfter": _parse_retry_after(response)},
+                )
             if response.status_code == 404:
                 raise DatasetError(
                     f"Dataset not found: {repository_id}",
@@ -937,7 +995,7 @@ def download_hf_file(
         cp.bytes_downloaded = existing
 
     owns_client = client is None
-    client = client or httpx.Client(timeout=None, follow_redirects=True, transport=transport)
+    client = client or hf_http_client(transport=transport)
     headers_base = _auth_headers(token)
     hasher: hashlib._Hash | None = None
     # Incremental hash only when starting from zero; resume requires final file hash.
@@ -983,6 +1041,15 @@ def download_hf_file(
                         sleep_fn(delay)
                         continue
 
+                    if response.status_code in {401, 403}:
+                        raise DatasetError(
+                            "Hugging Face authentication failed"
+                            if response.status_code == 401
+                            else "Hugging Face access denied",
+                            code="hf_auth" if response.status_code == 401 else "hf_forbidden",
+                            http_status=response.status_code,
+                        )
+
                     if response.status_code == 404:
                         raise DatasetError(
                             f"HF file not found: {safe_name}",
@@ -1022,7 +1089,23 @@ def download_hf_file(
                         elif cp.total_bytes is None:
                             cp.total_bytes = cp.bytes_downloaded + int(total_header)
 
-                    cp.etag = response.headers.get("etag") or cp.etag
+                    new_etag = response.headers.get("etag")
+                    if (
+                        new_etag
+                        and cp.etag
+                        and new_etag != cp.etag
+                        and cp.bytes_downloaded > 0
+                    ):
+                        # Remote identity changed under a partial. Restart the file.
+                        cp.bytes_downloaded = 0
+                        cp.etag = None
+                        cp.content_hash = None
+                        if partial.exists():
+                            partial.unlink()
+                        hasher = hashlib.sha256()
+                        attempt += 1
+                        continue
+                    cp.etag = new_etag or cp.etag
                     mode = "ab" if cp.bytes_downloaded > 0 else "wb"
                     with partial.open(mode) as handle:
                         for chunk in response.iter_bytes(chunk_size=chunk_size):
@@ -1047,8 +1130,11 @@ def download_hf_file(
                                         "chunkSize": chunk_size,
                                     }
                                 )
+                        handle.flush()
+                        os.fsync(handle.fileno())
 
-                    # Promote partial → final after size check
+                    # Promote partial → final after size check. Handle is closed
+                    # first so Windows can replace the partial.
                     if expected_size is not None and cp.bytes_downloaded != expected_size:
                         raise DatasetError(
                             f"Size mismatch for {safe_name}: got {cp.bytes_downloaded} expected {expected_size}",
@@ -1091,6 +1177,36 @@ def download_hf_file(
                     )
             except DatasetError:
                 raise
+            except httpx.TimeoutException as exc:
+                delay = compute_backoff_seconds(attempt, policy=policy)
+                attempt += 1
+                if attempt >= policy.max_attempts:
+                    raise DatasetError(
+                        "Hugging Face download timed out",
+                        code="hf_timeout",
+                        http_status=504,
+                    ) from exc
+                sleep_fn(delay)
+            except httpx.ConnectError as exc:
+                delay = compute_backoff_seconds(attempt, policy=policy)
+                attempt += 1
+                if attempt >= policy.max_attempts:
+                    raise DatasetError(
+                        "Hugging Face connection failed",
+                        code="hf_connect",
+                        http_status=502,
+                    ) from exc
+                sleep_fn(delay)
+            except httpx.RemoteProtocolError as exc:
+                delay = compute_backoff_seconds(attempt, policy=policy)
+                attempt += 1
+                if attempt >= policy.max_attempts:
+                    raise DatasetError(
+                        "Hugging Face connection reset",
+                        code="hf_connection_reset",
+                        http_status=502,
+                    ) from exc
+                sleep_fn(delay)
             except httpx.HTTPError as exc:
                 delay = compute_backoff_seconds(attempt, policy=policy)
                 attempt += 1
@@ -1256,7 +1372,7 @@ def download_hf_repository(
             state = manifest.files[entry.path]
             state.status = "downloading"
         # Per-worker persistent client (keep-alive across chunks of one file)
-        with httpx.Client(timeout=None, follow_redirects=True, transport=transport) as client:
+        with hf_http_client(transport=transport) as client:
 
             def file_progress(info: dict[str, Any]) -> None:
                 with lock:
