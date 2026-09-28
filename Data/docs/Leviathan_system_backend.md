@@ -623,7 +623,7 @@ Important dataset concepts:
 - native/Python compute backend reported honestly;
 - missing memory/throughput metrics remain UNMEASURED.
 
-HTTP: `Data/backend/routes/datasets.py`. Knowledge ingestion: `routes/knowledge.py`. Source ingestion enters through domain APIs but heavy parse/index work is worker-owned.
+HTTP: `Data/backend/routes/datasets.py`. Knowledge ingestion: `Data/backend/routes/knowledge.py`. Source ingestion enters through domain APIs but heavy parse/index work is worker-owned.
 
 ---
 
@@ -680,7 +680,7 @@ plan install
  -> READY or typed failure
 ```
 
-Primary files are in `Data/modules/module_manager/install.py` and external adapter/manager/store code; routes are `Data/backend/routes/modules.py`.
+Primary install authority is `Data/modules/module_manager/external/install.py`; dependency/package-manager helpers and adapters live beside it under `Data/modules/module_manager/external/`. Lifecycle composition remains in `Data/modules/module_manager/manager.py`; routes are `Data/backend/routes/modules.py`.
 
 Privileged system dependency approval is bound to request arguments/plan hash. Normal production execution uses JobRuntime/Worker Fabric; synchronous install fallback is default-off and must be explicitly enabled. Installation state/receipts are persisted in CONTROL domain migration v6.
 
@@ -705,9 +705,9 @@ MCP tools still enter the same capability/approval/observation architecture. MCP
 
 # 19. Browser, media, voice and provider I/O
 
-- `Data/modules/browser/` + `routes/browser.py`, `browser_qa.py` — browser capability/QA boundaries;
-- `Data/modules/media/` + `routes/media.py` — media capability boundary; disconnected platforms stay NOT CONNECTED/UNAVAILABLE;
-- `Data/modules/voice/` + `routes/voice.py` — realtime voice boundary;
+- `Data/modules/browser/` + `Data/backend/routes/browser.py`, `browser_qa.py` — browser capability/QA boundaries;
+- `Data/modules/media/` + `Data/backend/routes/media.py` — media capability boundary; disconnected platforms stay NOT CONNECTED/UNAVAILABLE;
+- `Data/modules/voice/` + `Data/backend/routes/voice.py` — realtime voice boundary;
 - `Data/modules/provider_io/` — controlled remote HTTP/provider/market-data/chat I/O, credentials, readiness and streams;
 - `Data/modules/model_download/` — model-download worker boundary;
 - `Data/modules/isolation/` — sandbox/isolation guard;
@@ -723,20 +723,23 @@ Network permission, provider configuration and provider health are three differe
 
 **Real-money execution is BLOCKED.** Historical simulation, shadow and autonomous paper use simulated capital. A5/live-money autonomy is impossible by product contract.
 
-HTTP owner: `Data/backend/routes/market_sim.py`; trading-agent/orchestra HTTP: `Data/backend/routes/trading_orchestra.py`; Research Command: `routes/research_command.py`.
+HTTP owner: `Data/backend/routes/market_sim.py`; trading-agent/orchestra HTTP: `Data/backend/routes/trading_orchestra.py`; Research Command: `Data/backend/routes/research_command.py`.
 
 ## 20.1 Market data and causality
 
 Important files:
 
-- `data.py` / provider/store helpers — registered historical/stream data;
+- `data_store.py` — `MarketDataStore`, canonical indexed historical market-file registry; large market files stay on disk;
+- `dataset_pipeline.py` — market-data import/quality/version preparation around `MarketDataStore`;
+- `ohlcv.py` — OHLCV loading/validation/normalization;
 - `causality.py` — `SimulationClock`, `MarketView`, as-of firewall;
 - `features.py` — canonical FeatureEngine;
 - `regimes.py` — deterministic trend/volatility/correlation/changepoint regimes; HMM stays feature-gated until real support exists;
 - `market_state.py` — causal market-state snapshots;
 - `costs.py` — cost model packs;
-- `session_calendar.py` / instrument/accounting rules — market-session/economic constraints;
-- `feed.py` / feed-ordering components — live/public feed state where configured.
+- `universe.py`, `exchange_calendars.py`, `instruments.py` — point-in-time universe, session calendars and instrument/session rules;
+- `Data/modules/provider_io/adapters/market_stream.py` — external/current market-feed stream ordering, stable feed identity and gap recovery;
+- `paper_deployment.py` — paper-forward feed-health representation used by deployments.
 
 Historical perception may only use `timestamp <= as_of`. Unknown calendars/data/features fail closed or stay UNMEASURED; OHLCV is never promoted to fake L2/L3 order-book truth.
 
@@ -833,7 +836,7 @@ Canonical integrity components include:
 - capacity/execution compatibility;
 - sealed single-use/lineage contamination firewall.
 
-Relevant files include `research_integrity.py`/split helpers, `walk_forward.py`, `robustness.py`, `regimes.py`, `sample_adequacy.py`, `capacity_qualification.py`, `qualification.py`, `commit_reveal.py` and related tests.
+Relevant files include `split_manifest.py` (`DatasetSplitManifest` / `ResearchEpisodeBinding`), `epistemic.py` (adaptive-vs-sealed evidence classes), `walk_forward.py`, `robustness.py`, `regimes.py`, `sample_adequacy.py`, `capacity_qualification.py`, `qualification.py`, `commit_reveal.py` and related tests.
 
 SEALED evidence is not adaptive training material for the same contaminated lineage. Renaming a strategy does not reset the root lineage.
 
@@ -865,7 +868,9 @@ Agent/VLM confidence is never a competing gate. Caller `passed=true` booleans ar
 
 Key files:
 
-- `paper.py` / portfolio services and broker adapters — paper order/account state;
+- `portefeuille/service.py` — canonical paper portfolio lifecycle/accounting/order service used by Research Command/Orchestra paper routing;
+- `paper_broker.py` — paper-broker abstraction and local paper sessions;
+- `paper_forward.py` — paper-forward runner;
 - `paper_deployment.py` — durable deployment/feed health;
 - `autonomous_paper_loop.py` — A0–A4 loop state/promotion receipts;
 - `paper_forward_drift.py` — forward evidence policy/drift/tickets;
@@ -898,7 +903,7 @@ Old evidence remains immutable. PAPER-observed StrategyMemory has its own episte
 
 **Research Command**: `Data/modules/market_sim/research_command/service.py`, store support, `Data/backend/routes/research_command.py`. It composes existing TradingOrchestra, paper portfolio, news and Research Lab. It can start/pause a bound paper/research session, manage watch state, flatten paper positions, arm paper kill switch and invoke the existing lab lifecycle. It **does not own a second learning engine**.
 
-**Institutional Control Room**: MarketSim institutional runtime/service projections exposed through `market_sim.py`. It surfaces qualification/reconciliation/exceptions/audit/data-plane/fabric truth without inventing green states.
+**Institutional Control Room**: MarketSim institutional runtime/service projections exposed through `Data/backend/routes/market_sim.py`. It surfaces qualification/reconciliation/exceptions/audit/data-plane/fabric truth without inventing green states.
 
 ## 20.11 Chat read capabilities for trading research
 
@@ -947,7 +952,7 @@ Rules:
 - `Data/modules/observations/` — durable observations;
 - `Data/modules/metrics/` — metric/time-series collection;
 - `Data/modules/analytics/` — analytics service;
-- `Data/modules/host_console/` + `routes/host_console.py` — read-only host projections;
+- `Data/modules/host_console/` + `Data/backend/routes/host_console.py` — read-only host projections;
 - `Data/modules/backup/` — database backup/restore with maintenance/recovery fencing;
 - `Data/modules/chaos/` — controlled fault injection;
 - `Data/modules/product_truth/` — truthful product/readiness projections.
@@ -1100,33 +1105,33 @@ Other backend-relevant code:
 | app dependency wiring | `Data/backend/main.py` | target route/service constructor |
 | environment/default setting | `Data/backend/config.py` | `settings/catalog.py`, `bindings.py`, `.env.example` |
 | persisted setting/UI catalog | `Data/modules/settings/` | frontend Settings page |
-| DB ownership/schema | `Data/backend/table_ownership.py`, `db_upgrade.py` | owning store + migration tests |
+| DB ownership/schema | `Data/backend/table_ownership.py`, `Data/backend/db_upgrade.py` | owning store + migration tests |
 | bulk DB write | `Data/modules/db_commit/` | owning domain store |
-| Chat behavior | `Data/backend/main.py` chat endpoint | `cognition/`, Brain, context |
+| Chat behavior | `Data/backend/main.py` chat endpoint | `Data/modules/cognition/`, Brain, context |
 | cognition planning/reasoning | `Data/modules/cognition/` | `verification/`, `context/` |
 | model routing | `Data/modules/models/control_plane.py` | router/residency/model_runtime |
 | provider transport | `Data/modules/model_runtime/` | capability probe/contracts |
 | retrieval/RAG | `Data/modules/knowledge/` | `brain/`, `context/` |
 | durable memory | `Data/modules/memory/` | Brain/perception |
 | tool/side effect | `Data/modules/execution/` | approval, observation, function/module/MCP owner |
-| durable heavy job | `Data/modules/jobs/` | `workers/entrypoints/` |
-| worker lifecycle | `Data/modules/workers/` | `routes/workers.py`, launcher boot |
+| durable heavy job | `Data/modules/jobs/` | `Data/modules/workers/entrypoints/` |
+| worker lifecycle | `Data/modules/workers/` | `Data/backend/routes/workers.py`, launcher boot |
 | agent/fleet | `Data/modules/agents/` | cognition delegation |
 | coding agent | `Data/modules/coding/` | execution functions/verification |
-| research/web | `Data/modules/research/` | routes/research.py, workers |
-| dataset ingestion | `Data/modules/datasets/`, `source_ingestion/` | db_commit/knowledge workers |
-| training/evaluation | `Data/modules/training/`, `evaluation/` | release/verification/flywheel |
-| module installation/lifecycle | `Data/modules/module_manager/` | routes/modules.py, approvals, JobRuntime |
-| skill integration | `routes/skills.py` | module_manager external skill store |
+| research/web | `Data/modules/research/` | `Data/backend/routes/research.py`, workers |
+| dataset ingestion | `Data/modules/datasets/`, `Data/modules/source_ingestion/` | db_commit/knowledge workers |
+| training/evaluation | `Data/modules/training/`, `Data/modules/evaluation/` | release/verification/flywheel |
+| module installation/lifecycle | `Data/modules/module_manager/` | `Data/backend/routes/modules.py`, approvals, JobRuntime |
+| skill integration | `Data/backend/routes/skills.py` | module_manager external skill store |
 | MCP | `Data/modules/mcp/` | ExecutionGateway |
 | market simulation | `Data/modules/market_sim/gym.py` | causality/features/execution/accounting |
-| strategy generation | `market_sim/strategy_families.py`, `learning_candidates.py` | DSL/learning/research_cycle |
-| autonomous trading research | `market_sim/research_cycle.py` | hypothesis/perception/learning/qualification |
-| qualification | `market_sim/qualification.py` | WFA/regimes/robustness/capacity/sealed |
-| paper autonomy/drift | `autonomous_paper_loop.py`, `paper_forward_drift.py` | service/store/live guard |
-| Research Command | `market_sim/research_command/` | route + orchestra + paper + lab |
-| security/auth | `common/http_auth.py`, `security/`, `approvals/` | main middleware/ExecutionGateway |
-| observability | `observability/`, `metrics/` | event producers + frontend event client |
+| strategy generation | `Data/modules/market_sim/strategy_families.py`, `Data/modules/market_sim/learning_candidates.py` | DSL/learning/research_cycle |
+| autonomous trading research | `Data/modules/market_sim/research_cycle.py` | hypothesis/perception/learning/qualification |
+| qualification | `Data/modules/market_sim/qualification.py` | WFA/regimes/robustness/capacity/sealed |
+| paper autonomy/drift | `Data/modules/market_sim/autonomous_paper_loop.py`, `Data/modules/market_sim/paper_forward_drift.py` | service/store/live guard |
+| Research Command | `Data/modules/market_sim/research_command/` | route + orchestra + paper + lab |
+| security/auth | `Data/modules/common/http_auth.py`, `Data/modules/security/`, `Data/modules/approvals/` | main middleware/ExecutionGateway |
+| observability | `Data/modules/observability/`, `Data/modules/metrics/` | event producers + frontend event client |
 
 ---
 
