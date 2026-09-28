@@ -24,8 +24,25 @@ describe("ModulesPage external fabric lifecycle", () => {
   it("does not treat a queued install as a completed install", () => {
     expect(viewSrc).toContain("Install queued");
     expect(viewSrc).toContain("Version install queued");
+    expect(viewSrc).toContain("Approval required");
     expect(hookSrc).toContain("installActionText");
     expect(hookSrc).toContain("lifecycleFailureText");
+  });
+
+  it("wires dependency-aware install plan and approve-everything CTA", () => {
+    expect(hookSrc).toContain("approveAndInstallEverything");
+    expect(hookSrc).toContain("moduleInstallState");
+    expect(hookSrc).toContain("approveApproval");
+    expect(hookSrc).toContain("plan_hash");
+    expect(hookSrc).toContain("approval_id");
+    expect(hookSrc).toContain("primaryInstallCta");
+    expect(modulesSrc).toContain("Install plan");
+    expect(modulesSrc).toContain("RETRY INSTALL");
+    expect(modulesSrc).toContain("primaryInstallCta");
+    expect(viewSrc).toContain("parseInstallPlan");
+    expect(viewSrc).toContain("APPROVE & INSTALL EVERYTHING");
+    expect(viewSrc).toContain("MISSING — WILL INSTALL");
+    expect(viewSrc).not.toMatch(/Magic install failed/);
   });
 
   it("exposes install/start/stop/restart/ensure-ready without inventing runtime truth", () => {

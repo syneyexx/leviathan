@@ -7,8 +7,11 @@ import {
   DETAIL_TABS,
   LOCAL_NAV,
   dependenciesFromRow,
+  dependencyStateLabel,
+  dependencyStateTone,
   formatMeasured,
   healthLabel,
+  installPhaseSteps,
   lifecycleBadges,
   measuredFromHealth,
   moduleDescription,
@@ -574,6 +577,179 @@ export function ModulesPage() {
                       </label>
                     </div>
                   </div>
+
+                  {ws.installPanelOpen && (ws.installPlan || ws.installOperation) ? (
+                    <section className="lv-mod-install-plan" aria-label="Module install plan">
+                      <header className="lv-mod-install-plan-head">
+                        <h3>Install plan</h3>
+                        <button
+                          type="button"
+                          className="lv-mod-btn is-ghost"
+                          onClick={() => ws.setInstallPanelOpen(false)}
+                        >
+                          Close
+                        </button>
+                      </header>
+
+                      {ws.installPlan ? (
+                        <div className="lv-mod-install-grid">
+                          <div>
+                            <div className="lv-mod-install-label">Module</div>
+                            <div>{ws.installPlan.moduleId || moduleId(selected)}</div>
+                          </div>
+                          <div>
+                            <div className="lv-mod-install-label">Source / ref</div>
+                            <div>
+                              {String(ws.installPlan.source.source || ws.installPlan.source.url || "—")}
+                              {" @ "}
+                              {ws.installPlan.requestedRef}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="lv-mod-install-label">Strategies</div>
+                            <div>{ws.installPlan.strategies.join(", ") || "—"}</div>
+                          </div>
+                          <div>
+                            <div className="lv-mod-install-label">Package manager</div>
+                            <div>{ws.installPlan.packageManager || "NONE"}</div>
+                          </div>
+                          <div>
+                            <div className="lv-mod-install-label">Host privilege</div>
+                            <div>{ws.installPlan.privilegeState || "UNMEASURED"}</div>
+                          </div>
+                          <div>
+                            <div className="lv-mod-install-label">Approval</div>
+                            <div>
+                              {ws.installPlan.requiresApproval || ws.installOperation?.status === "APPROVAL_REQUIRED"
+                                ? "REQUIRED"
+                                : "NOT REQUIRED"}
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {ws.installPlan?.observations?.length ? (
+                        <div className="lv-mod-install-deps">
+                          <div className="lv-mod-install-label">Dependencies</div>
+                          <ul>
+                            {ws.installPlan.observations.map((obs) => (
+                              <li key={obs.dependencyId}>
+                                <span>{obs.dependencyId}</span>
+                                <Badge label={dependencyStateLabel(obs.state)} tone={dependencyStateTone(obs.state)} />
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+
+                      {ws.installPlan?.privilegedMutations?.length ? (
+                        <div className="lv-mod-install-block">
+                          <div className="lv-mod-install-label">System changes</div>
+                          <ul>
+                            {ws.installPlan.privilegedMutations.map((m, i) => (
+                              <li key={`${String(m.dependency_id)}-${i}`}>
+                                install {String(m.dependency_id)}
+                                {Array.isArray(m.packages) && m.packages.length
+                                  ? ` (${(m.packages as unknown[]).map(String).join(", ")})`
+                                  : ""}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+
+                      {ws.installPlan?.applicationActions?.length ? (
+                        <div className="lv-mod-install-block">
+                          <div className="lv-mod-install-label">Application changes</div>
+                          <ul>
+                            {ws.installPlan.applicationActions.map((a, i) => (
+                              <li key={`${String(a.action)}-${i}`}>{String(a.action)}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+
+                      {ws.installPlan?.blockers?.length ? (
+                        <div className="lv-mod-install-block is-err">
+                          <div className="lv-mod-install-label">Blockers</div>
+                          <ul>
+                            {ws.installPlan.blockers.map((b, i) => (
+                              <li key={`${String(b.code)}-${i}`}>
+                                {String(b.code)}
+                                {b.detail ? `: ${String(b.detail)}` : ""}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+
+                      {ws.installOperation &&
+                      ["QUEUED", "RUNNING", "PREPARING", "INSTALLING_SYSTEM_DEPENDENCIES", "VERIFYING_SYSTEM_DEPENDENCIES", "FETCHING_SOURCE", "PREPARING_RUNTIME", "INSTALLING_APPLICATION_DEPENDENCIES", "POST_INSTALL", "VERIFYING_INSTALLATION", "ACTIVATING", "READY", "FAILED"].includes(
+                        ws.installOperation.phase || ws.installOperation.status,
+                      ) ? (
+                        <div className="lv-mod-install-progress">
+                          <div className="lv-mod-install-label">
+                            Progress{ws.installPolling ? " (live)" : ""}
+                            {ws.installOperation.phase ? ` — ${ws.installOperation.phase}` : ""}
+                          </div>
+                          <ol>
+                            {installPhaseSteps(ws.installOperation.phase || ws.installOperation.status).map((step) => (
+                              <li key={step.id} className={`is-${step.state}`}>
+                                {step.state === "done" ? "✓" : step.state === "active" ? "●" : "○"} {step.label}
+                              </li>
+                            ))}
+                          </ol>
+                        </div>
+                      ) : null}
+
+                      {ws.installOperation?.status === "FAILED" || ws.installOperation?.phase === "FAILED" ? (
+                        <div className="lv-mod-install-block is-err" role="alert">
+                          <div className="lv-mod-install-label">Install failed</div>
+                          <p>
+                            {[ws.installOperation.errorCode, ws.installOperation.errorDetail]
+                              .filter(Boolean)
+                              .join(" — ") || "Structured failure from backend"}
+                          </p>
+                          {ws.installOperation.retryable ? <p>Retryable</p> : null}
+                        </div>
+                      ) : null}
+
+                      <div className="lv-mod-install-actions">
+                        {ws.installOperation?.status === "FAILED" || ws.installOperation?.phase === "FAILED" ? (
+                          <button
+                            type="button"
+                            className="lv-mod-btn is-primary"
+                            disabled={ws.lifecycleBusy}
+                            onClick={() => void ws.retryInstall()}
+                          >
+                            RETRY INSTALL
+                          </button>
+                        ) : ["QUEUED", "RUNNING", "CREATED", "RETRY_WAIT", "READY", "INSTALLED", "COMPLETED"].includes(
+                            ws.installOperation?.status || "",
+                          ) ? (
+                          <button type="button" className="lv-mod-btn is-primary" disabled>
+                            {ws.primaryInstallCta}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="lv-mod-btn is-primary"
+                            disabled={
+                              ws.lifecycleBusy ||
+                              Boolean(
+                                ws.installPlan &&
+                                  !ws.installPlan.installable &&
+                                  ws.installPlan.blockers.some((b) => String(b.code) !== "PRIVILEGE_REQUIRED"),
+                              )
+                            }
+                            onClick={() => void ws.approveAndInstallEverything()}
+                          >
+                            {ws.primaryInstallCta}
+                          </button>
+                        )}
+                      </div>
+                    </section>
+                  ) : null}
 
                   <div className="lv-mod-cards">
                     <article className="lv-mod-card" aria-label="Health">

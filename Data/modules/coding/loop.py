@@ -291,6 +291,7 @@ class CodingLoop:
                             side_effects=tuple(
                                 FRSideEffect(s) if isinstance(s, str) else s for s in side_effects
                             ),
+                            arguments=args,
                         ):
                             pending = {
                                 "capability_id": parsed.capability_id,
@@ -451,6 +452,7 @@ class CodingLoop:
                 str(approval_id),
                 capability_id=capability_id,
                 side_effects=tuple(FRSideEffect(s) if isinstance(s, str) else s for s in side_effects),
+                arguments=args,
             ):
                 self.store.add_step(
                     session.session_id,

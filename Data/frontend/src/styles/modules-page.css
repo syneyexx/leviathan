@@ -974,3 +974,90 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Dependency-aware install plan panel */
+.lv-mod-install-plan {
+  margin: 0.75rem 1rem 0;
+  padding: 1rem;
+  border: 1px solid var(--mod-gold-border);
+  background: linear-gradient(180deg, rgba(20, 28, 36, 0.92), rgba(12, 16, 22, 0.96));
+  border-radius: 2px;
+}
+
+.lv-mod-install-plan-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.lv-mod-install-plan-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mod-gold);
+}
+
+.lv-mod-install-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem 1rem;
+  margin-bottom: 0.85rem;
+  font-size: 0.85rem;
+}
+
+.lv-mod-install-label {
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mod-muted);
+  margin-bottom: 0.2rem;
+}
+
+.lv-mod-install-deps ul,
+.lv-mod-install-block ul,
+.lv-mod-install-progress ol {
+  margin: 0.35rem 0 0.85rem;
+  padding-left: 1.1rem;
+  font-size: 0.85rem;
+}
+
+.lv-mod-install-deps li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  list-style: disc;
+  margin-bottom: 0.35rem;
+}
+
+.lv-mod-install-block.is-err {
+  color: var(--mod-err);
+}
+
+.lv-mod-install-progress li.is-done {
+  color: var(--mod-ok, #6fbf73);
+}
+
+.lv-mod-install-progress li.is-active {
+  color: var(--mod-gold);
+  font-weight: 600;
+}
+
+.lv-mod-install-progress li.is-pending {
+  color: var(--mod-muted);
+}
+
+.lv-mod-install-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+@media (max-width: 960px) {
+  .lv-mod-install-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}

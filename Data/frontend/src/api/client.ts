@@ -842,11 +842,35 @@ export const api = {
     return request("/api/modules/discover", { method: "POST" });
   },
 
-  installModule(moduleId: string, payload: { force?: boolean; ref?: string } = {}): Promise<Record<string, unknown>> {
+  installModule(
+    moduleId: string,
+    payload: {
+      force?: boolean;
+      ref?: string;
+      activate?: boolean;
+      approval_id?: string;
+      plan_hash?: string;
+      auto_resolve_dependencies?: boolean;
+    } = {},
+  ): Promise<Record<string, unknown>> {
     return request(`/api/modules/${encodeURIComponent(moduleId)}/install`, {
       method: "POST",
       body: JSON.stringify(payload),
     });
+  },
+
+  moduleInstallPlan(
+    moduleId: string,
+    payload: { force?: boolean; ref?: string } = {},
+  ): Promise<Record<string, unknown>> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/install-plan`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  moduleInstallState(moduleId: string): Promise<Record<string, unknown>> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/install-state`);
   },
 
   startModule(moduleId: string): Promise<Record<string, unknown>> {
