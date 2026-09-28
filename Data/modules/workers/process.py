@@ -161,8 +161,7 @@ def verify_owned(proc: OwnedProcess) -> bool:
     # On platforms without starttime, identity prefix pid: may drift — require popen still running.
     if proc.popen is not None and proc.popen.poll() is not None:
         return False
-    if current.startswith("linux:") and proc.process_start_identity.startswith("linux:"
-    ):
+    if current.startswith("linux:") and proc.process_start_identity.startswith("linux:"):
         return current == proc.process_start_identity
     return True
 
