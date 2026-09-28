@@ -39,6 +39,7 @@ from .types import (
     SIGNAL_INVALID_RECIPIENT,
     SIGNAL_MAX_HOPS,
     SIGNAL_NOT_FOUND,
+    SIGNAL_TARGET_UNAVAILABLE,
     SIGNAL_NO_RECIPIENT,
     DeliveryState,
     RecipientType,
@@ -680,9 +681,10 @@ class SignalFabricService:
 
     def _enqueue_delivery_job(self, delivery_id: str, *, priority: SignalPriority) -> None:
         if self.job_runtime is None:
-            # Inline processing fallback for tests / non-worker environments.
-            self.process_delivery(delivery_id, worker_id="inline")
-            return
+            raise SignalFabricError(
+                SIGNAL_TARGET_UNAVAILABLE,
+                "job_runtime unavailable; cannot enqueue agent_signal.deliver",
+            )
         try:
             self.job_runtime.enqueue(
                 capability_id="agent_signal.deliver",
@@ -693,9 +695,12 @@ class SignalFabricService:
                 domain="agents",
                 idempotency_key=f"agent_signal.deliver:{delivery_id}",
             )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("enqueue_delivery_failed delivery=%s err=%s — inline fallback", delivery_id, exc)
-            self.process_delivery(delivery_id, worker_id="inline-fallback")
+        except Exception as exc:  # noqa: BLE001 — never inline-fallback in production
+            logger.warning("enqueue_delivery_failed delivery=%s err=%s", delivery_id, exc)
+            raise SignalFabricError(
+                SIGNAL_TARGET_UNAVAILABLE,
+                f"Failed to enqueue delivery: {exc}",
+            ) from exc
 
     def _validate_payload(
         self,

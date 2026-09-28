@@ -755,7 +755,32 @@ plan install
 
 Primary install authority is `Data/modules/module_manager/external/install.py`; dependency/package-manager helpers and adapters live beside it under `Data/modules/module_manager/external/`. Lifecycle composition remains in `Data/modules/module_manager/manager.py`; routes are `Data/backend/routes/modules.py`.
 
-Privileged system dependency approval is bound to request arguments/plan hash. Normal production execution uses JobRuntime/Worker Fabric; synchronous install fallback is default-off and must be explicitly enabled. Installation state/receipts are persisted in CONTROL domain migration v6.
+Privileged system dependency approval is bound to request arguments/plan hash.
+Production classifies `external.module.install` as **EXTERNAL_REQUIRED** and routes
+it exclusively to the Worker Fabric `module_runtime` pool (venv/pip/npm/build/
+staging/promotion). FastAPI may plan/approve/enqueue only — never run pip/npm
+inline. Synchronous install fallback is mechanically gated to explicit
+`inprocess_test` allow (`LEVIATHAN_MODULE_ALLOW_SYNC_INSTALL_TEST`) and is
+unreachable in production. Installation state/receipts are persisted in CONTROL
+domain migration v6.
+
+## 18.2b Agent / Signal / Workflow / Scheduler ownership (externalization wave)
+
+| Concern | Owner pool | Production rule |
+|---------|------------|-----------------|
+| Module dependency install | `module_runtime` | EXTERNAL_REQUIRED; staged install only |
+| Long-running agent missions / multi-agent | `agents` | `agent.advance` units; durable children; no ThreadPoolExecutor wait; no `jobs.process_next()` |
+| Signal delivery / retry / housekeeping | `agent_signals` | enqueue deliver; handlers create/enqueue missions — never run mission bodies |
+| Workflow continuation | `workflow` | one `workflow.advance` unit; EXTERNAL_REQUIRED steps become specialist child jobs; no busy-wait |
+| Schedule evaluation | `scheduler` (singleton) | enqueue-only; never execute targets; never call/monkeypatch `process_next`; specialist pool routing via `pool_for_capability` |
+
+FastAPI remains the control plane (validate / authorize / enqueue). ExecutionGateway
+authorization remains mandatory for capability work. Parent cancellation propagates
+to child missions and pending specialist jobs where owned.
+
+Primary install authority is `Data/modules/module_manager/external/install.py`; dependency/package-manager helpers and adapters live beside it under `Data/modules/module_manager/external/`. Lifecycle composition remains in `Data/modules/module_manager/manager.py`; routes are `Data/backend/routes/modules.py`.
+
+Privileged system dependency approval is bound to request arguments/plan hash. Installation state/receipts are persisted in CONTROL domain migration v6.
 
 ## 18.3 Skills
 

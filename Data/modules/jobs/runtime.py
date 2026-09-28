@@ -52,6 +52,7 @@ EXTERNAL_WORKER_CAPABILITIES: frozenset[str] = frozenset(
         "agent_signal.deliver",
         "agent_signal.retry",
         "agent_signal.housekeeping",
+        "external.module.install",
         "provider.http",
         "provider.chat.complete",
         "provider.chat.stream",

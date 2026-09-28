@@ -50,10 +50,17 @@ def register_external_control_capabilities(catalog: CapabilityCatalog) -> None:
         heavy = cap_id.startswith("external.module.") or cap_id == "external.knowledge.assimilate"
         if cap_id == "external.module.install":
             effects = (SideEffect.READ, SideEffect.WRITE, SideEffect.NETWORK, SideEffect.EXECUTE)
+            # Install mutates host/fs/network/process trees — never API-inline.
+            execution_class = "EXTERNAL_REQUIRED"
+            worker_kind = "module_runtime"
         elif heavy:
             effects = (SideEffect.READ, SideEffect.EXECUTE)
+            execution_class = "EXTERNAL_PREFERRED"
+            worker_kind = "general"
         else:
             effects = (SideEffect.READ,)
+            execution_class = "INLINE_SAFE"
+            worker_kind = "general"
         catalog.register(
             CapabilityDefinition(
                 id=cap_id,
@@ -83,8 +90,9 @@ def register_external_control_capabilities(catalog: CapabilityCatalog) -> None:
                 },
                 output_schema={"type": "object", "additionalProperties": True},
                 metadata={
-                    "execution_class": "EXTERNAL_PREFERRED" if heavy else "INLINE_SAFE",
+                    "execution_class": execution_class,
                     "domain": "external_capability",
+                    "worker_kind": worker_kind,
                 },
             )
         )

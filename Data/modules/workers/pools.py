@@ -177,6 +177,18 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
         description="Coding session advancement",
         max_count=2,
     ),
+    "module_runtime": PoolDefinition(
+        pool_id="module_runtime",
+        entrypoint="Data.modules.workers.entrypoints.module_runtime",
+        default_count=1,
+        job_kinds=("external.module.install",),
+        resource_classes=("IO_HEAVY", "NETWORK_BOUND", "CPU_HEAVY", "MEMORY_HEAVY"),
+        description=(
+            "External module dependency installation — venv/pip/npm/build/"
+            "staged promotion. Not arbitrary module invoke."
+        ),
+        max_count=2,
+    ),
     "agents": PoolDefinition(
         pool_id="agents",
         entrypoint="Data.modules.workers.entrypoints.agents",
