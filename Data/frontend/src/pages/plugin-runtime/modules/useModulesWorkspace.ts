@@ -10,6 +10,8 @@ import {
   deriveKpis,
   filterCounts,
   filterModules,
+  installActionText,
+  lifecycleFailureText,
   moduleId,
   parseCapabilities,
   tryParseArgs,
@@ -215,8 +217,10 @@ export function useModulesWorkspace() {
     try {
       if (action === "install") {
         const res = await api.installModule(id);
-        toast(`Install: ${JSON.stringify(res.job_id ?? res.result ?? "ok")}`);
-        setLastAction("Installed successfully");
+        const text = installActionText("install", res);
+        setPanelJson(JSON.stringify(res, null, 2));
+        toast(text);
+        setLastAction(text);
       } else if (action === "start") {
         await api.startModule(id);
         toast(`Started ${id}`);
@@ -268,10 +272,11 @@ export function useModulesWorkspace() {
       } else if (action === "install-version") {
         const ref = versionRef.trim() || undefined;
         const res = await api.installModuleVersion(id, { ref, activate: false });
+        const text = installActionText("install-version", res);
         setPanelJson(JSON.stringify(res, null, 2));
         setDetailTab("versions");
-        toast(`Install version: ${JSON.stringify(res.job_id ?? res.result ?? "ok")}`);
-        setLastAction("Version install requested");
+        toast(text);
+        setLastAction(text);
       } else if (action === "activate-version") {
         const vid = versionId.trim();
         if (!vid) {
@@ -306,7 +311,11 @@ export function useModulesWorkspace() {
       const snap = await api.listModules().catch(() => null);
       if (snap) applySnapshot(snap);
     } catch (err) {
-      toast(errorMessage(err));
+      const msg = lifecycleFailureText(action, errorMessage(err));
+      setLastAction(msg);
+      toast(msg);
+      const snap = await api.listModules().catch(() => null);
+      if (snap) applySnapshot(snap);
     } finally {
       setLifecycleBusy(false);
     }

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from ...errors import failure_from_lifecycle_result
 from ...types import ModuleHealth, ModuleResult, ModuleStatus
-from ..types import AdapterType, ExternalRuntimeState, normalize_capability_parts
+from ..install import InstallError
+from ..types import AdapterType, ExternalFailureCode, ExternalRuntimeState, normalize_capability_parts
 from .base import AdapterContext, CancelCheck, ProgressCb
 from .catalog_source import CatalogSourceAdapter
 from .cli import CliAdapter
@@ -61,7 +63,16 @@ class CompositeAdapter:
     def ensure_installed(self, *, progress: ProgressCb | None = None, cancel_check: CancelCheck | None = None) -> dict[str, Any]:
         results = []
         for child in self._children:
-            results.append(child.ensure_installed(progress=progress, cancel_check=cancel_check))
+            result = child.ensure_installed(progress=progress, cancel_check=cancel_check)
+            results.append(result)
+            failed = failure_from_lifecycle_result(result if isinstance(result, dict) else {"result": result})
+            if failed is not None:
+                code, detail = failed
+                try:
+                    failure_code = ExternalFailureCode(code)
+                except ValueError:
+                    failure_code = ExternalFailureCode.INSTALL_FAILED
+                raise InstallError(failure_code, detail)
         return {"status": "INSTALLED", "children": results}
 
     def start(self) -> dict[str, Any]:

@@ -539,10 +539,39 @@ export function formatMeasured(m: MeasuredValue<string | number | boolean>, fall
   return fallback;
 }
 
+export function installActionText(
+  action: "install" | "install-version",
+  response: { status?: unknown; job_id?: unknown; result?: unknown } | null | undefined,
+): string {
+  const status = String(response?.status ?? "").toUpperCase();
+  const inFlight = status === "QUEUED" || status === "RUNNING" || status === "CREATED" || status === "RETRY_WAIT";
+  const jobWithoutResult =
+    Boolean(response?.job_id) &&
+    response?.result == null &&
+    status !== "COMPLETED" &&
+    status !== "INSTALLED";
+  const queued = inFlight || jobWithoutResult;
+  if (queued) {
+    return action === "install" ? "Install queued" : "Version install queued";
+  }
+  return action === "install" ? "Installed successfully" : "Version installed";
+}
+
+export function lifecycleFailureText(action: string, detail: string): string {
+  const label =
+    action === "install" ? "Install failed" : action === "install-version" ? "Version install failed" : "";
+  const body = detail.trim();
+  if (!label) return body || "Request failed";
+  if (!body) return label;
+  if (body.toLowerCase().startsWith(label.toLowerCase())) return body;
+  return `${label} — ${body}`;
+}
+
 export function lifecycleBadges(row: ManagedModuleRow): { label: string; tone: StatusTone }[] {
   const badges: { label: string; tone: StatusTone }[] = [];
   const s = statusUpper(row.status);
-  if (s === "DISCOVERED" || !isInstalled(row)) {
+  const failed = s === "FAILED" || s === "ERROR";
+  if (!failed && (s === "DISCOVERED" || !isInstalled(row))) {
     badges.push({ label: "DISCOVERED", tone: "cyan" });
   }
   if (isInstalled(row)) {

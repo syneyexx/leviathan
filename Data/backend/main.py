@@ -2538,6 +2538,7 @@ app.include_router(
         module_manager=module_manager,
         observability=observability,
         job_runtime=job_runtime,
+        approval_service=approval_service,
     )
 )
 app.include_router(

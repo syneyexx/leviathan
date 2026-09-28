@@ -106,16 +106,35 @@ class ExternalModuleExecutor:
                     provider_kind="module",
                     provider_ref=provider_ref,
                 )
+            versioned = "activate" in arguments or bool(arguments.get("ref"))
+            action = "install_version" if versioned else "install"
             try:
                 if job_id:
                     self.module_manager.register_job(module_id, job_id)
-                managed = self.module_manager.get(module_id)
-                inst = managed.instance if managed else None
-                if inst is not None and hasattr(inst, "ensure_installed"):
-                    result = inst.ensure_installed(progress=progress, cancel_check=cancel_check)
+                self._metric(
+                    "module.install.started",
+                    {"module_id": module_id, "action": action, "job_id": job_id},
+                )
+                lifecycle_kwargs: dict[str, Any] = {}
+                if progress is not None:
+                    lifecycle_kwargs["progress"] = progress
+                if cancel_check is not None:
+                    lifecycle_kwargs["cancel_check"] = cancel_check
+                if versioned:
+                    activate = bool(arguments.get("activate")) if "activate" in arguments else True
+                    result = self.module_manager.install_version(
+                        module_id,
+                        ref=arguments.get("ref"),
+                        activate=activate,
+                        **lifecycle_kwargs,
+                    )
                 else:
-                    result = self.module_manager.ensure_installed(module_id)
+                    result = self.module_manager.ensure_installed(module_id, **lifecycle_kwargs)
                 self._metric("external.modules.installed", {"module_id": module_id})
+                self._metric(
+                    "module.install.completed",
+                    {"module_id": module_id, "action": action, "job_id": job_id},
+                )
                 return CapabilityResult(
                     request_id=request_id or "",
                     capability_id=capability_id,
@@ -123,15 +142,44 @@ class ExternalModuleExecutor:
                     output=normalize_capability_parts(summary=f"installed {module_id}", structured_data=result),
                     provider_kind="module",
                     provider_ref=provider_ref,
+                    telemetry={"module_id": module_id, "action": action, "job_id": job_id},
                 )
             except ModuleManagerError as exc:
+                self._metric(
+                    "module.install.failed",
+                    {
+                        "module_id": module_id,
+                        "action": exc.action or action,
+                        "error_code": exc.code,
+                        "error_class": type(exc).__name__,
+                        "error": str(exc.detail or "")[:240],
+                        "job_id": job_id,
+                    },
+                )
+                status = (
+                    CapabilityStatus.CANCELLED
+                    if exc.code == "CANCELLED"
+                    else CapabilityStatus.FAILED
+                )
                 return CapabilityResult(
                     request_id=request_id or "",
                     capability_id=capability_id,
-                    status=CapabilityStatus.FAILED,
+                    status=status,
                     error=str(exc),
+                    output=normalize_capability_parts(
+                        summary=str(exc),
+                        error=exc.public_dict(),
+                        metadata={"module_id": module_id, "action": exc.action or action, "job_id": job_id},
+                    ),
                     provider_kind="module",
                     provider_ref=provider_ref,
+                    telemetry={
+                        "module_id": module_id,
+                        "action": exc.action or action,
+                        "error_code": exc.code,
+                        "error_class": type(exc).__name__,
+                        "job_id": job_id,
+                    },
                 )
             finally:
                 if job_id:

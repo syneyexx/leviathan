@@ -562,7 +562,16 @@ export type SoakReport = {
 };
 
 export type ApiErrorBody = {
-  detail?: string | { msg: string }[] | { code?: string; message?: string; retryable?: boolean };
+  detail?:
+    | string
+    | { msg: string }[]
+    | {
+        code?: string;
+        message?: string;
+        retryable?: boolean;
+        module_id?: string;
+        action?: string;
+      };
 };
 
 export type CapabilityState = "supported" | "unsupported" | "unknown" | "unverified" | "unmeasured";

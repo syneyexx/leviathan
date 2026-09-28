@@ -171,14 +171,14 @@ class ExternalModulesSkillsRouteTests(unittest.TestCase):
                 "/api/modules/fake-cli/install-version",
                 json={"ref": None, "activate": True},
             )
-            self.assertIn(install_ver.status_code, {200, 400})
+            self.assertIn(install_ver.status_code, {200, 400, 409, 422, 424})
             activate_ver = client.post(
                 "/api/modules/fake-cli/activate-version",
                 json={"version_id": "missing-version"},
             )
-            self.assertIn(activate_ver.status_code, {200, 400})
+            self.assertIn(activate_ver.status_code, {200, 400, 404, 409, 422})
             rollback_ver = client.post("/api/modules/fake-cli/rollback-version", json={})
-            self.assertIn(rollback_ver.status_code, {200, 400})
+            self.assertIn(rollback_ver.status_code, {200, 400, 404, 409, 422})
 
             skills = client.get("/api/skills", params={"query": "cinematic", "limit": 10})
             self.assertEqual(skills.status_code, 200)

@@ -1,6 +1,7 @@
 """Universal Module Manager — one loader for LEVIATHAN modules/plugins."""
 
-from .manager import ModuleManager, ModuleManagerError
+from .errors import ModuleManagerError
+from .manager import ModuleManager
 from .types import (
     CapabilityAnnouncement,
     ILeviathanModule,

@@ -51,6 +51,19 @@ class RetryPolicy:
                 "VALIDATION_ERROR",
                 "PERMISSION_DENIED",
                 "APPROVAL_REQUIRED",
+                "DEPENDENCY_MISSING",
+                "INSTALL_FAILED",
+                "INVALID_RESULT",
+                "CAPABILITY_NOT_FOUND",
+                "NOT_INSTALLED",
+                "UPDATE_BLOCKED_ACTIVE",
+                "PROTOCOL_ERROR",
+                "CANCEL_UNSUPPORTED",
+                "PORT_IN_USE",
+                "START_FAILED",
+                "HEALTH_FAILED",
+                "EXIT_NONZERO",
+                "NOT_AVAILABLE",
             }:
                 return False
             if code in {

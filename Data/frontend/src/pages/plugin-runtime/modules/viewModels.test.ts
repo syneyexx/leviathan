@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { detailMessage } from "../../../api/http";
 import {
   actionAvailability,
   deriveKpis,
@@ -6,8 +7,11 @@ import {
   filterModules,
   formatMeasured,
   healthLabel,
+  installActionText,
   isExecutable,
   isInstalled,
+  lifecycleBadges,
+  lifecycleFailureText,
   moduleId,
   parseCapabilities,
   redactSecrets,
@@ -160,5 +164,40 @@ describe("Modules view models", () => {
     const kpis = deriveKpis({ enabled: false, modules: [] }, {});
     expect(kpis.featureFlag).toBe("OFF");
     expect(kpis.totalModules).toBe(0);
+  });
+
+  it("does not present a queued install as installed", () => {
+    expect(installActionText("install", { status: "QUEUED", job_id: "job-1" })).toBe("Install queued");
+    expect(installActionText("install-version", { status: "QUEUED", job_id: "job-2" })).toBe(
+      "Version install queued",
+    );
+    expect(installActionText("install", { result: { status: "INSTALLED" } })).toBe("Installed successfully");
+    expect(installActionText("install-version", { result: { status: "INSTALLED" } })).toBe("Version installed");
+  });
+
+  it("surfaces backend lifecycle detail instead of a generic HTTP failure", () => {
+    const message = detailMessage(
+      {
+        detail: {
+          code: "DEPENDENCY_MISSING",
+          message: "missing dependencies: curl",
+          module_id: "ghosttrack",
+          action: "install",
+        },
+      },
+      424,
+    );
+    const text = lifecycleFailureText("install", message);
+    expect(text).toBe("Install failed — DEPENDENCY_MISSING: missing dependencies: curl");
+    expect(text).not.toContain("Request failed (500)");
+    expect(lifecycleFailureText("install-version", message)).toBe(
+      "Version install failed — DEPENDENCY_MISSING: missing dependencies: curl",
+    );
+  });
+
+  it("shows FAILED instead of only DISCOVERED after an install failure", () => {
+    const badges = lifecycleBadges(row({ status: "FAILED", error: "DEPENDENCY_MISSING: curl" }));
+    expect(badges.map((badge) => badge.label)).toContain("FAILED");
+    expect(badges.map((badge) => badge.label)).not.toContain("DISCOVERED");
   });
 });

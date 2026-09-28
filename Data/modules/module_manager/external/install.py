@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from ..errors import bounded_process_output
 from .types import ExternalConfig, ExternalFailureCode, InstallStrategy
 
 
@@ -208,7 +209,7 @@ class InstallationService:
                 env=post_env,
             )
             if completed.returncode != 0:
-                detail = (completed.stderr or completed.stdout or "").strip()[:800]
+                detail = bounded_process_output(completed.stderr, completed.stdout)
                 raise InstallError(
                     ExternalFailureCode.INSTALL_FAILED,
                     f"post_install failed ({completed.returncode}): {detail}",
@@ -255,7 +256,7 @@ class InstallationService:
                     shell=False,
                 )
                 if completed.returncode == 0 and ref:
-                    subprocess.run(
+                    checkout = subprocess.run(
                         ["git", "-C", str(dest), "checkout", ref],
                         capture_output=True,
                         text=True,
@@ -263,10 +264,15 @@ class InstallationService:
                         check=False,
                         shell=False,
                     )
+                    if checkout.returncode != 0:
+                        raise InstallError(
+                            ExternalFailureCode.INSTALL_FAILED,
+                            f"git checkout failed: {bounded_process_output(checkout.stderr, checkout.stdout)}",
+                        )
             if completed.returncode != 0:
                 raise InstallError(
                     ExternalFailureCode.INSTALL_FAILED,
-                    f"git failed: {completed.stderr[:800] or completed.stdout[:800]}",
+                    f"{_git_stage(cmd)} failed: {bounded_process_output(completed.stderr, completed.stdout)}",
                 )
         rev = subprocess.run(
             ["git", "-C", str(dest), "rev-parse", "HEAD"],
@@ -293,10 +299,10 @@ class InstallationService:
                 shell=False,
             )
             if completed.returncode != 0:
-                detail = (completed.stderr or completed.stdout or "").strip()[:800]
+                detail = bounded_process_output(completed.stderr, completed.stdout)
                 raise InstallError(
                     ExternalFailureCode.INSTALL_FAILED,
-                    f"venv failed: {detail or 'unknown (is python3-venv installed?)'}",
+                    f"venv failed: {detail if detail != 'no output' else 'unknown (is python3-venv installed?)'}",
                 )
         pip = venv / ("Scripts/pip.exe" if os.name == "nt" else "bin/pip")
         if not pip.exists():
@@ -316,7 +322,7 @@ class InstallationService:
                     shell=False,
                 )
                 if completed.returncode != 0:
-                    detail = (completed.stderr or completed.stdout or "").strip()[:500]
+                    detail = bounded_process_output(completed.stderr, completed.stdout)
                     raise InstallError(ExternalFailureCode.INSTALL_FAILED, f"pip -r failed: {detail}")
         if packages:
             completed = subprocess.run(
@@ -328,7 +334,7 @@ class InstallationService:
                 shell=False,
             )
             if completed.returncode != 0:
-                detail = (completed.stderr or completed.stdout or "").strip()[:500]
+                detail = bounded_process_output(completed.stderr, completed.stdout)
                 raise InstallError(ExternalFailureCode.INSTALL_FAILED, f"pip install failed: {detail}")
         # Also install editable package if pyproject/setup present.
         if (root / "pyproject.toml").exists() or (root / "setup.py").exists():
@@ -341,7 +347,7 @@ class InstallationService:
                 shell=False,
             )
             if editable.returncode != 0:
-                detail = (editable.stderr or editable.stdout or "").strip()[:500]
+                detail = bounded_process_output(editable.stderr, editable.stdout)
                 raise InstallError(ExternalFailureCode.INSTALL_FAILED, f"pip editable failed: {detail}")
         return {"python": py, "venv": str(venv)}
 
@@ -392,7 +398,7 @@ class InstallationService:
             shell=False,
         )
         if completed.returncode != 0:
-            detail = (completed.stderr or completed.stdout or "").strip()[:500]
+            detail = bounded_process_output(completed.stderr, completed.stdout)
             raise InstallError(ExternalFailureCode.INSTALL_FAILED, f"pip failed: {detail}")
         return {"pip_packages": packages, "editable": editable, "cwd": str(root)}
 
@@ -422,9 +428,20 @@ class InstallationService:
             env=env,
         )
         if completed.returncode != 0:
-            detail = (completed.stderr or completed.stdout or "").strip()[:800]
+            detail = bounded_process_output(completed.stderr, completed.stdout)
             raise InstallError(ExternalFailureCode.INSTALL_FAILED, f"{tool} failed: {detail}")
         return {tool: "ok", "tool_path": tool_path, "node_bin_dir": node_dir}
+
+
+def _git_stage(cmd: list[str]) -> str:
+    verbs = set(cmd)
+    if "clone" in verbs:
+        return "git clone"
+    if "fetch" in verbs:
+        return "git fetch"
+    if "checkout" in verbs:
+        return "git checkout"
+    return "git"
 
 
 def _missing_binaries(names: tuple[str, ...]) -> list[str]:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from ...types import ModuleHealth, ModuleResult, ModuleStatus
+from ..install import InstallError
 from ..types import ExternalFailureCode, ExternalRuntimeState, normalize_capability_parts
 from .base import AdapterContext, CancelCheck, ProgressCb
 
@@ -98,7 +99,7 @@ class McpAdapter:
     def start(self) -> dict[str, Any]:
         bridge = self.ctx.mcp_bridge
         if bridge is None:
-            raise RuntimeError("mcp_bridge not configured")
+            raise InstallError(ExternalFailureCode.PROTOCOL_ERROR, "mcp_bridge not configured")
         self._state = ExternalRuntimeState.STARTING
         self._reregister_mcp()
         try:
@@ -121,7 +122,7 @@ class McpAdapter:
             return {"status": "RUNNING", "server_id": self._server_id}
         except Exception as exc:  # noqa: BLE001
             self._state = ExternalRuntimeState.FAILED
-            raise RuntimeError(f"MCP start failed: {exc}") from exc
+            raise InstallError(ExternalFailureCode.START_FAILED, f"MCP start failed: {exc}") from exc
 
     def stop(self) -> dict[str, Any]:
         bridge = self.ctx.mcp_bridge

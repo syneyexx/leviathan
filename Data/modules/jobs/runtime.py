@@ -497,7 +497,7 @@ class JobRuntime:
                 return record
 
             error_text = cap_result.error or cap_result.status.value
-            error_code = cap_result.status.value
+            error_code = _capability_error_code(cap_result)
             retryable = self.retry_policy.classify_retryable(
                 error_text,
                 error_code=error_code,
@@ -602,3 +602,19 @@ class JobRuntime:
             current = self.store.get(job.job_id)
             if current is None or current.state in TERMINAL_JOB_STATES or current.state == JobState.RETRY_WAIT:
                 self._cancel_flags.pop(job.job_id, None)
+
+
+def _capability_error_code(cap_result: Any) -> str:
+    """Prefer a structured lifecycle code when the capability result carries one."""
+    telemetry = getattr(cap_result, "telemetry", None) or {}
+    if isinstance(telemetry, dict):
+        coded = telemetry.get("error_code")
+        if isinstance(coded, str) and coded.strip():
+            return coded.strip()
+    output = getattr(cap_result, "output", None)
+    if isinstance(output, dict):
+        err = output.get("error")
+        if isinstance(err, dict) and err.get("code"):
+            return str(err["code"])
+    status = getattr(cap_result, "status", None)
+    return str(getattr(status, "value", status) or "FAILED")
