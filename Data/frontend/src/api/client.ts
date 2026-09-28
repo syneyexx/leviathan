@@ -931,6 +931,7 @@ export const api = {
     query?: string;
     include_catalog?: boolean;
     enabled_only?: boolean;
+    classification?: "all" | "core" | "agent" | "external" | "tools" | string;
     limit?: number;
     offset?: number;
   } = {}): Promise<{
@@ -938,13 +939,26 @@ export const api = {
     count: number;
     offset: number;
     limit: number;
-    totals: { installed: number; catalog: number };
+    totals: {
+      installed: number;
+      catalog: number;
+      total?: number;
+      available?: number | null;
+      external_packs?: number | null;
+      tools?: number | null;
+      issues?: number | null;
+      agent_skills?: number | null;
+      updates_available?: number | null;
+      classifications?: Record<string, number | null | undefined>;
+      truth?: Record<string, boolean>;
+    };
     truth?: Record<string, boolean>;
   }> {
     const q = new URLSearchParams();
     if (params.query) q.set("query", params.query);
     if (params.include_catalog) q.set("include_catalog", "true");
     if (params.enabled_only) q.set("enabled_only", "true");
+    if (params.classification) q.set("classification", params.classification);
     if (params.limit != null) q.set("limit", String(params.limit));
     if (params.offset != null) q.set("offset", String(params.offset));
     const qs = q.toString();
@@ -966,6 +980,36 @@ export const api = {
     return request(`/api/skills/${encodeURIComponent(skillId)}/enable`, {
       method: "POST",
       body: JSON.stringify({ enabled }),
+    });
+  },
+
+  testSkill(skillId: string): Promise<{
+    result: {
+      ok: boolean;
+      skill_id?: string;
+      checks?: Array<{ name: string; passed: boolean; detail: string }>;
+      truth?: Record<string, boolean>;
+    };
+    skill: Record<string, unknown>;
+  }> {
+    return request(`/api/skills/${encodeURIComponent(skillId)}/test`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+
+  executeSkill(
+    skillId: string,
+    payload: { capability_id?: string; arguments?: Record<string, unknown> } = {},
+  ): Promise<{
+    skill_id: string;
+    capability_id: string;
+    result: Record<string, unknown>;
+    truth?: Record<string, boolean>;
+  }> {
+    return request(`/api/skills/${encodeURIComponent(skillId)}/execute`, {
+      method: "POST",
+      body: JSON.stringify(payload),
     });
   },
 
