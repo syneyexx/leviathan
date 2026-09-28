@@ -54,6 +54,8 @@ CONTROL_TABLES: frozenset[str] = frozenset(
         "eval_regression_corpus",
         "eval_reports",
         "evidence",
+        "external_install_dependency_receipts",
+        "external_install_operations",
         "external_log_windows",
         "external_module_versions",
         "external_modules",

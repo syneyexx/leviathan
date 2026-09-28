@@ -132,6 +132,10 @@ def validate_feature_hierarchy(desired: dict[str, Any]) -> None:
     checks = [
         ("features.chat_sse", ("features.chat_streaming",)),
         ("features.module_manager_subprocess", ("features.module_manager_enabled",)),
+        (
+            "features.module_manager_allow_sync_install_fallback",
+            ("features.module_manager_enabled",),
+        ),
         ("features.coding_enabled", ("features.agents_enabled",)),
         ("features.mcp_stdio", ("features.mcp_enabled",)),
         ("features.mcp_http", ("features.mcp_enabled",)),

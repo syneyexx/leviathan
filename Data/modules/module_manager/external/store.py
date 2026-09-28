@@ -8,10 +8,16 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
+
+# Terminal install-operation statuses — used for active-idempotency uniqueness.
+_TERMINAL_INSTALL_STATUSES = frozenset(
+    {"SUCCEEDED", "FAILED", "CANCELLED", "COMPLETED", "READY"}
+)
 
 
 def utc_now() -> str:
@@ -158,6 +164,68 @@ class ExternalCapabilityStore:
                 byte_count INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS external_install_operations (
+                operation_id TEXT PRIMARY KEY,
+                module_id TEXT NOT NULL,
+                requested_ref TEXT,
+                status TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                progress REAL,
+                job_id TEXT,
+                approval_id TEXT,
+                plan_hash TEXT NOT NULL,
+                plan_json TEXT NOT NULL,
+                package_manager TEXT,
+                error_code TEXT,
+                error_detail TEXT,
+                retryable INTEGER NOT NULL DEFAULT 0,
+                rollback_status TEXT,
+                idempotency_key TEXT,
+                started_at TEXT,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                FOREIGN KEY(module_id) REFERENCES external_modules(module_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_ext_install_ops_module
+                ON external_install_operations(module_id, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_ext_install_ops_status
+                ON external_install_operations(status);
+            CREATE INDEX IF NOT EXISTS idx_ext_install_ops_job
+                ON external_install_operations(job_id);
+            CREATE INDEX IF NOT EXISTS idx_ext_install_ops_idempotency
+                ON external_install_operations(idempotency_key);
+            -- Prevent two equivalent ACTIVE installs for the same idempotency key.
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_ext_install_ops_active_idempotency
+                ON external_install_operations(idempotency_key)
+                WHERE idempotency_key IS NOT NULL
+                  AND status NOT IN ('SUCCEEDED', 'FAILED', 'CANCELLED', 'COMPLETED', 'READY');
+
+            CREATE TABLE IF NOT EXISTS external_install_dependency_receipts (
+                receipt_id TEXT PRIMARY KEY,
+                operation_id TEXT NOT NULL,
+                dependency_id TEXT NOT NULL,
+                state_before TEXT,
+                state_after TEXT,
+                package_manager TEXT,
+                packages_json TEXT NOT NULL DEFAULT '[]',
+                observed_version_before TEXT,
+                observed_version_after TEXT,
+                newly_installed INTEGER NOT NULL DEFAULT 0,
+                command_fingerprint TEXT,
+                started_at TEXT,
+                completed_at TEXT,
+                status TEXT NOT NULL,
+                error_code TEXT,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                FOREIGN KEY(operation_id) REFERENCES external_install_operations(operation_id)
+                    ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_ext_install_receipts_operation
+                ON external_install_dependency_receipts(operation_id);
             """
         )
 
@@ -889,3 +957,327 @@ class ExternalCapabilityStore:
                 return []
             lines = json.loads(row["lines_json"] or "[]")
             return list(lines)[-max(1, min(int(limit), 500)) :]
+
+    # --- install operations ---
+
+    def create_install_operation(
+        self,
+        *,
+        module_id: str,
+        plan_hash: str,
+        plan: dict[str, Any] | str,
+        status: str = "PENDING",
+        phase: str = "PLANNING",
+        operation_id: str | None = None,
+        requested_ref: str | None = None,
+        progress: float | None = None,
+        job_id: str | None = None,
+        approval_id: str | None = None,
+        package_manager: str | None = None,
+        error_code: str | None = None,
+        error_detail: str | None = None,
+        retryable: bool = False,
+        rollback_status: str | None = None,
+        idempotency_key: str | None = None,
+        started_at: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if idempotency_key:
+            existing = self.find_active_install_operation(module_id, idempotency_key)
+            if existing is not None:
+                return existing
+
+        now = utc_now()
+        oid = operation_id or str(uuid.uuid4())
+        plan_json = (
+            plan
+            if isinstance(plan, str)
+            else json.dumps(plan or {}, separators=(",", ":"))
+        )
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            # Application-level active uniqueness (partial unique index is the DB guard).
+            if idempotency_key:
+                conflict = conn.execute(
+                    """
+                    SELECT operation_id FROM external_install_operations
+                    WHERE idempotency_key = ?
+                      AND status NOT IN ('SUCCEEDED', 'FAILED', 'CANCELLED', 'COMPLETED', 'READY')
+                    LIMIT 1
+                    """,
+                    (idempotency_key,),
+                ).fetchone()
+                if conflict:
+                    return self.get_install_operation(str(conflict["operation_id"])) or {}
+            conn.execute(
+                """
+                INSERT INTO external_install_operations(
+                    operation_id, module_id, requested_ref, status, phase, progress,
+                    job_id, approval_id, plan_hash, plan_json, package_manager,
+                    error_code, error_detail, retryable, rollback_status,
+                    idempotency_key, started_at, updated_at, completed_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    oid,
+                    module_id,
+                    requested_ref,
+                    status,
+                    phase,
+                    progress,
+                    job_id,
+                    approval_id,
+                    plan_hash,
+                    plan_json,
+                    package_manager,
+                    error_code,
+                    error_detail,
+                    1 if retryable else 0,
+                    rollback_status,
+                    idempotency_key,
+                    started_at or now,
+                    now,
+                    None,
+                    json.dumps(metadata or {}, separators=(",", ":")),
+                ),
+            )
+        return self.get_install_operation(oid) or {}
+
+    def get_install_operation(self, operation_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                "SELECT * FROM external_install_operations WHERE operation_id = ?",
+                (operation_id,),
+            ).fetchone()
+            return self._install_operation_row(row) if row else None
+
+    def update_install_operation(
+        self,
+        operation_id: str,
+        *,
+        status: str | None = None,
+        phase: str | None = None,
+        progress: float | None = None,
+        job_id: str | None = None,
+        approval_id: str | None = None,
+        package_manager: str | None = None,
+        error_code: str | None = None,
+        error_detail: str | None = None,
+        retryable: bool | None = None,
+        rollback_status: str | None = None,
+        started_at: str | None = None,
+        completed_at: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        clear_error: bool = False,
+    ) -> dict[str, Any] | None:
+        now = utc_now()
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            existing = conn.execute(
+                "SELECT * FROM external_install_operations WHERE operation_id = ?",
+                (operation_id,),
+            ).fetchone()
+            if existing is None:
+                return None
+
+            new_status = status if status is not None else existing["status"]
+            sets: list[str] = ["updated_at = ?"]
+            params: list[Any] = [now]
+
+            def _set(col: str, value: Any) -> None:
+                sets.append(f"{col} = ?")
+                params.append(value)
+
+            if status is not None:
+                _set("status", status)
+            if phase is not None:
+                _set("phase", phase)
+            if progress is not None:
+                _set("progress", progress)
+            if job_id is not None:
+                _set("job_id", job_id)
+            if approval_id is not None:
+                _set("approval_id", approval_id)
+            if package_manager is not None:
+                _set("package_manager", package_manager)
+            if clear_error:
+                _set("error_code", None)
+                _set("error_detail", None)
+            else:
+                if error_code is not None:
+                    _set("error_code", error_code)
+                if error_detail is not None:
+                    _set("error_detail", error_detail)
+            if retryable is not None:
+                _set("retryable", 1 if retryable else 0)
+            if rollback_status is not None:
+                _set("rollback_status", rollback_status)
+            if started_at is not None:
+                _set("started_at", started_at)
+            if metadata is not None:
+                _set("metadata_json", json.dumps(metadata, separators=(",", ":")))
+
+            resolved_completed = completed_at
+            if resolved_completed is None and str(new_status) in _TERMINAL_INSTALL_STATUSES:
+                if not existing["completed_at"]:
+                    resolved_completed = now
+            if resolved_completed is not None:
+                _set("completed_at", resolved_completed)
+
+            params.append(operation_id)
+            conn.execute(
+                f"UPDATE external_install_operations SET {', '.join(sets)} WHERE operation_id = ?",
+                params,
+            )
+        return self.get_install_operation(operation_id)
+
+    def find_active_install_operation(
+        self,
+        module_id: str,
+        idempotency_key: str | None,
+    ) -> dict[str, Any] | None:
+        if not idempotency_key:
+            return None
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                """
+                SELECT * FROM external_install_operations
+                WHERE module_id = ?
+                  AND idempotency_key = ?
+                  AND status NOT IN ('SUCCEEDED', 'FAILED', 'CANCELLED', 'COMPLETED', 'READY')
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                (module_id, idempotency_key),
+            ).fetchone()
+            return self._install_operation_row(row) if row else None
+
+    def list_install_operations(self, module_id: str) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            rows = conn.execute(
+                """
+                SELECT * FROM external_install_operations
+                WHERE module_id = ?
+                ORDER BY updated_at DESC
+                """,
+                (module_id,),
+            ).fetchall()
+            return [self._install_operation_row(r) for r in rows]
+
+    def add_dependency_receipt(
+        self,
+        *,
+        operation_id: str,
+        dependency_id: str,
+        status: str,
+        receipt_id: str | None = None,
+        state_before: str | None = None,
+        state_after: str | None = None,
+        package_manager: str | None = None,
+        packages: list[str] | tuple[str, ...] | None = None,
+        observed_version_before: str | None = None,
+        observed_version_after: str | None = None,
+        newly_installed: bool = False,
+        command_fingerprint: str | None = None,
+        started_at: str | None = None,
+        completed_at: str | None = None,
+        error_code: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        rid = receipt_id or str(uuid.uuid4())
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            conn.execute(
+                """
+                INSERT INTO external_install_dependency_receipts(
+                    receipt_id, operation_id, dependency_id, state_before, state_after,
+                    package_manager, packages_json, observed_version_before,
+                    observed_version_after, newly_installed, command_fingerprint,
+                    started_at, completed_at, status, error_code, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    rid,
+                    operation_id,
+                    dependency_id,
+                    state_before,
+                    state_after,
+                    package_manager,
+                    json.dumps(list(packages or []), separators=(",", ":")),
+                    observed_version_before,
+                    observed_version_after,
+                    1 if newly_installed else 0,
+                    command_fingerprint,
+                    started_at or now,
+                    completed_at,
+                    status,
+                    error_code,
+                    json.dumps(metadata or {}, separators=(",", ":")),
+                ),
+            )
+        receipts = self.list_dependency_receipts(operation_id)
+        for item in receipts:
+            if item.get("receipt_id") == rid:
+                return item
+        return {"receipt_id": rid, "operation_id": operation_id, "dependency_id": dependency_id}
+
+    def list_dependency_receipts(self, operation_id: str) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            rows = conn.execute(
+                """
+                SELECT * FROM external_install_dependency_receipts
+                WHERE operation_id = ?
+                ORDER BY started_at ASC, receipt_id ASC
+                """,
+                (operation_id,),
+            ).fetchall()
+            return [self._dependency_receipt_row(r) for r in rows]
+
+    def _install_operation_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "operation_id": row["operation_id"],
+            "module_id": row["module_id"],
+            "requested_ref": row["requested_ref"],
+            "status": row["status"],
+            "phase": row["phase"],
+            "progress": row["progress"],
+            "job_id": row["job_id"],
+            "approval_id": row["approval_id"],
+            "plan_hash": row["plan_hash"],
+            "plan": json.loads(row["plan_json"] or "{}"),
+            "package_manager": row["package_manager"],
+            "error_code": row["error_code"],
+            "error_detail": row["error_detail"],
+            "retryable": bool(row["retryable"]),
+            "rollback_status": row["rollback_status"],
+            "idempotency_key": row["idempotency_key"],
+            "started_at": row["started_at"],
+            "updated_at": row["updated_at"],
+            "completed_at": row["completed_at"],
+            "metadata": json.loads(row["metadata_json"] or "{}"),
+        }
+
+    def _dependency_receipt_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "receipt_id": row["receipt_id"],
+            "operation_id": row["operation_id"],
+            "dependency_id": row["dependency_id"],
+            "state_before": row["state_before"],
+            "state_after": row["state_after"],
+            "package_manager": row["package_manager"],
+            "packages": json.loads(row["packages_json"] or "[]"),
+            "observed_version_before": row["observed_version_before"],
+            "observed_version_after": row["observed_version_after"],
+            "newly_installed": bool(row["newly_installed"]),
+            "command_fingerprint": row["command_fingerprint"],
+            "started_at": row["started_at"],
+            "completed_at": row["completed_at"],
+            "status": row["status"],
+            "error_code": row["error_code"],
+            "metadata": json.loads(row["metadata_json"] or "{}"),
+        }

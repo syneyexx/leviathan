@@ -69,6 +69,7 @@ class ApprovalChecker(Protocol):
         *,
         capability_id: str,
         side_effects: tuple[SideEffect, ...],
+        arguments: dict[str, Any] | None = None,
     ) -> bool: ...
 
 
@@ -585,11 +586,21 @@ class ExecutionGateway:
                 "Approval checker not configured; cannot verify gated capability",
                 reason="approval_denied",
             )
-        if not self.approval_checker.is_approved(
-            request.approval_id,
-            capability_id=definition.id,
-            side_effects=definition.side_effects,
-        ):
+        try:
+            approved = self.approval_checker.is_approved(
+                request.approval_id,
+                capability_id=definition.id,
+                side_effects=definition.side_effects,
+                arguments=request.arguments,
+            )
+        except TypeError:
+            # Older checkers without an arguments parameter remain compatible.
+            approved = self.approval_checker.is_approved(
+                request.approval_id,
+                capability_id=definition.id,
+                side_effects=definition.side_effects,
+            )
+        if not approved:
             raise GatewayRejection(
                 f"Approval {request.approval_id!r} is not valid for capability {definition.id!r}",
                 reason="approval_denied",

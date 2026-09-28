@@ -353,6 +353,7 @@ class FeatureFlags:
     neuro_training_real_worker: bool
     module_manager_enabled: bool
     module_manager_subprocess: bool
+    module_manager_allow_sync_install_fallback: bool
     agents_enabled: bool
     coding_enabled: bool
     signal_fabric_enabled: bool
@@ -831,6 +832,9 @@ class Settings:
                 "neuro_training_real_worker": self.features.neuro_training_real_worker,
                 "module_manager_enabled": self.features.module_manager_enabled,
                 "module_manager_subprocess": self.features.module_manager_subprocess,
+                "module_manager_allow_sync_install_fallback": (
+                    self.features.module_manager_allow_sync_install_fallback
+                ),
                 "agents_enabled": self.features.agents_enabled,
                 "coding_enabled": self.features.coding_enabled,
                 "signal_fabric_enabled": self.features.signal_fabric_enabled,
@@ -1254,6 +1258,9 @@ class Settings:
                 neuro_training_real_worker=_env_bool("LEVIATHAN_NEURO_TRAINING_REAL_WORKER", False),
                 module_manager_enabled=_env_bool("LEVIATHAN_FEATURE_MODULE_MANAGER", True),
                 module_manager_subprocess=_env_bool("LEVIATHAN_FEATURE_MODULE_MANAGER_SUBPROCESS", False),
+                module_manager_allow_sync_install_fallback=_env_bool(
+                    "LEVIATHAN_FEATURE_MODULE_MANAGER_ALLOW_SYNC_INSTALL_FALLBACK", False
+                ),
                 agents_enabled=_env_bool("LEVIATHAN_FEATURE_AGENTS", True),
                 coding_enabled=coding_enabled,
                 signal_fabric_enabled=_env_bool("LEVIATHAN_FEATURE_SIGNAL_FABRIC", True),
@@ -1666,6 +1673,14 @@ class Settings:
         if self.features.module_manager_subprocess and not self.features.module_manager_enabled:
             raise ConfigurationError(
                 "LEVIATHAN_FEATURE_MODULE_MANAGER_SUBPROCESS requires LEVIATHAN_FEATURE_MODULE_MANAGER=true"
+            )
+        if (
+            self.features.module_manager_allow_sync_install_fallback
+            and not self.features.module_manager_enabled
+        ):
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_MODULE_MANAGER_ALLOW_SYNC_INSTALL_FALLBACK requires "
+                "LEVIATHAN_FEATURE_MODULE_MANAGER=true"
             )
         if self.features.coding_enabled and not self.features.agents_enabled:
             raise ConfigurationError(
