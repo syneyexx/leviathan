@@ -219,6 +219,19 @@ class InstitutionalRuntimeIntegrationTests(unittest.TestCase):
         self.assertNotEqual(snap["audit"].get("status"), "UNMEASURED")
         self.assertGreaterEqual(snap["reconciliation"]["openCount"], 1)
         self.assertTrue(snap["audit"]["ok"] or snap["audit"]["ok"] is False)
+        opened = snap["reconciliation"]["breaks"][0]
+        self.assertIn("explanation", opened)
+        self.assertIn("field", opened)
+        self.assertIn("createdAt", opened)
+        self.assertGreaterEqual(len(snap["audit"].get("recentEvents") or []), 1)
+        self.assertIn("lastTs", snap["audit"])
+        self.assertIn("research", snap)
+        self.assertIn("dataPlane", snap)
+        self.assertIn("api", snap)
+        self.assertIn("events", snap)
+        exc = snap["exceptions"]["items"][0]
+        self.assertEqual(exc["severity"], "MEDIUM")
+        self.assertIn("lastSeen", exc)
 
     def test_portfolio_service_wires_institutional_on_fill(self) -> None:
         store = MarketSimStore(self.db)

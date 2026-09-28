@@ -1046,15 +1046,27 @@ class InstitutionalRuntime:
             "openCount": len(breaks),
             "breaks": [
                 {
-                    "breakId": b["break_id"],
-                    "domain": b["domain"],
-                    "status": b["status"],
+                    "breakId": b.get("break_id"),
+                    "domain": b.get("domain"),
+                    "field": b.get("field"),
+                    "status": b.get("status"),
                     "fingerprint": b.get("fingerprint"),
+                    "explanation": b.get("explanation"),
+                    "createdAt": b.get("created_at"),
+                    "updatedAt": b.get("updated_at"),
+                    "leftSystem": b.get("left_system"),
+                    "rightSystem": b.get("right_system"),
                 }
                 for b in breaks[:50]
             ],
             "recentRuns": [
-                {"runId": r["run_id"], "status": r["status"], "openCount": r["open_count"]}
+                {
+                    "runId": r.get("run_id"),
+                    "status": r.get("status"),
+                    "openCount": r.get("open_count"),
+                    "domain": r.get("domain"),
+                    "createdAt": r.get("created_at"),
+                }
                 for r in recon_runs[:10]
             ],
         }
@@ -1063,18 +1075,35 @@ class InstitutionalRuntime:
             "openCount": len(exceptions),
             "items": [
                 {
-                    "exceptionId": e["exception_id"],
-                    "kind": e["kind"],
-                    "severity": e["severity"],
-                    "status": e["status"],
+                    "exceptionId": e.get("exception_id"),
+                    "kind": e.get("kind"),
+                    "severity": e.get("severity"),
+                    "status": e.get("status"),
+                    "owner": e.get("owner"),
+                    "firstSeen": e.get("first_seen"),
+                    "lastSeen": e.get("last_seen"),
                 }
                 for e in exceptions[:50]
             ],
         }
+        recent_audit = self.repo.list_audit_events(limit=40)
+        audit_tail = recent_audit[-20:]
         audit_body = {
             "status": audit.get("status"),
             "ok": audit.get("ok"),
             "count": audit.get("count"),
+            "brokenAt": audit.get("brokenAt"),
+            "lastTs": audit.get("lastTs") or (audit_tail[-1].get("ts") if audit_tail else None),
+            "recentEvents": [
+                {
+                    "eventId": ev.get("event_id"),
+                    "kind": ev.get("kind"),
+                    "actor": ev.get("actor"),
+                    "detail": ev.get("detail"),
+                    "ts": ev.get("ts"),
+                }
+                for ev in audit_tail
+            ],
         }
         snap = build_control_room_snapshot(
             generated_at=now_canonical(),

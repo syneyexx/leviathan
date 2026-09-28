@@ -185,6 +185,16 @@ class ControlRoomProjectionsW30Tests(unittest.TestCase):
             self.assertIn("dataPlane", body)
             self.assertEqual(body["research"]["qualificationRunsCount"], 1)
             self.assertTrue(body["truth"]["projections_bounded"])
+            run = body["research"]["qualificationRuns"][0]
+            self.assertIn("blockers", run)
+            self.assertIn("LOW_SAMPLE", run["blockers"])
+            self.assertIn("updatedAt", run)
+            self.assertIn("byImplementation", body["gaps"])
+            self.assertEqual(
+                sum(body["gaps"]["byImplementation"].values()),
+                body["gaps"]["count"],
+            )
+            self.assertIn("certifiedAt", body["dataPlane"]["certifications"][0])
 
 
 class ModelRiskPersistenceW31Tests(unittest.TestCase):

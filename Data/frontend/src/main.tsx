@@ -13,6 +13,7 @@ import "./styles/pages.css";
 import "./styles/analytics.css";
 import "./styles/trading.css";
 import "./styles/trading-pages.css";
+import "./styles/control-room.css";
 import "./styles/training.css";
 import "./styles/coding.css";
 import "./styles/media-platform.css";
