@@ -7,6 +7,7 @@ const clientPath = resolve(__dirname, "../../api/client.ts");
 const paperHookPath = resolve(__dirname, "paper/hooks/usePaperTradingOperator.ts");
 const paperPagePath = resolve(__dirname, "paper/PaperTradingPage.tsx");
 const controlRoomPath = resolve(__dirname, "InstitutionalControlRoomPage.tsx");
+const controlRoomModelPath = resolve(__dirname, "controlRoom/viewModel.ts");
 
 describe("Trading Center typed capability contracts", () => {
   const types = readFileSync(typesPath, "utf8");
@@ -14,6 +15,7 @@ describe("Trading Center typed capability contracts", () => {
   const paper = readFileSync(paperHookPath, "utf8");
   const paperPage = readFileSync(paperPagePath, "utf8");
   const controlRoom = readFileSync(controlRoomPath, "utf8");
+  const controlRoomModel = readFileSync(controlRoomModelPath, "utf8");
 
   it("declares MarketSimCapabilities and granularity types", () => {
     expect(types).toContain("export type MarketSimCapabilities");
@@ -42,7 +44,9 @@ describe("Trading Center typed capability contracts", () => {
   });
 
   it("Control Room treats live trading as blocked by default", () => {
-    expect(controlRoom).toContain("LIVE_TRADING_AVAILABLE");
-    expect(controlRoom).toContain("BLOCKED");
+    expect(controlRoom).toContain("marketSimInstitutionalControlRoom");
+    expect(controlRoom).not.toContain("setInterval");
+    expect(controlRoomModel).toContain("LIVE_TRADING_AVAILABLE");
+    expect(controlRoomModel).toContain("BLOCKED");
   });
 });

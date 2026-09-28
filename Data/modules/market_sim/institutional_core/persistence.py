@@ -386,6 +386,7 @@ class InstitutionalRepository:
         import hashlib
 
         events = self.list_audit_events(limit=100_000)
+        last_ts = events[-1].get("ts") if events else None
         prev = "0" * 64
         for ev in events:
             body = _canon(
@@ -406,9 +407,10 @@ class InstitutionalRepository:
                     "status": "FAIL",
                     "brokenAt": ev.get("event_id"),
                     "count": len(events),
+                    "lastTs": last_ts,
                 }
             prev = ev["event_hash"]
-        return {"ok": True, "status": "PASS", "count": len(events)}
+        return {"ok": True, "status": "PASS", "count": len(events), "lastTs": last_ts}
 
     # --- Exceptions ---
 

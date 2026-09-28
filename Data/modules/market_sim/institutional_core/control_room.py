@@ -166,6 +166,10 @@ def build_research_projections(
                 "decision": q.get("decision"),
                 "currentGate": q.get("current_gate"),
                 "sealedAttemptId": q.get("sealed_attempt_id"),
+                "strategyId": q.get("strategy_id"),
+                "blockers": [str(b)[:200] for b in (q.get("blockers") or [])][:8],
+                "createdAt": q.get("created_at"),
+                "updatedAt": q.get("updated_at"),
             }
             for q in quals[:20]
         ],
@@ -235,6 +239,7 @@ def build_data_plane_projections(
                 "certificationState": c.get("certification_state"),
                 "pitState": c.get("pit_state"),
                 "survivorshipState": c.get("survivorship_state"),
+                "certifiedAt": c.get("certified_at"),
             }
             for c in certs[:20]
         ],
@@ -257,10 +262,16 @@ def build_control_room_snapshot(
     notes: list[str] = []
     live = verify_live_trading_blocked()
     matrix = build_capability_gap_matrix()
+    matrix_public = matrix.public_dict()
+    by_implementation: dict[str, int] = {}
+    for row in matrix.rows:
+        key = str(row.implementation or "UNKNOWN")
+        by_implementation[key] = by_implementation.get(key, 0) + 1
     gaps_body = {
         "openGapCount": len(open_gaps(matrix)),
-        "byStatus": matrix.public_dict()["byStatus"],
-        "count": matrix.public_dict()["count"],
+        "byStatus": matrix_public["byStatus"],
+        "byImplementation": by_implementation,
+        "count": matrix_public["count"],
     }
     multi = build_multi_asset_truth_pack(feature_enabled=feature_enabled).public_dict()
 
