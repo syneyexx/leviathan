@@ -2,7 +2,7 @@
 
 > **Canonical frontend documentation.** This is the single human-readable reference for LEVIATHAN's React/TypeScript UI, route structure, client contracts and frontend file organization.
 >
-> Snapshot: **2026-09-26**, based on `main` after External Execution Fabric / General Assistant Fabric and Frontier Master Program W0 baseline. Code and tests are authoritative when this file becomes stale.
+> Snapshot: **2026-09-28**, based on `cursor/module-dependency-install-2ee4` after dependency-aware module installation. Code and tests are authoritative when this file becomes stale.
 >
 > Backend reference: [`Leviathan_system_backend.md`](./Leviathan_system_backend.md).
 
@@ -473,7 +473,7 @@ Routes cover:
 - `pages/ToolsPage.tsx` — canonical capability/tool surface;
 - `pages/McpPage.tsx` — MCP servers/sessions/tools;
 - `pages/WorkflowsPage.tsx` — workflow controls;
-- `pages/ModulesPage.tsx` / `pages/plugin-runtime/ModulesPage.tsx` — ModuleManager surface (discover, install, start/stop/restart, ensure-ready, health, logs, jobs, capabilities, sweep-idle, versions/check-update/install-version/activate-version/rollback, execute). Shows adapter kind, runtime state, capability counts for external modules. Does **not** invent RUNNING/READY — derives from backend snapshot;
+- `pages/ModulesPage.tsx` / `pages/plugin-runtime/ModulesPage.tsx` — ModuleManager surface (discover, install, start/stop/restart, ensure-ready, health, logs, jobs, capabilities, sweep-idle, versions/check-update/install-version/activate-version/rollback, execute). Shows adapter kind, runtime state, capability counts for external modules. Does **not** invent RUNNING/READY — derives from backend snapshot. **Dependency-aware install UI (CURRENT):** operator sees the backend install plan (strategies, package manager, privilege state, dependency observations, privileged system changes, application actions, blockers), then **APPROVE & INSTALL EVERYTHING** (approves via `ApprovalService` when required and re-posts install with `plan_hash` + `auto_resolve_dependencies`). Live phase progress polls `/api/modules/{id}/install-state` (PLANNING → system deps → fetch → runtime → app deps → post_install → verify → READY / FAILED). Client: `api.moduleInstallPlan` / `moduleInstallState` / `installModule`; helpers in `pages/plugin-runtime/modules/viewModels.ts` + `useModulesWorkspace.ts`. Does not invent install success — only backend plan/operation evidence;
 - `pages/plugin-runtime/SkillsPage.tsx` — `/skills` installed + catalog skill search (paginated metadata only). Enable/disable and on-demand instruction load via `/api/skills`. Never dumps thousands of skills into prompts;
 - Chat capability result cards (`pages/chat/CapabilityResultCards.tsx`) render backend-backed tool telemetry (status, duration, result/source/artifact counts) under the latest assistant message and in the Tools tab — never invent counts;
 - `pages/PerformancePage.tsx` — thin wrapper/performance page;

@@ -2,7 +2,7 @@
 
 > **Canonical backend documentation.** This is the single human-readable backend architecture reference for LEVIATHAN.
 >
-> Documentation snapshot: **2026-09-26**, based on `main` after External Execution Fabric (#163), General Assistant Fabric (#165), and Frontier Master Program W0A/W0B baseline. Runtime code and tests remain the final authority when this document and executable behavior disagree.
+> Documentation snapshot: **2026-09-28**, based on `cursor/module-dependency-install-2ee4` after dependency-aware module installation. Runtime code and tests remain the final authority when this document and executable behavior disagree.
 >
 > Companion frontend reference: [`Leviathan_system_frontend.md`](./Leviathan_system_frontend.md).
 
@@ -918,18 +918,19 @@ Adapter kinds: `DECLARATIVE`, `MCP`, `PROTOCOL`, `SKILL`.
 - **Adapters:** `MCP` (via McpBridge), `CLI`, `PROCESS_SERVICE`, `HTTP_OPENAPI`, `SKILL_PACK`, `CATALOG_SOURCE`, `SCRIPT_PACKAGE`, `COMPOSITE`.
 - **Declarative manifests:** `Data/external_capabilities/*/module.json` (plus existing `Data/modules/*/module.json`). Top-level `external` folds into manifest metadata.
 - **Factory:** `create_external_capability_module(manifest=...)` — ModuleManager calls factories with `manifest=` when the signature accepts it; legacy `factory()` still works.
-- **Lifecycle API:** `ensure_installed`, `start`, `stop`, `restart`, `ensure_ready`, `health`, `logs`, `active_jobs` on ModuleManager. HTTP: `/api/modules/{id}/install|start|stop|restart|ensure-ready|health|logs|capabilities|jobs`.
-- **Install:** typed strategies (`GIT_CHECKOUT`, `PYTHON_VENV`, `PIP_PACKAGE`, `NODE_NPM`/`NODE_PNPM`, `BINARY`, `NONE`) under `data_root/external_capabilities/<module-id>/versions/<ref>`. Binary dependency checks alias `python`↔`python3`; Node installs prefer the newest discoverable toolchain (e.g. nvm ≥22.22) and honor argv `post_install` (no shell strings). Version rows auto-upsert parent CONTROL module registration (FK-safe). Missing optional OS packages (`python3-venv`, etc.) surface as `INSTALL_FAILED`/`DEPENDENCY_MISSING` — they must not crash core boot.
+- **Lifecycle API:** `ensure_installed`, `start`, `stop`, `restart`, `ensure_ready`, `health`, `logs`, `active_jobs` on ModuleManager. HTTP: `/api/modules/{id}/install|start|stop|restart|ensure-ready|health|logs|capabilities|jobs` plus install-plan/state surfaces below.
+- **Install:** typed strategies (`GIT_CHECKOUT`, `PYTHON_VENV`, `PIP_PACKAGE`, `NODE_NPM`/`NODE_PNPM`, `BINARY`, `NONE`) under `data_root/external_capabilities/<module-id>/versions/<ref>`. Binary dependency checks alias `python`↔`python3`; Node installs prefer the newest discoverable toolchain (e.g. nvm ≥22.22) and honor argv `post_install` (no shell strings). Version rows auto-upsert parent CONTROL module registration (FK-safe). Optional/third-party install failures never crash core boot.
+- **Dependency-aware install (CURRENT):** Before fetch/runtime work, `InstallationService` runs a dependency preflight (`dependencies.py` + `package_managers.py`). Manifest `install.dependencies` are **logical** ids (aliases like `python3`→`python`); package names come only from the trusted `LOGICAL_DEPENDENCY_REGISTRY` — unsupported ids fail closed as `DEPENDENCY_UNSUPPORTED` and are **never** injected as arbitrary strings into a package manager. Strategy-implied deps are merged automatically: `GIT_CHECKOUT`→`git`; `PYTHON_VENV`→`python`+`python_venv`; `PIP_PACKAGE`→`python`+`pip`; `NODE_NPM`→`node`+`npm`; `NODE_PNPM`→`node`+`pnpm`; `NODE_SCRIPT`→`node`. Supported missing host deps can be auto-resolved through the detected supported manager (`apt`/`dnf`/`yum`/`pacman`/`zypper`/`apk`/`brew`/`winget`) **only after** the operator approves the exact install plan (`plan_hash`). Privileged host mutations require `ApprovalService` with `arguments_digest` bound to the plan (`plan_hash` / privileged package set); stale plans require re-approval (`PLAN_STALE_REAPPROVAL_REQUIRED`). System-package elevation is privilege-scoped; third-party `post_install` / pip / npm / venv steps always run unprivileged argv (`shell=False`) and never inherit root solely because system packages needed privilege. Production installs enqueue through JobRuntime workers; synchronous install is development-only when `features.module_manager_allow_sync_install_fallback` is explicitly true. HTTP: `POST /api/modules/{id}/install-plan` (read-only plan), `GET /api/modules/{id}/install-state` (operation + phase progress), `POST /api/modules/{id}/install` / `install-version` (approve+execute path).
 - **Version control:** `check_update`, `install_version`, `activate_version`, `rollback_version`, `list_versions`. HTTP: `/api/modules/{id}/check-update|versions|install-version|activate-version|rollback-version`. Activation refuses while active jobs exist (`UPDATE_BLOCKED_ACTIVE`).
 - **Idle shutdown:** LAZY/RESIDENT process services honor `runtime.idle_timeout_seconds`; `ModuleManager.sweep_idle_modules` / `POST /api/modules/sweep-idle` stop idle processes with no active jobs.
 - **Port isolation:** PROCESS_SERVICE start fails closed with `PORT_IN_USE` when `base_url` / ready-probe host:port already accepts connections (prevents ready-probe success against another module — e.g. llm-agent-trader `:8010` vs Osintgram `:8000`).
-- **Execution:** `ExternalModuleExecutor` is wired as `ExecutionGateway.module_executor`. Catalogued MODULE capabilities execute through the gateway; MCP tools remain McpBridge-owned.
+- **Execution:** `ExternalModuleExecutor` is wired as `ExecutionGateway.module_executor`. Catalogued MODULE capabilities execute through the gateway; MCP tools remain McpBridge-owned. After gateway-verified approval (`plan_hash` present), privileged system-dep resolution may proceed for that install operation only.
 - **MCP module registration:** `module.json` `mcp.servers` accept `server_id` / `display_name` / `name`; `register_servers_from_module` resolves `$INSTALL_ROOT` in command/args/cwd/env. `McpAdapter.ensure_installed`/`start` re-registers with the active install root before connect.
 - **Skills:** SKILL.md importer indexes metadata; instructions load on demand. Large catalogs (`CATALOG_SOURCE`) never enter system prompts. Skill search tokenizes natural-language goals (OR over keywords ≥3 chars) so CapabilityBroker/CognitiveRuntime `SEARCH_CAPABILITY` can shortlist `skill:` refs without injecting instruction bodies. HTTP: `/api/skills` (search/paginate), `/api/skills/{id}`, `/api/skills/{id}/enable`.
 - **Assimilation:** `KnowledgeAssimilationService.assimilate_external_capability` + `external.knowledge.assimilate` capability. Modes NONE / EVIDENCE / KNOWLEDGE_CANDIDATE / AUTO_KNOWLEDGE. Background via JobRuntime when available; Chat may show "Knowledge ingestion queued".
 - **Chat SSE:** Cognition emits operational events only (`capability.discovered` / `tool.started` / `tool.progress` / `tool.completed` / `tool.failed` / `module.starting` / `module.ready` / `artifact.created` / `source.observed` / `knowledge.assimilation_queued` / `job.started` / `job.progress` / `job.completed`, …) — no private CoT. `SEARCH_CAPABILITY` emits one `capability.discovered` per shortlisted id. Rich tool telemetry includes optional `module_id`, `parts`, artifact/source counts. `INVOKE_CAPABILITY` passes cooperative `_cancel_check` / `_progress_cb` into ExecutionGateway so in-flight external adapters can cancel honestly; EXTERNAL_REQUIRED MODULE caps offload via JobRuntime as above.
-- **Observability (bounded):** `external.modules.discovered|installed|running`, `external.invocations`, `external.failures`, `external.jobs.active`, `external.bytes_output`, `skills.indexed|loaded`, `mcp.sessions`, `assimilation.queued|completed` — no unbounded high-cardinality labels.
-- **CONTROL persistence:** `external_modules`, `external_module_versions`, `external_process_records`, `external_skills`, `external_skill_catalogs`, `external_plugin_bindings`, `external_log_windows` (domain migration v3). No fourth database.
+- **Observability (bounded):** `external.modules.discovered|installed|running`, `external.invocations`, `external.failures`, `external.jobs.active`, `external.bytes_output`, `skills.indexed|loaded`, `mcp.sessions`, `assimilation.queued|completed` — no unbounded high-cardinality labels. Install emits bounded `module.install.*` / phase progress events without unbounded package-name cardinality.
+- **CONTROL persistence:** `external_modules`, `external_module_versions`, `external_process_records`, `external_skills`, `external_skill_catalogs`, `external_plugin_bindings`, `external_log_windows` (domain migration **v4**); plus `external_install_operations` and `external_install_dependency_receipts` (domain migration **v6**) for durable install plans, phases, approvals, and per-dependency receipts. No fourth database.
 - **Process ownership:** PID + fingerprint reconciliation — persisted RUNNING is never trusted after restart; PID-reuse kills are refused.
 - **Optional modules:** missing/failed third-party installs do not prevent LEVIATHAN boot.
 - **Trading boundary:** external finance packages with `marketsim_bypass_forbidden` / `real_money_blocked` are research/analytics only. Mutation-like ops (orders/live trades) are REJECTED at `ExternalModuleExecutor` and MCP dispatch; MarketSim remains trading authority; real-money remains BLOCKED.
@@ -938,6 +939,48 @@ Adapter kinds: `DECLARATIVE`, `MCP`, `PROTOCOL`, `SKILL`.
 - **HTTP body aliases:** `HTTP_OPENAPI` / process-service HTTP ops support declarative `body_aliases` (arg→body rename) and `accept_statuses` without per-source wrappers.
 
 Acceptance matrix (machine-readable): `Data/backend/tests/external_sources_acceptance_matrix.json`.
+
+### Remaining external limits
+
+LEVIATHAN does not mutate the host during CI.
+At runtime, module installation performs a dependency preflight.
+Supported missing host dependencies can be resolved automatically through
+the detected supported package managers (apt/dnf/yum/pacman/zypper/apk/brew/winget)
+after the operator approves the exact install plan.
+Unsupported package managers, unavailable privilege elevation, blocked
+network access, or unknown dependency mappings remain explicit blockers.
+Production installation executes through JobRuntime workers; synchronous
+installation is development-only when explicitly enabled.
+
+This is **not** universal host-package support: only registry-mapped logical dependencies on detected supported managers are installable; everything else stays an explicit `DEPENDENCY_UNSUPPORTED` / privilege / network blocker.
+
+### Manifest dependency audit (external_capabilities, excl. HADES/editor)
+
+Implicit strategy deps cover git/python/venv/node/npm/pnpm gaps — do **not** needlessly duplicate those into every `module.json`. Manifest `dependencies` should list only extras beyond strategy implication (or keep redundant aliases harmlessly). Snapshot:
+
+| Module | Strategies | Manifest deps | Implicit coverage / notes |
+|---|---|---|---|
+| `agent-reach` | GIT_CHECKOUT, PYTHON_VENV | python3, curl | python covered by PYTHON_VENV; **curl** must stay explicit |
+| `andrej-karpathy-skills` | GIT_CHECKOUT | — | git implied |
+| `anthropic-skills` | GIT_CHECKOUT | — | git implied |
+| `awesome-openclaw-skills` | GIT_CHECKOUT | — | git implied |
+| `claude-osint` | GIT_CHECKOUT | — | git implied |
+| `cloudflare-security-audit-skill` | GIT_CHECKOUT | — | git implied |
+| `desktop-commander-mcp` | GIT_CHECKOUT, NODE_NPM | — | git/node/npm implied |
+| `feynman` | GIT_CHECKOUT, NODE_NPM | node | node redundant with NODE_NPM (harmless) |
+| `financial-services` | GIT_CHECKOUT | — | git implied |
+| `fincept-terminal` | GIT_CHECKOUT, PYTHON_VENV | python3 | python redundant with PYTHON_VENV |
+| `ghosttrack` | GIT_CHECKOUT, PYTHON_VENV | python3, curl | python implied; **curl** must stay explicit |
+| `llm-agent-trader` | GIT_CHECKOUT, PYTHON_VENV | python3 | python redundant with PYTHON_VENV |
+| `mattpocock-skills` | GIT_CHECKOUT | — | git implied |
+| `obra-superpowers` | GIT_CHECKOUT | — | git implied |
+| `openmaic` | GIT_CHECKOUT, NODE_PNPM | node, pnpm | both implied by NODE_PNPM (harmless) |
+| `osintgram` | GIT_CHECKOUT, PYTHON_VENV | — | git/python/python_venv implied |
+| `ponytail` | GIT_CHECKOUT | — | git implied |
+| `scrollcraft` | GIT_CHECKOUT, NODE_NPM | node, ffmpeg | node implied; **ffmpeg** must stay explicit |
+| `selfstarter` | GIT_CHECKOUT | bash | **bash** must stay explicit (not strategy-implied) |
+| `tech-leads-agent-skills` | GIT_CHECKOUT | — | git implied |
+| `vibe-trading` | GIT_CHECKOUT, PYTHON_VENV | python3 | python redundant with PYTHON_VENV |
 
 ---
 
