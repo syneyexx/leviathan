@@ -125,16 +125,15 @@ class TaskSignalHandler(SignalHandler):
             request=request,
             title=str(payload.get("title") or signal.subject or "signal-handoff")[:200],
             priority=str(payload.get("priority") or "med"),
-            # Do NOT pass parent_mission_id in a way that forces inline execution.
-            # Lineage is recorded in metadata; mission is enqueued to agents pool.
-            parent_mission_id=None,
+            # Lineage parent is recorded; production launch_mission enqueues
+            # durable agent.advance (never inline on the signal worker).
+            parent_mission_id=signal.mission_id,
             depth=int(payload.get("depth") or 0) + 1,
             dry_run=bool(payload.get("dryRun") or False),
             use_jobs=False,
             metadata={
                 "signalFabricKey": dedupe,
                 "parentSignalId": signal.signal_id,
-                "parentMissionId": signal.mission_id,
                 "correlationId": signal.correlation_id,
                 "traceId": signal.trace_id,
                 "source": "signal_fabric",
@@ -208,12 +207,11 @@ class VerificationSignalHandler(SignalHandler):
                 agent_id=agent_id,
                 request=request,
                 title=f"Verify: {claim}"[:200],
-                parent_mission_id=None,
+                parent_mission_id=signal.mission_id,
                 dry_run=bool(payload.get("dryRun") or False),
                 metadata={
                     "signalFabricKey": dedupe,
                     "parentSignalId": signal.signal_id,
-                    "parentMissionId": signal.mission_id,
                     "verification": True,
                     "source": "signal_fabric",
                     "root_mission_id": signal.mission_id,

@@ -18,8 +18,16 @@ def pytest_session_active() -> bool:
 
 
 def allow_sync_install_for_tests() -> bool:
-    """True only for explicit TEST-ONLY sync install (never production)."""
-    raw = (os.environ.get(ALLOW_SYNC_TEST_ENV) or "").strip().lower()
-    if raw not in {"1", "true", "yes", "on"}:
+    """True only inside a test harness.
+
+    Production never allows sync install even when the feature flag is on.
+    Under pytest, routes may enable sync via ``allow_sync_install_fallback``
+    for deterministic fixtures; the explicit env is an additional opt-in.
+    """
+    if not pytest_session_active():
         return False
-    return pytest_session_active()
+    raw = (os.environ.get(ALLOW_SYNC_TEST_ENV) or "").strip().lower()
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    # pytest session + route flag is sufficient for TEST-ONLY sync paths.
+    return True

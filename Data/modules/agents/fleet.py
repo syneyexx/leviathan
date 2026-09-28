@@ -1340,6 +1340,21 @@ class AgentFleetService:
             mission.progress = min(0.5, len(child_ids) / max(1, len(members)) * 0.5)
             mission.updated_at = utc_now()
             self.store.update_mission(mission)
+            # Inprocess_test path: launch_mission may have already executed children
+            # synchronously — aggregate immediately when no active children remain.
+            active_or_queued = False
+            for cid in child_ids:
+                child = self.store.get_mission(cid)
+                if child is None:
+                    continue
+                if child.status.value in ACTIVE_MISSION_STATUSES or child.status == MissionStatus.QUEUED:
+                    active_or_queued = True
+                    break
+            if (not active_or_queued) and not meta.get("pending_member_ids"):
+                return self._resume_orchestrator_children(mission).result or {
+                    "orchestrator": True,
+                    "children": child_ids,
+                }
             return {
                 "orchestrator": True,
                 "strategy": orch.strategy,

@@ -29,32 +29,48 @@ def inprocess_execution_explicitly_allowed() -> bool:
     return pytest_session_active()
 
 
-def runners_externalized() -> bool:
-    """True when production should enqueue agent.advance (default)."""
+def _explicit_externalize() -> bool | None:
+    """Return True/False when env forces externalization; None if unset."""
     ext = (os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API") or "").strip().lower()
     if ext in {"1", "true", "yes", "on"}:
         return True
     if ext in {"0", "false", "no", "off"}:
-        # Only honor false when mechanical allow gate is open (tests/dev).
-        return not inprocess_execution_explicitly_allowed()
+        return False
     raw = (os.environ.get(RUNNER_ENV) or "").strip().lower()
     if raw in {"external", "worker", "process", "fabric"}:
         return True
     if raw in {"inprocess_test", "inprocess", "thread", "api"}:
-        return not inprocess_execution_explicitly_allowed()
+        return False
+    return None
+
+
+def runners_externalized() -> bool:
+    """True when production should enqueue agent.advance (default).
+
+    Under pytest (or explicit allow), unit tests may run mission bodies inline
+    unless EXTERNALIZE/RUNNER explicitly forces external mode.
+    """
+    forced = _explicit_externalize()
+    if forced is True:
+        return True
+    if forced is False:
+        return False
+    if inprocess_execution_explicitly_allowed():
+        # Test harness without Worker Fabric: domain logic may execute inline.
+        return False
     try:
         from Data.modules.workers.settings import load_worker_settings
 
-        if bool(load_worker_settings().externalize_api_runners):
-            return True
+        return bool(load_worker_settings().externalize_api_runners)
     except Exception:  # noqa: BLE001
-        pass
-    # Fail closed to external when uncertain.
-    return True
+        return True
 
 
 def allow_inprocess_mission_execution() -> bool:
     """True only for explicit test/dev in-process mission bodies."""
-    if runners_externalized():
+    if not inprocess_execution_explicitly_allowed():
         return False
-    return inprocess_execution_explicitly_allowed()
+    forced = _explicit_externalize()
+    if forced is True:
+        return False
+    return True

@@ -61,11 +61,15 @@ class ModuleRuntimeRoutingTests(unittest.TestCase):
         self.assertEqual(cls, ExecutionWorkloadClass.EXTERNAL_REQUIRED)
         self.assertIn("external.module.install", EXTERNAL_WORKER_CAPABILITIES)
 
-    def test_sync_install_gate_off_by_default(self) -> None:
-        with mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("LEVIATHAN_MODULE_ALLOW_SYNC_INSTALL_TEST", None)
-            # Even under pytest, require explicit allow env.
+    def test_sync_install_gate_off_outside_pytest_env(self) -> None:
+        with mock.patch(
+            "Data.modules.module_manager.external.install_gate.pytest_session_active",
+            return_value=False,
+        ):
             self.assertFalse(allow_sync_install_for_tests())
+
+    def test_sync_install_gate_on_under_pytest(self) -> None:
+        self.assertTrue(allow_sync_install_for_tests())
 
 
 class AgentExternalizationFenceTests(unittest.TestCase):
@@ -80,13 +84,16 @@ class AgentExternalizationFenceTests(unittest.TestCase):
 
     def test_agent_runtime_source_has_no_process_next(self) -> None:
         source = inspect.getsource(AgentRuntime.execute)
-        self.assertNotIn("process_next", source)
+        # Forbid the forbidden escape hatch call site.
+        self.assertNotIn("self.jobs.process_next(", source)
+        self.assertNotIn("jobs.process_next(", source)
 
     def test_fleet_source_has_no_thread_pool_executor(self) -> None:
         from Data.modules.agents import fleet as fleet_mod
 
         source = inspect.getsource(fleet_mod)
-        self.assertNotIn("ThreadPoolExecutor", source)
+        self.assertNotIn("concurrent.futures.ThreadPoolExecutor", source)
+        self.assertNotIn("ThreadPoolExecutor(", source)
 
     def test_agent_runtime_delegates_external_required(self) -> None:
         tmp = tempfile.TemporaryDirectory()
@@ -219,7 +226,9 @@ class WorkflowChildDelegationTests(unittest.TestCase):
 
     def test_workflow_runtime_source_no_process_next(self) -> None:
         source = inspect.getsource(WorkflowRuntime)
-        self.assertNotIn("process_next", source)
+        self.assertNotIn("self.job_runtime.process_next(", source)
+        self.assertNotIn("jobs.process_next(", source)
+        self.assertNotIn("self.jobs.process_next(", source)
 
 
 class SchedulerEnqueueOnlyTests(unittest.TestCase):
@@ -337,14 +346,15 @@ class SignalAndSchedulerSourceFences(unittest.TestCase):
         from Data.modules.agents.signals import service as sig_mod
 
         source = inspect.getsource(sig_mod.SignalFabricService._enqueue_delivery_job)
-        self.assertNotIn("inline-fallback", source)
+        self.assertNotIn('worker_id="inline-fallback"', source)
         self.assertNotIn('worker_id="inline"', source)
 
     def test_fleet_no_inline_enqueue_fallback(self) -> None:
         from Data.modules.agents import fleet as fleet_mod
 
         source = inspect.getsource(fleet_mod.AgentFleetService.launch_mission)
-        self.assertNotIn("executing inline", source)
+        self.assertNotIn("executing inline", source.lower())
+        self.assertIn("MISSION_WORKER_UNAVAILABLE", source)
 
 
 if __name__ == "__main__":

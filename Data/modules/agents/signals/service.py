@@ -681,6 +681,13 @@ class SignalFabricService:
 
     def _enqueue_delivery_job(self, delivery_id: str, *, priority: SignalPriority) -> None:
         if self.job_runtime is None:
+            # TEST-ONLY: pytest / explicit allow may process inline without a worker.
+            # Production never reaches this path without JobRuntime.
+            from Data.modules.agents.execution_gate import inprocess_execution_explicitly_allowed
+
+            if inprocess_execution_explicitly_allowed():
+                self.process_delivery(delivery_id, worker_id="inline-test")
+                return
             raise SignalFabricError(
                 SIGNAL_TARGET_UNAVAILABLE,
                 "job_runtime unavailable; cannot enqueue agent_signal.deliver",
@@ -695,8 +702,13 @@ class SignalFabricService:
                 domain="agents",
                 idempotency_key=f"agent_signal.deliver:{delivery_id}",
             )
-        except Exception as exc:  # noqa: BLE001 — never inline-fallback in production
+        except Exception as exc:  # noqa: BLE001 — never silent production inline fallback
             logger.warning("enqueue_delivery_failed delivery=%s err=%s", delivery_id, exc)
+            from Data.modules.agents.execution_gate import inprocess_execution_explicitly_allowed
+
+            if inprocess_execution_explicitly_allowed():
+                self.process_delivery(delivery_id, worker_id="inline-test")
+                return
             raise SignalFabricError(
                 SIGNAL_TARGET_UNAVAILABLE,
                 f"Failed to enqueue delivery: {exc}",
