@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .admission import ResourceAdmission
+from .crash_diagnostics import analyze_worker_crash
 from .events import WorkerEventKind, get_worker_event_emitter
 from .pools import POOL_CATALOG
 from .process import OwnedProcess, spawn_worker_process, terminate_owned, verify_owned
@@ -46,6 +47,16 @@ class PoolRuntimeState:
     degraded_reason: str | None = None
     crash_timestamps: list[float] = field(default_factory=list)
     cooldown_until: float = 0.0
+    # Recent crash evidence — retained across successful respawn.
+    last_crash_at: float | None = None
+    last_crash_worker_id: str | None = None
+    last_exit_code: int | None = None
+    last_error_code: str | None = None
+    last_error_summary: str | None = None
+    last_crash_log_path: str | None = None
+    restart_attempt: int = 0
+    recovery_at: float | None = None
+    recent_crashes: list[dict[str, Any]] = field(default_factory=list)
 
 
 class WorkerSupervisor:
@@ -134,6 +145,35 @@ class WorkerSupervisor:
         self.registry.initialize()
         self.admission.initialize()
         self._apply_desired_overrides()
+        self._assert_schema_ready()
+
+    def _assert_schema_ready(self) -> None:
+        """Defense in depth: do not spawn pools into an unready CONTROL schema.
+
+        Worker registry/admission tables are required here. JobStore ``jobs`` is
+        owned by API bootstrap; the parent ``wait_for_api_bootstrap`` barrier
+        proves that path before supervisor spawn in production.
+        """
+        required = ("worker_instances", "supervisor_leases", "resource_reservations")
+        try:
+            with self.registry.connect(operation="schema_ready_check") as conn:
+                for table in required:
+                    row = conn.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                        (table,),
+                    ).fetchone()
+                    if row is None:
+                        raise SupervisorFatalError(
+                            f"WORKER_SCHEMA_NOT_READY: missing table {table}"
+                        )
+        except SupervisorFatalError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            if is_transient_sqlite_error(exc):
+                raise RuntimeError(
+                    f"WORKER_SCHEMA_STARTUP_BLOCKED: transient SQLite during schema check: {exc}"
+                ) from exc
+            raise SupervisorFatalError(f"WORKER_SCHEMA_NOT_READY: {exc}") from exc
 
     def acquire(self) -> bool:
         return self.registry.try_acquire_supervisor_lease(
@@ -381,7 +421,9 @@ class WorkerSupervisor:
             state.degraded = False
             state.degraded_reason = None
 
-        live = [
+        # Capacity: owned + not terminal. STARTING occupies a slot (do not overspawn)
+        # but is NOT proven healthy — recovery requires READY/BUSY + heartbeat.
+        capacity = [
             w
             for w in self.registry.list(pool_id=pool_id)
             if w.worker_id in self._owned
@@ -395,12 +437,23 @@ class WorkerSupervisor:
                 WorkerInstanceState.DEGRADED,
             }
         ]
+        proven = [
+            w
+            for w in capacity
+            if w.state in {WorkerInstanceState.READY, WorkerInstanceState.BUSY}
+            and w.last_heartbeat_at
+        ]
+        # Mark recovery only when proven workers exist after a crash window.
+        if proven and state.last_crash_at and state.recovery_at is None:
+            state.recovery_at = time.time()
+            self._restart_attempts[pool_id] = 0
+
         # Scale up
-        while len(live) < state.desired and not (
+        while len(capacity) < state.desired and not (
             state.degraded and time.time() < state.cooldown_until
         ):
             try:
-                owned = self._spawn(pool_id, slot=len(live))
+                owned = self._spawn(pool_id, slot=len(capacity))
             except Exception as exc:  # noqa: BLE001
                 self._record_crash(pool_id, str(exc))
                 try:
@@ -408,7 +461,7 @@ class WorkerSupervisor:
                 except Exception:  # noqa: BLE001
                     pass
                 break
-            live.append(
+            capacity.append(
                 WorkerRegistration(
                     worker_id=owned.worker_id,
                     pool_id=pool_id,
@@ -418,6 +471,7 @@ class WorkerSupervisor:
                 )
             )
             # Restart visibility when recovering after a crash window.
+            # Do NOT clear restart attempts until proven READY (see above).
             attempts = self._restart_attempts.get(pool_id, 0)
             if attempts > 0:
                 try:
@@ -428,11 +482,10 @@ class WorkerSupervisor:
                     )
                 except Exception:  # noqa: BLE001
                     pass
-                self._restart_attempts[pool_id] = 0
         # Scale down — drain excess; do not kill active non-preemptible jobs.
-        excess = len(live) - state.desired
+        excess = len(capacity) - state.desired
         if excess > 0:
-            for reg in sorted(live, key=lambda r: r.slot, reverse=True)[:excess]:
+            for reg in sorted(capacity, key=lambda r: r.slot, reverse=True)[:excess]:
                 proc = self._owned.get(reg.worker_id)
                 if proc is None:
                     continue
@@ -511,11 +564,22 @@ class WorkerSupervisor:
                             exit_code = proc.popen.poll()
                     except Exception:  # noqa: BLE001
                         exit_code = None
+                    runtime_ms = max(0.0, (time.time() - float(proc.started_at)) * 1000.0)
+                    evidence = analyze_worker_crash(
+                        log_path=proc.log_path,
+                        exit_code=exit_code,
+                    )
+                    pool_state = self._pools.get(proc.pool_id)
+                    restart_attempt = (
+                        (self._restart_attempts.get(proc.pool_id, 0) + 1)
+                        if pool_state is not None
+                        else 1
+                    )
                     try:
                         self.registry.mark_state(
                             worker_id,
                             WorkerInstanceState.CRASHED,
-                            degraded_reason="process_exited",
+                            degraded_reason=evidence.error_code,
                         )
                     except Exception as exc:  # noqa: BLE001
                         errors.append(
@@ -530,16 +594,34 @@ class WorkerSupervisor:
                         self._events.worker_crashed(
                             pool=proc.pool_id,
                             worker_id=worker_id,
+                            worker_pid=proc.pid,
                             exit_code=exit_code,
-                            reason="process_exited",
+                            error_code=evidence.error_code,
+                            error_summary=evidence.error_summary,
+                            message=evidence.error_summary,
+                            duration_ms=runtime_ms,
+                            crash_log_path=str(proc.log_path) if proc.log_path else None,
+                            startup_phase=evidence.startup_phase,
+                            startup_or_runtime=evidence.startup_or_runtime,
+                            restart_attempt=restart_attempt,
+                            restart_max=int(self.settings.restart_max_attempts),
+                            extra=evidence.public_dict(),
                         )
                     except Exception:  # noqa: BLE001
                         pass
                     self._owned.pop(worker_id, None)
-                    self._record_crash(proc.pool_id, "process_exited")
-                    self._restart_attempts[proc.pool_id] = (
-                        self._restart_attempts.get(proc.pool_id, 0) + 1
+                    self._record_crash(
+                        proc.pool_id,
+                        evidence.error_code,
+                        worker_id=worker_id,
+                        exit_code=exit_code,
+                        error_code=evidence.error_code,
+                        error_summary=evidence.error_summary,
+                        crash_log_path=str(proc.log_path) if proc.log_path else None,
                     )
+                    self._restart_attempts[proc.pool_id] = restart_attempt
+                    if pool_state is not None:
+                        pool_state.recovery_at = None
             except Exception as exc:  # noqa: BLE001
                 errors.append(
                     {
@@ -551,12 +633,40 @@ class WorkerSupervisor:
                 )
                 logger.exception("reap child %s failed", worker_id)
 
-    def _record_crash(self, pool_id: str, reason: str) -> None:
+    def _record_crash(
+        self,
+        pool_id: str,
+        reason: str,
+        *,
+        worker_id: str | None = None,
+        exit_code: int | None = None,
+        error_code: str | None = None,
+        error_summary: str | None = None,
+        crash_log_path: str | None = None,
+    ) -> None:
         state = self._pools[pool_id]
         now = time.time()
         window = float(self.settings.restart_window_seconds)
         state.crash_timestamps = [t for t in state.crash_timestamps if now - t <= window]
         state.crash_timestamps.append(now)
+        state.last_crash_at = now
+        state.last_crash_worker_id = worker_id
+        state.last_exit_code = exit_code
+        state.last_error_code = error_code or reason
+        state.last_error_summary = error_summary or reason
+        state.last_crash_log_path = crash_log_path
+        state.restart_attempt = self._restart_attempts.get(pool_id, 0) + 1
+        state.recent_crashes.append(
+            {
+                "at": now,
+                "worker_id": worker_id,
+                "exit_code": exit_code,
+                "error_code": error_code or reason,
+                "error_summary": error_summary or reason,
+                "crash_log_path": crash_log_path,
+            }
+        )
+        state.recent_crashes = state.recent_crashes[-10:]
         if len(state.crash_timestamps) >= int(self.settings.restart_max_attempts):
             n = len(state.crash_timestamps)
             backoff = min(
@@ -564,7 +674,7 @@ class WorkerSupervisor:
                 self.settings.restart_base_backoff * (2 ** max(0, n - 1)),
             )
             state.degraded = True
-            state.degraded_reason = f"WORKER_RESTART_EXHAUSTED: {reason}"
+            state.degraded_reason = f"WORKER_RESTART_EXHAUSTED: {error_code or reason}"
             state.cooldown_until = now + backoff
             try:
                 self._events.emit_kind(
@@ -572,6 +682,13 @@ class WorkerSupervisor:
                     pool=pool_id,
                     worker_id=f"{pool_id}-pool",
                     error_code="UITGESCHAKELD — restartlimiet bereikt",
+                    message=state.degraded_reason,
+                    extra={
+                        "exit_code": exit_code,
+                        "error_code": error_code or reason,
+                        "restart_attempt": state.restart_attempt,
+                        "restart_max": int(self.settings.restart_max_attempts),
+                    },
                 )
             except Exception:  # noqa: BLE001
                 pass
@@ -695,6 +812,16 @@ class WorkerSupervisor:
                     "degraded_reason": state.degraded_reason,
                     **counts,
                     "owned": sum(1 for p in self._owned.values() if p.pool_id == pool_id),
+                    "last_crash_at": state.last_crash_at,
+                    "last_crash_worker_id": state.last_crash_worker_id,
+                    "last_exit_code": state.last_exit_code,
+                    "last_error_code": state.last_error_code,
+                    "last_error_summary": state.last_error_summary,
+                    "last_crash_log_path": state.last_crash_log_path,
+                    "restart_attempt": state.restart_attempt,
+                    "recovery_at": state.recovery_at,
+                    "recent_crashes": list(state.recent_crashes),
+                    "proven_ready": counts["ready"] + counts["busy"],
                 }
             )
         if quarantined:

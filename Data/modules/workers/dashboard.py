@@ -58,7 +58,18 @@ def _iso_age_seconds(iso: str | None) -> float | None:
         return None
 
 
-def _pool_status_reason(pool_id: str, *, desired: int, running: int, defn: Any) -> tuple[str, str | None]:
+def _pool_status_reason(
+    pool_id: str,
+    *,
+    desired: int,
+    running: int,
+    ready: int,
+    starting: int,
+    queued: int = 0,
+    defn: Any,
+    last_error_code: str | None = None,
+    recent_crashes: int = 0,
+) -> tuple[str, str | None]:
     """Return (status, reason) for a pool row."""
     if pool_id == "knowledge_commit":
         return "DEPRECATED", "Owner: db_commit — bulk COMMIT_WRITE uses db_commit"
@@ -71,9 +82,21 @@ def _pool_status_reason(pool_id: str, *, desired: int, running: int, defn: Any) 
     if desired <= 0:
         return "DISABLED", "desired_count=0"
     if running <= 0:
-        return "DEGRADED", f"desired={desired} · running=0"
-    if running < desired:
-        return "STARTING", f"desired={desired} · running={running}"
+        reason = f"desired={desired} · running=0"
+        if last_error_code:
+            reason = f"{reason} · last_error={last_error_code}"
+        return "DEGRADED", reason
+    if ready < desired and starting > 0:
+        return "STARTING", f"desired={desired} · ready={ready} · starting={starting}"
+    if ready < desired:
+        return "STARTING", f"desired={desired} · ready={ready}"
+    if queued > 0 and ready >= desired:
+        # Caller may upgrade to STALLED when claim lag is measured.
+        return "READY", f"QUEUED_WORK={queued}"
+    if pool_id == "source_ingestion" and queued <= 0 and ready >= desired:
+        return "READY", "NO_QUEUED_WORK"
+    if recent_crashes and ready >= desired:
+        return "READY", f"recovered · recent_crashes={recent_crashes}"
     return "HEALTHY", None
 
 
@@ -318,7 +341,18 @@ def build_worker_fabric_dashboard(
         degraded = sum(1 for r in regs if str(r.get("state")) == WorkerInstanceState.DEGRADED.value)
         failed = sum(1 for r in regs if str(r.get("state")) in _FAILED_STATES)
         starting = sum(1 for r in regs if str(r.get("state")) == WorkerInstanceState.STARTING.value)
-        status, reason = _pool_status_reason(pid, desired=desired, running=running, defn=defn)
+        status, reason = _pool_status_reason(
+            pid,
+            desired=desired,
+            running=running,
+            ready=ready,
+            starting=starting,
+            queued=int(queues.get(pid, 0)),
+            defn=defn,
+        )
+        # Proven readiness for fabric summary: STARTING processes are not READY.
+        if status in {"HEALTHY", "READY"} and ready < desired:
+            status, reason = "STARTING", f"desired={desired} · ready={ready}"
         if desired > 0:
             enabled_pools += 1
             desired_total += desired
@@ -349,9 +383,14 @@ def build_worker_fabric_dashboard(
             }
         )
 
+    # Count only proven-ready workers for fabric READY — not STARTING.
+    ready_total = sum(1 for w in workers_out if str(w.get("state")) in _IDLE_STATES)
+    starting_total = sum(
+        1 for w in workers_out if str(w.get("state")) == WorkerInstanceState.STARTING.value
+    )
     running_total = sum(1 for w in workers_out if str(w.get("state")) in _LIVE_STATES)
     busy_total = sum(1 for w in workers_out if str(w.get("state")) in _BUSY_STATES)
-    idle_total = sum(1 for w in workers_out if str(w.get("state")) in _IDLE_STATES)
+    idle_total = ready_total
     failed_total = sum(1 for w in workers_out if str(w.get("state")) in _FAILED_STATES)
     queue_total = sum(v for k, v in queues.items() if not k.startswith("__"))
 
@@ -364,7 +403,7 @@ def build_worker_fabric_dashboard(
         fabric_status = "DEGRADED"
     elif required_degraded > 0:
         fabric_status = "DEGRADED"
-    elif running_total < desired_total:
+    elif ready_total < desired_total or starting_total > 0:
         fabric_status = "STARTING"
 
     return {
@@ -374,6 +413,8 @@ def build_worker_fabric_dashboard(
             "pools_enabled": enabled_pools,
             "desired_workers": desired_total,
             "running_workers": running_total,
+            "ready_workers": ready_total,
+            "starting_workers": starting_total,
             "busy_workers": busy_total,
             "idle_workers": idle_total,
             "failed_workers": failed_total,

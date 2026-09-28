@@ -155,6 +155,8 @@ export function useOperator() {
 
   const apiBase = host.apiBase;
   const live = host.state === "RUNNING" || host.state === "DEGRADED" || host.state === "STARTING" || host.state === "ATTACHED_EXTERNAL";
+  const livenessIndependent =
+    host.state === "RUNNING" || host.state === "DEGRADED" || host.state === "ATTACHED_EXTERNAL";
 
   useEffect(() => {
     if (!apiBase || !live) {
@@ -163,12 +165,26 @@ export function useOperator() {
     }
   }, [apiBase, live, resetBackendProjections]);
 
-  // Fast liveness poll — drives API card + frontendReachable.
+  // Independent liveness monitor — only while RUNNING/DEGRADED/ATTACHED.
+  // During PREFLIGHT/STARTING the native Rust host controller owns readiness;
+  // do not race it with burst HTTP polls on every host.state transition.
+  const hostStateRef = useRef(host.state);
+  hostStateRef.current = host.state;
   useEffect(() => {
-    if (!apiBase || !live) return;
+    if (!apiBase || !livenessIndependent) {
+      // Trust host bridge during STARTING/PREFLIGHT — no immediate tick burst.
+      return;
+    }
     const controller = new AbortController();
     let timer = 0;
+    let stopped = false;
     const tick = async () => {
+      if (stopped) return;
+      // Re-check state without recreating the effect on every transition.
+      const state = hostStateRef.current;
+      if (state !== "RUNNING" && state !== "DEGRADED" && state !== "ATTACHED_EXTERNAL") {
+        return;
+      }
       const hidden = document.hidden;
       try {
         const body = await getJson<JsonMap>(apiBase, "/api/host/liveness", controller.signal);
@@ -180,15 +196,19 @@ export function useOperator() {
           setFrontendReachable(false);
         }
       }
-      const delay = hidden ? 15_000 : host.state === "STARTING" ? 1_500 : 3_000;
+      // Slow independent monitor once RUNNING — host-core already probes at 400ms.
+      const delay = hidden ? 15_000 : 5_000;
       timer = window.setTimeout(() => void tick(), delay);
     };
-    void tick();
+    // Defer first tick slightly so STARTING→RUNNING does not immediately
+    // pile onto the host controller's own liveness probe.
+    timer = window.setTimeout(() => void tick(), 750);
     return () => {
+      stopped = true;
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [apiBase, live, host.state]);
+  }, [apiBase, livenessIndependent]);
 
   // Slower /api/health — optional enrichment (jobs queue, llm fallback).
   useEffect(() => {

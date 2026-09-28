@@ -277,6 +277,35 @@ def build_source_ingestion_read_model(
         overall = round(sum(progress_values) / len(progress_values), 2)
     elif counts["completed"] and not (counts["queued"] or counts["processing"] or counts["failed"] or counts["unknown"]):
         overall = 100.0
+
+    # Executor ownership + idle/stall semantics for operator surfaces.
+    try:
+        from Data.modules.source_ingestion.worker import resolve_runner_mode
+
+        executor_owner = resolve_runner_mode()
+    except Exception:  # noqa: BLE001
+        executor_owner = "UNMEASURED"
+
+    idle_reason = None
+    activity = "UNKNOWN"
+    if counts["processing"] > 0:
+        activity = "PROCESSING"
+    elif counts["queued"] > 0:
+        activity = "QUEUED"
+    elif counts["failed"] > 0 and not counts["queued"] and not counts["processing"]:
+        activity = "IDLE_WITH_FAILURES"
+        idle_reason = "NO_QUEUED_WORK"
+    elif not any(counts[k] for k in ("queued", "processing", "completed", "failed", "unknown")):
+        activity = "IDLE_NO_WORK"
+        idle_reason = "NO_QUEUED_WORK"
+    else:
+        activity = "IDLE"
+        idle_reason = "NO_QUEUED_WORK"
+
+    current = next((j for j in jobs if j.get("state") and str(j["state"]).upper() in {"RUNNING", "CLAIMED"}), None)
+    last_failed = next((j for j in jobs if str(j.get("state") or "").upper() == "FAILED"), None)
+    last_completed = next((j for j in jobs if str(j.get("state") or "").upper() == "COMPLETED"), None)
+
     return {
         "counts": {
             "queued": counts["queued"],
@@ -288,6 +317,20 @@ def build_source_ingestion_read_model(
         "overallProgressPct": overall,
         "jobs": jobs,
         "database": database or None,
+        "executor_owner": executor_owner,
+        "activity": activity,
+        "idle_reason": idle_reason,
+        "queue_depth": counts["queued"],
+        "currently_processing": current,
+        "last_failed": last_failed,
+        "last_completed": last_completed,
+        "sources_registered": "UNMEASURED",
+        "sources_pending": counts["queued"],
+        "sources_processing": counts["processing"],
+        "sources_ingested": counts["completed"],
+        "sources_failed": counts["failed"],
+        "documents_created": "UNMEASURED",
+        "chunks_created": "UNMEASURED",
         "truth": {
             "readOnly": True,
             "sourceIngestionNotDatasetLearning": True,
@@ -295,6 +338,7 @@ def build_source_ingestion_read_model(
             "missingThroughputIsNull": True,
             "emptyIsNotComplete": True,
             "partialIsNotComplete": True,
+            "fabricOwnsProduction": executor_owner in {"fabric", "external"},
         },
     }
 

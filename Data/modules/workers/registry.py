@@ -40,8 +40,13 @@ class WorkerRegistry:
         self._decode_diagnostics: list[dict[str, Any]] = []
 
     @contextmanager
-    def connect(self) -> Iterator[sqlite3.Connection]:
-        with control_plane_connection(self.db_path) as conn:
+    def connect(self, *, operation: str = "registry") -> Iterator[sqlite3.Connection]:
+        with control_plane_connection(
+            self.db_path,
+            store="worker_registry",
+            operation=operation,
+            write_class="CONTROL_WRITE",
+        ) as conn:
             yield conn
 
     def initialize(self) -> None:

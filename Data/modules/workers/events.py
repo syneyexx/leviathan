@@ -15,6 +15,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import Any, Mapping
 
 MAX_HUMAN_TITLE_LEN = 120
@@ -42,6 +43,43 @@ _SECRET_KEY_HINTS = frozenset(
 )
 
 _structured_logger = logging.getLogger("leviathan.workers.events")
+# Structured sink must NOT echo human lines back into the same console stream.
+# Terminal emission is owned exclusively by WorkerEventEmitter._stream writes.
+_structured_logger.propagate = False
+_structured_logger.setLevel(logging.DEBUG)
+if not _structured_logger.handlers:
+    _structured_logger.addHandler(logging.NullHandler())
+
+
+class _StructuredEventBuffer(logging.Handler):
+    """In-process structured sink for tests / observability attach points."""
+
+    def __init__(self, capacity: int = 256) -> None:
+        super().__init__()
+        self.capacity = max(16, int(capacity))
+        self.records: list[logging.LogRecord] = []
+        self._lock = threading.Lock()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        with self._lock:
+            self.records.append(record)
+            if len(self.records) > self.capacity:
+                self.records = self.records[-self.capacity :]
+
+    def drain(self) -> list[logging.LogRecord]:
+        with self._lock:
+            out = list(self.records)
+            self.records.clear()
+            return out
+
+
+_structured_buffer = _StructuredEventBuffer()
+if not any(isinstance(h, _StructuredEventBuffer) for h in _structured_logger.handlers):
+    _structured_logger.addHandler(_structured_buffer)
+
+
+def get_structured_event_buffer() -> _StructuredEventBuffer:
+    return _structured_buffer
 
 
 class WorkerEventKind(str, Enum):
@@ -286,8 +324,35 @@ def format_terminal_message(event: WorkerEvent) -> str:
     if kind == WorkerEventKind.WORKER_CRASHED:
         label = event.worker_id or event.pool or "worker"
         exit_code = event.extra.get("exit_code")
-        exit_bit = f" — exit={exit_code}" if exit_code is not None else ""
-        return f"[WORKER] {sanitize_human_label(label, max_len=48)} onverwacht gestopt{exit_bit}"
+        error_code = sanitize_human_label(
+            event.error_code or event.extra.get("error_code") or "UNCLASSIFIED_EXIT",
+            max_len=48,
+        )
+        detail = sanitize_human_label(
+            event.message or event.extra.get("error_summary") or "",
+            max_len=80,
+        )
+        phase = sanitize_human_label(event.extra.get("startup_phase") or "", max_len=40)
+        bits = [sanitize_human_label(label, max_len=48), "crashed"]
+        if exit_code is not None:
+            bits.append(f"exit={exit_code}")
+        if error_code:
+            bits.append(error_code)
+        if phase:
+            bits.append(f"phase={phase}")
+        if detail and detail != error_code:
+            bits.append(detail)
+        restart = event.extra.get("restart_attempt")
+        restart_max = event.extra.get("restart_max")
+        if restart is not None:
+            if restart_max is not None:
+                bits.append(f"restart={restart}/{restart_max}")
+            else:
+                bits.append(f"restart={restart}")
+        log_path = event.extra.get("crash_log_path")
+        if log_path:
+            bits.append(f"log={sanitize_human_label(Path(str(log_path)).name, max_len=64)}")
+        return "[WORKER] " + " — ".join(bits)
 
     if kind == WorkerEventKind.WORKER_RESTARTED:
         label = event.worker_id or event.pool or "worker"
@@ -489,13 +554,45 @@ class WorkerEventEmitter:
         worker_id: str | None = None,
         exit_code: int | None = None,
         reason: str | None = None,
+        error_code: str | None = None,
+        error_summary: str | None = None,
+        message: str | None = None,
+        worker_pid: int | None = None,
+        attempt: int | None = None,
+        duration_ms: float | None = None,
+        crash_log_path: str | None = None,
+        startup_phase: str | None = None,
+        startup_or_runtime: str | None = None,
+        restart_attempt: int | None = None,
+        restart_max: int | None = None,
+        extra: Mapping[str, Any] | None = None,
     ) -> str:
+        payload: dict[str, Any] = dict(extra or {})
+        if exit_code is not None:
+            payload["exit_code"] = exit_code
+        if crash_log_path:
+            payload["crash_log_path"] = str(crash_log_path)
+        if error_summary:
+            payload["error_summary"] = sanitize_human_label(error_summary, max_len=160)
+        if startup_phase:
+            payload["startup_phase"] = sanitize_human_label(startup_phase, max_len=64)
+        if startup_or_runtime:
+            payload["startup_or_runtime"] = str(startup_or_runtime)
+        if restart_attempt is not None:
+            payload["restart_attempt"] = int(restart_attempt)
+        if restart_max is not None:
+            payload["restart_max"] = int(restart_max)
+        code = error_code or reason or "UNCLASSIFIED_EXIT"
         return self.emit_kind(
             WorkerEventKind.WORKER_CRASHED,
             pool=pool,
             worker_id=worker_id,
-            error_code=reason,
-            extra={"exit_code": exit_code} if exit_code is not None else {},
+            worker_pid=worker_pid,
+            attempt=attempt if attempt is not None else restart_attempt,
+            duration_ms=duration_ms,
+            error_code=code,
+            message=message or error_summary,
+            extra=payload,
         )
 
     def worker_restarted(

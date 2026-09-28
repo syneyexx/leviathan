@@ -90,8 +90,19 @@ class SourceIngestionSettings:
             raise ValueError("source_ingestion.worker_concurrency must be >= 1")
         if self.secret_policy not in {"quarantine", "skip", "redact"}:
             raise ValueError("source_ingestion.secret_policy must be quarantine|skip|redact")
-        if self.runner not in {"inprocess", "external", "none"}:
-            raise ValueError("source_ingestion.runner must be inprocess|external|none")
+        if self.runner not in {
+            "inprocess",
+            "inprocess_test",
+            "external",
+            "fabric",
+            "standalone_legacy",
+            "none",
+            "disabled",
+        }:
+            raise ValueError(
+                "source_ingestion.runner must be fabric|standalone_legacy|"
+                "inprocess_test|disabled (legacy: inprocess|external|none)"
+            )
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -127,8 +138,17 @@ def load_source_ingestion_settings(
     runner = (os.environ.get("LEVIATHAN_SOURCE_INGESTION_RUNNER") or "").strip().lower()
     if not runner and ri is not None:
         runner = str(getattr(ri, "source_ingestion_runner", "") or "").strip().lower()
-    if runner not in {"inprocess", "external", "none"}:
-        runner = "inprocess"
+    # Canonicalize; default production = fabric (legacy alias: external).
+    if runner in {"inprocess", "in-process", "internal", "thread", "inprocess_test"}:
+        runner = "inprocess_test"
+    elif runner in {"standalone", "standalone_legacy", "legacy_external", "legacy"}:
+        runner = "standalone_legacy"
+    elif runner in {"fabric", "external", "worker", "process"}:
+        runner = "fabric"
+    elif runner in {"none", "off", "disabled"}:
+        runner = "disabled"
+    else:
+        runner = "fabric"
 
     settings = SourceIngestionSettings(
         enabled=_env_bool("LEVIATHAN_SOURCE_INGESTION_ENABLED", True),

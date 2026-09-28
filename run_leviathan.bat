@@ -74,19 +74,22 @@ echo [LEVIATHAN] Heavy jobs: use run_leviathan_workers.bat for external Worker S
 echo [LEVIATHAN] ^(unless workers are already autostarted via leviathan.py bootstrap^).
 echo.
 
-REM Optional: when LEVIATHAN_SOURCE_INGESTION_RUNNER=external, start the shared
-REM source-ingestion worker in a second window (same DB; do not double inprocess).
-findstr /B /C:"LEVIATHAN_SOURCE_INGESTION_RUNNER=external" ".env" >nul 2>&1
-if not errorlevel 1 (
-  echo [LEVIATHAN] Starting source ingestion worker ^(external mode^)
-  start "LEVIATHAN Source Ingestion" /D "%~dp0" "%PY%" scripts\source_ingestion_worker.py
-)
-
-REM Optional autostart of full Worker Supervisor when configured.
+REM Source Ingestion production owner is Worker Fabric (source_ingestion pool).
+REM Do NOT autostart the legacy standalone worker when Worker Supervisor is enabled.
+REM Deprecated: LEVIATHAN_SOURCE_INGESTION_RUNNER=external now means fabric ownership,
+REM not "start scripts\source_ingestion_worker.py".
 findstr /B /C:"LEVIATHAN_WORKERS_AUTOSTART=1" ".env" >nul 2>&1
 if not errorlevel 1 (
   echo [LEVIATHAN] Autostarting Worker Supervisor ^(LEVIATHAN_WORKERS_AUTOSTART=1^)
+  echo [LEVIATHAN] Source Ingestion owned by Worker Fabric — standalone worker NOT started
   start "LEVIATHAN Workers" /D "%~dp0" "%~dp0run_leviathan_workers.bat"
+) else (
+  REM Legacy diagnostics only: explicit standalone_legacy without fabric autostart.
+  findstr /B /C:"LEVIATHAN_SOURCE_INGESTION_RUNNER=standalone_legacy" ".env" >nul 2>&1
+  if not errorlevel 1 (
+    echo [LEVIATHAN] Starting LEGACY standalone source ingestion worker ^(diagnostics only^)
+    start "LEVIATHAN Source Ingestion LEGACY" /D "%~dp0" "%PY%" scripts\source_ingestion_worker.py
+  )
 )
 
 "%PY%" leviathan.py

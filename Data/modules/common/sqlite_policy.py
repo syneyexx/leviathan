@@ -1,4 +1,4 @@
-"""Canonical SQLite operational policy for LEVIATHAN.
+"""SQLite attribution and phase-timed transaction helpers — production policy.
 
 WAL is established during database initialization / migration — not on every
 hot control-plane or heartbeat connection.
@@ -41,6 +41,8 @@ _METRICS: dict[str, int] = {
     "sqlite_busy_retry_exhausted": 0,
     "slow_transaction_count": 0,
 }
+
+ROWS_UNMEASURED = "UNMEASURED"
 
 
 class WriteClass(str, Enum):
@@ -122,6 +124,15 @@ def open_sqlite_connection(
 open_control_connection = open_sqlite_connection
 
 
+def _rows_delta(conn: sqlite3.Connection, before: int | None) -> int | str:
+    if before is None:
+        return ROWS_UNMEASURED
+    try:
+        return max(0, int(conn.total_changes) - int(before))
+    except Exception:  # noqa: BLE001
+        return ROWS_UNMEASURED
+
+
 @contextmanager
 def sqlite_connection(
     db_path: Path | str,
@@ -136,7 +147,11 @@ def sqlite_connection(
     write_class: WriteClass | str | None = None,
     slow_tx_ms: float | None = None,
 ) -> Iterator[sqlite3.Connection]:
-    """Context-managed connection with rollback-on-error and optional slow-tx log."""
+    """Context-managed connection with rollback-on-error and optional slow-tx log.
+
+    Measures body_ms and commit_ms separately. Does not claim lock-wait duration
+    unless BEGIN IMMEDIATE is used via ``write_transaction``.
+    """
     conn = open_sqlite_connection(
         db_path,
         timeout=timeout,
@@ -145,11 +160,21 @@ def sqlite_connection(
         set_wal=set_wal,
     )
     started = time.perf_counter()
-    rows_hint = 0
+    body_started = started
+    changes_before: int | None
+    try:
+        changes_before = int(conn.total_changes)
+    except Exception:  # noqa: BLE001
+        changes_before = None
+    body_ms = 0.0
+    commit_ms = 0.0
     try:
         yield conn
+        body_ms = (time.perf_counter() - body_started) * 1000.0
         if commit:
+            commit_started = time.perf_counter()
             conn.commit()
+            commit_ms = (time.perf_counter() - commit_started) * 1000.0
     except Exception:
         try:
             conn.rollback()
@@ -157,20 +182,24 @@ def sqlite_connection(
             pass
         raise
     finally:
-        duration_ms = (time.perf_counter() - started) * 1000.0
+        total_ms = (time.perf_counter() - started) * 1000.0
         threshold = (
             DEFAULT_SLOW_TX_MS
             if slow_tx_ms is None
             else float(slow_tx_ms)
         )
-        if duration_ms >= threshold:
+        rows = _rows_delta(conn, changes_before)
+        if total_ms >= threshold:
             _METRICS["slow_transaction_count"] += 1
             _emit_slow_transaction(
                 store=store or "unknown",
                 operation=operation or "unknown",
-                duration_ms=duration_ms,
-                rows=rows_hint,
+                duration_ms=total_ms,
+                rows=rows,
                 write_class=write_class,
+                begin_ms=None,
+                body_ms=body_ms,
+                commit_ms=commit_ms,
             )
         conn.close()
 
@@ -195,15 +224,31 @@ def write_transaction(
     slow_tx_ms: float | None = None,
     rows: int | None = None,
 ) -> Iterator[sqlite3.Connection]:
-    """Bounded write transaction helper. Caller owns connection lifetime."""
+    """Bounded write transaction helper. Caller owns connection lifetime.
+
+    Measures begin_ms (lock acquisition for IMMEDIATE), body_ms, commit_ms.
+    """
     started = time.perf_counter()
+    try:
+        changes_before = int(conn.total_changes)
+    except Exception:  # noqa: BLE001
+        changes_before = None
+    begin_ms = 0.0
+    body_ms = 0.0
+    commit_ms = 0.0
+    begin_started = time.perf_counter()
     if immediate:
         begin_immediate(conn)
     else:
         conn.execute("BEGIN")
+    begin_ms = (time.perf_counter() - begin_started) * 1000.0
+    body_started = time.perf_counter()
     try:
         yield conn
+        body_ms = (time.perf_counter() - body_started) * 1000.0
+        commit_started = time.perf_counter()
         conn.commit()
+        commit_ms = (time.perf_counter() - commit_started) * 1000.0
     except Exception:
         try:
             conn.rollback()
@@ -211,16 +256,23 @@ def write_transaction(
             pass
         raise
     finally:
-        duration_ms = (time.perf_counter() - started) * 1000.0
+        total_ms = (time.perf_counter() - started) * 1000.0
         threshold = DEFAULT_SLOW_TX_MS if slow_tx_ms is None else float(slow_tx_ms)
-        if duration_ms >= threshold:
+        if rows is not None:
+            row_count: int | str = int(rows)
+        else:
+            row_count = _rows_delta(conn, changes_before)
+        if total_ms >= threshold:
             _METRICS["slow_transaction_count"] += 1
             _emit_slow_transaction(
                 store=store or "unknown",
                 operation=operation or "unknown",
-                duration_ms=duration_ms,
-                rows=int(rows or 0),
+                duration_ms=total_ms,
+                rows=row_count,
                 write_class=write_class,
+                begin_ms=begin_ms,
+                body_ms=body_ms,
+                commit_ms=commit_ms,
             )
 
 
@@ -286,14 +338,26 @@ def _emit_slow_transaction(
     store: str,
     operation: str,
     duration_ms: float,
-    rows: int,
+    rows: int | str,
     write_class: WriteClass | str | None,
+    begin_ms: float | None = None,
+    body_ms: float | None = None,
+    commit_ms: float | None = None,
 ) -> None:
     wc = write_class.value if isinstance(write_class, WriteClass) else (write_class or "")
+    rows_s = str(rows)
     line = (
         f"[DB] slow transaction — store={store} operation={operation} "
-        f"duration={duration_ms:.0f}ms rows={rows} pid={os.getpid()}"
+        f"total_ms={duration_ms:.0f} rows={rows_s} pid={os.getpid()}"
     )
+    if begin_ms is not None:
+        line += f" begin_ms={begin_ms:.0f}"
+    if body_ms is not None:
+        line += f" body_ms={body_ms:.0f}"
+    if commit_ms is not None:
+        line += f" commit_ms={commit_ms:.0f}"
+    # Backward-compatible duration alias for older log scrapers.
+    line += f" duration={duration_ms:.0f}ms"
     if wc:
         line += f" write_class={wc}"
     print(line, flush=True)

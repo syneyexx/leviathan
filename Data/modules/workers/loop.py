@@ -78,6 +78,10 @@ def run_pool_loop(
     from .process import process_start_identity_for
     from .protocol import WorkerRegistration, WORKER_PROTOCOL_VERSION
 
+    # Startup phases — retained for crash diagnostics only (no healthy spam).
+    phase = "PROCESS_SPAWNED"
+    print(f"[worker] phase={phase} pool={pool_id} worker_id={worker_id}", flush=True)
+    phase = "LOADING_CONFIG"
     identity = process_start_identity_for(os.getpid())
     stop = {"flag": False}
 
@@ -88,6 +92,7 @@ def run_pool_loop(
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, _stop)
 
+    phase = "REGISTERING"
     registry.upsert(
         WorkerRegistration(
             worker_id=worker_id,
@@ -111,6 +116,7 @@ def run_pool_loop(
     last_hb = 0.0
     draining = False
 
+    phase = "READY"
     emitter = get_worker_event_emitter()
     emitter.worker_ready(pool=pool_id, worker_id=worker_id, worker_pid=os.getpid())
 

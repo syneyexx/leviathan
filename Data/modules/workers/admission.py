@@ -110,8 +110,13 @@ class ResourceAdmission:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
     @contextmanager
-    def connect(self) -> Iterator[sqlite3.Connection]:
-        with control_plane_connection(self.db_path) as conn:
+    def connect(self, *, operation: str = "admission") -> Iterator[sqlite3.Connection]:
+        with control_plane_connection(
+            self.db_path,
+            store="resource_admission",
+            operation=operation,
+            write_class="CONTROL_WRITE",
+        ) as conn:
             yield conn
 
     def initialize(self) -> None:
