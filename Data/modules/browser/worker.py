@@ -9,11 +9,17 @@ from __future__ import annotations
 
 import hashlib
 import html
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Protocol
+from urllib.parse import urlparse
+
+_LOCALHOST_ALLOW = frozenset(
+    {"localhost", "127.0.0.1", "::1", "0.0.0.0", "localhost.localdomain"}
+)
 
 
 class BrowserAction(str, Enum):
@@ -63,6 +69,14 @@ class BrowserSession:
     created_at: str = field(default_factory=_utc_now)
     updated_at: str = field(default_factory=_utc_now)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Generation binding — sessions created under a worker generation are lost
+    # when the worker restarts / supervisor generation changes.
+    worker_generation: str | None = None
+    last_activity_at: float = field(default_factory=time.monotonic)
+
+    def touch(self) -> None:
+        self.last_activity_at = time.monotonic()
+        self.updated_at = _utc_now()
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -75,6 +89,8 @@ class BrowserSession:
             "last_action": self.last_action,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "worker_generation": self.worker_generation,
+            "last_activity_at": self.last_activity_at,
             "metadata": self.metadata,
             "truth": {
                 "page_text_is_untrusted_context": True,
@@ -251,7 +267,7 @@ class FixtureBrowserBackend:
         if action == BrowserAction.TYPE:
             text = str(arguments.get("text") or "")
             selector = str(arguments.get("selector") or "input")
-            session.dom_text = f"{session.dom_text}\n[typed:{selector}={text}]"
+            session.dom_text = f"{session.dom_text}\n[typed:{selector} len={len(text)}]"
             session.last_action = action.value
             session.updated_at = _utc_now()
             obs = BrowserObservation(
@@ -263,6 +279,9 @@ class FixtureBrowserBackend:
             meta["selector"] = selector
             # Never echo potential credentials into metadata beyond length.
             meta["text_len"] = len(text)
+            meta["secret_ref_present"] = bool(
+                arguments.get("secret_ref") or arguments.get("secretRef")
+            )
             return session, obs, meta
 
         if action in {BrowserAction.SCROLL, BrowserAction.WAIT, BrowserAction.KEYPRESS}:
@@ -311,6 +330,11 @@ class BrowserWorker:
         allow_uploads: bool = True,
         filesystem_root: str | None = None,
         qa_crawler: Any | None = None,
+        session_ttl_seconds: float = 900.0,
+        worker_generation: str | None = None,
+        max_wait_seconds: float = 30.0,
+        max_screenshot_width: int | None = 1920,
+        max_screenshot_height: int | None = 1080,
     ) -> None:
         if backend is not None:
             self.backend = backend
@@ -331,6 +355,11 @@ class BrowserWorker:
         self.allow_network = allow_network
         self.allow_uploads = allow_uploads
         self.filesystem_root = filesystem_root
+        self.session_ttl_seconds = float(session_ttl_seconds)
+        self.worker_generation = worker_generation
+        self.max_wait_seconds = float(max_wait_seconds)
+        self.max_screenshot_width = max_screenshot_width
+        self.max_screenshot_height = max_screenshot_height
 
     def get_qa_crawler(self) -> Any:
         if self._qa_crawler is False:
@@ -350,6 +379,11 @@ class BrowserWorker:
                 allow_uploads=self.allow_uploads,
                 filesystem_root=self.filesystem_root,
                 qa_crawler=False,  # type: ignore[arg-type] — sentinel: no nested factory
+                session_ttl_seconds=self.session_ttl_seconds,
+                worker_generation=self.worker_generation,
+                max_wait_seconds=self.max_wait_seconds,
+                max_screenshot_width=self.max_screenshot_width,
+                max_screenshot_height=self.max_screenshot_height,
             )
             crawler = BrowserJourneyCrawler(
                 browser_worker=qa_worker,
@@ -364,6 +398,244 @@ class BrowserWorker:
 
     def sessions_for_run(self, run_id: str) -> list[BrowserSession]:
         return [s for s in self._sessions.values() if s.run_id == run_id]
+
+    def expire_idle_sessions(self) -> list[str]:
+        """Drop sessions idle longer than session_ttl_seconds; close backend pages when possible."""
+        ttl = float(self.session_ttl_seconds)
+        if ttl <= 0:
+            return []
+        now = time.monotonic()
+        expired: list[str] = []
+        for sid, session in list(self._sessions.items()):
+            last = float(getattr(session, "last_activity_at", 0.0) or 0.0)
+            if (now - last) > ttl:
+                expired.append(sid)
+                self._close_backend_session(session)
+                self._sessions.pop(sid, None)
+        return expired
+
+    def shutdown(self) -> None:
+        """Close all sessions and the backend if it exposes close()."""
+        for sid, session in list(self._sessions.items()):
+            self._close_backend_session(session)
+            self._sessions.pop(sid, None)
+        closer = getattr(self.backend, "close", None)
+        if callable(closer):
+            try:
+                closer()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def status_projection(self) -> dict[str, Any]:
+        """Worker/backend/session summary — never launches Chromium."""
+        kind = getattr(self.backend, "kind", BrowserBackendKind.FIXTURE)
+        kind_val = kind.value if hasattr(kind, "value") else str(kind)
+        # Cached readiness only — do not call readiness(force=True) / launch.
+        cached: dict[str, Any] | None = None
+        raw_cache = getattr(self.backend, "_readiness", None)
+        if isinstance(raw_cache, dict):
+            cached = {
+                k: v
+                for k, v in raw_cache.items()
+                if k
+                in {
+                    "ready",
+                    "status",
+                    "detail",
+                    "package_installed",
+                    "package_available",
+                    "chromium_executable",
+                    "chromium_exists",
+                    "driver_started",
+                    "chromium_launched",
+                    "navigation_ok",
+                    "observation_ok",
+                    "truth",
+                }
+            }
+        sessions_summary = [
+            {
+                "session_id": s.session_id,
+                "run_id": s.run_id,
+                "url": s.url,
+                "last_action": s.last_action,
+                "worker_generation": s.worker_generation,
+                "last_activity_at": s.last_activity_at,
+                "updated_at": s.updated_at,
+            }
+            for s in self._sessions.values()
+        ]
+        return {
+            "worker_generation": self.worker_generation,
+            "session_ttl_seconds": self.session_ttl_seconds,
+            "max_wait_seconds": self.max_wait_seconds,
+            "active_sessions": len(self._sessions),
+            "sessions": sessions_summary,
+            "backend": {
+                "kind": kind_val,
+                "readiness_cached": cached,
+                "has_close": callable(getattr(self.backend, "close", None)),
+            },
+            "allow_network": self.allow_network,
+            "truth": {
+                "status_projection_does_not_launch_chromium": True,
+                "fixture_is_not_chromium": kind == BrowserBackendKind.FIXTURE,
+                "cached_status_does_not_launch_chromium": True,
+            },
+        }
+
+    def _close_backend_session(self, session: BrowserSession) -> None:
+        backend = self.backend
+        closer = getattr(backend, "close_session", None)
+        if callable(closer):
+            try:
+                closer(session)
+                return
+            except Exception:  # noqa: BLE001
+                pass
+        pages = getattr(backend, "_pages", None)
+        if isinstance(pages, dict):
+            page = pages.pop(session.session_id, None)
+            if page is not None:
+                try:
+                    page.close()
+                except Exception:  # noqa: BLE001
+                    pass
+        console = getattr(backend, "_console", None)
+        if isinstance(console, dict):
+            console.pop(session.session_id, None)
+        net = getattr(backend, "_network_errors", None)
+        if isinstance(net, dict):
+            net.pop(session.session_id, None)
+
+    def _bound_wait_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Hard-cap WAIT duration via max_wait_seconds."""
+        args = dict(arguments)
+        cap_s = max(0.0, float(self.max_wait_seconds))
+        cap_ms = int(cap_s * 1000)
+        if "seconds" in args:
+            try:
+                args["seconds"] = max(0.0, min(float(args["seconds"]), cap_s))
+            except (TypeError, ValueError):
+                args["seconds"] = cap_s
+        if "duration" in args:
+            try:
+                args["duration"] = max(0.0, min(float(args["duration"]), cap_s))
+            except (TypeError, ValueError):
+                args["duration"] = cap_s
+        for key in ("ms", "timeout_ms", "wait_ms"):
+            if key not in args:
+                continue
+            try:
+                args[key] = max(0, min(int(float(args[key])), cap_ms))
+            except (TypeError, ValueError):
+                args[key] = cap_ms
+        # Propagate ceiling so backends that ignore unknown keys still see a bound.
+        args["max_wait_seconds"] = cap_s
+        if "ms" not in args and "timeout_ms" not in args and "seconds" in args:
+            args["ms"] = int(float(args["seconds"]) * 1000)
+        return args
+
+    def _validate_navigate_url(self, url: str) -> None:
+        """Apply url_policy when available; keep local_dom data:/file:/localhost working."""
+        raw = str(url or "").strip()
+        if not raw:
+            return
+        kind = getattr(self.backend, "kind", BrowserBackendKind.FIXTURE)
+        kind_val = (kind.value if hasattr(kind, "value") else str(kind or "")).lower()
+        parsed = urlparse(raw)
+        scheme = (parsed.scheme or "").lower()
+
+        # Bare filesystem paths (Round 7 local_dom tests pass Path strings).
+        if not scheme or (len(scheme) == 1 and scheme.isalpha()):
+            if kind_val in {"local_dom", "fixture"}:
+                return
+
+        # data: / file: — permitted for local_dom + fixture (and data: probes).
+        if scheme in {"data", "file"} or raw.startswith("data:") or raw.startswith("file:"):
+            if kind_val in {"local_dom", "fixture"}:
+                return
+            if scheme == "data" or raw.startswith("data:"):
+                try:
+                    from .url_policy import validate_browser_url
+
+                    validate_browser_url(
+                        raw, allow_data_for_probe=True, allow_private=False, context="navigate"
+                    )
+                except ImportError:
+                    return
+                return
+
+        try:
+            from .errors import BrowserDomainError  # noqa: F401 — re-exported for callers
+            from .url_policy import validate_browser_url
+        except ImportError:
+            return
+
+        host = (parsed.hostname or "").lower()
+        allow_private = False
+        allowed_hosts: tuple[str, ...] | None = None
+        # Explicit localhost QA path: local_dom + allow_network + localhost allow set.
+        if self.allow_network and host in _LOCALHOST_ALLOW and kind_val in {
+            "local_dom",
+            "playwright",
+            "fixture",
+        }:
+            allow_private = True
+            allowed_hosts = tuple(_LOCALHOST_ALLOW)
+        # RFC 2606 special-use TLDs used in unit fixtures (e.g. example.test) —
+        # DNS fail-closed would otherwise treat them as private and block before
+        # Playwright can report honest UNAVAILABLE.
+        elif host.endswith((".test", ".example", ".invalid")):
+            allow_private = True
+
+        validate_browser_url(
+            raw,
+            allow_private=allow_private,
+            allowed_hosts=allowed_hosts,
+            allow_data_for_probe=False,
+            context="navigate",
+        )
+
+    @staticmethod
+    def _safe_type_metadata(
+        meta: dict[str, Any], arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Never log typed text — selector + length + secret_ref presence only."""
+        out = {
+            k: v
+            for k, v in meta.items()
+            if k
+            not in {
+                "text",
+                "value",
+                "typed_text",
+                "input_text",
+                "password",
+                "secret",
+                "screenshot_svg",
+                "screenshot_html",
+                "screenshot_png",
+            }
+        }
+        selector = (
+            arguments.get("selector")
+            or arguments.get("target")
+            or out.get("selector")
+            or "input"
+        )
+        text = arguments.get("text")
+        text_len = out.get("text_len")
+        if text_len is None and text is not None:
+            text_len = len(str(text))
+        out["selector"] = str(selector)
+        out["text_len"] = int(text_len or 0)
+        out["secret_ref_present"] = bool(
+            arguments.get("secret_ref")
+            or arguments.get("secretRef")
+            or out.get("secret_ref_present")
+        )
+        return out
 
     def execute(
         self,
@@ -382,8 +654,11 @@ class BrowserWorker:
             "QA_CANCEL",
             "QA_REPLAY",
             "QA_REPORT",
+            "QA_ADVANCE",
         } or action_key.lower().startswith("qa_"):
             return self._execute_qa(action_key, args, run_id=run_id, request_id=request_id)
+
+        self.expire_idle_sessions()
 
         if isinstance(action, str):
             action = BrowserAction(action.upper())
@@ -393,9 +668,64 @@ class BrowserWorker:
             session = self._sessions[session_id]
             if run_id and session.run_id and session.run_id != run_id:
                 raise PermissionError("Browser session belongs to a different run")
+            # Generation binding — worker restart / supervisor gen change.
+            if (
+                self.worker_generation is not None
+                and session.worker_generation != self.worker_generation
+            ):
+                from .errors import BROWSER_SESSION_LOST
+
+                return {
+                    "status": BrowserJobStatus.REJECTED.value,
+                    "error": BROWSER_SESSION_LOST,
+                    "error_code": BROWSER_SESSION_LOST,
+                    "session_id": session.session_id,
+                    "action": action.value,
+                    "detail": "Browser session bound to a different worker generation",
+                    "truth": {
+                        "no_fabricated_browser_results": True,
+                        "requires_capability_gateway": True,
+                        "session_generation_binding": True,
+                    },
+                }
         else:
-            session = BrowserSession(session_id=str(uuid.uuid4()), run_id=run_id)
+            session = BrowserSession(
+                session_id=str(uuid.uuid4()),
+                run_id=run_id,
+                worker_generation=self.worker_generation,
+                last_activity_at=time.monotonic(),
+            )
             self._sessions[session.session_id] = session
+
+        if action == BrowserAction.NAVIGATE:
+            try:
+                self._validate_navigate_url(str(args.get("url") or ""))
+            except Exception as exc:  # noqa: BLE001
+                from .errors import BROWSER_TARGET_BLOCKED, BrowserDomainError
+
+                code = getattr(exc, "code", None) or BROWSER_TARGET_BLOCKED
+                if isinstance(exc, BrowserDomainError) or code == BROWSER_TARGET_BLOCKED:
+                    return {
+                        "status": BrowserJobStatus.REJECTED.value,
+                        "error": str(exc),
+                        "error_code": str(code),
+                        "session_id": session.session_id,
+                        "action": action.value,
+                        "truth": {
+                            "no_fabricated_browser_results": True,
+                            "url_policy_enforced": True,
+                        },
+                    }
+                raise
+
+        if action == BrowserAction.WAIT:
+            args = self._bound_wait_arguments(args)
+
+        if action == BrowserAction.SCREENSHOT:
+            if self.max_screenshot_width is not None and "max_width" not in args:
+                args["max_width"] = int(self.max_screenshot_width)
+            if self.max_screenshot_height is not None and "max_height" not in args:
+                args["max_height"] = int(self.max_screenshot_height)
 
         kind = getattr(self.backend, "kind", BrowserBackendKind.FIXTURE)
         try:
@@ -428,6 +758,22 @@ class BrowserWorker:
                 },
             }
         except Exception as exc:  # noqa: BLE001
+            from .errors import BrowserDomainError
+
+            if isinstance(exc, BrowserDomainError):
+                return {
+                    "status": BrowserJobStatus.REJECTED.value,
+                    "error": exc.message,
+                    "error_code": exc.code,
+                    "session_id": session.session_id,
+                    "action": action.value,
+                    "backend": kind.value if hasattr(kind, "value") else str(kind),
+                    "details": dict(exc.details),
+                    "truth": {
+                        "no_fabricated_browser_results": True,
+                        "typed_browser_domain_error": True,
+                    },
+                }
             if getattr(exc, "unavailable", False) or "not installed" in str(exc).lower():
                 return {
                     "status": BrowserJobStatus.UNSUPPORTED.value,
@@ -441,6 +787,10 @@ class BrowserWorker:
                     },
                 }
             raise
+
+        session.touch()
+        if session.worker_generation is None and self.worker_generation is not None:
+            session.worker_generation = self.worker_generation
 
         artifact_id = None
         if action == BrowserAction.SCREENSHOT and self.artifact_store is not None:
@@ -510,6 +860,15 @@ class BrowserWorker:
         else:
             status = BrowserJobStatus.COMPLETED.value
 
+        if action == BrowserAction.TYPE:
+            safe_meta = self._safe_type_metadata(meta, args)
+        else:
+            safe_meta = {
+                k: v
+                for k, v in meta.items()
+                if k not in {"screenshot_svg", "screenshot_html", "screenshot_png", "text"}
+            }
+
         return {
             "status": status,
             "action": action.value,
@@ -520,11 +879,7 @@ class BrowserWorker:
             "artifact_refs": [artifact_id] if artifact_id else [],
             "backend": meta.get("backend"),
             "detail": f"Browser {action.value} via {meta.get('backend')} backend",
-            "metadata": {
-                k: v
-                for k, v in meta.items()
-                if k not in {"screenshot_svg", "screenshot_html", "screenshot_png"}
-            },
+            "metadata": safe_meta,
             "truth": {
                 "no_fabricated_browser_results": True,
                 "requires_capability_gateway": True,
@@ -598,6 +953,7 @@ class BrowserWorker:
                 CrawlStatus.COMPLETED.value,
                 CrawlStatus.LIMIT_REACHED.value,
                 CrawlStatus.CANCELLED.value,
+                CrawlStatus.NEEDS_CONTINUATION.value,
             }
             return {
                 "status": (
@@ -609,7 +965,41 @@ class BrowserWorker:
                 "report": payload,
                 "journey_id": payload.get("journey_id"),
                 "run_id": payload.get("run_id"),
+                "needs_continuation": bool(
+                    payload.get("needs_continuation")
+                    or payload.get("status") == CrawlStatus.NEEDS_CONTINUATION.value
+                ),
                 "detail": f"QA crawl {payload.get('status')}",
+                "truth": payload.get("truth") or {},
+            }
+        if key in {"QA_ADVANCE", "ADVANCE"}:
+            report = crawler.advance(
+                journey_id=args.get("journey_id"),
+                run_id=run_id or args.get("run_id"),
+                checkpoint=args.get("checkpoint"),
+            )
+            payload = report.public_dict() if hasattr(report, "public_dict") else dict(report)
+            terminal_ok = payload.get("status") in {
+                CrawlStatus.COMPLETED.value,
+                CrawlStatus.LIMIT_REACHED.value,
+                CrawlStatus.CANCELLED.value,
+                CrawlStatus.NEEDS_CONTINUATION.value,
+            }
+            return {
+                "status": (
+                    BrowserJobStatus.COMPLETED.value
+                    if terminal_ok
+                    else BrowserJobStatus.FAILED.value
+                ),
+                "action": "QA_ADVANCE",
+                "report": payload,
+                "journey_id": payload.get("journey_id"),
+                "run_id": payload.get("run_id"),
+                "needs_continuation": bool(
+                    payload.get("needs_continuation")
+                    or payload.get("status") == CrawlStatus.NEEDS_CONTINUATION.value
+                ),
+                "detail": f"QA advance {payload.get('status')}",
                 "truth": payload.get("truth") or {},
             }
         if key in {"QA_STATUS", "STATUS"}:

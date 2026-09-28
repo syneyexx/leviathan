@@ -48,6 +48,7 @@ class CrawlStatus(str, Enum):
     CANCELLED = "CANCELLED"
     FAILED = "FAILED"
     LIMIT_REACHED = "LIMIT_REACHED"
+    NEEDS_CONTINUATION = "NEEDS_CONTINUATION"
 
 
 _DESTRUCTIVE_PATTERNS = re.compile(
@@ -149,6 +150,7 @@ class CrawlReport:
             "finished_at": self.finished_at,
             "error": self.error,
             "checkpoint": dict(self.checkpoint),
+            "needs_continuation": self.status == CrawlStatus.NEEDS_CONTINUATION,
             "truth": {
                 "localhost_scoped_by_default": True,
                 "no_stealth_evasion": True,
@@ -208,6 +210,8 @@ class BrowserJourneyCrawler:
         allow_form_submit: bool = True,
         observability: Any | None = None,
         sleep_fn: Callable[[float], None] | None = None,
+        slice_max_actions: int = 12,
+        slice_max_seconds: float = 12.0,
     ) -> None:
         self.browser_worker = browser_worker
         self.artifact_store = artifact_store
@@ -223,6 +227,8 @@ class BrowserJourneyCrawler:
         self.allow_form_submit = bool(allow_form_submit)
         self.observability = observability
         self._sleep = sleep_fn or time.sleep
+        self.slice_max_actions = max(1, int(slice_max_actions))
+        self.slice_max_seconds = max(0.1, float(slice_max_seconds))
         self._runs: dict[str, CrawlReport] = {}
         self._cancel: set[str] = set()
 
@@ -293,37 +299,114 @@ class BrowserJourneyCrawler:
         seed: int = 42,
         resume_checkpoint: dict[str, Any] | None = None,
     ) -> CrawlReport:
+        checkpoint_in = dict(resume_checkpoint or {})
         if run_id and run_id in self._runs:
             report = self._runs[run_id]
         else:
             report = self.start(
-                start_url=start_url or (resume_checkpoint or {}).get("url") or "",
+                start_url=start_url
+                or checkpoint_in.get("url")
+                or checkpoint_in.get("current_url")
+                or "",
                 persona=persona,
-                seed=seed,
+                seed=int(checkpoint_in.get("seed") or seed),
                 run_id=run_id,
             )
         if report.status == CrawlStatus.CANCELLED:
             return report
         report.status = CrawlStatus.RUNNING
+        report.finished_at = None
         rng = random.Random(report.seed)
+        # Advance RNG past prior actions so resume stays approximately deterministic.
+        prior_actions = int(checkpoint_in.get("actions_performed") or 0)
+        for _ in range(max(0, prior_actions)):
+            rng.random()
         started = time.monotonic()
+        slice_started = time.monotonic()
+        slice_actions = 0
         session_id: str | None = None
-        path: list[str] = []
+        path: list[str] = list(checkpoint_in.get("action_history") or [])[-40:]
         graph: dict[str, StateNode] = {}
-        forms_filled = 0
+        for fp in list(checkpoint_in.get("visited_fingerprints") or [])[-50:]:
+            graph[str(fp)] = StateNode(
+                fingerprint=str(fp),
+                url=str(checkpoint_in.get("current_url") or report.start_url),
+                depth=0,
+            )
+        forms_filled = int(checkpoint_in.get("forms_filled") or 0)
         nav_failures = 0
+        current_url = str(checkpoint_in.get("current_url") or report.start_url)
+        last_fp = str(checkpoint_in.get("fingerprint") or "")
+        nav: dict[str, Any] = {}
 
         try:
-            nav = self._action(
-                "NAVIGATE",
-                {"url": report.start_url, "headers": self._qa_headers(report)},
-                run_id=report.run_id,
-            )
-            session_id = str((nav.get("session") or {}).get("session_id") or nav.get("session_id") or "")
-            path.append(f"Navigate {report.start_url}")
-            report.actions_performed += 1
-            report.pages_visited = 1
-            self._ingest_observation(report, nav, path)
+            resuming = bool(checkpoint_in) and int(checkpoint_in.get("pages_visited") or 0) > 0
+            if resuming:
+                resume_url = str(
+                    checkpoint_in.get("current_url")
+                    or checkpoint_in.get("url")
+                    or report.start_url
+                )
+                report.pages_visited = int(checkpoint_in.get("pages_visited") or 0)
+                report.actions_performed = int(checkpoint_in.get("actions_performed") or 0)
+                if checkpoint_in.get("screenshots") and not report.screenshots:
+                    report.screenshots = [str(s) for s in list(checkpoint_in["screenshots"])[-20:]]
+                nav = self._action(
+                    "NAVIGATE",
+                    {"url": resume_url, "headers": self._qa_headers(report)},
+                    run_id=report.run_id,
+                )
+                session_id = str(
+                    (nav.get("session") or {}).get("session_id") or nav.get("session_id") or ""
+                )
+                path.append(f"Resume navigate {resume_url}")
+                report.actions_performed += 1
+                slice_actions += 1
+                current_url = resume_url
+                self._ingest_observation(report, nav, path)
+                obs = (nav.get("observation") or nav.get("result") or {})
+                current_url = str(obs.get("url") or resume_url)
+                last_fp = self._fingerprint(current_url, obs)
+                prior_fp = str(checkpoint_in.get("fingerprint") or "")
+                if prior_fp and last_fp != prior_fp:
+                    from .errors import BROWSER_QA_RESUME_DIVERGED
+
+                    dom = str(obs.get("dom_text") or "").strip()
+                    report.issues.append(
+                        CrawlIssue(
+                            issue_id=f"iss_{uuid.uuid4().hex[:8]}",
+                            severity="medium" if dom else "high",
+                            kind=BROWSER_QA_RESUME_DIVERGED,
+                            message="Resume fingerprint diverged from checkpoint",
+                            url=current_url,
+                            reproduction=list(path),
+                            metadata={
+                                "expected_fingerprint": prior_fp[:24],
+                                "observed_fingerprint": last_fp[:24],
+                            },
+                        )
+                    )
+                    # Badly diverged (blank page after resume) — surface typed code.
+                    if not dom:
+                        report.error = BROWSER_QA_RESUME_DIVERGED
+            else:
+                nav = self._action(
+                    "NAVIGATE",
+                    {"url": report.start_url, "headers": self._qa_headers(report)},
+                    run_id=report.run_id,
+                )
+                session_id = str(
+                    (nav.get("session") or {}).get("session_id") or nav.get("session_id") or ""
+                )
+                path.append(f"Navigate {report.start_url}")
+                report.actions_performed += 1
+                report.pages_visited = 1
+                slice_actions += 1
+                current_url = report.start_url
+                self._ingest_observation(report, nav, path)
+                obs0 = (nav.get("observation") or nav.get("result") or {})
+                current_url = str(obs0.get("url") or report.start_url)
+                last_fp = self._fingerprint(current_url, obs0)
 
             while True:
                 if report.run_id in self._cancel:
@@ -341,10 +424,18 @@ class BrowserJourneyCrawler:
                     report.status = CrawlStatus.LIMIT_REACHED
                     report.error = "CRAWLER_LIMIT_REACHED:max_wall_time"
                     break
+                if slice_actions >= self.slice_max_actions:
+                    report.status = CrawlStatus.NEEDS_CONTINUATION
+                    break
+                if (time.monotonic() - slice_started) >= self.slice_max_seconds:
+                    report.status = CrawlStatus.NEEDS_CONTINUATION
+                    break
 
                 obs = (nav.get("observation") or nav.get("result") or {})
-                url = str(obs.get("url") or report.start_url)
+                url = str(obs.get("url") or current_url or report.start_url)
+                current_url = url
                 fp = self._fingerprint(url, obs)
+                last_fp = fp
                 node = graph.get(fp)
                 if node:
                     node.visit_count += 1
@@ -450,6 +541,7 @@ class BrowserJourneyCrawler:
                     continue
 
                 report.actions_performed += 1
+                slice_actions += 1
                 path.append(str(action_spec.get("label") or action_spec["action"]))
                 if action_spec.get("kind") == "FORM_FILL":
                     forms_filled += 1
@@ -465,6 +557,7 @@ class BrowserJourneyCrawler:
                     )
                     if new_url != url:
                         report.pages_visited += 1
+                    current_url = new_url
                     self._ingest_observation(report, nav, path)
                     # Mutation verification when required.
                     if bool(nav.get("requires_verify_state")) or status == "APPLIED_UNVERIFIED":
@@ -474,6 +567,7 @@ class BrowserJourneyCrawler:
                             run_id=report.run_id,
                         )
                         report.actions_performed += 1
+                        slice_actions += 1
                         if str(verify.get("status") or "").upper() not in {"COMPLETED", "OK", "PASSED"}:
                             report.issues.append(
                                 CrawlIssue(
@@ -502,20 +596,71 @@ class BrowserJourneyCrawler:
                 "pages_visited": report.pages_visited,
                 "actions_performed": report.actions_performed,
                 "forms_filled": forms_filled,
+                "slice_actions": slice_actions,
             }
-            report.reproduction_journeys = [path] if path else []
+            report.reproduction_journeys = [path[-80:]] if path else []
             report.checkpoint = {
                 "url": report.start_url,
+                "current_url": current_url,
                 "pages_visited": report.pages_visited,
                 "actions_performed": report.actions_performed,
                 "seed": report.seed,
+                "persona": report.persona.value,
+                "action_history": path[-40:],
+                "visited_fingerprints": list(graph.keys())[-50:],
+                "forms_filled": forms_filled,
+                "issues_count": len(report.issues),
+                "screenshots": list(report.screenshots)[-20:],
+                "fingerprint": last_fp,
+                "slice_max_actions": self.slice_max_actions,
+                "slice_max_seconds": self.slice_max_seconds,
+                "budget": {
+                    "max_pages": self.budget.max_pages,
+                    "max_actions": self.budget.max_actions,
+                    "max_depth": self.budget.max_depth,
+                    "max_wall_time_seconds": self.budget.max_wall_time_seconds,
+                    "max_forms": self.budget.max_forms,
+                },
+                "rng_state": {
+                    "seed": report.seed,
+                    "actions_performed": report.actions_performed,
+                },
             }
             self._flush_artifacts(report)
             self._emit(
                 "crawler.completed" if report.status == CrawlStatus.COMPLETED else "crawler.issue",
-                {"run_id": report.run_id, "status": report.status.value, "issues": len(report.issues)},
+                {
+                    "run_id": report.run_id,
+                    "status": report.status.value,
+                    "issues": len(report.issues),
+                    "needs_continuation": report.status == CrawlStatus.NEEDS_CONTINUATION,
+                },
             )
         return report
+
+    def advance(
+        self,
+        *,
+        journey_id: str | None = None,
+        run_id: str | None = None,
+        checkpoint: dict[str, Any] | None = None,
+    ) -> CrawlReport:
+        """Resume a crawl slice from a checkpoint (JobRuntime continuation)."""
+        ref = run_id or journey_id
+        key = _resolve_report_key(self._runs, str(ref)) if ref else None
+        prior = self._runs.get(key) if key else None
+        cp = dict(checkpoint or (prior.checkpoint if prior else {}) or {})
+        if prior is not None and not cp:
+            cp = dict(prior.checkpoint or {})
+        return self.run(
+            start_url=str(
+                cp.get("url") or (prior.start_url if prior else "") or ""
+            ),
+            run_id=(prior.run_id if prior else run_id),
+            persona=(prior.persona if prior else JourneyPersona.DESKTOP_MOUSE),
+            seed=int(cp.get("seed") or (prior.seed if prior else 42)),
+            resume_checkpoint=cp,
+        )
 
     def replay(self, run_id: str) -> CrawlReport:
         prior = self.status(run_id)

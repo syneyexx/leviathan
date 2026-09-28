@@ -128,6 +128,9 @@ class QaCrawlerTests(unittest.TestCase):
             browser_worker=self.worker,
             allowed_hosts=("localhost", "127.0.0.1", "::1"),
             budget=CrawlBudget(max_pages=8, max_actions=25, max_wall_time_seconds=15.0),
+            # Unit tests exercise a single in-process slice; production uses smaller defaults.
+            slice_max_actions=100,
+            slice_max_seconds=60.0,
             sleep_fn=lambda _s: None,
         )
 
@@ -149,6 +152,7 @@ class QaCrawlerTests(unittest.TestCase):
             {
                 CrawlStatus.COMPLETED,
                 CrawlStatus.LIMIT_REACHED,
+                CrawlStatus.NEEDS_CONTINUATION,
                 CrawlStatus.FAILED,
                 CrawlStatus.CANCELLED,
             },
