@@ -2,15 +2,23 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import logging
 import threading
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, NoReturn
 
 from .discovery import ManifestError, discover_manifest_paths, load_manifest_file
+from .errors import (
+    ModuleManagerError,
+    coerce_lifecycle_error,
+    failure_from_lifecycle_result,
+    scrub_error_text,
+    unknown_module_error,
+)
 from .subprocess_exec import SubprocessModuleExecutor
 from .types import (
     ILeviathanModule,
@@ -22,6 +30,8 @@ from .types import (
     ModuleStatus,
 )
 
+logger = logging.getLogger("leviathan.module_manager")
+
 # Statuses that may accept execute / ensure_ready without re-init.
 _READY_STATUSES = {
     ModuleStatus.READY,
@@ -31,10 +41,6 @@ _READY_STATUSES = {
     ModuleStatus.INSTALLED,
     ModuleStatus.DEGRADED,
 }
-
-
-class ModuleManagerError(RuntimeError):
-    pass
 
 
 @dataclass
@@ -111,6 +117,9 @@ class ModuleManager:
             "reload_attempts": 0,
             "subprocess_executes": 0,
             "errors": 0,
+            "install_started": 0,
+            "install_completed": 0,
+            "install_failed": 0,
         }
     )
 
@@ -324,7 +333,13 @@ class ModuleManager:
                 duration_ms=(time.perf_counter() - started) * 1000,
             )
             managed.last_result = result
-            raise ModuleManagerError(managed.error) from exc
+            raise ModuleManagerError(
+                managed.error,
+                code="TIMEOUT",
+                module_id=module_id,
+                action="execute",
+                detail=managed.error,
+            ) from exc
         except Exception as exc:  # noqa: BLE001 — containment boundary
             managed.status = ModuleStatus.ERROR
             managed.error = f"execute crashed: {exc}"
@@ -396,17 +411,20 @@ class ModuleManager:
         return ready
 
     def ensure_installed(self, module_id: str, **kwargs: Any) -> dict[str, Any]:
+        """Install a module. Operational adapter failures become ModuleManagerError."""
         managed = self._ensure_instance(module_id)
         assert managed.instance is not None
-        if hasattr(managed.instance, "ensure_installed"):
-            result = managed.instance.ensure_installed(**kwargs)
-            managed.status = ModuleStatus.INSTALLED
-            return result if isinstance(result, dict) else {"result": result}
-        return {"status": "INSTALLED", "detail": "no_install_required"}
+        return self._run_install(
+            managed,
+            action="install",
+            call=lambda: self._call_install(managed, **kwargs),
+            activate=True,
+        )
 
     def start(self, module_id: str) -> dict[str, Any]:
         managed = self._ensure_instance(module_id)
         assert managed.instance is not None
+        previous = managed.status
         managed.status = ModuleStatus.STARTING
         managed.desired_state = "RUNNING"
         try:
@@ -414,17 +432,23 @@ class ModuleManager:
                 result = managed.instance.start()
             else:
                 result = {"status": "READY", "detail": "start_noop"}
-            managed.status = ModuleStatus.RUNNING if str((result or {}).get("status", "")).upper() == "RUNNING" else ModuleStatus.READY
+            if not isinstance(result, dict):
+                result = {"status": "READY", "result": result}
+            self._raise_if_result_failed(result, module_id=module_id, action="start")
+            managed.status = (
+                ModuleStatus.RUNNING
+                if str(result.get("status") or "").upper() == "RUNNING"
+                else ModuleStatus.READY
+            )
             managed.error = None
-            return result if isinstance(result, dict) else {"result": result}
-        except Exception as exc:  # noqa: BLE001
-            managed.status = ModuleStatus.FAILED
-            managed.error = str(exc)
-            raise ModuleManagerError(f"start failed: {exc}") from exc
+            return result
+        except Exception as exc:
+            self._fail_lifecycle(managed, exc, module_id=module_id, action="start", previous=previous)
 
     def stop(self, module_id: str) -> dict[str, Any]:
         managed = self._ensure_instance(module_id)
         assert managed.instance is not None
+        previous = managed.status
         managed.status = ModuleStatus.STOPPING
         managed.desired_state = "STOPPED"
         try:
@@ -432,12 +456,14 @@ class ModuleManager:
                 result = managed.instance.stop()
             else:
                 result = {"status": "STOPPED", "detail": "stop_noop"}
+            if not isinstance(result, dict):
+                result = {"status": "STOPPED", "result": result}
+            self._raise_if_result_failed(result, module_id=module_id, action="stop")
             managed.status = ModuleStatus.STOPPED
-            return result if isinstance(result, dict) else {"result": result}
-        except Exception as exc:  # noqa: BLE001
-            managed.status = ModuleStatus.FAILED
-            managed.error = str(exc)
-            raise ModuleManagerError(f"stop failed: {exc}") from exc
+            managed.error = None
+            return result
+        except Exception as exc:
+            self._fail_lifecycle(managed, exc, module_id=module_id, action="stop", previous=previous)
 
     def restart(self, module_id: str) -> dict[str, Any]:
         self.stop(module_id)
@@ -446,36 +472,51 @@ class ModuleManager:
     def ensure_ready(self, module_id: str) -> dict[str, Any]:
         managed = self._ensure_instance(module_id)
         assert managed.instance is not None
+        previous = managed.status
         try:
             if hasattr(managed.instance, "ensure_ready"):
                 result = managed.instance.ensure_ready()
             else:
                 if managed.status not in _READY_STATUSES:
                     self.initialize(module_id, self._last_context)
+                    managed = self._require(module_id)
                 result = {"ready": True, "status": managed.status.value}
-            if isinstance(result, dict) and result.get("ready"):
+            if not isinstance(result, dict):
+                result = {"ready": True, "result": result}
+            if result.get("ready"):
                 status = str(result.get("status") or "").upper()
                 if status == "RUNNING":
                     managed.status = ModuleStatus.RUNNING
                 elif managed.status not in {ModuleStatus.RUNNING, ModuleStatus.BUSY}:
                     managed.status = ModuleStatus.READY
-            return result if isinstance(result, dict) else {"ready": True, "result": result}
-        except Exception as exc:  # noqa: BLE001
-            managed.status = ModuleStatus.FAILED
-            managed.error = str(exc)
-            raise ModuleManagerError(f"ensure_ready failed: {exc}") from exc
+                managed.error = None
+            return result
+        except Exception as exc:
+            self._fail_lifecycle(
+                managed, exc, module_id=module_id, action="ensure_ready", previous=previous
+            )
 
     def health(self, module_id: str) -> ModuleHealth:
         managed = self._ensure_instance(module_id)
         assert managed.instance is not None
-        return managed.instance.health()
+        try:
+            return managed.instance.health()
+        except Exception as exc:
+            self._fail_lifecycle(
+                managed, exc, module_id=module_id, action="health", previous=managed.status
+            )
 
     def logs(self, module_id: str, *, limit: int = 200) -> list[str]:
         managed = self._ensure_instance(module_id)
         assert managed.instance is not None
-        if hasattr(managed.instance, "logs"):
-            return list(managed.instance.logs(limit=limit))
-        return []
+        try:
+            if hasattr(managed.instance, "logs"):
+                return list(managed.instance.logs(limit=limit))
+            return []
+        except Exception as exc:
+            self._fail_lifecycle(
+                managed, exc, module_id=module_id, action="logs", previous=managed.status
+            )
 
     def active_jobs(self, module_id: str) -> list[str]:
         managed = self._require(module_id)
@@ -493,9 +534,15 @@ class ModuleManager:
     def check_update(self, module_id: str) -> dict[str, Any]:
         managed = self._ensure_instance(module_id)
         assert managed.instance is not None
-        if hasattr(managed.instance, "check_update"):
-            return managed.instance.check_update()
-        return {"module_id": module_id, "update_available": False, "reason": "not_external"}
+        previous = managed.status
+        try:
+            if hasattr(managed.instance, "check_update"):
+                return managed.instance.check_update()
+            return {"module_id": module_id, "update_available": False, "reason": "not_external"}
+        except Exception as exc:
+            self._fail_lifecycle(
+                managed, exc, module_id=module_id, action="check_update", previous=previous
+            )
 
     def install_version(
         self,
@@ -508,46 +555,93 @@ class ModuleManager:
         managed = self._ensure_instance(module_id)
         assert managed.instance is not None
         if not hasattr(managed.instance, "install_version"):
-            raise ModuleManagerError(f"module {module_id} does not support install_version")
-        try:
+            raise ModuleManagerError(
+                f"module {module_id} does not support install_version",
+                code="INVALID_RESULT",
+                module_id=module_id,
+                action="install_version",
+                detail=f"module {module_id} does not support install_version",
+            )
+        progress = kwargs.get("progress")
+        cancel_check = kwargs.get("cancel_check")
+
+        def _call() -> Any:
+            assert managed.instance is not None
             return managed.instance.install_version(
                 ref=ref,
                 activate=activate,
                 active_jobs=list(managed.active_jobs),
-                **kwargs,
+                progress=progress,
+                cancel_check=cancel_check,
             )
-        except Exception as exc:  # noqa: BLE001
-            raise ModuleManagerError(f"install_version failed: {exc}") from exc
+
+        return self._run_install(managed, action="install_version", call=_call, activate=activate)
 
     def activate_version(self, module_id: str, version_id: str) -> dict[str, Any]:
         managed = self._ensure_instance(module_id)
         assert managed.instance is not None
         if not hasattr(managed.instance, "activate_version"):
-            raise ModuleManagerError(f"module {module_id} does not support activate_version")
+            raise ModuleManagerError(
+                f"module {module_id} does not support activate_version",
+                code="INVALID_RESULT",
+                module_id=module_id,
+                action="activate_version",
+                detail=f"module {module_id} does not support activate_version",
+            )
+        previous = managed.status
         try:
-            return managed.instance.activate_version(version_id, active_jobs=list(managed.active_jobs))
-        except Exception as exc:  # noqa: BLE001
-            raise ModuleManagerError(f"activate_version failed: {exc}") from exc
+            result = managed.instance.activate_version(version_id, active_jobs=list(managed.active_jobs))
+            if not isinstance(result, dict):
+                result = {"status": "ACTIVE", "result": result}
+            self._raise_if_result_failed(result, module_id=module_id, action="activate_version")
+            managed.error = None
+            if str(result.get("status") or "").upper() == "ACTIVE":
+                managed.status = ModuleStatus.INSTALLED
+            return result
+        except Exception as exc:
+            self._fail_lifecycle(
+                managed, exc, module_id=module_id, action="activate_version", previous=previous
+            )
 
     def rollback_version(self, module_id: str, *, version_id: str | None = None) -> dict[str, Any]:
         managed = self._ensure_instance(module_id)
         assert managed.instance is not None
         if not hasattr(managed.instance, "rollback_version"):
-            raise ModuleManagerError(f"module {module_id} does not support rollback_version")
+            raise ModuleManagerError(
+                f"module {module_id} does not support rollback_version",
+                code="INVALID_RESULT",
+                module_id=module_id,
+                action="rollback_version",
+                detail=f"module {module_id} does not support rollback_version",
+            )
+        previous = managed.status
         try:
-            return managed.instance.rollback_version(
+            result = managed.instance.rollback_version(
                 version_id=version_id,
                 active_jobs=list(managed.active_jobs),
             )
-        except Exception as exc:  # noqa: BLE001
-            raise ModuleManagerError(f"rollback_version failed: {exc}") from exc
+            if not isinstance(result, dict):
+                result = {"status": "ACTIVE", "result": result}
+            self._raise_if_result_failed(result, module_id=module_id, action="rollback_version")
+            managed.error = None
+            return result
+        except Exception as exc:
+            self._fail_lifecycle(
+                managed, exc, module_id=module_id, action="rollback_version", previous=previous
+            )
 
     def list_versions(self, module_id: str) -> list[dict[str, Any]]:
         managed = self._ensure_instance(module_id)
         assert managed.instance is not None
-        if hasattr(managed.instance, "list_versions"):
-            return list(managed.instance.list_versions())
-        return []
+        previous = managed.status
+        try:
+            if hasattr(managed.instance, "list_versions"):
+                return list(managed.instance.list_versions())
+            return []
+        except Exception as exc:
+            self._fail_lifecycle(
+                managed, exc, module_id=module_id, action="versions", previous=previous
+            )
 
     def sweep_idle_modules(self) -> list[dict[str, Any]]:
         """Stop idle LAZY/RESIDENT external processes with no active jobs."""
@@ -593,8 +687,107 @@ class ModuleManager:
         with self._lock:
             managed = self._modules.get(module_id)
             if managed is None:
-                raise ModuleManagerError(f"Unknown module: {module_id}")
+                raise unknown_module_error(module_id, action="resolve")
             return managed
+
+    def _call_install(self, managed: ManagedModule, **kwargs: Any) -> Any:
+        assert managed.instance is not None
+        if not hasattr(managed.instance, "ensure_installed"):
+            return {"status": "INSTALLED", "detail": "no_install_required"}
+        forwarded = {
+            key: kwargs[key]
+            for key in ("progress", "cancel_check")
+            if key in kwargs and kwargs[key] is not None
+        }
+        return managed.instance.ensure_installed(**forwarded)
+
+    def _run_install(
+        self,
+        managed: ManagedModule,
+        *,
+        action: str,
+        call: Callable[[], Any],
+        activate: bool,
+    ) -> dict[str, Any]:
+        module_id = managed.manifest.module_id
+        previous = managed.status
+        self.telemetry["install_started"] = int(self.telemetry.get("install_started", 0)) + 1
+        managed.status = ModuleStatus.BUSY
+        managed.desired_state = "INSTALLED"
+        managed.error = None
+        try:
+            result = call()
+            if not isinstance(result, dict):
+                result = {"status": "INSTALLED", "result": result}
+            self._raise_if_result_failed(result, module_id=module_id, action=action)
+            if activate or previous in {
+                ModuleStatus.DISCOVERED,
+                ModuleStatus.LOADED,
+                ModuleStatus.FAILED,
+                ModuleStatus.ERROR,
+                ModuleStatus.BUSY,
+                ModuleStatus.INITIALIZING,
+            }:
+                managed.status = ModuleStatus.INSTALLED
+            else:
+                managed.status = previous
+            managed.error = None
+            self.telemetry["install_completed"] = int(self.telemetry.get("install_completed", 0)) + 1
+            return result
+        except Exception as exc:
+            self.telemetry["install_failed"] = int(self.telemetry.get("install_failed", 0)) + 1
+            self._fail_lifecycle(managed, exc, module_id=module_id, action=action, previous=previous)
+
+    def _raise_if_result_failed(self, result: dict[str, Any], *, module_id: str, action: str) -> None:
+        failed = failure_from_lifecycle_result(result)
+        if failed is None:
+            return
+        code, detail = failed
+        raise ModuleManagerError(
+            f"{code}: {detail}",
+            code=code,
+            module_id=module_id,
+            action=action,
+            detail=detail,
+        )
+
+    def _fail_lifecycle(
+        self,
+        managed: ManagedModule,
+        exc: BaseException,
+        *,
+        module_id: str,
+        action: str,
+        previous: ModuleStatus,
+    ) -> NoReturn:
+        """Record a lifecycle failure and raise the normalized contract.
+
+        Unexpected defects are logged and re-raised so they stay HTTP 500.
+        """
+        normalized = coerce_lifecycle_error(exc, module_id=module_id, action=action)
+        if normalized is None:
+            managed.status = ModuleStatus.FAILED
+            managed.error = scrub_error_text(f"{type(exc).__name__}: {exc}")
+            self.telemetry["errors"] = int(self.telemetry.get("errors", 0)) + 1
+            logger.exception(
+                "module.lifecycle.unexpected module_id=%s action=%s error_class=%s",
+                module_id,
+                action,
+                type(exc).__name__,
+            )
+            raise exc
+        # A blocked version switch is not a failed installation of a live module.
+        if normalized.code == "UPDATE_BLOCKED_ACTIVE" and previous != ModuleStatus.BUSY:
+            managed.status = previous
+        elif normalized.code == "UPDATE_BLOCKED_ACTIVE":
+            managed.status = previous if previous != ModuleStatus.BUSY else ModuleStatus.INSTALLED
+        else:
+            managed.status = ModuleStatus.FAILED
+        managed.error = scrub_error_text(f"{normalized.code}: {normalized.detail}")
+        self.telemetry["errors"] = int(self.telemetry.get("errors", 0)) + 1
+        if normalized is exc:
+            raise normalized
+        raise normalized from exc
 
     @staticmethod
     def _resolve_factory(entrypoint: str) -> Callable[..., Any]:

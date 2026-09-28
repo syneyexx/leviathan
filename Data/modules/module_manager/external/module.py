@@ -242,7 +242,10 @@ class ExternalCapabilityModule:
         if not data_root and self._adapter is not None:
             data_root = getattr(getattr(self._adapter, "ctx", None), "data_root", None)
         if not data_root:
-            raise RuntimeError("data_root required for install_version")
+            from .types import ExternalFailureCode
+            from .versions import VersionError
+
+            raise VersionError(ExternalFailureCode.INSTALL_FAILED, "data_root required for install_version")
         result = install_version(
             module_id=self._manifest.module_id,
             config=self._config,

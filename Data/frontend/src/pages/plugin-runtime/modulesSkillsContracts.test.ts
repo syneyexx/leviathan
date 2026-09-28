@@ -21,6 +21,13 @@ describe("ModulesPage external fabric lifecycle", () => {
     expect(modulesSrc).toContain("/api/modules/sweep-idle");
   });
 
+  it("does not treat a queued install as a completed install", () => {
+    expect(viewSrc).toContain("Install queued");
+    expect(viewSrc).toContain("Version install queued");
+    expect(hookSrc).toContain("installActionText");
+    expect(hookSrc).toContain("lifecycleFailureText");
+  });
+
   it("exposes install/start/stop/restart/ensure-ready without inventing runtime truth", () => {
     expect(hookSrc).toContain("installModule");
     expect(hookSrc).toContain("startModule");
