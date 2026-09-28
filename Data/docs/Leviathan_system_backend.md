@@ -602,7 +602,7 @@ Important invariants:
 
 ## 12.2 Worker Fabric
 
-`Data/modules/workers/` is the external execution plane. Domain entrypoints include agents, coding, research, memory, brain_compute, datasets/documents, embeddings/reranking, evaluation/training, market simulation, MCP, model downloads, **model_runtime** (singleton managed serving lifecycle / probes / benchmarks), provider I/O, source ingestion, **file_io** (generic heavy filesystem reads/writes/copies/hashes/CSV/Parquet/scans), scheduler/workflows, maintenance/backup, telemetry and DB commit.
+`Data/modules/workers/` is the external execution plane. Domain entrypoints include agents, coding, research, memory, brain_compute, datasets/documents, embeddings/reranking, evaluation/training, market simulation, MCP, model downloads, **model_runtime** (singleton managed serving lifecycle / probes / benchmarks), provider I/O, source ingestion, **file_io** (generic heavy filesystem reads/writes/copies/hashes/CSV/Parquet/scans), **browser** (singleton Playwright/Chromium/QA), **media** (FFmpeg/transforms/generation orchestration), scheduler/workflows, maintenance/backup, telemetry and DB commit.
 
 Generic heavy filesystem jobs (`file.read` when oversized, `file.write` when oversized, `file.copy`, `file.hash`, `file.parse_csv`, `file.profile_csv`, `file.process_parquet`, `filesystem.scan`, recursive `workspace.list`) enqueue with `worker_pool=file_io`. API-local JobRuntime only claims `general`/unassigned jobs and cannot steal specialist file_io work. Small interactive file operations remain INLINE_SAFE in the control plane.
 
@@ -989,8 +989,70 @@ MCP tools still enter the same capability/approval/observation architecture. MCP
 
 # 19. Browser, media, voice and provider I/O
 
-- `Data/modules/browser/` + `Data/backend/routes/browser.py`, `browser_qa.py` — browser capability/QA boundaries;
-- `Data/modules/media/` + `Data/backend/routes/media.py` — media capability boundary; disconnected platforms stay NOT CONNECTED/UNAVAILABLE;
+## 19.1 Browser (singleton external worker)
+
+Production topology:
+
+```
+FastAPI (validate / authorize / enqueue / status)
+    -> JobRuntime
+    -> browser specialist pool (default_count=1, max_count=1)
+    -> BrowserWorker + Playwright/Chromium (or local_dom)
+    -> ArtifactStore observations/screenshots/downloads
+```
+
+- Live capabilities (`browser.navigate` … `browser.keypress`, `browser.qa.crawl` /
+  `browser.qa.advance` / `browser.qa.replay`) are **EXTERNAL_REQUIRED**.
+- FastAPI never starts Playwright, never launches Chromium, never calls
+  `JobRuntime.process_next()`, and never invokes `BrowserWorker.execute()` /
+  `crawler.run()` on the control plane.
+- Session affinity: singleton pool until explicit session sharding exists.
+  Cross-run session reuse is denied; idle sessions expire (configurable TTL);
+  worker restart reports `BROWSER_SESSION_LOST`.
+- Cached `/api/browser/status` reads measured readiness written by the browser
+  worker — status endpoints do not launch Chromium.
+- Fixture browser remains test-only; package presence alone is not READY.
+- QA crawls remain localhost/allowlist scoped by default, use bounded
+  continuation slices (`browser.qa.advance`) with checkpoints, durable
+  JobRuntime cancellation, and ArtifactStore reports. Replay divergence is
+  reported honestly (`BROWSER_QA_RESUME_DIVERGED` / `BROWSER_REPLAY_DIVERGED`).
+- URL/SSRF policy is centralized in `Data/modules/browser/url_policy.py`.
+- Windows-safe Chromium/Playwright driver process-tree cleanup is owned by the
+  browser worker shutdown path (shared process-control primitives).
+
+## 19.2 Media (specialist external worker)
+
+Production topology:
+
+```
+FastAPI -> JobRuntime -> media pool (default_count=1, max_count=2)
+    -> typed media operation
+    -> FFprobe / FFmpeg / deterministic image transforms
+    -> verify -> ArtifactStore
+
+Generation / vision:
+media worker -> Model Control Plane / provider_io -> Artifact (provenanced)
+```
+
+- Live `media.*` capabilities are **EXTERNAL_REQUIRED**. Routes enqueue only —
+  no `process_next()`, no inline FastAPI FFmpeg/MediaService heavy work.
+- Production transcoding uses configured FFmpeg/FFprobe (argv-safe, `-nostdin`,
+  local-file protocols only, codec/container allowlists). Missing binaries
+  report `MEDIA_FFMPEG_UNAVAILABLE` / `MEDIA_FFPROBE_UNAVAILABLE` — never
+  auto-install.
+- Fixture MediaService SVG output is test-only and must not claim production
+  generation/thumbnail/vision capability.
+- Image generation / edit / vision require a configured Model Control Plane or
+  provider backend; otherwise `MEDIA_GENERATION_UNAVAILABLE` /
+  `MEDIA_VISION_UNAVAILABLE`. Media does not own a second model runtime.
+- ASR/TTS remain Voice-owned; OCR remains DocumentAI-owned.
+- Cross-modal search stays a worker-local caption cache — not a second vector
+  stack; durable retrieval uses embedding / Knowledge when required.
+- Large media never uses whole-file `read_bytes()` into JobStore; outputs use
+  staging + verification + ArtifactStore path ingestion with lineage.
+
+## 19.3 Voice / provider I/O (unchanged ownership)
+
 - `Data/modules/voice/` + `Data/backend/routes/voice.py` — realtime voice boundary;
 - `Data/modules/provider_io/` — controlled remote HTTP/provider/market-data/chat I/O, credentials, readiness and streams;
 - `Data/modules/model_download/` — model-download worker boundary;
