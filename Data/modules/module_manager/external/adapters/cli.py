@@ -19,7 +19,7 @@ from ..install import InstallationService, InstallError
 from ..process import BoundedLogBuffer
 from ..results import parse_cli_result
 from ..types import ExternalConfig, ExternalFailureCode, ExternalRuntimeState
-from .base import AdapterContext, CancelCheck, ProgressCb
+from .base import AdapterContext, CancelCheck, ProgressCb, forward_install_kwargs
 
 
 class CliAdapter:
@@ -35,20 +35,22 @@ class CliAdapter:
     def runtime_state(self) -> ExternalRuntimeState:
         return self._state
 
-    def ensure_installed(self, *, progress: ProgressCb | None = None, cancel_check: CancelCheck | None = None) -> dict[str, Any]:
+    def ensure_installed(self, **kwargs: Any) -> dict[str, Any]:
         if not self.ctx.data_root:
             raise InstallError(ExternalFailureCode.INSTALL_FAILED, "data_root required for install")
         service = InstallationService(Path(self.ctx.data_root))
+        install_kwargs = forward_install_kwargs(self.ctx, kwargs)
         result = service.ensure_installed(
             module_id=self.ctx.module_id,
             config=self.config,
-            progress=progress,
-            cancel_check=cancel_check,
+            **install_kwargs,
         )
         self._install_root = result.install_root
         self._state = ExternalRuntimeState.INSTALLED
-        if self.ctx.store is not None:
-            self.ctx.store.add_version(
+        store = install_kwargs.get("store") or self.ctx.store
+        activate = bool(kwargs.get("activate", True))
+        if store is not None:
+            store.add_version(
                 version_id=result.version_id,
                 module_id=self.ctx.module_id,
                 install_root=result.install_root,
@@ -57,11 +59,11 @@ class CliAdapter:
                 content_hash=result.content_hash,
                 install_strategies=result.strategies,
                 dependency_versions=result.dependency_versions,
-                activate=True,
+                activate=activate,
                 adapter="CLI",
                 name=self.ctx.module_id,
             )
-            self.ctx.store.set_runtime_state(self.ctx.module_id, ExternalRuntimeState.INSTALLED.value)
+            store.set_runtime_state(self.ctx.module_id, ExternalRuntimeState.INSTALLED.value)
         return result.public_dict()
 
     def start(self) -> dict[str, Any]:

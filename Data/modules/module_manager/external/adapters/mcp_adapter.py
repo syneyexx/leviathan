@@ -38,7 +38,7 @@ class McpAdapter:
         except Exception:  # noqa: BLE001
             return self._state
 
-    def ensure_installed(self, *, progress: ProgressCb | None = None, cancel_check: CancelCheck | None = None) -> dict[str, Any]:
+    def ensure_installed(self, **kwargs: Any) -> dict[str, Any]:
         # MCP install is registering config with McpBridge (may still need local checkout for stdio).
         bridge = self.ctx.mcp_bridge
         if bridge is None:
@@ -47,7 +47,7 @@ class McpAdapter:
         if self.config.source.source and self.config.source.source_type in {"git", "path"}:
             from .cli import CliAdapter
 
-            installed = CliAdapter(self.ctx).ensure_installed(progress=progress, cancel_check=cancel_check)
+            installed = CliAdapter(self.ctx).ensure_installed(**kwargs)
         else:
             installed = {"status": "INSTALLED"}
         self._reregister_mcp(install_root=(installed or {}).get("install_root"))

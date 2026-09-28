@@ -21,8 +21,8 @@ class ScriptPackageAdapter:
     def runtime_state(self) -> ExternalRuntimeState:
         return self._cli.runtime_state()
 
-    def ensure_installed(self, *, progress: ProgressCb | None = None, cancel_check: CancelCheck | None = None) -> dict[str, Any]:
-        return self._cli.ensure_installed(progress=progress, cancel_check=cancel_check)
+    def ensure_installed(self, **kwargs: Any) -> dict[str, Any]:
+        return self._cli.ensure_installed(**kwargs)
 
     def start(self) -> dict[str, Any]:
         return self._cli.start()

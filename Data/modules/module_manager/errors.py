@@ -241,6 +241,8 @@ def http_status_for_lifecycle_error(exc: ModuleManagerError) -> int:
         return 404
     if code == "UPDATE_BLOCKED_ACTIVE":
         return 409
+    if code in {"INSTALL_WORKER_UNAVAILABLE", "INSTALL_QUEUE_FAILED"}:
+        return 503
     if code in _DEPENDENCY_CODES:
         return 424
     if code == "TIMEOUT":

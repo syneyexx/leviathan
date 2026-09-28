@@ -35,8 +35,8 @@ class ProcessServiceAdapter:
             self._state = ExternalRuntimeState.STOPPED
         return self._state
 
-    def ensure_installed(self, *, progress: ProgressCb | None = None, cancel_check: CancelCheck | None = None) -> dict[str, Any]:
-        result = self._cli.ensure_installed(progress=progress, cancel_check=cancel_check)
+    def ensure_installed(self, **kwargs: Any) -> dict[str, Any]:
+        result = self._cli.ensure_installed(**kwargs)
         self._install_root = result.get("install_root") or self._install_root
         return result
 

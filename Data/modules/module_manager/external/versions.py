@@ -81,6 +81,14 @@ def install_version(
     active_jobs: list[str] | None = None,
     progress: Any = None,
     cancel_check: Any = None,
+    force: bool = False,
+    plan_hash: str | None = None,
+    operation_id: str | None = None,
+    auto_resolve_dependencies: bool = True,
+    approved_plan: Any = None,
+    allow_system_deps: bool = False,
+    runner: Any = None,
+    **kwargs: Any,
 ) -> dict[str, Any]:
     """Install a pinned version without mutating the active runtime by default."""
     if activate and active_jobs:
@@ -92,14 +100,26 @@ def install_version(
     new_source = replace(config.source, ref=desired_ref)
     new_config = replace(config, source=new_source)
     service = InstallationService(Path(data_root))
+    # Prefer explicit store kwarg; callers may override via kwargs["store"].
+    effective_store = kwargs["store"] if "store" in kwargs else store
     result = service.ensure_installed(
         module_id=module_id,
         config=new_config,
         progress=progress,
         cancel_check=cancel_check,
+        ref=desired_ref,
+        force=force,
+        activate=activate,
+        plan_hash=plan_hash,
+        operation_id=operation_id,
+        auto_resolve_dependencies=auto_resolve_dependencies,
+        approved_plan=approved_plan,
+        allow_system_deps=allow_system_deps,
+        runner=runner,
+        store=effective_store,
     )
-    if store is not None:
-        store.add_version(
+    if effective_store is not None:
+        effective_store.add_version(
             version_id=result.version_id,
             module_id=module_id,
             install_root=result.install_root,
@@ -112,7 +132,7 @@ def install_version(
             status="ACTIVE" if activate else "INSTALLED",
         )
         if not activate:
-            store.set_runtime_state(module_id, ExternalRuntimeState.INSTALLED.value)
+            effective_store.set_runtime_state(module_id, ExternalRuntimeState.INSTALLED.value)
     out = result.public_dict()
     out["activated"] = bool(activate)
     out["desired_ref"] = desired_ref
