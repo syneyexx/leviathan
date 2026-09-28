@@ -262,6 +262,7 @@
 }
 
 .lv-mod-list-head {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -285,7 +286,7 @@
 }
 
 .lv-mod-search {
-  flex: 1;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -294,6 +295,12 @@
   border-radius: 6px;
   border: 1px solid rgba(197, 160, 89, 0.22);
   background: rgba(0, 0, 0, 0.35);
+}
+
+.lv-mod-search > svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
 }
 
 .lv-mod-search input {
@@ -335,6 +342,7 @@
 }
 
 .lv-mod-filters {
+  flex: 0 0 auto;
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
@@ -360,7 +368,7 @@
 }
 
 .lv-mod-rows {
-  flex: 1;
+  flex: 1 1 auto;
   overflow: auto;
   padding: 0 8px 10px;
   display: flex;
