@@ -44,8 +44,9 @@ export interface IngestionRowModel {
   type: string;
   state: string;
   progressPct: number | null;
-  progressEstimated: boolean;
-  progressSource: "measured" | "phase_estimate" | "unmeasured";
+  /** Optional for fixture/backward-compatible models; production mapping always supplies it. */
+  progressEstimated?: boolean;
+  progressSource?: "measured" | "phase_estimate" | "unmeasured";
   throughput: string;
   elapsed: string;
   worker: string;
@@ -58,7 +59,8 @@ export interface IngestionModel {
   completed: number | null;
   failed: number | null;
   overallProgressPct: number | null;
-  overallProgressEstimated: boolean;
+  /** Optional for fixture/backward-compatible models; production mapping always supplies it. */
+  overallProgressEstimated?: boolean;
   jobs: IngestionRowModel[];
   unavailable: boolean;
 }
