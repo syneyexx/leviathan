@@ -95,7 +95,11 @@ class ExternalModuleExecutor:
                     provider_ref=provider_ref,
                 )
 
-        if capability_id == "external.module.install":
+        if capability_id in {
+            "external.module.install",
+            "external.module.update",
+            "external.module.upgrade",
+        }:
             module_id = str(arguments.get("module_id") or "")
             if not module_id:
                 return CapabilityResult(
@@ -108,11 +112,16 @@ class ExternalModuleExecutor:
                 )
             # Prefer explicit activate; default True for /install worker path when missing.
             activate = bool(arguments["activate"]) if "activate" in arguments else True
-            action = "install_version" if arguments.get("ref") and not activate else "install"
+            lifecycle_action = str(arguments.get("action") or capability_id.rsplit(".", 1)[-1])
+            action = "install_version" if arguments.get("ref") and not activate else lifecycle_action
             # After gateway verified approval (plan_hash present), allow privileged system deps.
             allow_system_deps = bool(arguments.get("allow_system_deps"))
             if arguments.get("plan_hash") and not allow_system_deps:
                 allow_system_deps = True
+            # Update/upgrade reuse the canonical InstallationService lifecycle (re-install/plan).
+            force = bool(arguments.get("force", False))
+            if lifecycle_action in {"update", "upgrade"}:
+                force = True
             try:
                 if job_id:
                     self.module_manager.register_job(module_id, job_id)
@@ -122,7 +131,7 @@ class ExternalModuleExecutor:
                 )
                 install_kwargs: dict[str, Any] = {
                     "ref": arguments.get("ref"),
-                    "force": bool(arguments.get("force", False)),
+                    "force": force,
                     "activate": activate,
                     "plan_hash": arguments.get("plan_hash"),
                     "operation_id": arguments.get("operation_id"),
@@ -154,6 +163,12 @@ class ExternalModuleExecutor:
                         module_id,
                         **{k: v for k, v in install_kwargs.items() if k != "approval_id"},
                     )
+                if isinstance(result, dict):
+                    result = {
+                        **result,
+                        "lifecycle_action": lifecycle_action,
+                        "canonical_install": True,
+                    }
                 self._metric("external.modules.installed", {"module_id": module_id})
                 self._metric(
                     "module.install.completed",
@@ -163,7 +178,10 @@ class ExternalModuleExecutor:
                     request_id=request_id or "",
                     capability_id=capability_id,
                     status=CapabilityStatus.COMPLETED,
-                    output=normalize_capability_parts(summary=f"installed {module_id}", structured_data=result),
+                    output=normalize_capability_parts(
+                        summary=f"{lifecycle_action} {module_id}",
+                        structured_data=result,
+                    ),
                     provider_kind="module",
                     provider_ref=provider_ref,
                     telemetry={"module_id": module_id, "action": action, "job_id": job_id},
@@ -204,6 +222,66 @@ class ExternalModuleExecutor:
                         "error_class": type(exc).__name__,
                         "job_id": job_id,
                     },
+                )
+            finally:
+                if job_id:
+                    try:
+                        self.module_manager.unregister_job(module_id, job_id)
+                    except Exception:  # noqa: BLE001
+                        pass
+
+        if capability_id in {
+            "external.module.start",
+            "external.module.stop",
+            "external.module.restart",
+            "external.module.ensure_ready",
+        }:
+            module_id = str(arguments.get("module_id") or "")
+            if not module_id:
+                return CapabilityResult(
+                    request_id=request_id or "",
+                    capability_id=capability_id,
+                    status=CapabilityStatus.REJECTED,
+                    error="module_id required",
+                    provider_kind="module",
+                    provider_ref=provider_ref,
+                )
+            action = capability_id.rsplit(".", 1)[-1]
+            try:
+                if job_id:
+                    self.module_manager.register_job(module_id, job_id)
+                method = {
+                    "start": "start",
+                    "stop": "stop",
+                    "restart": "restart",
+                    "ensure_ready": "ensure_ready",
+                }[action]
+                result = getattr(self.module_manager, method)(module_id)
+                return CapabilityResult(
+                    request_id=request_id or "",
+                    capability_id=capability_id,
+                    status=CapabilityStatus.COMPLETED,
+                    output=normalize_capability_parts(
+                        summary=f"{action} {module_id}",
+                        structured_data=result if isinstance(result, dict) else {"result": result},
+                    ),
+                    provider_kind="module",
+                    provider_ref=provider_ref,
+                    telemetry={"module_id": module_id, "action": action, "job_id": job_id},
+                )
+            except ModuleManagerError as exc:
+                return CapabilityResult(
+                    request_id=request_id or "",
+                    capability_id=capability_id,
+                    status=CapabilityStatus.FAILED,
+                    error=str(exc),
+                    output=normalize_capability_parts(
+                        summary=str(exc),
+                        error=exc.public_dict() if hasattr(exc, "public_dict") else {"detail": str(exc)},
+                        metadata={"module_id": module_id, "action": action},
+                    ),
+                    provider_kind="module",
+                    provider_ref=provider_ref,
                 )
             finally:
                 if job_id:

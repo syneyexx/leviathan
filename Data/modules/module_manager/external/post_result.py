@@ -1,11 +1,13 @@
 """Post-result hooks for external capabilities: evidence + background assimilation.
 
 Does not block chat. Large/knowledge work is JobRuntime-queued when a runtime is available.
+Production NEVER falls back to synchronous Knowledge assimilation.
 """
 
 from __future__ import annotations
 
 import hashlib
+import os
 import threading
 from datetime import datetime, timezone
 from typing import Any, Mapping
@@ -28,6 +30,14 @@ def resolve_assimilation_mode(definition_metadata: Mapping[str, Any] | None, out
         return AssimilationMode.NONE
 
 
+def allow_inprocess_assimilation_for_tests() -> bool:
+    """TEST-ONLY sync assimilation — mechanically gated."""
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        return False
+    raw = (os.environ.get("LEVIATHAN_ASSIMILATION_ALLOW_INPROCESS_TEST") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def queue_or_run_assimilation(
     *,
     mode: AssimilationMode,
@@ -44,18 +54,21 @@ def queue_or_run_assimilation(
     observation_id: str | None = None,
     observability: Any | None = None,
 ) -> dict[str, Any]:
-    """Schedule assimilation according to mode. NEVER blocks on large ingest when JobRuntime available."""
+    """Schedule assimilation according to mode.
+
+    Heavy Knowledge modes require JobRuntime → knowledge_prepare.
+    Production never runs assimilation_service synchronously.
+    """
     if mode == AssimilationMode.NONE or str(status).upper() not in {"COMPLETED", "OK", "SUCCESS"}:
         return {"queued": False, "mode": mode.value, "reason": "skipped"}
 
-    # Process-local idempotency for sync/fallback path (JobRuntime key covers queued path).
+    # Process-local cache is an OPTIMIZATION only — durable idempotency uses JobStore key.
     idem_key = assimilation_idempotency_key(capability_id, request_id or "")
     if request_id and not mark_assim_seen(idem_key):
         return {"queued": False, "mode": mode.value, "reason": "duplicate_skipped", "idempotency_key": idem_key}
 
     out = dict(output or {})
     sources = list(out.get("source_refs") or out.get("sources") or [])
-    # Prefer earliest source published_at when present — do not strip dynamic-content time.
     published_candidates = []
     available_candidates = []
     for src in sources:
@@ -66,6 +79,9 @@ def queue_or_run_assimilation(
                 available_candidates.append(str(src["available_at"]))
     meta_out = dict(out.get("metadata") or {})
     retrieved_at = str(meta_out.get("retrieved_at") or utc_now())
+    result_fingerprint = content_hash_for(
+        f"{capability_id}|{request_id}|{mode.value}|{retrieved_at}|{len(sources)}"
+    )
     payload = {
         "mode": mode.value,
         "capability_id": capability_id,
@@ -80,6 +96,8 @@ def queue_or_run_assimilation(
         "available_at": available_candidates[0] if available_candidates else meta_out.get("available_at"),
         "source_count": len(sources),
         "provenance_retained": True,
+        "result_fingerprint": result_fingerprint,
+        "assimilation_version": 1,
     }
 
     # EVIDENCE-only: claim observation evidence inline (tiny CONTROL_WRITE).
@@ -106,7 +124,10 @@ def queue_or_run_assimilation(
         _emit(observability, "assimilation.completed", {"mode": mode.value, "capability_id": capability_id, "evidence_id": evidence_id})
         return {"queued": False, "mode": mode.value, "evidence_id": evidence_id, "completed": True}
 
-    # Knowledge candidate / auto — prefer background job.
+    # Knowledge candidate / auto — MUST go to knowledge_prepare via JobRuntime.
+    durable_key = (
+        f"assim:{capability_id}:{request_id}:{result_fingerprint}:v{payload['assimilation_version']}"
+    )
     if job_runtime is not None:
         try:
             job = job_runtime.enqueue(
@@ -114,10 +135,16 @@ def queue_or_run_assimilation(
                 arguments=dict(payload),
                 requested_by="external.fabric",
                 run_id=run_id,
-                idempotency_key=f"assim:{capability_id}:{request_id}",
+                idempotency_key=durable_key,
                 latency_class="background",
                 domain="knowledge",
                 consumer="external.fabric",
+                worker_pool="knowledge_prepare",
+                metadata={
+                    "worker_kind": "knowledge_prepare",
+                    "execution_class": "EXTERNAL_REQUIRED",
+                    "result_fingerprint": result_fingerprint,
+                },
             )
             _emit(
                 observability,
@@ -129,12 +156,18 @@ def queue_or_run_assimilation(
                 "assimilation.queued",
                 {"mode": mode.value, "capability_id": capability_id, "job_id": getattr(job, "job_id", None)},
             )
-            return {"queued": True, "mode": mode.value, "job_id": getattr(job, "job_id", None), "evidence_id": evidence_id}
-        except Exception as exc:  # noqa: BLE001 — fall through to sync best-effort
+            return {
+                "queued": True,
+                "mode": mode.value,
+                "job_id": getattr(job, "job_id", None),
+                "evidence_id": evidence_id,
+                "idempotency_key": durable_key,
+            }
+        except Exception as exc:  # noqa: BLE001
             payload["enqueue_error"] = str(exc)
 
-    # Sync fallback (tests / no JobRuntime) — still best-effort, never raise to caller.
-    if assimilation_service is not None:
+    # Production: fail closed. TEST-ONLY inprocess path is mechanically gated.
+    if assimilation_service is not None and allow_inprocess_assimilation_for_tests():
         try:
             receipt = assimilation_service.assimilate_external_capability(**payload)
             _emit(
@@ -145,29 +178,38 @@ def queue_or_run_assimilation(
                     "capability_id": capability_id,
                     "receipt_id": getattr(receipt, "receipt_id", None),
                     "ok": getattr(receipt, "ok", False),
-                },
-            )
-            _emit(
-                observability,
-                "assimilation.completed",
-                {
-                    "mode": mode.value,
-                    "capability_id": capability_id,
-                    "receipt_id": getattr(receipt, "receipt_id", None),
-                    "ok": getattr(receipt, "ok", False),
+                    "inprocess_test": True,
                 },
             )
             return {
                 "queued": False,
                 "mode": mode.value,
                 "completed": True,
+                "inprocess_test": True,
                 "receipt": receipt.public_dict() if hasattr(receipt, "public_dict") else receipt,
                 "evidence_id": evidence_id,
             }
         except Exception as exc:  # noqa: BLE001
-            return {"queued": False, "mode": mode.value, "error": str(exc)}
+            return {
+                "queued": False,
+                "mode": mode.value,
+                "error": str(exc),
+                "code": "ASSIMILATION_FAILED",
+            }
 
-    return {"queued": False, "mode": mode.value, "reason": "assimilation_service_unavailable", "evidence_id": evidence_id}
+    _emit(
+        observability,
+        "assimilation.unavailable",
+        {"mode": mode.value, "capability_id": capability_id, "code": "ASSIMILATION_UNAVAILABLE"},
+    )
+    return {
+        "queued": False,
+        "mode": mode.value,
+        "reason": "ASSIMILATION_UNAVAILABLE",
+        "code": "ASSIMILATION_UNAVAILABLE",
+        "evidence_id": evidence_id,
+        "pending": True,
+    }
 
 
 def run_assimilation_job(
@@ -190,7 +232,6 @@ def _bounded_output(output: Mapping[str, Any] | None) -> dict[str, Any]:
     }
     structured = output.get("structured_data")
     if isinstance(structured, dict):
-        # Keep bounded structured slice only.
         import json
 
         encoded = json.dumps(structured, default=str)
@@ -220,13 +261,15 @@ def assimilation_idempotency_key(capability_id: str, request_id: str) -> str:
 
 
 def mark_assim_seen(key: str) -> bool:
-    """Return True if this is the first time seeing the key (should run)."""
+    """Return True if this is the first time seeing the key (should run).
+
+    Process-local optimization only — NOT canonical durability.
+    """
     with _idempotency_lock:
         if key in _seen_keys:
             return False
         _seen_keys.add(key)
         if len(_seen_keys) > 10_000:
-            # Bound process-local cache.
             _seen_keys.clear()
             _seen_keys.add(key)
         return True

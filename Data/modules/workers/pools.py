@@ -163,11 +163,17 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
             "model_runtime.benchmark",
             "model_runtime.probe",
             "model_runtime.inference_test",
+            "model_runtime.start",
+            "model_runtime.stop",
+            "model.serving.start",
+            "model.serving.stop",
+            "model.serving.reconcile",
         ),
-        resource_classes=("CPU_LIGHT", "MODEL_INFERENCE", "GPU_SHARED"),
+        resource_classes=("CPU_LIGHT", "MODEL_INFERENCE", "GPU_SHARED", "IO_HEAVY"),
         description=(
             "Singleton managed model-serving lifecycle owner — start/stop/"
             "reconcile ServingSupervisor children, benchmarks, inference probes. "
+            "Operator-owned Ollama/LM Studio are never killed. "
             "Not Model Control Plane registry; not model_download acquisition."
         ),
         max_count=1,
@@ -176,11 +182,16 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
         pool_id="mcp_execution",
         entrypoint="Data.modules.workers.entrypoints.mcp_execution",
         default_count=1,
-        job_kinds=("mcp.call", "mcp."),
+        job_kinds=(
+            "mcp.call",
+            "mcp.connect",
+            "mcp.list_tools",
+            "mcp.",
+        ),
         resource_classes=("NETWORK_BOUND", "CPU_LIGHT"),
         description=(
-            "Long MCP tools/call execution — connect/handshake/list remain "
-            "Control Plane control traffic"
+            "Live MCP connect/handshake/list/tools/call — stdio spawn and HTTP "
+            "network I/O owned by mcp_execution (not FastAPI)"
         ),
         max_count=4,
     ),
@@ -241,13 +252,30 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
         pool_id="module_runtime",
         entrypoint="Data.modules.workers.entrypoints.module_runtime",
         default_count=1,
-        job_kinds=("external.module.install",),
-        resource_classes=("IO_HEAVY", "NETWORK_BOUND", "CPU_HEAVY", "MEMORY_HEAVY"),
-        description=(
-            "External module dependency installation — venv/pip/npm/build/"
-            "staged promotion. Not arbitrary module invoke."
+        job_kinds=(
+            "external.module.install",
+            "external.module.update",
+            "external.module.upgrade",
+            "external.module.invoke",
+            "external.module.start",
+            "external.module.stop",
+            "external.module.restart",
+            "external.module.ensure_ready",
         ),
-        max_count=2,
+        resource_classes=(
+            "IO_HEAVY",
+            "NETWORK_BOUND",
+            "CPU_HEAVY",
+            "MEMORY_HEAVY",
+            "GPU_SHARED",
+            "GPU_EXCLUSIVE",
+        ),
+        description=(
+            "External module install/update/upgrade, CLI/script/process-service "
+            "lifecycle, and network module invocation. MCP-backed modules use "
+            "mcp_execution for tools/call. max_count=1 for process-service ownership."
+        ),
+        max_count=1,
     ),
     "agents": PoolDefinition(
         pool_id="agents",
@@ -276,11 +304,12 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
             "knowledge.ingest_document",
             "knowledge.ingest_path",
             "knowledge.reconcile",
+            "external.knowledge.assimilate",
         ),
         resource_classes=("CPU_HEAVY", "MEMORY_HEAVY"),
         description=(
             "Chunking, embeddings prep, entity extraction, semantic reconciliation, "
-            "externalized ModelData scan"
+            "external Knowledge assimilation planning (bulk writes via db_commit)"
         ),
     ),
     "knowledge_commit": PoolDefinition(
@@ -483,8 +512,27 @@ def default_pool_counts() -> dict[str, int]:
     return {pid: defn.default_count for pid, defn in POOL_CATALOG.items()}
 
 
-def pool_for_capability(capability_id: str) -> str:
-    """Map a capability id to the owning pool (most specific prefix wins)."""
+def pool_for_capability(
+    capability_id: str,
+    *,
+    worker_kind: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> str:
+    """Map a capability id to the owning pool (most specific prefix wins).
+
+    Dynamic MODULE capabilities may not share a fixed prefix — when
+    ``worker_kind`` / metadata ``worker_kind`` / ``worker_pool`` is present,
+    that owner wins over prefix matching.
+    """
+    meta = dict(metadata or {})
+    explicit = (
+        (worker_kind or "").strip()
+        or str(meta.get("worker_kind") or "").strip()
+        or str(meta.get("worker_pool") or "").strip()
+    )
+    if explicit and explicit in POOL_CATALOG:
+        return explicit
+
     cap = str(capability_id or "")
     best: str | None = None
     best_len = -1

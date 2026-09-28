@@ -102,6 +102,14 @@ EXTERNAL_WORKER_CAPABILITIES: frozenset[str] = frozenset(
         "agent_signal.retry",
         "agent_signal.housekeeping",
         "external.module.install",
+        "external.module.update",
+        "external.module.upgrade",
+        "external.module.invoke",
+        "external.module.start",
+        "external.module.stop",
+        "external.module.restart",
+        "external.module.ensure_ready",
+        "external.knowledge.assimilate",
         "provider.http",
         "provider.chat.complete",
         "provider.chat.stream",
@@ -132,7 +140,14 @@ EXTERNAL_WORKER_CAPABILITIES: frozenset[str] = frozenset(
         "model_runtime.benchmark",
         "model_runtime.probe",
         "model_runtime.inference_test",
+        "model_runtime.start",
+        "model_runtime.stop",
+        "model.serving.start",
+        "model.serving.stop",
+        "model.serving.reconcile",
         "mcp.call",
+        "mcp.connect",
+        "mcp.list_tools",
         "research.fetch_url",
         "research.report.generate",
         "research.web.probe",
@@ -315,7 +330,15 @@ class JobRuntime:
             try:
                 from Data.modules.workers.pools import pool_for_capability
 
-                resolved_pool = pool_for_capability(capability_id)
+                meta = dict(metadata or {})
+                # Prefer catalog worker_kind for dynamic MODULE capabilities.
+                try:
+                    definition = self.gateway.get_capability(capability_id)
+                    if definition is not None and getattr(definition, "metadata", None):
+                        meta = {**dict(definition.metadata or {}), **meta}
+                except Exception:  # noqa: BLE001
+                    pass
+                resolved_pool = pool_for_capability(capability_id, metadata=meta)
             except Exception:  # noqa: BLE001
                 resolved_pool = None
         create_kwargs: dict[str, Any] = {
@@ -406,13 +429,20 @@ class JobRuntime:
         if not self.resources.try_acquire(reservation):
             return None
         try:
+            # Production API-local runtime only claims general/unassigned work.
+            # Test/demo harness may set LEVIATHAN_JOBRUNTIME_CLAIM_ANY_POOL=1 to
+            # exercise specialist-routed jobs without spawning a full Worker Fabric.
+            claim_any = (os.environ.get("LEVIATHAN_JOBRUNTIME_CLAIM_ANY_POOL") or "").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
             job = self.store.claim_next_queued(
                 worker_id=self.worker_id,
                 lease_ttl_seconds=self.lease_ttl_seconds,
                 exclude_capability_ids=EXTERNAL_WORKER_CAPABILITIES,
-                # API-local runtime only claims general/unassigned work.
-                # Specialist pools (file_io, research, dataset, …) own their jobs.
-                worker_pool="general",
+                worker_pool=None if claim_any else "general",
             )
             if job is None:
                 return None

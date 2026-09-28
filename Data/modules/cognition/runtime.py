@@ -1471,7 +1471,7 @@ class CognitiveRuntime:
                 resource_class = resource_class_for_file_capability(capability_id)
                 timeout_seconds = max(timeout_seconds, 600.0)
             else:
-                worker_pool = pool_for_capability(capability_id)
+                worker_pool = pool_for_capability(capability_id, metadata=meta)
         except Exception:  # noqa: BLE001
             worker_pool = None
 

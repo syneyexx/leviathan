@@ -92,3 +92,16 @@ def resolve_externalize_fn(
     if externalize_fn is not None:
         return externalize_fn
     return lambda: workers_externalize_enabled(settings)
+
+
+# --- Wave compatibility aliases (927bacda naming) ---
+
+
+def runners_externalized(settings: Any | None = None) -> bool:
+    """Alias for ``workers_externalize_enabled`` (wave / managed_adapter)."""
+    return workers_externalize_enabled(settings)
+
+
+def allow_inline_serving_for_tests() -> bool:
+    """True under pytest / explicit inline allow — never production FastAPI."""
+    return inline_execution_explicitly_allowed()

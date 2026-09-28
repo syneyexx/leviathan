@@ -203,7 +203,12 @@ class ServingSupervisorHardeningTests(unittest.TestCase):
             )
         worker.managed_by_leviathan = False
         out = self.supervisor.stop(worker.worker_id)
-        self.assertIn("refusing", (out.last_error or "").lower())
+        err = (out.last_error or "").lower()
+        self.assertTrue(
+            "refusing" in err or "ownership_unproven" in err,
+            err,
+        )
+        self.assertEqual((out.metadata or {}).get("stop_refused"), "OWNERSHIP_UNPROVEN")
         self.assertEqual(out.state, WorkerState.READY)
 
     def test_env_policy_excludes_secrets(self) -> None:

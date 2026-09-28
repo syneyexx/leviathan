@@ -152,19 +152,16 @@ class StdioTransport:
         proc = self._proc
         if proc is None:
             return
+        from Data.modules.common.process_control import kill_process_tree
+
+        # Canonical Windows taskkill /T + POSIX killpg — child/grandchild cleanup.
         if os.name == "posix" and self._pgid is not None:
             try:
                 os.killpg(self._pgid, signal.SIGKILL)
-            except OSError:
-                try:
-                    proc.kill()
-                except OSError:
-                    pass
-        else:
-            try:
-                proc.kill()
+                return
             except OSError:
                 pass
+        kill_process_tree(proc, grace_seconds=0.1)
 
     def _read_stdout(self) -> None:
         assert self._proc is not None and self._proc.stdout is not None

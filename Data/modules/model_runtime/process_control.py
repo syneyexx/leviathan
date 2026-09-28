@@ -1,4 +1,9 @@
-"""Cross-platform owned-process termination for managed model workers."""
+"""Cross-platform owned-process termination for managed model workers.
+
+Delegates tree-kill / env-scrub helpers to canonical
+``Data.modules.common.process_control`` — do not fork a second Windows
+tree-kill policy. Local helpers cover spawn, log buffers, and wait loops.
+"""
 
 from __future__ import annotations
 
@@ -8,23 +13,23 @@ import subprocess
 import time
 from typing import Any
 
+from Data.modules.common.process_control import (
+    kill_process_tree,
+    scrub_child_environment,
+    terminate_owned_pid,
+    terminate_owned_process as common_terminate_owned_process,
+)
 
-def _windows_kill_tree(pid: int, *, force: bool = False) -> None:
-    """Terminate a Windows process tree without shell=True command injection."""
-    args = ["taskkill", "/PID", str(int(pid)), "/T"]
-    if force:
-        args.append("/F")
-    try:
-        subprocess.run(
-            args,
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=15,
-            shell=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        pass
+__all__ = [
+    "WorkerLogBuffer",
+    "drain_pipe_bounded",
+    "kill_process_tree",
+    "scrub_child_environment",
+    "spawn_owned_process",
+    "terminate_owned_pid",
+    "terminate_owned_process",
+    "wait_until",
+]
 
 
 def terminate_owned_process(
@@ -35,74 +40,40 @@ def terminate_owned_process(
 ) -> dict[str, Any]:
     """Gracefully stop a LEVIATHAN-owned subprocess tree, then force-kill if needed.
 
-    Never targets an arbitrary PID — only the Popen we own.
-    Windows-safe: uses CREATE_NEW_PROCESS_GROUP at spawn + taskkill /T.
+    Prefer Windows CTRL_BREAK when available; otherwise delegate to the shared
+    common.process_control tree-kill path. Never targets an arbitrary PID —
+    only the Popen we own.
     """
     if proc.poll() is not None:
         return {
             "alreadyExited": True,
             "returncode": proc.returncode,
             "forced": False,
+            "stillAlive": False,
         }
 
-    forced = False
-    try:
-        if os.name == "nt":
-            # Graceful: CTRL_BREAK to process group when available; else terminate.
-            try:
-                proc.send_signal(signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
-            except (AttributeError, OSError, ValueError):
-                try:
-                    _windows_kill_tree(proc.pid, force=False)
-                except Exception:  # noqa: BLE001
-                    proc.terminate()
-        else:
-            try:
-                os.killpg(proc.pid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError, OSError):
-                proc.terminate()
-    except Exception:  # noqa: BLE001
+    # Windows: try CTRL_BREAK to the process group before shared terminate.
+    if os.name == "nt":
         try:
-            proc.terminate()
-        except Exception:  # noqa: BLE001
+            proc.send_signal(signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
+            try:
+                proc.wait(timeout=max(0.1, float(graceful_timeout_seconds)))
+                return {
+                    "alreadyExited": False,
+                    "returncode": proc.returncode,
+                    "forced": False,
+                    "stillAlive": False,
+                }
+            except subprocess.TimeoutExpired:
+                pass
+        except (AttributeError, OSError, ValueError):
             pass
 
-    try:
-        proc.wait(timeout=max(0.1, float(graceful_timeout_seconds)))
-        return {"alreadyExited": False, "returncode": proc.returncode, "forced": False}
-    except subprocess.TimeoutExpired:
-        forced = True
-
-    try:
-        if os.name == "nt":
-            _windows_kill_tree(proc.pid, force=True)
-            try:
-                proc.kill()
-            except Exception:  # noqa: BLE001
-                pass
-        else:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                proc.kill()
-    except Exception:  # noqa: BLE001
-        pass
-
-    try:
-        proc.wait(timeout=max(0.1, float(force_timeout_seconds)))
-    except subprocess.TimeoutExpired:
-        return {
-            "alreadyExited": False,
-            "returncode": None,
-            "forced": forced,
-            "stillAlive": True,
-        }
-    return {
-        "alreadyExited": False,
-        "returncode": proc.returncode,
-        "forced": forced,
-        "stillAlive": False,
-    }
+    return common_terminate_owned_process(
+        proc,
+        graceful_timeout_seconds=graceful_timeout_seconds,
+        force_timeout_seconds=force_timeout_seconds,
+    )
 
 
 def spawn_owned_process(

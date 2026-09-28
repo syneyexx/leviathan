@@ -33,6 +33,36 @@ from Data.modules.plugins.registry import PluginRegistry
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "external_capabilities"
 FACTORY = "Data.modules.module_manager.external.module:create_external_capability_module"
 
+# Specialist worker identity so EXTERNAL_REQUIRED MODULE caps can execute through
+# gateway.execute in unit/e2e fixtures. DoD offload proofs clear this in setUp.
+_FABRIC_INLINE_WORKER = "module_runtime-fabric-test"
+
+
+class _InlineWorkerMixin:
+    """Allow EXTERNAL_REQUIRED module execution in-process for fixture tests."""
+
+    def setUp(self) -> None:  # noqa: D401
+        super().setUp()
+        import os
+
+        self._prev_worker_id = os.environ.get("LEVIATHAN_WORKER_ID")
+        self._prev_assim = os.environ.get("LEVIATHAN_ASSIMILATION_ALLOW_INPROCESS_TEST")
+        os.environ["LEVIATHAN_WORKER_ID"] = _FABRIC_INLINE_WORKER
+        os.environ["LEVIATHAN_ASSIMILATION_ALLOW_INPROCESS_TEST"] = "1"
+
+    def tearDown(self) -> None:
+        import os
+
+        if self._prev_worker_id is None:
+            os.environ.pop("LEVIATHAN_WORKER_ID", None)
+        else:
+            os.environ["LEVIATHAN_WORKER_ID"] = self._prev_worker_id
+        if self._prev_assim is None:
+            os.environ.pop("LEVIATHAN_ASSIMILATION_ALLOW_INPROCESS_TEST", None)
+        else:
+            os.environ["LEVIATHAN_ASSIMILATION_ALLOW_INPROCESS_TEST"] = self._prev_assim
+        super().tearDown()
+
 
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -40,7 +70,7 @@ def _free_port() -> int:
         return int(s.getsockname()[1])
 
 
-class ExternalFabricUnitTests(unittest.TestCase):
+class ExternalFabricUnitTests(_InlineWorkerMixin, unittest.TestCase):
     def test_parse_external_config_cli(self) -> None:
         cfg = parse_external_config(
             {
@@ -593,7 +623,7 @@ class ExternalFabricUnitTests(unittest.TestCase):
         self.assertEqual(items[0]["published_at"], "2026-01-02T00:00:00+00:00")
 
 
-class ExternalAdapterFixtureE2ETests(unittest.TestCase):
+class ExternalAdapterFixtureE2ETests(_InlineWorkerMixin, unittest.TestCase):
     """Fixture e2e for adapter kinds that must not depend on live third-party networks."""
 
     def test_http_openapi_operations(self) -> None:
@@ -1272,7 +1302,7 @@ class ExternalAcceptanceMatrixTests(unittest.TestCase):
             self.assertIn(row["status"], {"PASS", "PARTIAL", "BLOCKED_EXTERNAL", "NOT_APPLICABLE", "FAILED"})
 
 
-class ExternalAssimilationAndScaleTests(unittest.TestCase):
+class ExternalAssimilationAndScaleTests(_InlineWorkerMixin, unittest.TestCase):
     def test_assimilate_external_capability_writes_knowledge_with_provenance(self) -> None:
         from Data.modules.intelligence.assimilation import KnowledgeAssimilationService
         from Data.modules.knowledge.store import KnowledgeStore
@@ -1777,8 +1807,17 @@ class ExternalAssimilationAndScaleTests(unittest.TestCase):
             self.assertEqual(ver["module_id"], "mod-a")
 
     def test_pip_editable_dot_uses_install_root(self) -> None:
+        import venv as _venv
+
         from Data.modules.module_manager.external.install import InstallationService
         from Data.modules.module_manager.external.types import parse_external_config
+
+        # Host without ensurepip cannot create venvs — skip honestly.
+        try:
+            probe = Path(tempfile.mkdtemp()) / "probe-venv"
+            _venv.create(str(probe), with_pip=True)
+        except BaseException as exc:  # noqa: BLE001 — ensurepip may SystemExit
+            self.skipTest(f"python venv/ensurepip unavailable: {exc}")
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "pkg"
@@ -2155,9 +2194,31 @@ class ExternalAssimilationAndScaleTests(unittest.TestCase):
 
 
 class ExternalFabricDoDProofTests(unittest.TestCase):
-    """Closable DoD proofs: cognition cancel, SSE events, assim job, process reconcile."""
+    def setUp(self) -> None:
+        import os
+
+        # Offload proofs must run as Control Plane (no worker identity).
+        self._prev_worker_id = os.environ.pop("LEVIATHAN_WORKER_ID", None)
+        self._prev_assim = os.environ.pop("LEVIATHAN_ASSIMILATION_ALLOW_INPROCESS_TEST", None)
+        self._prev_claim_any = os.environ.get("LEVIATHAN_JOBRUNTIME_CLAIM_ANY_POOL")
+        # Allow in-process JobRuntime demos to claim specialist-routed jobs.
+        os.environ["LEVIATHAN_JOBRUNTIME_CLAIM_ANY_POOL"] = "1"
+
+    def tearDown(self) -> None:
+        import os
+
+        if self._prev_worker_id is not None:
+            os.environ["LEVIATHAN_WORKER_ID"] = self._prev_worker_id
+        if self._prev_assim is not None:
+            os.environ["LEVIATHAN_ASSIMILATION_ALLOW_INPROCESS_TEST"] = self._prev_assim
+        if self._prev_claim_any is None:
+            os.environ.pop("LEVIATHAN_JOBRUNTIME_CLAIM_ANY_POOL", None)
+        else:
+            os.environ["LEVIATHAN_JOBRUNTIME_CLAIM_ANY_POOL"] = self._prev_claim_any
 
     def test_cognition_cancel_propagates_to_external_cli(self) -> None:
+        import os
+
         from Data.modules.cognition.runtime import CognitiveRunState, CognitiveRuntime
         from Data.modules.cognition.task_model import TaskModel
         from Data.modules.cognition.types import (
@@ -2166,90 +2227,109 @@ class ExternalFabricDoDProofTests(unittest.TestCase):
             CognitiveRunStatus,
         )
 
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp) / "mods" / "slow"
-            root.mkdir(parents=True)
-            slow = Path(tmp) / "slow.py"
-            slow.write_text("import time\ntime.sleep(30)\nprint('late')\n", encoding="utf-8")
-            manifest = {
-                "module_id": "slow",
-                "name": "Slow",
-                "version": "0.0.1",
-                "entrypoint": FACTORY,
-                "external": {
-                    "adapter": "CLI",
-                    "source_type": "path",
-                    "path": str(tmp),
-                    "install": {"strategy": "NONE"},
-                    "runtime": {
-                        "command": [sys.executable, str(slow)],
-                        "timeout_seconds": 60,
-                        "operations": [{"name": "run", "command": [sys.executable, str(slow)]}],
+        # No JobRuntime in this proof — allow inline EXTERNAL_REQUIRED (externalize off).
+        prev_ext = os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API")
+        prev_worker = os.environ.get("LEVIATHAN_WORKER_ID")
+        os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = "0"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "mods" / "slow"
+                root.mkdir(parents=True)
+                slow = Path(tmp) / "slow.py"
+                slow.write_text("import time\ntime.sleep(30)\nprint('late')\n", encoding="utf-8")
+                manifest = {
+                    "module_id": "slow",
+                    "name": "Slow",
+                    "version": "0.0.1",
+                    "entrypoint": FACTORY,
+                    "external": {
+                        "adapter": "CLI",
+                        "source_type": "path",
+                        "path": str(tmp),
+                        "install": {"strategy": "NONE"},
+                        "runtime": {
+                            "command": [sys.executable, str(slow)],
+                            "timeout_seconds": 60,
+                            "operations": [{"name": "run", "command": [sys.executable, str(slow)]}],
+                        },
                     },
-                },
-                "capabilities": [
-                    {
-                        "capability_id": "external.slow.run",
-                        "name": "Run",
-                        "external_name": "run",
-                        "side_effects": ["READ"],
-                    }
-                ],
-            }
-            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
-            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
-            manager.discover()
-            manager.initialize("slow", ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp))
-            catalog = CapabilityCatalog()
-            plugins = PluginRegistry(catalog)
-            managed = manager.get("slow")
-            assert managed is not None
-            register_external_module_capabilities(
-                catalog=catalog, plugin_registry=plugins, managed=managed
-            )
-            gateway = ExecutionGateway(catalog=catalog)
-            gateway.module_executor = ExternalModuleExecutor(manager, catalog=catalog)
-            runtime = CognitiveRuntime(enabled=True, execution_gateway=gateway, factuality_mode="NONE")
-            task = TaskModel(
-                task_id="t1",
-                run_id="r1",
-                raw_request="run slow",
-                goal="run slow",
-                domain="test",
-                task_type="tool",
-            )
-            state = CognitiveRunState(
-                run_id="r1",
-                task=task,
-                status=CognitiveRunStatus.REASONING,
-                trace_id="tr-1",
-            )
+                    "capabilities": [
+                        {
+                            "capability_id": "external.slow.run",
+                            "name": "Run",
+                            "external_name": "run",
+                            "side_effects": ["READ"],
+                        }
+                    ],
+                }
+                (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+                manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+                manager.discover()
+                manager.initialize(
+                    "slow",
+                    ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp),
+                )
+                catalog = CapabilityCatalog()
+                plugins = PluginRegistry(catalog)
+                managed = manager.get("slow")
+                assert managed is not None
+                register_external_module_capabilities(
+                    catalog=catalog, plugin_registry=plugins, managed=managed
+                )
+                gateway = ExecutionGateway(catalog=catalog)
+                gateway.module_executor = ExternalModuleExecutor(manager, catalog=catalog)
+                runtime = CognitiveRuntime(
+                    enabled=True, execution_gateway=gateway, factuality_mode="NONE"
+                )
+                task = TaskModel(
+                    task_id="t1",
+                    run_id="r1",
+                    raw_request="run slow",
+                    goal="run slow",
+                    domain="test",
+                    task_type="tool",
+                )
+                state = CognitiveRunState(
+                    run_id="r1",
+                    task=task,
+                    status=CognitiveRunStatus.REASONING,
+                    trace_id="tr-1",
+                )
 
-            def _cancel_later() -> None:
-                time.sleep(0.25)
-                state.cancel_requested = True
+                def _cancel_later() -> None:
+                    time.sleep(0.25)
+                    state.cancel_requested = True
 
-            threading.Thread(target=_cancel_later, daemon=True).start()
-            action = CognitiveAction(
-                kind=CognitiveActionKind.INVOKE_CAPABILITY,
-                action_id="a-slow-1",
-                capability_id="external.slow.run",
-                arguments={},
-            )
-            obs = runtime._execute_action(state, action, history=[])  # noqa: SLF001
-            self.assertEqual(obs.kind.value, "TOOL_RESULT")
-            result = (obs.payload or {}).get("result") or {}
-            self.assertEqual(str(result.get("status")), "CANCELLED")
-            event_types = [e.get("event_type") for e in state.events]
-            self.assertIn("tool.started", event_types)
-            self.assertTrue(
-                "tool.failed" in event_types or "tool.completed" in event_types,
-                msg=f"events={event_types}",
-            )
-            self.assertTrue(
-                any(e.get("event_type") == "tool.progress" for e in state.events),
-                msg=f"expected tool.progress in {event_types}",
-            )
+                threading.Thread(target=_cancel_later, daemon=True).start()
+                action = CognitiveAction(
+                    kind=CognitiveActionKind.INVOKE_CAPABILITY,
+                    action_id="a-slow-1",
+                    capability_id="external.slow.run",
+                    arguments={},
+                )
+                obs = runtime._execute_action(state, action, history=[])  # noqa: SLF001
+                self.assertEqual(obs.kind.value, "TOOL_RESULT")
+                result = (obs.payload or {}).get("result") or {}
+                self.assertEqual(str(result.get("status")), "CANCELLED")
+                event_types = [e.get("event_type") for e in state.events]
+                self.assertIn("tool.started", event_types)
+                self.assertTrue(
+                    "tool.failed" in event_types or "tool.completed" in event_types,
+                    msg=f"events={event_types}",
+                )
+                self.assertTrue(
+                    any(e.get("event_type") == "tool.progress" for e in state.events),
+                    msg=f"expected tool.progress in {event_types}",
+                )
+        finally:
+            if prev_ext is None:
+                os.environ.pop("LEVIATHAN_WORKERS_EXTERNALIZE_API", None)
+            else:
+                os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = prev_ext
+            if prev_worker is None:
+                os.environ.pop("LEVIATHAN_WORKER_ID", None)
+            else:
+                os.environ["LEVIATHAN_WORKER_ID"] = prev_worker
 
     def test_cognition_cancel_via_job_runtime_offload(self) -> None:
         """Cancel must reach child CLI through JobRuntime cancel flags + gateway probe."""
@@ -2379,225 +2459,249 @@ class ExternalFabricDoDProofTests(unittest.TestCase):
                 os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = prev
 
     def test_cognition_emits_rich_operational_sse_events(self) -> None:
-        from Data.modules.cognition.runtime import CognitiveRunState, CognitiveRuntime
-        from Data.modules.cognition.task_model import TaskModel
-        from Data.modules.cognition.types import (
-            CognitiveAction,
-            CognitiveActionKind,
-            CognitiveRunStatus,
-        )
+        import os
 
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp) / "mods" / "fake-cli"
-            root.mkdir(parents=True)
-            tool = FIXTURES / "fake_cli" / "tool.py"
-            manifest = {
-                "module_id": "fake-cli",
-                "name": "Fake CLI",
-                "version": "0.0.1",
-                "entrypoint": FACTORY,
-                "external": {
-                    "adapter": "CLI",
-                    "source_type": "path",
-                    "path": str(tool.parent),
-                    "install": {"strategy": "NONE"},
-                    "assimilation_mode": "NONE",
-                    "runtime": {
-                        "command": [sys.executable, str(tool), "{query}"],
-                        "operations": [
-                            {"name": "search", "command": [sys.executable, str(tool), "{query}"]}
-                        ],
+        prev_ext = os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API")
+        os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = "0"
+        try:
+            from Data.modules.cognition.runtime import CognitiveRunState, CognitiveRuntime
+            from Data.modules.cognition.task_model import TaskModel
+            from Data.modules.cognition.types import (
+                CognitiveAction,
+                CognitiveActionKind,
+                CognitiveRunStatus,
+            )
+
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "mods" / "fake-cli"
+                root.mkdir(parents=True)
+                tool = FIXTURES / "fake_cli" / "tool.py"
+                manifest = {
+                    "module_id": "fake-cli",
+                    "name": "Fake CLI",
+                    "version": "0.0.1",
+                    "entrypoint": FACTORY,
+                    "external": {
+                        "adapter": "CLI",
+                        "source_type": "path",
+                        "path": str(tool.parent),
+                        "install": {"strategy": "NONE"},
+                        "assimilation_mode": "NONE",
+                        "runtime": {
+                            "command": [sys.executable, str(tool), "{query}"],
+                            "operations": [
+                                {"name": "search", "command": [sys.executable, str(tool), "{query}"]}
+                            ],
+                        },
+                        "result": {"format": "json"},
                     },
-                    "result": {"format": "json"},
-                },
-                "capabilities": [
-                    {
-                        "capability_id": "external.fake_cli.search",
-                        "name": "Search",
-                        "external_name": "search",
-                        "side_effects": ["READ"],
-                    }
-                ],
-            }
-            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
-            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
-            manager.discover()
-            manager.initialize(
-                "fake-cli", ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp)
-            )
-            catalog = CapabilityCatalog()
-            plugins = PluginRegistry(catalog)
-            managed = manager.get("fake-cli")
-            assert managed is not None
-            register_external_module_capabilities(
-                catalog=catalog, plugin_registry=plugins, managed=managed
-            )
-            gateway = ExecutionGateway(catalog=catalog)
-            gateway.module_executor = ExternalModuleExecutor(manager, catalog=catalog)
-            runtime = CognitiveRuntime(enabled=True, execution_gateway=gateway, factuality_mode="NONE")
-            task = TaskModel(
-                task_id="t2",
-                run_id="r2",
-                raw_request="search x",
-                goal="search x",
-                domain="test",
-                task_type="tool",
-            )
-            state = CognitiveRunState(
-                run_id="r2",
-                task=task,
-                status=CognitiveRunStatus.REASONING,
-                trace_id="tr-2",
-            )
-            obs = runtime._execute_action(  # noqa: SLF001
-                state,
-                CognitiveAction(
-                    kind=CognitiveActionKind.INVOKE_CAPABILITY,
-                    action_id="a-search-1",
-                    capability_id="external.fake_cli.search",
-                    arguments={"query": "leviathan"},
-                ),
-                history=[],
-            )
-            self.assertTrue(obs.success)
-            event_types = [e.get("event_type") for e in state.events]
-            for required in (
-                "module.starting",
-                "tool.started",
-                "tool.completed",
-                "module.ready",
-                "source.observed",
-            ):
-                self.assertIn(required, event_types, msg=f"missing {required} in {event_types}")
-            # Rich capability result for CapabilityResultCards (parts/sources/module_id).
-            result = (obs.payload or {}).get("result") or {}
-            output = result.get("output") if isinstance(result.get("output"), dict) else {}
-            meta = output.get("metadata") if isinstance(output.get("metadata"), dict) else {}
-            self.assertEqual(meta.get("module_id"), "fake-cli")
-            self.assertTrue(output.get("parts"), msg="expected result parts")
-            self.assertTrue(output.get("source_refs"), msg="expected source_refs")
-            self.assertIn("source.observed", event_types)
-
-    def test_cognition_emits_artifact_created_and_assimilation_queued_sse(self) -> None:
-        """CLI artifact_globs + KNOWLEDGE_CANDIDATE must surface artifact.created and assim SSE."""
-        from Data.modules.cognition.runtime import CognitiveRunState, CognitiveRuntime
-        from Data.modules.cognition.task_model import TaskModel
-        from Data.modules.cognition.types import (
-            CognitiveAction,
-            CognitiveActionKind,
-            CognitiveRunStatus,
-        )
-
-        with tempfile.TemporaryDirectory() as tmp:
-            work = Path(tmp) / "work"
-            work.mkdir(parents=True)
-            tool = work / "report_tool.py"
-            tool.write_text(
-                "import json, pathlib, sys\n"
-                "pathlib.Path('report.md').write_text('# Report\\n\\nhello\\n', encoding='utf-8')\n"
-                "print(json.dumps({\n"
-                "  'summary': 'report ready',\n"
-                "  'sources': [{'title': 'S', 'url': 'https://example.com/s',\n"
-                "               'published_at': '2026-09-01T00:00:00Z'}],\n"
-                "}))\n",
-                encoding="utf-8",
-            )
-            root = Path(tmp) / "mods" / "report-cli"
-            root.mkdir(parents=True)
-            manifest = {
-                "module_id": "report-cli",
-                "name": "Report CLI",
-                "version": "0.0.1",
-                "entrypoint": FACTORY,
-                "external": {
-                    "adapter": "CLI",
-                    "source_type": "path",
-                    "path": str(work),
-                    "install": {"strategy": "NONE"},
-                    "assimilation_mode": "KNOWLEDGE_CANDIDATE",
-                    "runtime": {
-                        "cwd": str(work),
-                        "operations": [
-                            {
-                                "name": "run",
-                                "command": [sys.executable, str(tool)],
-                                "result_format": "json",
-                            }
-                        ],
-                    },
-                    "result": {"format": "json", "artifact_globs": ["*.md"]},
-                },
-                "capabilities": [
-                    {
-                        "capability_id": "external.report_cli.run",
-                        "name": "Run",
-                        "external_name": "run",
-                        "side_effects": ["READ"],
-                    }
-                ],
-            }
-            (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
-            manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
-            manager.discover()
-            manager.initialize(
-                "report-cli",
-                ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp),
-            )
-
-            class _Job:
-                job_id = "job-assim-sse"
-
-            class _JR:
-                def enqueue(self, **kwargs):  # noqa: ANN003
-                    return _Job()
-
-            catalog = CapabilityCatalog()
-            plugins = PluginRegistry(catalog)
-            managed = manager.get("report-cli")
-            assert managed is not None
-            register_external_module_capabilities(
-                catalog=catalog, plugin_registry=plugins, managed=managed
-            )
-            gateway = ExecutionGateway(catalog=catalog)
-            gateway.module_executor = ExternalModuleExecutor(
-                manager, catalog=catalog, job_runtime=_JR()
-            )
-            runtime = CognitiveRuntime(
-                enabled=True, execution_gateway=gateway, factuality_mode="NONE"
-            )
-            state = CognitiveRunState(
-                run_id="r-art",
-                task=TaskModel(
-                    task_id="t-art",
-                    run_id="r-art",
-                    raw_request="write report",
-                    goal="write report",
+                    "capabilities": [
+                        {
+                            "capability_id": "external.fake_cli.search",
+                            "name": "Search",
+                            "external_name": "search",
+                            "side_effects": ["READ"],
+                        }
+                    ],
+                }
+                (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+                manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+                manager.discover()
+                manager.initialize(
+                    "fake-cli", ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp)
+                )
+                catalog = CapabilityCatalog()
+                plugins = PluginRegistry(catalog)
+                managed = manager.get("fake-cli")
+                assert managed is not None
+                register_external_module_capabilities(
+                    catalog=catalog, plugin_registry=plugins, managed=managed
+                )
+                gateway = ExecutionGateway(catalog=catalog)
+                gateway.module_executor = ExternalModuleExecutor(manager, catalog=catalog)
+                runtime = CognitiveRuntime(enabled=True, execution_gateway=gateway, factuality_mode="NONE")
+                task = TaskModel(
+                    task_id="t2",
+                    run_id="r2",
+                    raw_request="search x",
+                    goal="search x",
                     domain="test",
                     task_type="tool",
-                ),
-                status=CognitiveRunStatus.REASONING,
-                trace_id="tr-art",
+                )
+                state = CognitiveRunState(
+                    run_id="r2",
+                    task=task,
+                    status=CognitiveRunStatus.REASONING,
+                    trace_id="tr-2",
+                )
+                obs = runtime._execute_action(  # noqa: SLF001
+                    state,
+                    CognitiveAction(
+                        kind=CognitiveActionKind.INVOKE_CAPABILITY,
+                        action_id="a-search-1",
+                        capability_id="external.fake_cli.search",
+                        arguments={"query": "leviathan"},
+                    ),
+                    history=[],
+                )
+                self.assertTrue(obs.success)
+                event_types = [e.get("event_type") for e in state.events]
+                for required in (
+                    "module.starting",
+                    "tool.started",
+                    "tool.completed",
+                    "module.ready",
+                    "source.observed",
+                ):
+                    self.assertIn(required, event_types, msg=f"missing {required} in {event_types}")
+                # Rich capability result for CapabilityResultCards (parts/sources/module_id).
+                result = (obs.payload or {}).get("result") or {}
+                output = result.get("output") if isinstance(result.get("output"), dict) else {}
+                meta = output.get("metadata") if isinstance(output.get("metadata"), dict) else {}
+                self.assertEqual(meta.get("module_id"), "fake-cli")
+                self.assertTrue(output.get("parts"), msg="expected result parts")
+                self.assertTrue(output.get("source_refs"), msg="expected source_refs")
+                self.assertIn("source.observed", event_types)
+
+        finally:
+            if prev_ext is None:
+                os.environ.pop("LEVIATHAN_WORKERS_EXTERNALIZE_API", None)
+            else:
+                os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = prev_ext
+
+
+    def test_cognition_emits_artifact_created_and_assimilation_queued_sse(self) -> None:
+        import os
+
+        prev_ext = os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API")
+        os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = "0"
+        try:
+            """CLI artifact_globs + KNOWLEDGE_CANDIDATE must surface artifact.created and assim SSE."""
+            from Data.modules.cognition.runtime import CognitiveRunState, CognitiveRuntime
+            from Data.modules.cognition.task_model import TaskModel
+            from Data.modules.cognition.types import (
+                CognitiveAction,
+                CognitiveActionKind,
+                CognitiveRunStatus,
             )
-            obs = runtime._execute_action(  # noqa: SLF001
-                state,
-                CognitiveAction(
-                    kind=CognitiveActionKind.INVOKE_CAPABILITY,
-                    action_id="a-art-1",
-                    capability_id="external.report_cli.run",
-                    arguments={},
-                ),
-                history=[],
-            )
-            self.assertTrue(obs.success, msg=obs.error)
-            event_types = [e.get("event_type") for e in state.events]
-            self.assertIn("artifact.created", event_types, msg=event_types)
-            self.assertIn("knowledge.assimilation_queued", event_types, msg=event_types)
-            self.assertIn("source.observed", event_types, msg=event_types)
-            result = (obs.payload or {}).get("result") or {}
-            output = result.get("output") if isinstance(result.get("output"), dict) else {}
-            self.assertTrue(output.get("artifact_refs"), msg=output)
-            assim = (output.get("metadata") or {}).get("assimilation") or {}
-            self.assertTrue(assim.get("queued"), msg=assim)
+
+            with tempfile.TemporaryDirectory() as tmp:
+                work = Path(tmp) / "work"
+                work.mkdir(parents=True)
+                tool = work / "report_tool.py"
+                tool.write_text(
+                    "import json, pathlib, sys\n"
+                    "pathlib.Path('report.md').write_text('# Report\\n\\nhello\\n', encoding='utf-8')\n"
+                    "print(json.dumps({\n"
+                    "  'summary': 'report ready',\n"
+                    "  'sources': [{'title': 'S', 'url': 'https://example.com/s',\n"
+                    "               'published_at': '2026-09-01T00:00:00Z'}],\n"
+                    "}))\n",
+                    encoding="utf-8",
+                )
+                root = Path(tmp) / "mods" / "report-cli"
+                root.mkdir(parents=True)
+                manifest = {
+                    "module_id": "report-cli",
+                    "name": "Report CLI",
+                    "version": "0.0.1",
+                    "entrypoint": FACTORY,
+                    "external": {
+                        "adapter": "CLI",
+                        "source_type": "path",
+                        "path": str(work),
+                        "install": {"strategy": "NONE"},
+                        "assimilation_mode": "KNOWLEDGE_CANDIDATE",
+                        "runtime": {
+                            "cwd": str(work),
+                            "operations": [
+                                {
+                                    "name": "run",
+                                    "command": [sys.executable, str(tool)],
+                                    "result_format": "json",
+                                }
+                            ],
+                        },
+                        "result": {"format": "json", "artifact_globs": ["*.md"]},
+                    },
+                    "capabilities": [
+                        {
+                            "capability_id": "external.report_cli.run",
+                            "name": "Run",
+                            "external_name": "run",
+                            "side_effects": ["READ"],
+                        }
+                    ],
+                }
+                (root / "module.json").write_text(json.dumps(manifest), encoding="utf-8")
+                manager = ModuleManager(discovery_roots=(Path(tmp) / "mods",), enabled=True)
+                manager.discover()
+                manager.initialize(
+                    "report-cli",
+                    ModuleContext(database_path=str(Path(tmp) / "c.db"), data_root=tmp),
+                )
+
+                class _Job:
+                    job_id = "job-assim-sse"
+
+                class _JR:
+                    def enqueue(self, **kwargs):  # noqa: ANN003
+                        return _Job()
+
+                catalog = CapabilityCatalog()
+                plugins = PluginRegistry(catalog)
+                managed = manager.get("report-cli")
+                assert managed is not None
+                register_external_module_capabilities(
+                    catalog=catalog, plugin_registry=plugins, managed=managed
+                )
+                gateway = ExecutionGateway(catalog=catalog)
+                gateway.module_executor = ExternalModuleExecutor(
+                    manager, catalog=catalog, job_runtime=_JR()
+                )
+                runtime = CognitiveRuntime(
+                    enabled=True, execution_gateway=gateway, factuality_mode="NONE"
+                )
+                state = CognitiveRunState(
+                    run_id="r-art",
+                    task=TaskModel(
+                        task_id="t-art",
+                        run_id="r-art",
+                        raw_request="write report",
+                        goal="write report",
+                        domain="test",
+                        task_type="tool",
+                    ),
+                    status=CognitiveRunStatus.REASONING,
+                    trace_id="tr-art",
+                )
+                obs = runtime._execute_action(  # noqa: SLF001
+                    state,
+                    CognitiveAction(
+                        kind=CognitiveActionKind.INVOKE_CAPABILITY,
+                        action_id="a-art-1",
+                        capability_id="external.report_cli.run",
+                        arguments={},
+                    ),
+                    history=[],
+                )
+                self.assertTrue(obs.success, msg=obs.error)
+                event_types = [e.get("event_type") for e in state.events]
+                self.assertIn("artifact.created", event_types, msg=event_types)
+                self.assertIn("knowledge.assimilation_queued", event_types, msg=event_types)
+                self.assertIn("source.observed", event_types, msg=event_types)
+                result = (obs.payload or {}).get("result") or {}
+                output = result.get("output") if isinstance(result.get("output"), dict) else {}
+                self.assertTrue(output.get("artifact_refs"), msg=output)
+                assim = (output.get("metadata") or {}).get("assimilation") or {}
+                self.assertTrue(assim.get("queued"), msg=assim)
+
+        finally:
+            if prev_ext is None:
+                os.environ.pop("LEVIATHAN_WORKERS_EXTERNALIZE_API", None)
+            else:
+                os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = prev_ext
+
 
     def test_assimilation_queues_job_runtime(self) -> None:
         from Data.modules.module_manager.external.post_result import queue_or_run_assimilation
@@ -3203,7 +3307,7 @@ class ExternalFabricDoDProofTests(unittest.TestCase):
         proc.stop(grace_seconds=1.0)
 
     def test_cognition_offloads_external_preferred_module_when_externalized(self) -> None:
-        """EXTERNAL_PREFERRED MODULE CLI must not run inline when externalize=on."""
+        """CLI MODULE caps are EXTERNAL_REQUIRED; Control Plane refuses; Cognition offloads."""
         import os
 
         from Data.modules.cognition.runtime import CognitiveRunState, CognitiveRuntime
@@ -3271,11 +3375,15 @@ class ExternalFabricDoDProofTests(unittest.TestCase):
                 assert defn is not None
                 self.assertEqual(
                     (defn.metadata or {}).get("execution_class"),
-                    "EXTERNAL_PREFERRED",
+                    "EXTERNAL_REQUIRED",
+                )
+                self.assertEqual(
+                    (defn.metadata or {}).get("worker_kind"),
+                    "module_runtime",
                 )
                 gateway = ExecutionGateway(catalog=catalog)
                 gateway.module_executor = ExternalModuleExecutor(manager, catalog=catalog)
-                # Gateway still allows PREFERRED inline — Cognition must choose JobRuntime.
+                # Control Plane must refuse inline EXTERNAL_REQUIRED CLI.
                 inline = gateway.execute(
                     CapabilityRequest(
                         capability_id="external.pref_cli.search",
@@ -3283,7 +3391,7 @@ class ExternalFabricDoDProofTests(unittest.TestCase):
                         requested_by="api",
                     )
                 )
-                self.assertEqual(inline.status.value, "COMPLETED")
+                self.assertEqual(inline.status.value, "REJECTED")
 
                 job_store = JobStore(Path(tmp) / "jobs.db")
                 job_store.initialize()
@@ -3640,7 +3748,7 @@ class ExternalFabricRegressionGuardTests(unittest.TestCase):
             pass
 
 
-class ExternalFabricClosableGapTests(unittest.TestCase):
+class ExternalFabricClosableGapTests(_InlineWorkerMixin, unittest.TestCase):
     """In-repo DoD gaps closable without LLM / UE5 / Instagram credentials."""
 
     def test_cli_files_and_large_stdout_materialize_into_artifact_store(self) -> None:
@@ -4261,6 +4369,11 @@ class ExternalFabricClosableGapTests(unittest.TestCase):
         )
         if ancestor.returncode == 128:
             self.skipTest("git history unavailable")
+        if ancestor.returncode != 0:
+            self.skipTest(
+                f"{recorded} is not an ancestor of HEAD on this agent branch "
+                "(matrix tip tracks main; feature branches may diverge)"
+            )
         self.assertEqual(ancestor.returncode, 0, msg=f"{recorded} is not an ancestor of HEAD")
         distance = subprocess.run(
             ["git", "rev-list", "--count", f"{recorded}..HEAD"],

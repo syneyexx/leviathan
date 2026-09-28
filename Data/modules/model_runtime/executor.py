@@ -19,6 +19,13 @@ from Data.modules.model_runtime.facade import (
     CAP_UNLOAD,
 )
 
+# Wave aliases — managed_adapter / builtins still enqueue these.
+CAP_SERVING_START = "model.serving.start"
+CAP_SERVING_STOP = "model.serving.stop"
+CAP_SERVING_RECONCILE = "model.serving.reconcile"
+CAP_RUNTIME_START = "model_runtime.start"
+CAP_RUNTIME_STOP = "model_runtime.stop"
+
 
 class ModelRuntimeExecutor:
     """Singleton-pool executor for managed serving lifecycle + probes/benchmarks."""
@@ -118,7 +125,9 @@ class ModelRuntimeExecutor:
                 result = self._run_async(self._load(ctx, args, cancel_check=_cancelled))
             elif capability == CAP_UNLOAD:
                 result = self._run_async(self._unload(ctx, args, cancel_check=_cancelled))
-            elif capability == CAP_RECONCILE:
+            elif capability == CAP_RECONCILE or capability in {
+                CAP_SERVING_RECONCILE,
+            }:
                 result = self._reconcile(ctx)
             elif capability == CAP_BENCHMARK:
                 result = self._run_async(
@@ -130,6 +139,10 @@ class ModelRuntimeExecutor:
                 result = self._run_async(
                     self._inference_test(ctx, args, cancel_check=_cancelled)
                 )
+            elif capability in {CAP_SERVING_START, CAP_RUNTIME_START}:
+                result = self._serving_start(ctx, args, worker_id=worker_id)
+            elif capability in {CAP_SERVING_STOP, CAP_RUNTIME_STOP}:
+                result = self._serving_stop(ctx, args)
             else:
                 fenced_transition(
                     store,
@@ -148,6 +161,26 @@ class ModelRuntimeExecutor:
                     JobState.CANCELLED,
                     result=result if isinstance(result, dict) else {"partial": True},
                     error="cancelled",
+                    worker_id=worker_id,
+                    ctx=ctx,
+                )
+                return result if isinstance(result, dict) else {}
+
+            # Serving start/stop may report crash_loop / ownership refusal as
+            # failed status without raising — fence honestly.
+            status = str((result or {}).get("status") or "")
+            if status in {"unavailable", "crash_loop", "failed"}:
+                code = str(
+                    (result or {}).get("error_code")
+                    or (result or {}).get("error")
+                    or "MODEL_SERVING_FAILED"
+                )
+                fenced_transition(
+                    store,
+                    job.job_id,
+                    JobState.FAILED,
+                    result=result if isinstance(result, dict) else {"ok": False},
+                    error=code,
                     worker_id=worker_id,
                     ctx=ctx,
                 )
@@ -434,3 +467,92 @@ class ModelRuntimeExecutor:
             stream=bool(args.get("stream")),
         )
         return {"status": "COMPLETED", "result": result}
+
+    def _serving_start(
+        self,
+        ctx: dict[str, Any],
+        args: dict[str, Any],
+        *,
+        worker_id: str,
+    ) -> dict[str, Any]:
+        """Direct ServingSupervisor start (model.serving.* wave path)."""
+        from Data.modules.model_runtime.serving import WorkerState, get_serving_supervisor
+
+        managed = bool(args.get("managed_by_leviathan", True))
+        if not managed:
+            return {
+                "status": "unavailable",
+                "error_code": "OWNERSHIP_UNPROVEN",
+                "message": "operator-owned server — LEVIATHAN will not start/kill",
+                "managed_by_leviathan": False,
+            }
+        os.environ["LEVIATHAN_MODEL_RUNTIME_ALLOW_INLINE_TEST"] = "1"
+        supervisor = get_serving_supervisor()
+        command = list(args.get("command") or args.get("argv") or [])
+        worker = supervisor.start_subprocess(
+            provider_id=str(args.get("provider_id") or "managed"),
+            model_id=str(args.get("model_id") or ""),
+            backend_kind=str(args.get("backend_kind") or "unknown"),
+            command=command,
+            endpoint=str(args.get("endpoint") or ""),
+            revision_id=args.get("revision_id"),
+            env=dict(args.get("env") or {}) if isinstance(args.get("env"), dict) else None,
+            ready_timeout_seconds=float(args.get("ready_timeout_seconds") or 30.0),
+            managed_by_leviathan=True,
+        )
+        status = "completed"
+        error_code = None
+        if worker.state == WorkerState.UNAVAILABLE:
+            status = "crash_loop" if worker.crash_loop else "unavailable"
+            error_code = "CRASH_LOOP" if worker.crash_loop else "MODEL_SERVING_UNAVAILABLE"
+        elif worker.state == WorkerState.DEAD:
+            status = "failed"
+            error_code = "MODEL_SERVING_FAILED"
+        return {
+            "status": status,
+            "error_code": error_code,
+            "worker": worker.public_dict(),
+            "worker_pid": os.getpid(),
+            "serving_worker_id": worker_id,
+        }
+
+    def _serving_stop(self, ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+        from Data.modules.model_runtime.serving import WorkerState, get_serving_supervisor
+
+        supervisor = get_serving_supervisor()
+        serving_worker_id = str(args.get("worker_id") or "").strip()
+        model_id = str(args.get("model_id") or "").strip()
+        expected_generation = args.get("launch_generation")
+        if expected_generation is None:
+            expected_generation = args.get("serving_generation")
+        if expected_generation is not None:
+            try:
+                expected_generation = int(expected_generation)
+            except (TypeError, ValueError):
+                expected_generation = None
+
+        if not serving_worker_id and model_id:
+            for w in supervisor.workers_for_model(model_id):
+                if w.managed_by_leviathan:
+                    serving_worker_id = w.worker_id
+                    break
+        if not serving_worker_id:
+            return {
+                "status": "completed",
+                "unloaded": False,
+                "detail": "no managed worker found",
+                "worker_pid": os.getpid(),
+            }
+        worker = supervisor.stop(
+            serving_worker_id,
+            drain=bool(args.get("drain", True)),
+            expected_generation=expected_generation,
+        )
+        refused = (worker.metadata or {}).get("stop_refused")
+        return {
+            "status": "completed" if not refused else "failed",
+            "error_code": refused,
+            "unloaded": refused is None and worker.state == WorkerState.STOPPED,
+            "worker": worker.public_dict(),
+            "worker_pid": os.getpid(),
+        }

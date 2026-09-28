@@ -1,8 +1,10 @@
 """Generic worker supervisor — process pools for durable job execution.
 
-Model-serving workers remain owned by the Model Control Plane / ServingSupervisor.
-This package owns research, dataset, ingestion, coding, evaluation, provider_io,
-and other background execution pools only.
+Model-serving *lifecycle* is owned by the Worker Fabric ``model_runtime`` pool
+(ServingSupervisor runs inside that worker). Inference still routes through the
+Model Control Plane to the managed serving process. This package also owns
+research, dataset, ingestion, coding, evaluation, provider_io, mcp_execution,
+module_runtime, and other background execution pools.
 """
 
 from .admission import ResourceAdmission, ResourceClass

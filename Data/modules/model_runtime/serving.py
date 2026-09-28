@@ -57,7 +57,14 @@ class ServingWorker:
     serving_generation: int = 0
     managed_by_leviathan: bool = True
     restart_count: int = 0
+    crash_loop: bool = False
+    pid_fingerprint: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def launch_generation(self) -> int:
+        """Wave alias for ``serving_generation`` (managed_adapter / jobs)."""
+        return self.serving_generation
 
     def public_dict(self) -> dict[str, Any]:
         # Never expose full command lines / secrets.
@@ -86,8 +93,12 @@ class ServingWorker:
             "health_score": self.health_score,
             "revision_id": self.revision_id,
             "servingGeneration": self.serving_generation,
+            "launch_generation": self.serving_generation,
             "managedByLeviathan": self.managed_by_leviathan,
+            "managed_by_leviathan": self.managed_by_leviathan,
             "restartCount": self.restart_count,
+            "crash_loop": self.crash_loop,
+            "pid_fingerprint": self.pid_fingerprint,
             "metadata": safe_meta,
             "truth": {
                 "dead_is_not_ready": self.state != WorkerState.READY,
@@ -95,6 +106,7 @@ class ServingWorker:
                 not in (WorkerState.READY, WorkerState.DRAINING),
                 "unmeasured_health_is_visible": self.health_score is None,
                 "process_existence_is_not_ready": True,
+                "only_managed_may_be_killed": True,
             },
         }
 
@@ -248,7 +260,30 @@ class ServingSupervisor:
                 serving_generation=generation,
                 managed_by_leviathan=managed_by_leviathan,
                 restart_count=attempts,
+                crash_loop=True,
                 metadata={"crash_loop": True, "start_attempts": attempts},
+            )
+            with self._lock:
+                self._workers[worker_id] = worker
+            return worker
+
+        if not managed_by_leviathan:
+            # Operator-owned Ollama / LM Studio — never start or kill.
+            worker = ServingWorker(
+                worker_id=worker_id,
+                provider_id=provider_id,
+                model_id=model_id,
+                backend_kind=backend_kind,
+                endpoint=endpoint,
+                state=WorkerState.UNAVAILABLE,
+                last_error=(
+                    "OWNERSHIP_UNPROVEN — operator-owned server; "
+                    "LEVIATHAN will not start/kill process"
+                ),
+                revision_id=revision_id,
+                serving_generation=generation,
+                managed_by_leviathan=False,
+                metadata={"managed_by_leviathan": False, "stop_refused": "OWNERSHIP_UNPROVEN"},
             )
             with self._lock:
                 self._workers[worker_id] = worker
@@ -309,6 +344,7 @@ class ServingSupervisor:
             return worker
 
         self._start_stderr_drain(worker_id, proc)
+        fingerprint = _pid_fingerprint(proc.pid)
 
         worker = ServingWorker(
             worker_id=worker_id,
@@ -323,9 +359,11 @@ class ServingSupervisor:
             serving_generation=generation,
             managed_by_leviathan=managed_by_leviathan,
             restart_count=max(0, attempts - 1),
+            pid_fingerprint=fingerprint,
             metadata={
                 "command": command[:1],
                 "serving_generation": generation,
+                "managed_by_leviathan": managed_by_leviathan,
                 "launch_fingerprint": f"{generation}:{proc.pid}:{endpoint}",
             },
         )
@@ -436,8 +474,12 @@ class ServingSupervisor:
                 raise KeyError(worker_id)
             if not worker.managed_by_leviathan:
                 worker.last_error = (
-                    "refusing to stop operator-owned / unmanaged serving process"
+                    "OWNERSHIP_UNPROVEN — operator-owned server not killed"
                 )
+                worker.metadata = {
+                    **dict(worker.metadata or {}),
+                    "stop_refused": "OWNERSHIP_UNPROVEN",
+                }
                 return worker
             if (
                 expected_generation is not None
@@ -448,6 +490,10 @@ class ServingSupervisor:
                     f"stale unload generation {expected_generation} "
                     f"(current={worker.serving_generation}); not stopped"
                 )
+                worker.metadata = {
+                    **dict(worker.metadata or {}),
+                    "stop_refused": "STALE_GENERATION",
+                }
                 return worker
             if drain and worker.state == WorkerState.READY:
                 worker.state = WorkerState.DRAINING
@@ -460,8 +506,29 @@ class ServingSupervisor:
                     graceful_timeout_seconds=0.1 if force else 5.0,
                     force_timeout_seconds=3.0,
                 )
+            elif worker.pid and worker.pid_fingerprint:
+                # Lost Popen handle (API restart adoption) — kill only with
+                # proven PID fingerprint ownership.
+                from Data.modules.common.process_control import terminate_owned_pid
+
+                result = terminate_owned_pid(
+                    int(worker.pid),
+                    expected_fingerprint=worker.pid_fingerprint,
+                    grace_seconds=0.1 if force else 5.0,
+                    force=True,
+                )
+                if result.get("code") == "OWNERSHIP_UNPROVEN":
+                    worker.last_error = "OWNERSHIP_UNPROVEN / ORPHANED — not killed"
+                    worker.metadata = {
+                        **dict(worker.metadata or {}),
+                        "stop_refused": "OWNERSHIP_UNPROVEN",
+                    }
+                    self._persist_registry()
+                    return worker
+                stop_meta = {"forced": bool(result.get("forced")), "pid_kill": result}
             worker.state = WorkerState.STOPPED
             worker.pid = None
+            worker.pid_fingerprint = None
             worker.health_score = 0.0
             worker.last_health_at = _utc_now()
             if stop_meta.get("forced"):
@@ -578,8 +645,14 @@ class ServingSupervisor:
                     health_score=0.0,
                     last_health_at=_utc_now(),
                     revision_id=entry.get("revision_id"),
-                    serving_generation=int(entry.get("serving_generation") or 0),
+                    serving_generation=int(
+                        entry.get("serving_generation")
+                        or entry.get("launch_generation")
+                        or 0
+                    ),
                     managed_by_leviathan=bool(entry.get("managed_by_leviathan", True)),
+                    pid_fingerprint=fingerprint or None,
+                    crash_loop=bool(entry.get("crash_loop", False)),
                     metadata={
                         "orphan_reconciled": True,
                         "prior_state": state,
@@ -602,8 +675,14 @@ class ServingSupervisor:
                     health_score=None,
                     last_health_at=_utc_now(),
                     revision_id=entry.get("revision_id"),
-                    serving_generation=int(entry.get("serving_generation") or 0),
+                    serving_generation=int(
+                        entry.get("serving_generation")
+                        or entry.get("launch_generation")
+                        or 0
+                    ),
                     managed_by_leviathan=bool(entry.get("managed_by_leviathan", True)),
+                    pid_fingerprint=fingerprint or None,
+                    crash_loop=bool(entry.get("crash_loop", False)),
                     metadata={
                         "orphan_reconciled": True,
                         "adopted": True,
@@ -640,8 +719,11 @@ class ServingSupervisor:
                         "started_at": w.started_at,
                         "revision_id": w.revision_id,
                         "serving_generation": w.serving_generation,
+                        "launch_generation": w.serving_generation,
                         "managed_by_leviathan": w.managed_by_leviathan,
-                        "pid_fingerprint": _pid_fingerprint(w.pid) if w.pid else "",
+                        "crash_loop": w.crash_loop,
+                        "pid_fingerprint": w.pid_fingerprint
+                        or (_pid_fingerprint(w.pid) if w.pid else ""),
                     }
                 )
             payload = {"updated_at": _utc_now(), "workers": workers}
