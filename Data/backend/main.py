@@ -343,14 +343,7 @@ signal_fabric = SignalFabricService(
         and settings.features.agents_enabled
     ),
 )
-try:
-    from Data.modules.memory import MemoryStore as _MemoryStore
-
-    _mem = _MemoryStore(settings.database_path)
-    _mem.initialize()
-    signal_fabric.bind_memory_store(_mem)
-except Exception:  # noqa: BLE001
-    pass
+# Canonical MemoryStore only — bind after initialize() in lifespan (F-011).
 analytics_service = AnalyticsService(settings.database_path)
 workflow_store = WorkflowStore(settings.database_path)
 workflow_runtime = WorkflowRuntime(workflow_store, execution_gateway, job_runtime=job_runtime)
@@ -672,21 +665,23 @@ def _gate_loopback() -> GateCheck:
 
 
 def _assert_loopback_mutation_allowed(request: Request) -> None:
-    """Round 8: approve/deny/lease stay open on loopback; non-loopback needs operator token."""
-    if settings.runtime.loopback_only:
-        return
-    import os
+    """Central mutation auth: loopback is open; non-loopback needs operator token.
 
-    expected = (os.environ.get("LEVIATHAN_OPERATOR_TOKEN") or "").strip()
-    provided = (request.headers.get("x-leviathan-operator-token") or "").strip()
-    if not expected or provided != expected:
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                "Non-loopback host: approve/deny/lease require matching "
-                "X-Leviathan-Operator-Token (set LEVIATHAN_OPERATOR_TOKEN)"
-            ),
+    Kept as a named callback for sqlite/approvals/platform route builders.
+    The HTTP middleware enforces the same policy for *all* /api mutations so
+    newly mounted routers cannot accidentally bypass the operator boundary.
+    """
+    from Data.modules.common.http_auth import (
+        MutationAuthError,
+        assert_operator_mutation_allowed,
+    )
+
+    try:
+        assert_operator_mutation_allowed(
+            request, loopback_only=bool(settings.runtime.loopback_only)
         )
+    except MutationAuthError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 def _evaluation_externalize() -> bool:
@@ -1941,6 +1936,22 @@ async def lifespan(_: FastAPI):
             "complete/resume restore before normal operation"
         ) from exc
 
+    from Data.modules.common.http_auth import validate_non_loopback_security_posture
+
+    try:
+        validate_non_loopback_security_posture(
+            loopback_only=bool(settings.runtime.loopback_only)
+        )
+    except RuntimeError as exc:
+        observability.emit(
+            "security",
+            "startup.auth_required",
+            payload={"error": str(exc)},
+            level="error",
+            message="Refusing non-loopback startup without operator token",
+        )
+        raise
+
     from Data.backend.db_upgrade import upgrade_all_databases
     _upgrade_report = upgrade_all_databases(settings.database_paths)
     if not _upgrade_report.completed:
@@ -2044,6 +2055,8 @@ async def lifespan(_: FastAPI):
     capability_receipts.initialize()
     secrets_broker.initialize()
     memory_store.initialize()
+    # One in-process MemoryStore owner — signal fabric reuses the canonical instance.
+    signal_fabric.bind_memory_store(memory_store)
     neuro_snapshots.initialize()
     residual_receipts.initialize()
     verification_reports.initialize()
@@ -2354,6 +2367,24 @@ app = FastAPI(title="Leviathan", version="0.73.0-wave9-flywheel", lifespan=lifes
 from Data.modules.host_console.launcher_cors import LauncherReadCorsMiddleware
 
 app.add_middleware(LauncherReadCorsMiddleware)
+
+
+@app.middleware("http")
+async def _operator_mutation_auth_middleware(request: Request, call_next):
+    """Default-deny non-loopback mutations across the entire /api surface."""
+    from Data.modules.common.http_auth import (
+        MutationAuthError,
+        assert_operator_mutation_allowed,
+    )
+    from starlette.responses import JSONResponse
+
+    try:
+        assert_operator_mutation_allowed(
+            request, loopback_only=bool(settings.runtime.loopback_only)
+        )
+    except MutationAuthError as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
 app.include_router(build_models_router(model_plane))
 app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
@@ -3144,7 +3175,6 @@ async def chat(payload: ChatRequest, request: Request):
                 result.evidence_ids = ["uncertainty:statement"]
             return result.to_dict()
 
-        team_orchestrator._executor = _chat_team_executor
         team_state = team_orchestrator.start(
             request_text=message,
             run_id=f"team:{run.run_id}",
@@ -3154,6 +3184,7 @@ async def chat(payload: ChatRequest, request: Request):
             requires_research=requires_research,
             requires_tools=requires_tools,
             profile=team_profile,
+            specialist_executor=_chat_team_executor,
         )
         # Drive a bounded number of quality iterations for the HTTP turn.
         team_state = team_orchestrator.run_until_terminal(team_state.run_id, max_iterations=8)

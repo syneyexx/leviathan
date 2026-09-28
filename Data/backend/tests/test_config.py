@@ -164,6 +164,26 @@ class SettingsTests(unittest.TestCase):
             with self.assertRaises(ConfigurationError):
                 Settings.from_env()
 
+    def test_non_loopback_requires_operator_token(self) -> None:
+        env = {
+            "LEVIATHAN_LOOPBACK_ONLY": "false",
+            "LEVIATHAN_HOST": "0.0.0.0",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            os.environ.pop("LEVIATHAN_OPERATOR_TOKEN", None)
+            with self.assertRaises(ConfigurationError):
+                Settings.from_env()
+
+    def test_non_loopback_with_operator_token_loads(self) -> None:
+        env = {
+            "LEVIATHAN_LOOPBACK_ONLY": "false",
+            "LEVIATHAN_HOST": "0.0.0.0",
+            "LEVIATHAN_OPERATOR_TOKEN": "test-operator-token",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            cfg = Settings.from_env()
+        self.assertFalse(cfg.runtime.loopback_only)
+
     def test_relative_database_path_resolves_under_project(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             rel = "Data/backend/data/custom.db"

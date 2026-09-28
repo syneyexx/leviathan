@@ -298,6 +298,8 @@ class DeploymentModeTests(unittest.TestCase):
         from fastapi import HTTPException
 
         req = MagicMock()
+        req.method = "POST"
+        req.url.path = "/api/approvals/x/approve"
         req.headers = {}
         with patch("Data.backend.main.settings") as mock_settings:
             mock_settings.runtime.loopback_only = False
@@ -308,6 +310,20 @@ class DeploymentModeTests(unittest.TestCase):
                 with self.assertRaises(HTTPException) as ctx:
                     _assert_loopback_mutation_allowed(req)
                 self.assertEqual(ctx.exception.status_code, 403)
+
+    def test_non_loopback_mutation_gate_accepts_matching_token(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        from Data.backend.main import _assert_loopback_mutation_allowed
+
+        req = MagicMock()
+        req.method = "POST"
+        req.url.path = "/api/approvals/x/approve"
+        req.headers = {"x-leviathan-operator-token": "tok-1"}
+        with patch("Data.backend.main.settings") as mock_settings:
+            mock_settings.runtime.loopback_only = False
+            with patch.dict("os.environ", {"LEVIATHAN_OPERATOR_TOKEN": "tok-1"}, clear=False):
+                _assert_loopback_mutation_allowed(req)
 
 
 if __name__ == "__main__":

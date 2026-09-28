@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -34,6 +35,7 @@ class DeploymentSecurityPosture:
                 "multi_user_requires_real_auth": multi,
                 "auth_posture_honest": auth_ok,
                 "configuration_is_not_enforcement_proof": True,
+                "approval_is_not_authentication": True,
             },
         }
 
@@ -43,17 +45,20 @@ def assess_deployment_security(settings: Settings) -> DeploymentSecurityPosture:
     # Multi-user/network is not a first-class LEVIATHAN mode in this tree unless
     # explicitly non-loopback with an auth feature. Keep local single-user default.
     auth_feature = bool(getattr(settings.features, "multi_user_auth", False)) if hasattr(settings, "features") else False
+    operator_token = bool((os.environ.get("LEVIATHAN_OPERATOR_TOKEN") or "").strip())
     if not loopback or auth_feature:
         return DeploymentSecurityPosture(
             mode="multi_user_network",
             authentication_required=True,
             authorization_required=True,
-            authentication_implemented=False,  # honest: no real IdP wired
+            # Operator token is a real caller-auth boundary for mutations, not IdP/RBAC.
+            authentication_implemented=operator_token,
             authorization_implemented=bool(getattr(settings.features, "capability_world", False)),
             loopback_only=loopback,
             notes=(
-                "Non-loopback or multi_user_auth requested — real authentication is NOT implemented; "
-                "do not claim multi-user security from config alone",
+                "Non-loopback requires LEVIATHAN_OPERATOR_TOKEN for all /api mutations",
+                "Operator token authenticates the caller; ApprovalService is separate authorization",
+                "Scoped RBAC / actor identities are not yet a product mode",
             ),
         )
     return DeploymentSecurityPosture(

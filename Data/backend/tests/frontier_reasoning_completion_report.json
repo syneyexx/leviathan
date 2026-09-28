@@ -1,8 +1,13 @@
 {
   "program": "frontier_reasoning",
-  "generated_at": "2026-09-27T22:02:56Z",
+  "generated_at": "2026-09-28T15:51:41Z",
   "exit_code": 0,
-  "definition_of_done": true,
+  "process_exit_success": true,
+  "structural_baseline_ok": true,
+  "allowed_incomplete": true,
+  "all_required_rounds_passed": false,
+  "program_complete": false,
+  "definition_of_done": false,
   "canonical_backend_doc": "Data/docs/Leviathan_system_backend.md",
   "canonical_frontend_doc": "Data/docs/Leviathan_system_frontend.md",
   "skeleton": [
@@ -316,7 +321,9 @@
   ],
   "truth": {
     "f0_skeleton_pass_is_not_program_done": true,
+    "process_success_is_not_program_complete": true,
+    "allowed_incomplete_is_not_definition_of_done": true,
     "unmeasured_is_not_passed": true,
-    "required_gate_not_pass_exits_nonzero": true
+    "required_gate_not_pass_exits_nonzero": false
   }
 }

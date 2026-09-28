@@ -164,21 +164,52 @@ def _print_table(rows: list[dict[str, Any]], *, title: str) -> None:
         print(f"{str(row.get('id') or ''):<28} {str(row.get('status') or ''):<18} {row.get('evidence')}")
 
 
-def _write_report_json(*, skeleton: list[dict[str, Any]], gates: list[dict[str, Any]], exit_code: int) -> None:
+def _write_report_json(
+    *,
+    skeleton: list[dict[str, Any]],
+    gates: list[dict[str, Any]],
+    exit_code: int,
+    allow_f0_skeleton_only: bool,
+) -> None:
+    """Write machine-readable completion semantics.
+
+    process_exit_success / allowed_incomplete must never be conflated with
+    program_complete. definition_of_done is true only when every required
+    program gate is PASS (and the structural baseline is PASS).
+    """
+    structural_baseline_ok = all(
+        (not r.get("required")) or r.get("status") == "PASS" for r in skeleton
+    )
+    all_required_rounds_passed = all(
+        (not r.get("required")) or r.get("status") == "PASS" for r in gates
+    )
+    program_complete = bool(structural_baseline_ok and all_required_rounds_passed)
+    allowed_incomplete = bool(
+        allow_f0_skeleton_only and structural_baseline_ok and not all_required_rounds_passed
+    )
+    process_exit_success = exit_code == 0
     REPORT_JSON.parent.mkdir(parents=True, exist_ok=True)
     REPORT_JSON.write_text(json.dumps({
         "program": "frontier_reasoning",
         "generated_at": _utcnow(),
         "exit_code": exit_code,
-        "definition_of_done": exit_code == 0,
+        "process_exit_success": process_exit_success,
+        "structural_baseline_ok": structural_baseline_ok,
+        "allowed_incomplete": allowed_incomplete,
+        "all_required_rounds_passed": all_required_rounds_passed,
+        "program_complete": program_complete,
+        # Alias kept for consumers — NEVER equals process_exit_success alone.
+        "definition_of_done": program_complete,
         "canonical_backend_doc": str(BACKEND_DOC.relative_to(ROOT)),
         "canonical_frontend_doc": str(FRONTEND_DOC.relative_to(ROOT)),
         "skeleton": skeleton,
         "gates": gates,
         "truth": {
             "f0_skeleton_pass_is_not_program_done": True,
+            "process_success_is_not_program_complete": True,
+            "allowed_incomplete_is_not_definition_of_done": True,
             "unmeasured_is_not_passed": True,
-            "required_gate_not_pass_exits_nonzero": True,
+            "required_gate_not_pass_exits_nonzero": not allow_f0_skeleton_only,
         },
     }, indent=2) + "\n", encoding="utf-8")
 
@@ -221,7 +252,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Result: exit={exit_code} — {reason}")
 
     if args.write_report:
-        _write_report_json(skeleton=skeleton, gates=gates, exit_code=exit_code)
+        _write_report_json(
+            skeleton=skeleton,
+            gates=gates,
+            exit_code=exit_code,
+            allow_f0_skeleton_only=bool(args.allow_f0_skeleton_only),
+        )
         print(f"Wrote {REPORT_JSON.relative_to(ROOT)}")
     return exit_code
 
