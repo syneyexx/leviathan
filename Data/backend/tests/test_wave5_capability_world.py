@@ -6,6 +6,7 @@ the shared Run / Job / Gateway / Evidence / receipt trace.
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import unittest
@@ -141,6 +142,11 @@ class CapabilityWorldExitGateTests(unittest.TestCase):
     """One shared run/trace across API + MCP + browser via Gateway/Jobs/Evidence."""
 
     def setUp(self) -> None:
+        self._prev_claim_any = os.environ.get("LEVIATHAN_JOBRUNTIME_CLAIM_ANY_POOL")
+        self._prev_externalize = os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API")
+        # Specialist-routed browser jobs must be claimable by in-process JobRuntime.
+        os.environ["LEVIATHAN_JOBRUNTIME_CLAIM_ANY_POOL"] = "1"
+        os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = "0"
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.db = self.root / "wave5.db"
@@ -216,6 +222,13 @@ class CapabilityWorldExitGateTests(unittest.TestCase):
         self.bridge.shutdown()
         self.fn.shutdown()
         self.tmp.cleanup()
+        def _restore(key: str, prev: str | None) -> None:
+            if prev is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = prev
+        _restore("LEVIATHAN_JOBRUNTIME_CLAIM_ANY_POOL", self._prev_claim_any)
+        _restore("LEVIATHAN_WORKERS_EXTERNALIZE_API", self._prev_externalize)
 
     def _approve(self, capability_id: str, *, run_id: str) -> str:
         defn = self.catalog.require(capability_id)

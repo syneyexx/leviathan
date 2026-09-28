@@ -297,6 +297,19 @@ class HadesEditorUntouchedTests(unittest.TestCase):
     def test_diff_excludes_hades_and_editor(self) -> None:
         import subprocess
 
+        # Shallow CI checkouts may lack origin/main; fetch or fall back to merge-base.
+        try:
+            subprocess.check_call(
+                ["git", "rev-parse", "--verify", "origin/main"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except subprocess.CalledProcessError:
+            subprocess.check_call(
+                ["git", "fetch", "--depth", "1", "origin", "main"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
         out = subprocess.check_output(
             ["git", "diff", "--name-only", "origin/main...HEAD"],
             text=True,

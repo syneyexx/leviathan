@@ -441,7 +441,9 @@ class JobRuntime:
             job = self.store.claim_next_queued(
                 worker_id=self.worker_id,
                 lease_ttl_seconds=self.lease_ttl_seconds,
-                exclude_capability_ids=EXTERNAL_WORKER_CAPABILITIES,
+                # claim_any must include specialist EXTERNAL_REQUIRED jobs, else the
+                # env flag cannot exercise browser/mcp/module queues in demos/tests.
+                exclude_capability_ids=None if claim_any else EXTERNAL_WORKER_CAPABILITIES,
                 worker_pool=None if claim_any else "general",
             )
             if job is None:
