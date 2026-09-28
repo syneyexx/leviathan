@@ -1460,3 +1460,105 @@
   font-size: 11px;
   color: var(--rl-muted);
 }
+
+/* —— Autonomous create modal —— */
+.lv-rl-mode-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.lv-rl-mode-btn {
+  appearance: none;
+  border: 1px solid rgba(214, 169, 87, 0.28);
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--rl-muted);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.lv-rl-mode-btn.is-active {
+  color: var(--rl-gold);
+  border-color: rgba(214, 169, 87, 0.55);
+  background: rgba(214, 169, 87, 0.12);
+}
+
+.lv-rl-mode-note {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px dashed rgba(214, 169, 87, 0.28);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--rl-muted);
+  line-height: 1.45;
+}
+
+.lv-rl-advanced-toggle {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--rl-gold);
+  text-align: left;
+  padding: 4px 0;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.lv-rl-advanced {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(214, 169, 87, 0.18);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.lv-rl-hyp-list {
+  display: grid;
+  gap: 10px;
+}
+
+.lv-rl-hyp-card {
+  border: 1px solid var(--rl-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.lv-rl-hyp-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.lv-rl-hyp-trust {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--rl-amber, #f59e0b);
+}
+
+.lv-rl-hyp-id {
+  margin-left: auto;
+  font-size: 10px;
+  color: rgba(232, 228, 220, 0.4);
+  font-family: var(--lv-font-mono, ui-monospace, monospace);
+}
+
+.lv-rl-hyp-statement {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--rl-text);
+  line-height: 1.4;
+}

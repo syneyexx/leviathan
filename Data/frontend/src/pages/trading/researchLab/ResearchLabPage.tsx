@@ -6,10 +6,14 @@ import { useResearchLab } from "./hooks/useResearchLab";
 import { ResearchRunListRail } from "./components/ResearchRunListRail";
 import { ResearchLabTabBar } from "./components/ResearchLabTabBar";
 import { ResearchLabOverview } from "./components/ResearchLabOverview";
+import { ResearchLabHypothesesPanel } from "./components/ResearchLabHypothesesPanel";
+import { ResearchLabPerceptionPanel } from "./components/ResearchLabPerceptionPanel";
 import { ResearchLabGenerationsPanel } from "./components/ResearchLabGenerationsPanel";
 import { ResearchLabPopulationPanel } from "./components/ResearchLabPopulationPanel";
 import { ResearchLabLineagePanel } from "./components/ResearchLabLineagePanel";
 import { ResearchLabValidationPanel } from "./components/ResearchLabValidationPanel";
+import { ResearchLabLessonsPanel } from "./components/ResearchLabLessonsPanel";
+import { ResearchLabPaperPanel } from "./components/ResearchLabPaperPanel";
 import { ResearchLabAnalyticsPanel } from "./components/ResearchLabAnalyticsPanel";
 import { ResearchLabLogsPanel } from "./components/ResearchLabLogsPanel";
 import { ResearchRunDetailPanel } from "./components/ResearchRunDetailPanel";
@@ -24,6 +28,7 @@ export function ResearchLabPage() {
     phases,
     events,
     runCounts,
+    qualification,
     refresh,
     selectLab,
     setTab,
@@ -107,9 +112,24 @@ export function ResearchLabPage() {
                     <ResearchLabOverview
                       model={overviewModel}
                       candidates={state.candidates}
+                      lab={state.selectedLab}
+                      qualification={qualification}
                       hasLearning={state.learning != null}
                       learningError={state.learningError}
                       loading={centerBusy}
+                    />
+                  ) : null}
+                  {state.tab === "hypotheses" ? (
+                    <ResearchLabHypothesesPanel
+                      hypotheses={state.hypotheses}
+                      loading={centerBusy && state.hypotheses.length === 0}
+                    />
+                  ) : null}
+                  {state.tab === "perception" ? (
+                    <ResearchLabPerceptionPanel
+                      perception={state.perception}
+                      status={state.perceptionStatus}
+                      loading={centerBusy && state.perception == null}
                     />
                   ) : null}
                   {state.tab === "generations" ? (
@@ -131,6 +151,12 @@ export function ResearchLabPage() {
                       learning={state.learning}
                       loading={centerBusy}
                     />
+                  ) : null}
+                  {state.tab === "lessons" ? (
+                    <ResearchLabLessonsPanel lessons={state.lessons} loading={centerBusy} />
+                  ) : null}
+                  {state.tab === "paper" ? (
+                    <ResearchLabPaperPanel lab={state.selectedLab} learning={state.learning} />
                   ) : null}
                   {state.tab === "analytics" ? (
                     <ResearchLabAnalyticsPanel

@@ -8,6 +8,9 @@ const cssPath = resolve(__dirname, "../../styles/trading-research-lab.css");
 const apiPath = resolve(__dirname, "../../api/domains/marketSimLab.ts");
 const hookPath = resolve(__dirname, "researchLab/hooks/useResearchLab.ts");
 const vmPath = resolve(__dirname, "researchLab/viewModels.ts");
+const modalPath = resolve(__dirname, "researchLab/components/ResearchLabCreateModal.tsx");
+const hypPath = resolve(__dirname, "researchLab/components/ResearchLabHypothesesPanel.tsx");
+const percPath = resolve(__dirname, "researchLab/components/ResearchLabPerceptionPanel.tsx");
 
 describe("Research Lab page contracts", () => {
   const page = readFileSync(pagePath, "utf8");
@@ -16,6 +19,9 @@ describe("Research Lab page contracts", () => {
   const api = readFileSync(apiPath, "utf8");
   const hook = readFileSync(hookPath, "utf8");
   const vm = readFileSync(vmPath, "utf8");
+  const modal = readFileSync(modalPath, "utf8");
+  const hyp = readFileSync(hypPath, "utf8");
+  const perc = readFileSync(percPath, "utf8");
 
   it("keeps Research Lab route entry and wraps lv-main", () => {
     expect(entry).toContain('from "./researchLab/ResearchLabPage"');
@@ -39,9 +45,14 @@ describe("Research Lab page contracts", () => {
     expect(api).toContain("marketSimLabResumeRun");
     expect(api).toContain("marketSimLabCancelRun");
     expect(api).toContain("marketSimLabLearning");
+    expect(api).toContain("marketSimLabHypotheses");
+    expect(api).toContain("marketSimLabPerception");
+    expect(api).toContain("marketSimStrategyFamilies");
     expect(hook).toContain("marketSimLabCreateRun");
     expect(hook).toContain("marketSimLabStartRun");
     expect(hook).toContain("marketSimLabPauseRun");
+    expect(hook).toContain("marketSimLabHypotheses");
+    expect(hook).toContain("marketSimLabPerception");
   });
 
   it("exposes dashboard regions and truthful empty-state copy", () => {
@@ -49,13 +60,55 @@ describe("Research Lab page contracts", () => {
     expect(page).toContain("ResearchLabOverview");
     expect(page).toContain("ResearchRunDetailPanel");
     expect(page).toContain("ResearchLabCreateModal");
+    expect(page).toContain("ResearchLabHypothesesPanel");
+    expect(page).toContain("ResearchLabPerceptionPanel");
     expect(page).toContain("No research runs");
     expect(page).toContain("market simulation");
     expect(page).toContain("HYPOTHESES");
     expect(page).toContain("EXPERIMENTS");
     expect(vm).toContain("actionAvailability");
+    expect(vm).toContain('"hypotheses"');
+    expect(vm).toContain('"perception"');
+    expect(vm).toContain('"lessons"');
+    expect(vm).toContain('"paper"');
     expect(css).toContain(".lv-rl-charts-3");
     expect(css).toContain(".lv-rl-footer-quote");
+  });
+
+  it("supports autonomous discovery create without required strategy", () => {
+    expect(hook).toContain('runMode: "AUTONOMOUS_DISCOVERY"');
+    expect(hook).toContain("researchObjective");
+    expect(hook).toContain("enableChartVision");
+    expect(hook).toContain("modelBudget");
+    expect(hook).toContain("agentProposalRate");
+    expect(hook).toContain('d.runMode === "SEED_EXISTING_STRATEGY" && !d.strategyId');
+    expect(hook).toContain("A READY market-data source is required.");
+    expect(hook).toContain("runMode: d.runMode");
+    expect(hook).toContain("enableChartVision: d.enableChartVision");
+    expect(modal).toContain("Autonomous Discovery");
+    expect(modal).toContain("Seed Existing Strategy");
+    expect(modal).toContain("Research objective");
+    expect(modal).toContain("Advanced research settings");
+    expect(modal).toContain("Enable chart vision");
+    expect(modal).toContain("does not expose brokerage or execution controls");
+    expect(modal).not.toContain("Kill switch");
+    expect(modal).not.toContain("Place order");
+  });
+
+  it("supports seed existing strategy mode with strategy required", () => {
+    expect(hook).toContain("SEED_EXISTING_STRATEGY");
+    expect(hook).toContain("Strategy is required when seeding an existing strategy.");
+    expect(modal).toContain("Strategy");
+    expect(modal).toContain("canSubmit");
+  });
+
+  it("keeps honest empty states for hypotheses and perception", () => {
+    expect(hyp).toContain("EMPTY / UNMEASURED");
+    expect(hyp).toContain("falsification");
+    expect(hyp).toContain("mechanism");
+    expect(perc).toContain("UNMEASURED");
+    expect(perc).toContain("UNAVAILABLE");
+    expect(perc).toContain("Conflicts");
   });
 
   it("does not invent fake metrics or demo run ids", () => {

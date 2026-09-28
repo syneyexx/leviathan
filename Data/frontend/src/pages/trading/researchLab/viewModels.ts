@@ -16,19 +16,27 @@ export type RunStatusTone =
 
 export type ResearchLabTab =
   | "overview"
+  | "hypotheses"
+  | "perception"
   | "generations"
   | "population"
   | "lineage"
   | "validation"
+  | "lessons"
+  | "paper"
   | "analytics"
   | "logs";
 
 export const RESEARCH_LAB_TABS: readonly { id: ResearchLabTab; label: string }[] = [
   { id: "overview", label: "Overview" },
+  { id: "hypotheses", label: "Hypotheses" },
+  { id: "perception", label: "Perception" },
   { id: "generations", label: "Generations" },
   { id: "population", label: "Population" },
   { id: "lineage", label: "Lineage" },
   { id: "validation", label: "Validation" },
+  { id: "lessons", label: "Lessons" },
+  { id: "paper", label: "Paper" },
   { id: "analytics", label: "Analytics" },
   { id: "logs", label: "Logs" },
 ] as const;
@@ -46,6 +54,7 @@ export type StageMetrics = {
   maxDrawdownPct: number | null;
   totalReturnPct: number | null;
   winRate: number | null;
+  netExpectancy: number | null;
   accepted: boolean | null;
   failureCategories: unknown;
 };
@@ -222,7 +231,16 @@ function metricFromStage(stage: Record<string, unknown> | undefined, key: string
     if (m.status === "UNMEASURED") return null;
     return asNum(m.value);
   }
-  return asNum(raw);
+  const direct = asNum(raw);
+  if (direct != null) return direct;
+  // Expectancy pack may nest measured fields without fabricating zeros
+  if (key === "net_expectancy") {
+    const pack = asRecord(metrics.expectancy_pack) || asRecord(stage.expectancy_pack);
+    if (!pack) return null;
+    if (String(pack.net_expectancy_status || "").toUpperCase() === "UNMEASURED") return null;
+    return asNum(pack.net_expectancy);
+  }
+  return null;
 }
 
 export function extractStageResults(candidate: CandidateRecord | null | undefined): Record<string, Record<string, unknown>> {
@@ -244,6 +262,7 @@ export function stageMetrics(stage: Record<string, unknown> | undefined): StageM
     maxDrawdownPct: metricFromStage(stage, "max_drawdown_pct"),
     totalReturnPct: metricFromStage(stage, "total_return_pct"),
     winRate: metricFromStage(stage, "win_rate"),
+    netExpectancy: metricFromStage(stage, "net_expectancy"),
     accepted: stage?.accepted == null ? null : Boolean(stage.accepted),
     failureCategories: stage?.failure_categories ?? null,
   };
@@ -288,6 +307,7 @@ export function candidateCard(
         maxDrawdownPct: null,
         totalReturnPct: null,
         winRate: null,
+        netExpectancy: null,
         accepted: null,
         failureCategories: null,
       },

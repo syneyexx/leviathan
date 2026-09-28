@@ -17,11 +17,20 @@ import {
 
 const POLL_MS = 5000;
 
+export type ResearchRunMode = "SEED_EXISTING_STRATEGY" | "AUTONOMOUS_DISCOVERY";
+
 export type CreateRunDraft = {
   name: string;
+  runMode: ResearchRunMode;
   strategyId: string;
   sourceId: string;
   hypothesis: string;
+  researchObjective: string;
+  enableChartVision: boolean;
+  modelBudget: number;
+  agentProposalRate: number;
+  universe: string;
+  timeframes: string;
   autonomyCeiling: string;
   maxCandidates: number;
   maxIterations: number;
@@ -34,9 +43,16 @@ export type CreateRunDraft = {
 
 export const EMPTY_CREATE_DRAFT: CreateRunDraft = {
   name: "",
+  runMode: "AUTONOMOUS_DISCOVERY",
   strategyId: "",
   sourceId: "",
   hypothesis: "",
+  researchObjective: "",
+  enableChartVision: false,
+  modelBudget: 6,
+  agentProposalRate: 0.15,
+  universe: "",
+  timeframes: "",
   autonomyCeiling: "A1",
   maxCandidates: 10,
   maxIterations: 3,
@@ -64,6 +80,9 @@ export type ResearchLabState = {
   generations: GenerationRecord[];
   familyProbs: Record<string, number>;
   lessons: LabRunRecord[];
+  hypotheses: LabRunRecord[];
+  perception: Record<string, unknown> | null;
+  perceptionStatus: string | null;
   runTrials: LabRunRecord[];
   trials: LabRunRecord[];
   trialCount: number;
@@ -74,8 +93,38 @@ export type ResearchLabState = {
   createDraft: CreateRunDraft;
   strategies: MarketStrategy[];
   sources: MarketDataSource[];
+  strategyFamilies: Record<string, unknown>[];
   catalogError: string | null;
 };
+
+function emptyDiscoveryState(): Pick<
+  ResearchLabState,
+  | "learning"
+  | "generations"
+  | "familyProbs"
+  | "candidates"
+  | "lessons"
+  | "hypotheses"
+  | "perception"
+  | "perceptionStatus"
+  | "runTrials"
+  | "learningLoading"
+  | "learningError"
+> {
+  return {
+    learning: null,
+    generations: [],
+    familyProbs: {},
+    candidates: [],
+    lessons: [],
+    hypotheses: [],
+    perception: null,
+    perceptionStatus: null,
+    runTrials: [],
+    learningLoading: false,
+    learningError: null,
+  };
+}
 
 export function useResearchLab() {
   const [state, setState] = useState<ResearchLabState>({
@@ -95,6 +144,9 @@ export function useResearchLab() {
     generations: [],
     familyProbs: {},
     lessons: [],
+    hypotheses: [],
+    perception: null,
+    perceptionStatus: null,
     runTrials: [],
     trials: [],
     trialCount: 0,
@@ -105,6 +157,7 @@ export function useResearchLab() {
     createDraft: EMPTY_CREATE_DRAFT,
     strategies: [],
     sources: [],
+    strategyFamilies: [],
     catalogError: null,
   });
 
@@ -116,6 +169,36 @@ export function useResearchLab() {
     if (!mountedRef.current) return;
     setState((s) => ({ ...s, ...partial }));
   }, []);
+
+  const refreshHypothesesPerception = useCallback(
+    async (labId: string) => {
+      try {
+        const [hyps, perc] = await Promise.all([
+          api.marketSimLabHypotheses(labId).catch(() => ({
+            hypotheses: [] as Record<string, unknown>[],
+          })),
+          api.marketSimLabPerception(labId).catch(() => ({
+            perception: null as Record<string, unknown> | null,
+            status: "UNMEASURED",
+          })),
+        ]);
+        if (!mountedRef.current || selectedLabIdRef.current !== labId) return;
+        patch({
+          hypotheses: hyps.hypotheses || [],
+          perception: perc.perception || null,
+          perceptionStatus: perc.status != null ? String(perc.status) : "UNMEASURED",
+        });
+      } catch {
+        if (!mountedRef.current || selectedLabIdRef.current !== labId) return;
+        patch({
+          hypotheses: [],
+          perception: null,
+          perceptionStatus: "UNMEASURED",
+        });
+      }
+    },
+    [patch],
+  );
 
   const refreshLearning = useCallback(
     async (labId: string, opts?: { quiet?: boolean }) => {
@@ -159,6 +242,7 @@ export function useResearchLab() {
                 }
               : s.selectedLab,
         }));
+        await refreshHypothesesPerception(labId);
       } catch (err) {
         if (!mountedRef.current || selectedLabIdRef.current !== labId) return;
         const msg = err instanceof ApiError ? err.message : String(err);
@@ -176,9 +260,10 @@ export function useResearchLab() {
             ? "No learning run bound to this lab. Create a run with learning enabled, or start after enableLearning."
             : msg,
         });
+        await refreshHypothesesPerception(labId);
       }
     },
-    [patch],
+    [patch, refreshHypothesesPerception],
   );
 
   const refresh = useCallback(
@@ -240,16 +325,7 @@ export function useResearchLab() {
         });
         if (nextId) await refreshLearning(nextId, { quiet: opts?.quiet });
         else {
-          patch({
-            learning: null,
-            generations: [],
-            familyProbs: {},
-            candidates: [],
-            lessons: [],
-            runTrials: [],
-            learningLoading: false,
-            learningError: null,
-          });
+          patch(emptyDiscoveryState());
         }
       } catch (err) {
         if (!mountedRef.current) return;
@@ -269,20 +345,28 @@ export function useResearchLab() {
       patch({
         selectedLabId: labId,
         selectedLab: lab,
-        learning: null,
-        generations: [],
-        familyProbs: {},
-        candidates: [],
-        lessons: [],
-        runTrials: [],
-        learningError: null,
+        ...emptyDiscoveryState(),
+        learningLoading: Boolean(labId),
       });
       if (labId) void refreshLearning(labId);
     },
     [patch, refreshLearning, state.labs],
   );
 
-  const setTab = useCallback((tab: ResearchLabTab) => patch({ tab }), [patch]);
+  const setTab = useCallback(
+    (tab: ResearchLabTab) => {
+      patch({ tab });
+      const labId = selectedLabIdRef.current;
+      if (!labId) return;
+      if (tab === "hypotheses" || tab === "perception") {
+        void refreshHypothesesPerception(labId);
+      }
+      if (tab === "lessons") {
+        void refreshLearning(labId, { quiet: true });
+      }
+    },
+    [patch, refreshHypothesesPerception, refreshLearning],
+  );
 
   const runControl = useCallback(
     async (action: "start" | "pause" | "resume" | "cancel") => {
@@ -310,15 +394,17 @@ export function useResearchLab() {
   const openCreate = useCallback(async () => {
     patch({ createOpen: true, catalogError: null, createDraft: { ...EMPTY_CREATE_DRAFT } });
     try {
-      const [strats, src] = await Promise.all([
+      const [strats, src, families] = await Promise.all([
         api.listMarketStrategies(100),
         api.listMarketData(200),
+        api.marketSimStrategyFamilies().catch(() => ({ families: [] as Record<string, unknown>[] })),
       ]);
       if (!mountedRef.current) return;
       const readySources = (src.sources || []).filter((s) => s.status === "READY");
       patch({
         strategies: strats.strategies || [],
         sources: readySources,
+        strategyFamilies: families.families || [],
         createDraft: {
           ...EMPTY_CREATE_DRAFT,
           strategyId: strats.strategies?.[0]?.strategy_id || "",
@@ -334,26 +420,39 @@ export function useResearchLab() {
 
   const closeCreate = useCallback(() => patch({ createOpen: false }), [patch]);
 
-  const patchCreateDraft = useCallback(
-    (partial: Partial<CreateRunDraft>) => {
-      setState((s) => ({ ...s, createDraft: { ...s.createDraft, ...partial } }));
-    },
-    [],
-  );
+  const patchCreateDraft = useCallback((partial: Partial<CreateRunDraft>) => {
+    setState((s) => ({ ...s, createDraft: { ...s.createDraft, ...partial } }));
+  }, []);
 
   const submitCreate = useCallback(async () => {
     const d = state.createDraft;
-    if (!d.strategyId || !d.sourceId) {
-      patch({ actionError: "Strategy and READY market-data source are required." });
+    if (!d.sourceId) {
+      patch({ actionError: "A READY market-data source is required." });
+      return;
+    }
+    if (d.runMode === "SEED_EXISTING_STRATEGY" && !d.strategyId) {
+      patch({ actionError: "Strategy is required when seeding an existing strategy." });
       return;
     }
     patch({ busyAction: "create", actionError: null });
     try {
+      const universeSymbols = d.universe
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const timeframeList = d.timeframes
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
       const payload: Record<string, unknown> = {
         name: d.name.trim() || undefined,
-        strategyId: d.strategyId,
+        runMode: d.runMode,
         sourceId: d.sourceId,
-        hypothesis: d.hypothesis,
+        researchObjective: d.researchObjective.trim() || d.hypothesis.trim() || undefined,
+        hypothesis: d.hypothesis.trim() || d.researchObjective.trim() || undefined,
+        enableChartVision: d.enableChartVision,
+        modelBudget: d.modelBudget,
+        agentProposalRate: d.agentProposalRate,
         autonomyCeiling: d.autonomyCeiling,
         maxCandidates: d.maxCandidates,
         maxIterations: d.maxIterations,
@@ -363,13 +462,24 @@ export function useResearchLab() {
               generation_budget: d.generationBudget,
               trial_budget: d.trialBudget,
               population_size: d.populationSize,
+              agent_proposal_rate: d.agentProposalRate,
             }
           : undefined,
         metadata: {
           autonomy_ceiling: d.autonomyCeiling,
+          run_mode: d.runMode,
+          research_objective: d.researchObjective.trim() || undefined,
+          enable_chart_vision: d.enableChartVision,
+          model_budget: d.modelBudget,
+          agent_proposal_rate: d.agentProposalRate,
+          ...(universeSymbols.length ? { universe: universeSymbols } : {}),
+          ...(timeframeList.length ? { timeframes: timeframeList } : {}),
           ...(d.notes.trim() ? { notes: d.notes.trim() } : {}),
         },
       };
+      if (d.runMode === "SEED_EXISTING_STRATEGY") {
+        payload.strategyId = d.strategyId;
+      }
       const res = await api.marketSimLabCreateRun(payload);
       const lab = (res.lab || res) as LabRunRecord;
       const newId = String(lab.lab_id || "");

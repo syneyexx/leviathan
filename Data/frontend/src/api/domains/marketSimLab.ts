@@ -131,6 +131,33 @@ export const marketSimLabApi = {
     return request(`/api/market-sim/lab/runs/${encodeURIComponent(labId)}/lessons`);
   },
 
+  marketSimLabHypotheses(labId: string, limit = 50): Promise<{
+    lab_id: string;
+    hypotheses: Record<string, unknown>[];
+    hypothesis_id?: string | null;
+    count: number;
+  }> {
+    return request(
+      `/api/market-sim/lab/runs/${encodeURIComponent(labId)}/hypotheses?limit=${limit}`,
+    );
+  },
+
+  marketSimLabPerception(labId: string): Promise<{
+    lab_id: string;
+    perception: Record<string, unknown> | null;
+    status: string;
+  }> {
+    return request(`/api/market-sim/lab/runs/${encodeURIComponent(labId)}/perception`);
+  },
+
+  marketSimStrategyFamilies(): Promise<{
+    families: Record<string, unknown>[];
+    generatable: string[];
+    count: number;
+  }> {
+    return request("/api/market-sim/strategy-families");
+  },
+
   marketSimInstitutionalControlRoom(): Promise<Record<string, unknown>> {
     return request("/api/market-sim/institutional/control-room");
   },
