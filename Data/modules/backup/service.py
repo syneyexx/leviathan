@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import shutil
 import sqlite3
@@ -29,14 +28,10 @@ def utc_now() -> str:
 
 
 def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        while True:
-            chunk = handle.read(1024 * 1024)
-            if not chunk:
-                break
-            digest.update(chunk)
-    return digest.hexdigest()
+    """Streaming SHA-256 — never load an entire DB into RAM."""
+    from Data.modules.common.hashing import sha256_file
+
+    return sha256_file(Path(path))
 
 
 def _rel_or_abs(path: Path, root: Path | None) -> str:
@@ -87,6 +82,12 @@ class BackupManifest:
             "missingCorpusFiles": list(self.missing_corpus_files),
             "databases": dict(self.databases),
             "backupSetComplete": self.backup_set_complete,
+            "consistencyLevel": (
+                "PER_DATABASE_CONSISTENT"
+                if self.databases
+                else "SINGLE_DATABASE"
+            ),
+            "crossDatabasePointInTimeAtomicity": "UNAVAILABLE",
             "truth": {
                 "backup_is_not_cloud_sync": True,
                 "restore_requires_explicit_confirm": True,
@@ -101,6 +102,8 @@ class BackupManifest:
                 "backupSetComplete": self.backup_set_complete,
                 # BACKUP-002: three SQLite files cannot be replaced as one OS transaction.
                 "crossFileRestoreIsNotAtomic": True,
+                "crossDatabasePointInTimeAtomicity": "UNAVAILABLE",
+                "perDatabaseSnapshotsAreIndividuallyConsistent": True,
                 "corpusInventorySourceDomain": (self.metadata or {}).get(
                     "corpusInventorySourceDomain", "KNOWLEDGE"
                 ),
@@ -191,7 +194,7 @@ class BackupService:
             domain_name = domain.lower()
             db_copy = dest / f"leviathan_{domain_name}.db"
             self._safe_sqlite_copy(path, db_copy)
-            digest = hashlib.sha256(db_copy.read_bytes()).hexdigest()
+            digest = _sha256_file(db_copy)
             schema_version = self._schema_version(db_copy)
             size = db_copy.stat().st_size
             total_size += size
@@ -215,7 +218,7 @@ class BackupService:
             db_copy = dest / "leviathan.db"
             if not db_copy.is_file():
                 self._safe_sqlite_copy(only, db_copy)
-                primary_digest = hashlib.sha256(db_copy.read_bytes()).hexdigest()
+                primary_digest = _sha256_file(db_copy)
                 primary_schema = self._schema_version(db_copy)
                 total_size = db_copy.stat().st_size
 
@@ -327,6 +330,146 @@ class BackupService:
         )
         return manifest
 
+    def verify(
+        self,
+        backup_id: str,
+        *,
+        level: str = "HASH_VERIFIED",
+        cancel_check: Any | None = None,
+    ) -> dict[str, Any]:
+        """Verify a backup set at an explicit verification level.
+
+        Levels (cumulative honesty — never collapse into a single VERIFIED):
+        MANIFEST_VERIFIED, HASH_VERIFIED, SQLITE_QUICK_CHECK_VERIFIED,
+        SQLITE_FULL_INTEGRITY_VERIFIED, CORPUS_VERIFIED.
+        """
+        dest = self.backup_root / backup_id
+        manifest_path = dest / "manifest.json"
+        if not manifest_path.is_file():
+            raise BackupError(f"Backup not found: {backup_id}")
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        levels_achieved: list[str] = ["MANIFEST_VERIFIED"]
+        errors: list[str] = []
+        db_results: dict[str, Any] = {}
+        level_u = str(level or "HASH_VERIFIED").strip().upper()
+
+        databases = dict(data.get("databases") or {})
+        if not databases and data.get("database_sha256"):
+            databases = {
+                "CONTROL": {
+                    "backupFile": "leviathan.db",
+                    "sha256": data.get("database_sha256"),
+                    "sizeBytes": data.get("size_bytes"),
+                    "schemaVersion": data.get("schema_version"),
+                }
+            }
+
+        for domain, entry in databases.items():
+            if callable(cancel_check) and cancel_check():
+                raise BackupError("BACKUP_CANCELLED")
+            name = str(entry.get("backupFile") or "")
+            path = dest / name
+            result: dict[str, Any] = {"domain": domain, "path": name, "exists": path.is_file()}
+            if not path.is_file():
+                errors.append(f"{domain}: missing file {name}")
+                db_results[domain] = result
+                continue
+            size = path.stat().st_size
+            expected_size = entry.get("sizeBytes")
+            result["sizeBytes"] = size
+            if expected_size is not None and int(expected_size) != size:
+                errors.append(f"{domain}: size mismatch")
+            if level_u in {
+                "HASH_VERIFIED",
+                "SQLITE_QUICK_CHECK_VERIFIED",
+                "SQLITE_FULL_INTEGRITY_VERIFIED",
+                "CORPUS_VERIFIED",
+            }:
+                actual = _sha256_file(path)
+                expected = str(entry.get("sha256") or "")
+                result["sha256"] = actual
+                result["hashMatch"] = bool(expected) and actual == expected
+                if expected and actual != expected:
+                    errors.append(f"{domain}: hash mismatch")
+            if level_u in {"SQLITE_QUICK_CHECK_VERIFIED", "SQLITE_FULL_INTEGRITY_VERIFIED"}:
+                pragma = (
+                    "PRAGMA integrity_check"
+                    if level_u == "SQLITE_FULL_INTEGRITY_VERIFIED"
+                    else "PRAGMA quick_check"
+                )
+                try:
+                    conn = sqlite3.connect(f"file:{path.resolve()}?mode=ro", uri=True)
+                    try:
+                        row = conn.execute(pragma).fetchone()
+                        ok = bool(row) and str(row[0]).lower() == "ok"
+                        result["sqliteCheck"] = str(row[0]) if row else "UNMEASURED"
+                        result["sqliteOk"] = ok
+                        if not ok:
+                            errors.append(f"{domain}: {pragma} failed")
+                    finally:
+                        conn.close()
+                except Exception as exc:  # noqa: BLE001
+                    result["sqliteCheck"] = "UNMEASURED"
+                    result["sqliteOk"] = False
+                    errors.append(f"{domain}: sqlite open failed: {exc}")
+            db_results[domain] = result
+
+        if level_u in {
+            "HASH_VERIFIED",
+            "SQLITE_QUICK_CHECK_VERIFIED",
+            "SQLITE_FULL_INTEGRITY_VERIFIED",
+            "CORPUS_VERIFIED",
+        } and not any("hash mismatch" in e for e in errors):
+            if all(r.get("hashMatch") for r in db_results.values() if r.get("exists")):
+                levels_achieved.append("HASH_VERIFIED")
+        if level_u == "SQLITE_QUICK_CHECK_VERIFIED" and all(
+            r.get("sqliteOk") for r in db_results.values() if r.get("exists")
+        ):
+            levels_achieved.append("SQLITE_QUICK_CHECK_VERIFIED")
+        if level_u == "SQLITE_FULL_INTEGRITY_VERIFIED" and all(
+            r.get("sqliteOk") for r in db_results.values() if r.get("exists")
+        ):
+            levels_achieved.append("SQLITE_FULL_INTEGRITY_VERIFIED")
+
+        corpus_verified = False
+        if level_u == "CORPUS_VERIFIED":
+            inventory = list(data.get("corpusInventory") or [])
+            for entry in inventory:
+                if callable(cancel_check) and cancel_check():
+                    raise BackupError("BACKUP_CANCELLED")
+                rel = entry.get("backupRelativePath") or entry.get("relativePath")
+                if not rel:
+                    continue
+                path = dest / str(rel)
+                if not path.is_file():
+                    errors.append(f"corpus missing: {rel}")
+                    continue
+                expected = str(entry.get("sha256") or "")
+                if expected and _sha256_file(path) != expected:
+                    errors.append(f"corpus hash mismatch: {rel}")
+            if not any(e.startswith("corpus") for e in errors):
+                corpus_verified = True
+                levels_achieved.append("CORPUS_VERIFIED")
+
+        status = "PASS" if not errors else "FAIL"
+        return {
+            "backup_id": backup_id,
+            "requestedLevel": level_u,
+            "levelsAchieved": levels_achieved,
+            "status": status,
+            "errors": errors,
+            "databases": db_results,
+            "corpusVerified": corpus_verified,
+            "consistencyLevel": data.get("consistencyLevel") or "PER_DATABASE_CONSISTENT",
+            "crossDatabasePointInTimeAtomicity": data.get(
+                "crossDatabasePointInTimeAtomicity", "UNAVAILABLE"
+            ),
+            "truth": {
+                "levelsAreNotCollapsedToVerified": True,
+                "unmeasuredScannerIsNotPass": True,
+            },
+        }
+
     def _canonical_paths(self) -> dict[str, Path]:
         if self.database_paths is not None:
             return {
@@ -428,7 +571,7 @@ class BackupService:
                         f"Backup set incomplete: {domain} file missing — refusing restore"
                     )
                 expected = str(entry.get("sha256") or "")
-                actual = hashlib.sha256(db_copy.read_bytes()).hexdigest()
+                actual = _sha256_file(db_copy)
                 if expected and actual != expected:
                     raise BackupError(f"{domain} backup hash mismatch — refusing restore")
                 staged[domain] = db_copy
@@ -531,7 +674,7 @@ class BackupService:
             if not db_copy.is_file():
                 raise BackupError(f"Backup not found: {backup_id}")
             expected = str(data.get("database_sha256") or "")
-            actual = hashlib.sha256(db_copy.read_bytes()).hexdigest()
+            actual = _sha256_file(db_copy)
             if expected and actual != expected:
                 raise BackupError("Backup database hash mismatch — refusing restore")
             self.database_path.parent.mkdir(parents=True, exist_ok=True)

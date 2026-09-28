@@ -800,7 +800,11 @@ def _gate_module_manager_subprocess() -> GateCheck:
 
 
 def _gate_evaluation_relevance() -> GateCheck:
-    """Wave 2: release authority requires a relevant recorded foundation eval."""
+    """Wave 2: release authority requires a relevant recorded foundation eval.
+
+    GET release gates must NEVER execute suites — only read persisted evidence.
+    Missing evidence => UNMEASURED / not recorded (operators enqueue separately).
+    """
     from Data.modules.release import GateMeasurement
 
     if not settings.features.eval_platform:
@@ -813,12 +817,6 @@ def _gate_evaluation_relevance() -> GateCheck:
             measurement=GateMeasurement.NOT_APPLICABLE,
         )
     relevance = evaluation_platform.has_relevant_eval(suite_id="foundation", require_pass=False)
-    # Soft gate: recorded foundation eval required; FAIL blocks; UNMEASURED does not
-    # block readiness (honest) but cannot promote (require_pass path elsewhere).
-    if not relevance.get("recorded"):
-        # Auto-record foundation once so fresh installs are measurable, not silent.
-        evaluation_platform.run_foundation(persist=True)
-        relevance = evaluation_platform.has_relevant_eval(suite_id="foundation", require_pass=False)
     return evaluation_relevance_gate(
         relevance,
         severity=GateSeverity.BLOCK if relevance.get("measurement") == "FAIL" else GateSeverity.WARN,
@@ -1073,35 +1071,42 @@ def _master_security_check() -> MasterGateCheck:
 
 
 def _master_evaluation_check() -> MasterGateCheck:
-    if settings.features.eval_platform:
-        report = evaluation_platform.run_foundation(persist=True)
-    else:
-        report = evaluation_harness.run_suite(
-            "foundation",
-            evaluation_harness.default_foundation_suite(),
-            suite_id="foundation",
-        )
-    outcomes = {item.outcome.value for item in report.results}
-    measurements = {item.resolved_measurement().value for item in report.results}
-    if "FAILED" in outcomes or "ERROR" in outcomes or "FAIL" in measurements:
-        return MasterGateCheck(
-            check_id="evaluation_foundation",
-            name="Foundation evaluation",
-            status=MasterGateStatus.BLOCKED,
-            detail="foundation suite has FAILED/ERROR",
-        )
-    if "UNMEASURED" in outcomes or "UNMEASURED" in measurements:
+    """Read persisted foundation evidence only — never execute suites on GET."""
+    if not settings.features.eval_platform:
         return MasterGateCheck(
             check_id="evaluation_foundation",
             name="Foundation evaluation",
             status=MasterGateStatus.DEGRADED,
-            detail="foundation suite has UNMEASURED (honest; not shipable under CI)",
+            detail="eval_platform OFF — foundation UNMEASURED",
+        )
+    relevance = evaluation_platform.has_relevant_eval(suite_id="foundation", require_pass=False)
+    if not relevance.get("recorded"):
+        return MasterGateCheck(
+            check_id="evaluation_foundation",
+            name="Foundation evaluation",
+            status=MasterGateStatus.DEGRADED,
+            detail="no recorded foundation eval (enqueue POST /api/evaluation/foundation)",
+        )
+    measurement = str(relevance.get("measurement") or "UNMEASURED").upper()
+    if measurement == "FAIL":
+        return MasterGateCheck(
+            check_id="evaluation_foundation",
+            name="Foundation evaluation",
+            status=MasterGateStatus.BLOCKED,
+            detail="recorded foundation suite FAILED",
+        )
+    if measurement == "UNMEASURED":
+        return MasterGateCheck(
+            check_id="evaluation_foundation",
+            name="Foundation evaluation",
+            status=MasterGateStatus.DEGRADED,
+            detail="recorded foundation suite UNMEASURED (honest; not shipable under CI)",
         )
     return MasterGateCheck(
         check_id="evaluation_foundation",
         name="Foundation evaluation",
         status=MasterGateStatus.READY,
-        detail="foundation suite measured",
+        detail="recorded foundation suite measured",
     )
 
 
@@ -2461,6 +2466,8 @@ app.include_router(
     build_sqlite_manager_router(
         sqlite_manager,
         assert_mutation_auth=_assert_loopback_mutation_allowed,
+        job_runtime=job_runtime,
+        workers_externalize_fn=_evaluation_externalize,
     )
 )
 app.include_router(
