@@ -78,8 +78,8 @@ def process_research_job(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None
     """Advance one research job without blocking on all children.
 
     Job arguments:
-      action: advance|plan|retrieve|synthesize|verify|resume|deepen
-      project_id: research project id
+      action: advance|plan|retrieve|synthesize|verify|resume|deepen|web_probe|fetch_url
+      project_id: research project id (not required for web_probe)
     """
     store = ctx["job_store"]
     args = dict(getattr(job, "arguments", None) or {})
@@ -88,6 +88,8 @@ def process_research_job(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None
         action = "fetch_url"
     elif capability == "research.report.generate":
         action = "regenerate_report"
+    elif capability == "research.web.probe":
+        action = "web_probe"
     else:
         action = str(
             args.get("action")
@@ -97,8 +99,38 @@ def process_research_job(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None
     if args.get("action") and capability not in {
         "research.fetch_url",
         "research.report.generate",
+        "research.web.probe",
     }:
         action = str(args.get("action") or action).strip().lower()
+
+    # Web probe has no project_id.
+    if action in {"web_probe", "probe"}:
+        try:
+            service = _construct_research_service(ctx)
+        except Exception as exc:  # noqa: BLE001
+            return _fail(
+                store,
+                job,
+                f"ResearchService not constructible: {type(exc).__name__}: {exc}",
+                metadata={"research_action": action},
+                ctx=ctx,
+            )
+        try:
+            probe = service.execute_web_probe(
+                query=str(args.get("query") or "SQLite WAL mode"),
+                limit=int(args.get("limit") or 3),
+            )
+            payload = {"action": "web_probe", "probe": probe}
+            return _complete(store, job, payload, ctx=ctx)
+        except Exception as exc:  # noqa: BLE001
+            return _fail(
+                store,
+                job,
+                f"{type(exc).__name__}: {exc}",
+                metadata={"research_action": action},
+                ctx=ctx,
+            )
+
     project_id = str(args.get("project_id") or "")
     if not project_id:
         return _fail(store, job, "missing project_id", ctx=ctx)

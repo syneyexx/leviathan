@@ -373,7 +373,10 @@ Multimodal routes: `Data/backend/routes/multimodal.py`. Model vision capability 
 
 - `access.py` — access contracts;
 - `contracts.py` — Brain-facing types;
-- `facade.py` — unified query across canonical stores.
+- `facade.py` — unified query across canonical stores;
+- `compute.py` — heavy **derived** Brain computation (snapshots/analysis) for the `brain_compute` worker pool.
+
+Bounded UI reads (`GET /api/brain/graph`, `GET /api/brain/stats`) remain inline and capped by `max_nodes`/`max_edges`. Heavy snapshot/rebuild/analyze work is enqueued as `brain.compute.snapshot` / `brain.rebuild` / `brain.analyze` onto the Worker Fabric `brain_compute` pool (`default_count=1`, `max_count=2`). Results are advisory ArtifactStore snapshots with algorithm/version provenance — never a competing Brain/graph database and never a silent Knowledge/Memory mutation.
 
 Cognition/perception should use Brain instead of inventing private direct retrieval paths.
 
@@ -392,11 +395,13 @@ Cognition/perception should use Brain instead of inventing private direct retrie
 - `chunking.py`, `hashing.py`, `index_generations.py` — indexing mechanics;
 - `pipeline/artifact.py`, `curator.py`, `committer.py` — preparation/commit.
 
-Heavy ingest/index commits respect worker/DB-commit ownership.
+Heavy ingest/index commits respect worker/DB-commit ownership. Semantic reconciliation (`knowledge.reconcile`) is owned by `knowledge_prepare`: dry-run diagnosis (missing chunks / stale embeddings) is separable from apply; bulk mutations remain `db_commit` when classified COMMIT_WRITE.
 
 ## 9.3 Memory
 
-`Data/modules/memory/store.py`, `types.py` and `consolidation.py` own durable scoped memory. Trust states distinguish agent proposal, user statement, source-derived, verified, conflicted and revoked memory. Preference corrections supersede earlier scoped preference/fact rows; retrieval stays on current ACTIVE truth.
+`Data/modules/memory/store.py`, `types.py`, `consolidation.py` and `worker.py` own durable scoped memory. Trust states distinguish agent proposal, user statement, source-derived, verified, conflicted and revoked memory. Preference corrections supersede earlier scoped preference/fact rows; retrieval stays on current ACTIVE truth.
+
+Small Memory CRUD/search remains control-plane inline. Batch/heavy consolidation and enrichment execute on the Worker Fabric `memory` pool (`memory.consolidate` / `memory.enrich` / `memory.reconcile`). Consolidation may admit `AGENT_PROPOSED` candidates; **model confidence never becomes VERIFIED truth**.
 
 Do not collapse conversation history, cognition WorkingMemory, durable MemoryStore, Knowledge documents, VerifiedExperience and SkillLibrary into one concept.
 
@@ -524,7 +529,7 @@ Important invariants:
 
 ## 12.2 Worker Fabric
 
-`Data/modules/workers/` is the external execution plane. Domain entrypoints include agents, coding, research, datasets/documents, embeddings/reranking, evaluation/training, market simulation, MCP, model downloads, provider I/O, source ingestion, **file_io** (generic heavy filesystem reads/writes/copies/hashes/CSV/Parquet/scans), scheduler/workflows, maintenance/backup, telemetry and DB commit.
+`Data/modules/workers/` is the external execution plane. Domain entrypoints include agents, coding, research, memory, brain_compute, datasets/documents, embeddings/reranking, evaluation/training, market simulation, MCP, model downloads, provider I/O, source ingestion, **file_io** (generic heavy filesystem reads/writes/copies/hashes/CSV/Parquet/scans), scheduler/workflows, maintenance/backup, telemetry and DB commit.
 
 Generic heavy filesystem jobs (`file.read` when oversized, `file.write` when oversized, `file.copy`, `file.hash`, `file.parse_csv`, `file.profile_csv`, `file.process_parquet`, `filesystem.scan`, recursive `workspace.list`) enqueue with `worker_pool=file_io`. API-local JobRuntime only claims `general`/unassigned jobs and cannot steal specialist file_io work. Small interactive file operations remain INLINE_SAFE in the control plane.
 
@@ -644,16 +649,30 @@ High-level chain:
 
 ```text
 ResearchPage/API
- -> ResearchService
- -> JobRuntime research.advance
+ -> ResearchService (validate / authorize / enqueue)
+ -> JobRuntime research.plan | research.advance | research.fetch_url | research.report.generate | research.web.probe
  -> research worker
- -> ResearchRunner/Coordinator
- -> local retrieval + optional web search/fetch
+ -> ResearchRunner/Coordinator (retrieve/synthesize/verify phases stay coordinator-internal)
+ -> specialist deps: source_ingestion / embedding / rerank when required
  -> sources/snapshots
  -> evidence/claims/conflicts
  -> report/citation audit/quality
  -> optional Brain/Knowledge assimilation
 ```
+
+Production ownership (fail closed — no FastAPI inline heavy fallback when externalized):
+
+| Workload | Owner |
+|---|---|
+| Plan generation / regeneration | `research.plan` → research worker |
+| Manual bounded plan metadata edits | Control Plane CONTROL_WRITE |
+| Research runs | `research.advance` → research worker → `execute_queued_run` |
+| Live web probe (network) | `research.web.probe` → research worker |
+| Web readiness (config) | Control Plane INLINE_SAFE |
+| URL fetch | `research.fetch_url` → research worker |
+| Report regenerate | `research.report.generate` → research worker |
+| Physical source parse | `source_ingestion` (unchanged) |
+| Embedding / rerank batches | `embedding` / `rerank` specialist pools |
 
 Web permission and web search readiness are different. Outbound enabled does not mean a search provider is configured. Best-effort public search must remain labeled best-effort; fetch-only/search-unavailable states are explicit.
 
@@ -662,6 +681,24 @@ Search hit ≠ fetched source ≠ evidence span ≠ supported claim ≠ knowledg
 HTTP: `Data/backend/routes/research.py`.
 
 ---
+
+# 15A. Brain / Memory / Embedding / Rerank external execution
+
+```text
+CONTROL PLANE
+  -> DURABLE JOB
+  -> CORRECT DOMAIN WORKER
+  -> SPECIALIST MODEL/IO WORKERS WHEN REQUIRED
+  -> CANONICAL DOMAIN OUTPUT
+  -> CANONICAL COMMIT PATH
+```
+
+- **Brain facade** — bounded query stays inline; heavy derived compute → `brain_compute`.
+- **Memory** — bounded CRUD inline; heavy consolidation/enrichment → `memory`.
+- **Embedding / Rerank** — specialist inference pools; worker READY ≠ backend/model READY; rerank default_count remains 0 until configured; unavailable rerank must not be labeled neural.
+- **Knowledge reconcile** — `knowledge_prepare` diagnosis → typed repair → `db_commit` when COMMIT_WRITE.
+- **db_commit** — sole bulk SQLite COMMIT_WRITE lane (`default 1 / max 1`).
+- Product DBs remain CONTROL / KNOWLEDGE / MARKET only — never brain.db / memory.db / research_v2.db.
 
 # 16. Datasets, documents and ingestion
 

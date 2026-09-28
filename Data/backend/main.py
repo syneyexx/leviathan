@@ -2428,7 +2428,7 @@ app.include_router(
         job_store=job_store,
     )
 )
-app.include_router(build_brain_router(brain_facade))
+app.include_router(build_brain_router(brain_facade, job_runtime=job_runtime))
 app.include_router(build_mcp_router(mcp_bridge, execution_gateway))
 app.include_router(
     build_market_sim_router(
@@ -2517,7 +2517,7 @@ app.include_router(
         version=app.version,
     )
 )
-app.include_router(build_memory_router(memory_store=memory_store))
+app.include_router(build_memory_router(memory_store=memory_store, job_runtime=job_runtime))
 app.include_router(build_evidence_router(evidence_service=evidence_service))
 app.include_router(
     build_capabilities_router(

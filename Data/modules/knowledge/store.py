@@ -178,6 +178,88 @@ class KnowledgeStore:
             "status": "KNOWLEDGE_BACKFILL_PENDING" if remaining else "KNOWLEDGE_BACKFILL_DONE",
         }
 
+    def diagnose_reconciliation(self, *, limit: int = 100) -> dict[str, Any]:
+        """Read-only Knowledge semantic/index diagnosis (dry-run).
+
+        Reports missing chunks, docs lacking embeddings, and pending backfill.
+        Does not mutate. Apply repairs via knowledge.reconcile with apply=true
+        (worker) → backfill_content / prepare, then db_commit when COMMIT_WRITE.
+        """
+        safe_limit = min(max(int(limit), 1), 5000)
+        missing_chunks: list[str] = []
+        missing_embeddings: list[str] = []
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            rows = conn.execute(
+                """
+                SELECT d.id
+                FROM knowledge_documents d
+                WHERE COALESCE(d.status, 'READY') = 'READY'
+                  AND LENGTH(TRIM(COALESCE(d.content, ''))) > 0
+                  AND NOT EXISTS (
+                    SELECT 1 FROM knowledge_chunks c WHERE c.document_id = d.id
+                  )
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+            missing_chunks = [str(r["id"]) for r in rows]
+            # Chunks without embedding blobs (when embedding table exists).
+            try:
+                emb_rows = conn.execute(
+                    """
+                    SELECT c.chunk_id, c.document_id
+                    FROM knowledge_chunks c
+                    LEFT JOIN knowledge_chunk_embeddings e ON e.chunk_id = c.chunk_id
+                    WHERE e.chunk_id IS NULL
+                    LIMIT ?
+                    """,
+                    (safe_limit,),
+                ).fetchall()
+                missing_embeddings = [
+                    f"{r['document_id']}:{r['chunk_id']}" for r in emb_rows
+                ]
+            except Exception:  # noqa: BLE001 — embeddings table may be absent
+                missing_embeddings = []
+        pending_backfill = self.count_pending_content_backfill()
+        planned = []
+        if missing_chunks or pending_backfill:
+            planned.append(
+                {
+                    "repair": "backfill_content",
+                    "count": pending_backfill or len(missing_chunks),
+                    "severity": "medium",
+                }
+            )
+        if missing_embeddings:
+            planned.append(
+                {
+                    "repair": "reembed_chunks",
+                    "count": len(missing_embeddings),
+                    "severity": "low",
+                    "note": "Requires embedding worker / prepare path",
+                }
+            )
+        return {
+            "dry_run": True,
+            "mismatches": {
+                "missing_chunks": missing_chunks,
+                "missing_embeddings": missing_embeddings[:200],
+                "pending_backfill": pending_backfill,
+            },
+            "planned_repairs": planned,
+            "counts": {
+                "missing_chunks": len(missing_chunks),
+                "missing_embeddings": len(missing_embeddings),
+                "pending_backfill": pending_backfill,
+            },
+            "severity": "medium" if (missing_chunks or pending_backfill) else "ok",
+            "truth": {
+                "diagnosis_is_not_mutation": True,
+                "owner": "knowledge_prepare",
+            },
+        }
+
     def stage_document(
         self,
         *,
