@@ -44,7 +44,7 @@ describe("bounded celestial density", () => {
 });
 
 describe("calm animation clock", () => {
-  it("uses real-time scale by default and never catches up a paused wall-clock gap", () => {
+  it("uses real-time scale by default and caps resume/background frame deltas", () => {
     const callbacks = new Map<number, FrameRequestCallback>();
     let next = 1;
     const loop = createBrainSpaceAnimationLoop({
@@ -73,9 +73,9 @@ describe("calm animation clock", () => {
     expect(loop.getSimTime()).toBe(16);
     loop.setPaused(false);
     step(80_000);
-    expect(loop.getSimTime()).toBe(16);
+    expect(loop.getSimTime()).toBe(48);
     step(80_016);
-    expect(loop.getSimTime()).toBe(32);
+    expect(loop.getSimTime()).toBe(64);
     loop.stop();
   });
 });
