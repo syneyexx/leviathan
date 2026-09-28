@@ -21,7 +21,12 @@ from .types import (
     StepStatus,
 )
 from .worker import CodingWorker
-from .workspace import ensure_workspace, list_entries, resolve_root
+from .workspace import (
+    WorkspaceScanExternalRequired,
+    ensure_workspace,
+    list_entries,
+    resolve_root,
+)
 
 
 class CodingControlPlane:
@@ -363,6 +368,12 @@ class CodingControlPlane:
             entries = list_entries(root, path=path, recursive=recursive, max_entries=max_entries)
         except PathEscapeError as exc:
             raise CodingError("PATH_DENIED", str(exc), http_status=403) from exc
+        except WorkspaceScanExternalRequired as exc:
+            raise CodingError(
+                "WORKSPACE_SCAN_EXTERNAL_REQUIRED",
+                str(exc),
+                http_status=503,
+            ) from exc
         return {"root": str(root), "entries": entries, "path": path or "."}
 
     def request_approval_for_pending(self, session_id: str) -> dict[str, Any]:

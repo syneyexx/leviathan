@@ -575,6 +575,26 @@ An idle READY source-ingestion worker with zero queue depth means **healthy idle
 
 Canonical implementation: `Data/modules/source_ingestion/`, worker entrypoint above, Research routes/services under `Data/modules/research/` and `Data/backend/routes/research.py`. OCR owner: `Data/modules/workers/entrypoints/document_ai.py`.
 
+## 12.4 Dataset data plane, provider metadata, and filesystem scans
+
+FastAPI is the dataset control plane: validate, create catalog rows, enqueue, and report status. It does not download, materialize, validate, profile in full, scan for contamination, transform, index, export, or publish dataset bytes.
+
+| Work | Owner |
+|---|---|
+| Dataset lifecycle (import, HF bulk transfer, materialize, validate, contamination, transform, index/re-index, export, local publish) | `dataset` pool, capability `dataset.process`, `DatasetJobRunner` → `DatasetService` handlers |
+| Bounded Hugging Face repository listing / metadata | `provider_io` via `provider.hf.list` |
+| Generic large workspace scans, generic artifact transforms/packages | `file_io` when that pool exists |
+
+`file_io` is not part of this tree. Large recursive workspace scans and large artifact hash verification fail closed in the API (`WORKSPACE_SCAN_EXTERNAL_REQUIRED` / `ARTIFACT_VERIFY_EXTERNAL_REQUIRED`) instead of running inline. Small non-recursive workspace listings and bounded searches stay inline. A coding session already running inside the `coding` worker may use the streaming workspace helpers directly.
+
+Production dataset mode is `LEVIATHAN_DATASET_JOBS_RUNNER=external`. `inprocess_test` is the only in-process runner, and only when explicitly selected. A missing dataset worker leaves the job queued or returns `DATASET_EXECUTION_UNAVAILABLE` (HTTP 503). There is no “worker missing, run it in FastAPI” path.
+
+Hugging Face tokens are resolved inside the worker from environment/settings or an ephemeral credential reference. They are not stored in JobStore arguments, dataset job results, or error strings. Bulk HF transfer (resume, checkpoints, hashing, materialization) stays in the dataset worker. `provider_io` is not a bulk download engine.
+
+ArtifactStore `create_from_bytes` is bounded. Larger artifacts use `create_from_file` (copy) or `adopt_staged_file` (ownership transfer), both streaming. Huge results stay file-backed; job results carry references.
+
+Local dataset publish remains prepare → verify → atomic replace → metadata. Remote Hugging Face dataset upload is not implemented.
+
 ---
 
 # 13. Agent system and Signal Fabric

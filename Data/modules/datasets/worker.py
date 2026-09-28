@@ -2,15 +2,15 @@
 
 Claim ownership (single active loop)
 ------------------------------------
-* ``LEVIATHAN_DATASET_JOBS_RUNNER=inprocess`` — API in-process
-  ``DatasetJobRunner`` claims work (domain table when no JobRuntime; kernel
-  leases when JobRuntime is wired).
-* ``LEVIATHAN_DATASET_JOBS_RUNNER=external`` — **this worker** (or the
+* ``external`` / ``fabric`` (production default) — **this worker** (or the
   ``dataset`` pool entrypoint) is the **sole** runnable claim owner via Job
   Kernel capability ``dataset.process`` / ``worker_pool=dataset``. Domain
-  ``dataset_jobs`` retains metadata and execution progress; do **not** also
-  start the API in-process domain claim loop.
-* ``none`` — no automatic runner.
+  ``dataset_jobs`` retains metadata and execution progress. The API must not
+  start an in-process domain claim loop and must not execute handlers inline.
+* ``inprocess_test`` — explicit test/legacy API-thread runner only.
+  Aliases ``inprocess``, ``in-process``, ``internal``, and ``thread`` map here.
+  This is not a production fallback when the dataset worker is missing.
+* ``none`` / ``disabled`` — no automatic runner. Jobs stay queued.
 
 Domain history is never deleted. Kernel jobs link with
 ``domain_entity_type=dataset_job``, ``domain_entity_id=<domain job id>``,
@@ -18,7 +18,7 @@ and ``idempotency_key=dataset:process:{domain_job_id}``.
 
 Windows-compatible: plain Python process, no fork required.
 
-  LEVIATHAN_DATASET_JOBS_RUNNER=inprocess|external|none
+  LEVIATHAN_DATASET_JOBS_RUNNER=external|inprocess_test|none
 
 Start (Windows / Unix)::
 
@@ -43,18 +43,19 @@ RECYCLE_ENV = "LEVIATHAN_DATASET_WORKER_MAX_JOBS_BEFORE_RECYCLE"
 
 
 def resolve_runner_mode(settings: Any | None = None) -> str:
-    """Return ``inprocess``, ``external``, or ``none``.
+    """Return ``external``, ``inprocess_test``, or ``none``.
 
-    Production default is ``external`` (heavy work owned by dataset workers).
-    ``inprocess`` remains available as an explicit TEST/LEGACY mode only.
+    Production default is ``external``. Heavy dataset handlers run only in the
+    dataset worker. ``inprocess_test`` is an explicit test/legacy mode — a
+    missing worker must leave the job queued, never silently execute in FastAPI.
     """
     raw = (os.environ.get(RUNNER_ENV) or "").strip().lower()
     if not raw and settings is not None:
         ri = getattr(settings, "research_integration", None)
         raw = str(getattr(ri, "dataset_jobs_runner", "") or "").strip().lower()
-    if raw in {"inprocess", "in-process", "internal", "thread"}:
-        return "inprocess"
-    if raw in {"external", "worker", "process"}:
+    if raw in {"inprocess", "in-process", "internal", "thread", "inprocess_test"}:
+        return "inprocess_test"
+    if raw in {"external", "worker", "process", "fabric"}:
         return "external"
     if raw in {"none", "off", "disabled"}:
         return "none"
@@ -62,7 +63,8 @@ def resolve_runner_mode(settings: Any | None = None) -> str:
 
 
 def should_start_inprocess_runner(settings: Any | None = None) -> bool:
-    return resolve_runner_mode(settings) == "inprocess"
+    """True only for the explicit test/legacy thread. Never a production fallback."""
+    return resolve_runner_mode(settings) == "inprocess_test"
 
 
 def _default_lock_path(db_path: Path) -> Path:
@@ -239,7 +241,7 @@ def run_worker_loop(
         flush=True,
     )
     try:
-        service.reconcile()
+        service.reconcile(include_heavy=True)
         # Sidecar catalog recovery on worker boot (same store as API).
         try:
             service.reconcile_sidecars()

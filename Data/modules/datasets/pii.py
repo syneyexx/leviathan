@@ -33,13 +33,18 @@ def scan_records_pii(
     records: Iterable[CanonicalRecord],
     *,
     max_findings: int = 100,
+    max_records: int | None = None,
 ) -> dict[str, Any]:
     """Scan an iterable of records — does not require a complete corpus list."""
     findings: list[dict[str, Any]] = []
     records_with = 0
     record_count = 0
     total_finding_count = 0
+    capped = False
     for rec in records:
+        if max_records is not None and record_count >= max_records:
+            capped = True
+            break
         record_count += 1
         hit = scan_record_pii(rec)
         if hit:
@@ -48,13 +53,20 @@ def scan_records_pii(
             for item in hit:
                 if len(findings) < max_findings:
                     findings.append(item)
+    evidence = "SAMPLED" if capped else "EXACT"
     return {
         "recordCount": record_count,
         "recordsWithFindings": records_with,
         "findingCount": total_finding_count,
         "findings": findings,
-        "truncated": total_finding_count > len(findings),
+        "truncated": total_finding_count > len(findings) or capped,
+        "evidenceClass": evidence,
         "note": "Detections are flags, not proof of PII",
+        "truth": {
+            "evidenceClass": evidence,
+            "fullScanIsDatasetWorker": True,
+            "missingScanIsNotClean": True,
+        },
     }
 
 

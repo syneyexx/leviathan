@@ -5,11 +5,15 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+
+MAX_SEMANTIC_FILES = 8_000
+MAX_SEMANTIC_FILE_BYTES = 2 * 1024 * 1024
 
 SKIP_DIRS = {
     ".git",
@@ -168,14 +172,43 @@ class SemanticMapBuilder:
         )
 
     def _iter_source_files(self) -> Iterable[Path]:
-        for path in sorted(self.workspace_root.rglob("*")):
-            if not path.is_file():
-                continue
-            if any(part in SKIP_DIRS for part in path.parts):
-                continue
-            if path.suffix.lower() in {".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs"}:
-                yield path
-            elif path.name in {"package.json", "pyproject.toml", "setup.cfg", "Cargo.toml", "go.mod"}:
+        """Walk source files without descending into dependency/cache dirs.
+
+        This stays inside the coding worker. It does not enqueue per-file jobs.
+        """
+        count = 0
+        root = self.workspace_root
+        for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+            dirnames[:] = [name for name in dirnames if name not in SKIP_DIRS]
+            for name in filenames:
+                if count >= MAX_SEMANTIC_FILES:
+                    return
+                path = Path(dirpath) / name
+                if path.is_symlink():
+                    continue
+                interesting = path.suffix.lower() in {
+                    ".py",
+                    ".ts",
+                    ".tsx",
+                    ".js",
+                    ".jsx",
+                    ".go",
+                    ".rs",
+                } or path.name in {
+                    "package.json",
+                    "pyproject.toml",
+                    "setup.cfg",
+                    "Cargo.toml",
+                    "go.mod",
+                }
+                if not interesting:
+                    continue
+                try:
+                    if path.stat().st_size > MAX_SEMANTIC_FILE_BYTES:
+                        continue
+                except OSError:
+                    continue
+                count += 1
                 yield path
 
     def _index_file(self, path: Path, rel: str, digest: str, mtime_ns: int) -> FileIndexEntry:
