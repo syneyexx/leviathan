@@ -1972,7 +1972,13 @@ export const api = {
   probeResearchWeb(payload?: {
     query?: string;
     limit?: number;
-  }): Promise<{ probe: ResearchWebProbe }> {
+  }): Promise<{
+    probe: ResearchWebProbe;
+    queued?: boolean;
+    job?: JobRecord;
+    job_id?: string;
+    truth?: Record<string, unknown>;
+  }> {
     return request("/api/research/web/probe", {
       method: "POST",
       body: JSON.stringify(payload ?? {}),
@@ -2007,7 +2013,15 @@ export const api = {
   planResearchProject(
     projectId: string,
     payload: Record<string, unknown> = {},
-  ): Promise<{ project: ResearchProject; plan: ResearchPlan | null }> {
+  ): Promise<{
+    project: ResearchProject;
+    plan: ResearchPlan | null;
+    queued?: boolean;
+    job?: JobRecord;
+    job_id?: string;
+    status?: string;
+    truth?: Record<string, unknown>;
+  }> {
     return request(`/api/research/${encodeURIComponent(projectId)}/plan`, {
       method: "POST",
       body: JSON.stringify(payload),

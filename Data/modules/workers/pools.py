@@ -168,6 +168,30 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
         description="Durable research orchestration and child retrieval jobs",
         max_count=4,
     ),
+    "memory": PoolDefinition(
+        pool_id="memory",
+        entrypoint="Data.modules.workers.entrypoints.memory",
+        default_count=1,
+        job_kinds=("memory.",),
+        resource_classes=("CPU_HEAVY", "MEMORY_HEAVY", "MODEL_INFERENCE"),
+        description=(
+            "Heavy Memory consolidation/enrichment — not general; "
+            "trust gates preserved (AGENT_PROPOSED ≠ VERIFIED)"
+        ),
+        max_count=2,
+    ),
+    "brain_compute": PoolDefinition(
+        pool_id="brain_compute",
+        entrypoint="Data.modules.workers.entrypoints.brain_compute",
+        default_count=1,
+        job_kinds=("brain.", "brain.compute."),
+        resource_classes=("CPU_HEAVY", "MEMORY_HEAVY", "MODEL_INFERENCE"),
+        description=(
+            "Heavy DERIVED Brain computation only — Brain remains a facade; "
+            "never a Brain/graph database or competing Knowledge/Memory store"
+        ),
+        max_count=2,
+    ),
     "coding": PoolDefinition(
         pool_id="coding",
         entrypoint="Data.modules.workers.entrypoints.coding",
@@ -198,9 +222,18 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
         pool_id="knowledge_prepare",
         entrypoint="Data.modules.workers.entrypoints.knowledge_prepare",
         default_count=1,
-        job_kinds=("knowledge.prepare", "knowledge.ingest_scan", "knowledge.ingest_document", "knowledge.ingest_path"),
+        job_kinds=(
+            "knowledge.prepare",
+            "knowledge.ingest_scan",
+            "knowledge.ingest_document",
+            "knowledge.ingest_path",
+            "knowledge.reconcile",
+        ),
         resource_classes=("CPU_HEAVY", "MEMORY_HEAVY"),
-        description="Chunking, embeddings prep, entity extraction, externalized ModelData scan",
+        description=(
+            "Chunking, embeddings prep, entity extraction, semantic reconciliation, "
+            "externalized ModelData scan"
+        ),
     ),
     "knowledge_commit": PoolDefinition(
         pool_id="knowledge_commit",

@@ -1553,6 +1553,12 @@ export function ResearchPage() {
                         query: "SQLite WAL mode Python sqlite3",
                         limit: 3,
                       });
+                      if (res.queued) {
+                        toast("Web probe queued on research worker");
+                        const ready = await api.getResearchWebReadiness();
+                        setWebReadiness(ready.readiness);
+                        return;
+                      }
                       const probe = res.probe;
                       const ready = await api.getResearchWebReadiness();
                       setWebReadiness(ready.readiness);

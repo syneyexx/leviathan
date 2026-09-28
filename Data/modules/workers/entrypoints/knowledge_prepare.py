@@ -142,10 +142,66 @@ def _handle_prepare(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
         return {"error": str(exc)}
 
 
+def _handle_reconcile(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
+    from Data.modules.jobs.leases import fenced_transition
+    from Data.modules.jobs.states import JobState
+
+    args = dict(getattr(job, "arguments", None) or {})
+    dry_run = bool(args.get("dry_run", True))
+    apply = bool(args.get("apply", False)) and not dry_run
+    limit = min(max(int(args.get("limit") or 100), 1), 5000)
+    cancel_check = ctx.get("job_cancel_check")
+    try:
+        store = _knowledge_store(ctx)
+        diagnosis = store.diagnose_reconciliation(limit=limit)
+        result: dict[str, Any] = {
+            "action": "reconcile",
+            "diagnosis": diagnosis,
+            "applied": False,
+            "executed_via": "knowledge_prepare_worker",
+            "truth": {
+                "diagnosis_is_not_mutation": True,
+                "owner": "knowledge_prepare",
+                "bulk_mutations_use_db_commit_when_commit_write": True,
+            },
+        }
+        if apply:
+            if callable(cancel_check) and cancel_check():
+                raise RuntimeError("KNOWLEDGE_RECONCILE_CANCELLED")
+            # Apply only the bounded backfill repair — not arbitrary SQL.
+            repair = store.backfill_content(limit=limit)
+            result["applied"] = True
+            result["repair"] = repair
+            result["truth"]["diagnosis_is_not_mutation"] = False
+            # Re-verify after mutation.
+            result["verification"] = store.diagnose_reconciliation(limit=limit)
+        fenced_transition(
+            ctx["job_store"],
+            job.job_id,
+            JobState.COMPLETED,
+            result=result,
+            worker_id=str(ctx.get("worker_id") or ""),
+            ctx=ctx,
+        )
+        return result
+    except Exception as exc:  # noqa: BLE001
+        fenced_transition(
+            ctx["job_store"],
+            job.job_id,
+            JobState.FAILED,
+            error=f"KNOWLEDGE_RECONCILE_FAILED: {exc}"[:500],
+            worker_id=str(ctx.get("worker_id") or ""),
+            ctx=ctx,
+        )
+        return {"error": str(exc)}
+
+
 def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
     cap = str(getattr(job, "capability_id", "") or "")
     if cap == "knowledge.ingest_scan":
         return _handle_ingest_scan(ctx, job)
+    if cap == "knowledge.reconcile":
+        return _handle_reconcile(ctx, job)
     if cap in {"knowledge.prepare", "knowledge.ingest_document", "knowledge.ingest_path"}:
         return _handle_prepare(ctx, job)
     lease_ttl = float(
