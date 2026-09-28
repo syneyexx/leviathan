@@ -776,6 +776,7 @@ def build_default_catalog() -> CapabilityCatalog:
             output_schema={"type": "object"},
             required_permissions=("browser.navigate",),
             metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
                 "tags": ["browser", "navigate", "web", "dom"],
                 "domains": ["browser"],
                 "aliases": ["open page", "goto", "browse"],
@@ -801,6 +802,7 @@ def build_default_catalog() -> CapabilityCatalog:
             output_schema={"type": "object"},
             required_permissions=("browser.read",),
             metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
                 "tags": ["browser", "dom", "extract", "read"],
                 "domains": ["browser"],
                 "aliases": ["page text", "read page"],
@@ -826,6 +828,7 @@ def build_default_catalog() -> CapabilityCatalog:
             output_schema={"type": "object"},
             required_permissions=("browser.read", "artifact.write"),
             metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
                 "tags": ["browser", "screenshot", "vision"],
                 "domains": ["browser"],
                 "aliases": ["capture page", "snapshot"],
@@ -853,6 +856,7 @@ def build_default_catalog() -> CapabilityCatalog:
             output_schema={"type": "object"},
             required_permissions=("browser.interact",),
             metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
                 "tags": ["browser", "click", "interact"],
                 "domains": ["browser"],
                 "worker_kind": "browser",
@@ -879,6 +883,7 @@ def build_default_catalog() -> CapabilityCatalog:
             output_schema={"type": "object"},
             required_permissions=("browser.interact",),
             metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
                 "tags": ["browser", "type", "input"],
                 "domains": ["browser"],
                 "worker_kind": "browser",
@@ -904,6 +909,7 @@ def build_default_catalog() -> CapabilityCatalog:
             output_schema={"type": "object"},
             required_permissions=("browser.interact",),
             metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
                 "tags": ["browser", "form"],
                 "domains": ["browser"],
                 "worker_kind": "browser",
@@ -928,6 +934,7 @@ def build_default_catalog() -> CapabilityCatalog:
             output_schema={"type": "object"},
             required_permissions=("browser.interact", "artifact.write"),
             metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
                 "tags": ["browser", "download"],
                 "domains": ["browser"],
                 "worker_kind": "browser",
@@ -954,6 +961,7 @@ def build_default_catalog() -> CapabilityCatalog:
             output_schema={"type": "object"},
             required_permissions=("browser.interact",),
             metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
                 "tags": ["browser", "upload"],
                 "domains": ["browser"],
                 "worker_kind": "browser",
@@ -981,6 +989,7 @@ def build_default_catalog() -> CapabilityCatalog:
             output_schema={"type": "object"},
             required_permissions=("browser.read",),
             metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
                 "tags": ["browser", "verify"],
                 "domains": ["browser"],
                 "worker_kind": "browser",
@@ -1002,7 +1011,8 @@ def build_default_catalog() -> CapabilityCatalog:
             },
             output_schema={"type": "object"},
             required_permissions=("browser.interact",),
-            metadata={"tags": ["browser"], "domains": ["browser"], "worker_kind": "browser"},
+            metadata={
+                "execution_class": "EXTERNAL_REQUIRED","tags": ["browser"], "domains": ["browser"], "worker_kind": "browser"},
         )
     )
     catalog.register(
@@ -1019,7 +1029,8 @@ def build_default_catalog() -> CapabilityCatalog:
             },
             output_schema={"type": "object"},
             required_permissions=("browser.read",),
-            metadata={"tags": ["browser"], "domains": ["browser"], "worker_kind": "browser"},
+            metadata={
+                "execution_class": "EXTERNAL_REQUIRED","tags": ["browser"], "domains": ["browser"], "worker_kind": "browser"},
         )
     )
     catalog.register(
@@ -1039,7 +1050,8 @@ def build_default_catalog() -> CapabilityCatalog:
             },
             output_schema={"type": "object"},
             required_permissions=("browser.interact",),
-            metadata={"tags": ["browser"], "domains": ["browser"], "worker_kind": "browser"},
+            metadata={
+                "execution_class": "EXTERNAL_REQUIRED","tags": ["browser"], "domains": ["browser"], "worker_kind": "browser"},
         )
     )
     # GI9/GI10 — localhost QA journey crawler
@@ -1080,6 +1092,37 @@ def build_default_catalog() -> CapabilityCatalog:
                 "execution_class": "EXTERNAL_REQUIRED",
                 "localhost_scoped_by_default": True,
                 "no_stealth_anti_bot": True,
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="browser.qa.advance",
+            name="Browser QA Advance",
+            description=(
+                "Bounded QA crawl continuation slice (EXTERNAL_REQUIRED). "
+                "Releases the singleton browser worker between slices."
+            ),
+            side_effects=(SideEffect.NETWORK, SideEffect.EXECUTE, SideEffect.WRITE),
+            provider_kind=CapabilityProviderKind.BROWSER,
+            provider_ref="qa_advance",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {
+                    "journey_id": {"type": "string"},
+                    "run_id": {"type": "string"},
+                    "checkpoint": {"type": "object"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("browser.qa", "browser.interact"),
+            metadata={
+                "tags": ["browser", "qa", "advance"],
+                "domains": ["browser"],
+                "worker_kind": "browser",
+                "execution_class": "EXTERNAL_REQUIRED",
+                "localhost_scoped_by_default": True,
             },
         )
     )
@@ -1195,6 +1238,7 @@ def build_default_catalog() -> CapabilityCatalog:
             output_schema={"type": "object"},
             required_permissions=("media.read",),
             metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
                 "tags": ["media", "probe", "inspect"],
                 "domains": ["media"],
                 "aliases": ["probe media", "inspect file"],
@@ -1221,6 +1265,7 @@ def build_default_catalog() -> CapabilityCatalog:
             output_schema={"type": "object"},
             required_permissions=("media.read", "artifact.write"),
             metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
                 "tags": ["media", "thumbnail", "image"],
                 "domains": ["media"],
                 "worker_kind": "media",
@@ -1247,6 +1292,7 @@ def build_default_catalog() -> CapabilityCatalog:
             output_schema={"type": "object"},
             required_permissions=("media.write", "artifact.write"),
             metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
                 "tags": ["media", "image", "generate"],
                 "domains": ["media"],
                 "aliases": ["generate image", "draw"],
@@ -1276,6 +1322,7 @@ def build_default_catalog() -> CapabilityCatalog:
             output_schema={"type": "object"},
             required_permissions=("media.write", "artifact.write"),
             metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
                 "tags": ["media", "image", "edit"],
                 "domains": ["media"],
                 "worker_kind": "media",
@@ -1302,6 +1349,7 @@ def build_default_catalog() -> CapabilityCatalog:
             output_schema={"type": "object"},
             required_permissions=("media.read", "artifact.write"),
             metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
                 "tags": ["media", "video", "ingest", "frames"],
                 "domains": ["media"],
                 "aliases": ["ingest video", "video frames"],
@@ -1331,6 +1379,7 @@ def build_default_catalog() -> CapabilityCatalog:
             output_schema={"type": "object"},
             required_permissions=("media.read",),
             metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
                 "tags": ["media", "vision", "ocr", "tiles"],
                 "domains": ["media", "vision"],
                 "aliases": ["inspect image", "vision tiles"],
@@ -1359,6 +1408,7 @@ def build_default_catalog() -> CapabilityCatalog:
             output_schema={"type": "object"},
             required_permissions=("media.read",),
             metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
                 "tags": ["media", "retrieval", "cross-modal"],
                 "domains": ["media", "knowledge"],
                 "aliases": ["cross modal search", "find scene"],
@@ -1368,6 +1418,118 @@ def build_default_catalog() -> CapabilityCatalog:
         )
     )
     # Wave 7 — voice capabilities (fixture RealtimeVoiceService via ExecutionGateway).
+
+    catalog.register(
+        CapabilityDefinition(
+            id="media.transcode",
+            name="Media Transcode",
+            description="Typed FFmpeg transcode/convert on the media worker (EXTERNAL_REQUIRED).",
+            side_effects=(SideEffect.READ, SideEffect.WRITE, SideEffect.EXECUTE),
+            provider_kind=CapabilityProviderKind.MEDIA,
+            provider_ref="TRANSCODE",
+            input_schema={
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                    "path": {"type": "string"},
+                    "container": {"type": "string"},
+                    "video_codec": {"type": "string"},
+                    "audio_codec": {"type": "string"},
+                    "width": {"type": "integer"},
+                    "height": {"type": "integer"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("media.write", "artifact.write"),
+            metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
+                "tags": ["media", "transcode", "ffmpeg"],
+                "domains": ["media"],
+                "worker_kind": "media",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="media.convert",
+            name="Media Convert",
+            description="Typed media container/codec conversion (EXTERNAL_REQUIRED).",
+            side_effects=(SideEffect.READ, SideEffect.WRITE, SideEffect.EXECUTE),
+            provider_kind=CapabilityProviderKind.MEDIA,
+            provider_ref="CONVERT",
+            input_schema={"type": "object", "required": ["path"], "properties": {"path": {"type": "string"}}},
+            output_schema={"type": "object"},
+            required_permissions=("media.write", "artifact.write"),
+            metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
+                "tags": ["media", "convert"],
+                "domains": ["media"],
+                "worker_kind": "media",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="media.audio.process",
+            name="Media Audio Process",
+            description="Deterministic audio transform via FFmpeg (EXTERNAL_REQUIRED). ASR/TTS remain Voice-owned.",
+            side_effects=(SideEffect.READ, SideEffect.WRITE, SideEffect.EXECUTE),
+            provider_kind=CapabilityProviderKind.MEDIA,
+            provider_ref="AUDIO_PROCESS",
+            input_schema={"type": "object", "required": ["path"], "properties": {"path": {"type": "string"}}},
+            output_schema={"type": "object"},
+            required_permissions=("media.write", "artifact.write"),
+            metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
+                "tags": ["media", "audio"],
+                "domains": ["media"],
+                "worker_kind": "media",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="media.video.process",
+            name="Media Video Process",
+            description="Deterministic video transform via FFmpeg (EXTERNAL_REQUIRED).",
+            side_effects=(SideEffect.READ, SideEffect.WRITE, SideEffect.EXECUTE),
+            provider_kind=CapabilityProviderKind.MEDIA,
+            provider_ref="VIDEO_PROCESS",
+            input_schema={"type": "object", "required": ["path"], "properties": {"path": {"type": "string"}}},
+            output_schema={"type": "object"},
+            required_permissions=("media.write", "artifact.write"),
+            metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
+                "tags": ["media", "video"],
+                "domains": ["media"],
+                "worker_kind": "media",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="media.image.batch",
+            name="Media Image Batch",
+            description="Bounded streamed image-processing batch (EXTERNAL_REQUIRED).",
+            side_effects=(SideEffect.READ, SideEffect.WRITE, SideEffect.EXECUTE),
+            provider_kind=CapabilityProviderKind.MEDIA,
+            provider_ref="IMAGE_BATCH",
+            input_schema={
+                "type": "object",
+                "required": ["paths"],
+                "properties": {"paths": {"type": "array"}},
+            },
+            output_schema={"type": "object"},
+            required_permissions=("media.write", "artifact.write"),
+            metadata={
+                "execution_class": "EXTERNAL_REQUIRED",
+                "tags": ["media", "image", "batch"],
+                "domains": ["media"],
+                "worker_kind": "media",
+            },
+        )
+    )
+
     catalog.register(
         CapabilityDefinition(
             id="voice.start_session",
