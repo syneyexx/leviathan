@@ -68,9 +68,12 @@ class JobRuntimeTests(unittest.TestCase):
     def test_enqueue_and_process_read_job(self) -> None:
         path = self.root / "note.txt"
         path.write_text("job-hello", encoding="utf-8")
+        # Small file.read is INLINE_SAFE via gateway; when durable-enqueued it owns
+        # file_io. Force general pool here to exercise API-local JobRuntime claiming.
         job = self.jobs.enqueue(
             capability_id="file.read",
             arguments={"path": str(path)},
+            worker_pool="general",
         )
         self.assertEqual(job.state, JobState.QUEUED)
         done = self.jobs.process_next()
@@ -83,6 +86,7 @@ class JobRuntimeTests(unittest.TestCase):
         job = self.jobs.enqueue(
             capability_id="artifact.create_text",
             arguments={"content": "x", "filename": "a.txt"},
+            worker_pool="general",
         )
         done = self.jobs.process_next()
         assert done is not None
@@ -99,6 +103,7 @@ class JobRuntimeTests(unittest.TestCase):
             capability_id="artifact.create_text",
             arguments={"content": "job-artifact", "filename": "a.txt"},
             approval_id=approved.approval_id,
+            worker_pool="general",
         )
         done = self.jobs.process_next()
         assert done is not None
@@ -108,6 +113,7 @@ class JobRuntimeTests(unittest.TestCase):
         job = self.jobs.enqueue(
             capability_id="file.read",
             arguments={"path": str(self.root / "missing.txt")},
+            worker_pool="general",
         )
         cancelled = self.jobs.cancel(job.job_id)
         self.assertEqual(cancelled.state, JobState.CANCELLED)
@@ -115,9 +121,13 @@ class JobRuntimeTests(unittest.TestCase):
 
     def test_cancel_running_requests_cooperative_cancel(self) -> None:
         """RUNNING jobs move to CANCEL_REQUESTED, not terminal CANCELLED."""
-        job = self.store.create(capability_id="file.read", arguments={"path": "x"})
+        job = self.store.create(
+            capability_id="file.read",
+            arguments={"path": "x"},
+            worker_pool="general",
+        )
         self.store.transition(job.job_id, JobState.QUEUED)
-        claimed = self.store.claim_next_queued(worker_id="test-worker")
+        claimed = self.store.claim_next_queued(worker_id="test-worker", worker_pool="general")
         assert claimed is not None
         self.assertEqual(claimed.state, JobState.RUNNING)
         pending = self.jobs.cancel(claimed.job_id)
@@ -131,6 +141,7 @@ class JobRuntimeTests(unittest.TestCase):
         job = self.jobs.enqueue(
             capability_id="file.read",
             arguments={"path": str(self.root / "x.txt")},
+            worker_pool="general",
         )
         self.assertIsNone(self.jobs.process_next())
         still = self.jobs.get(job.job_id)
@@ -146,9 +157,13 @@ class JobRuntimeTests(unittest.TestCase):
         """W11: worker that lost lease fencing cannot mark COMPLETED."""
         from Data.modules.jobs import StaleLeaseError
 
-        job = self.store.create(capability_id="file.read", arguments={"path": "x"})
+        job = self.store.create(
+            capability_id="file.read",
+            arguments={"path": "x"},
+            worker_pool="general",
+        )
         self.store.transition(job.job_id, JobState.QUEUED)
-        claimed = self.store.claim_next_queued(worker_id="worker-a")
+        claimed = self.store.claim_next_queued(worker_id="worker-a", worker_pool="general")
         assert claimed is not None
         self.assertEqual(claimed.lease_owner, "worker-a")
         # Simulate lease transfer / reclaim by another worker.
@@ -167,6 +182,18 @@ class JobRuntimeTests(unittest.TestCase):
         assert still is not None
         self.assertEqual(still.state, JobState.RUNNING)
         self.assertEqual(still.lease_owner, "worker-b")
+
+    def test_file_io_pool_jobs_not_claimed_by_api_runtime(self) -> None:
+        job = self.jobs.enqueue(
+            capability_id="file.read",
+            arguments={"path": str(self.root / "note.txt")},
+            worker_pool="file_io",
+        )
+        self.assertIsNone(self.jobs.process_next())
+        still = self.jobs.get(job.job_id)
+        assert still is not None
+        self.assertEqual(still.state, JobState.QUEUED)
+        self.assertEqual(still.worker_pool, "file_io")
 
 
 if __name__ == "__main__":

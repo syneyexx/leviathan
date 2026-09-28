@@ -25,8 +25,13 @@ HandlerFn = Callable[[Any, Any], dict[str, Any] | None]
 
 def build_minimal_job_context() -> dict[str, Any]:
     """Process-safe factories — never imports backend.main."""
+    from pathlib import Path
+
     from Data.backend.config import load_settings
+    from Data.modules.artifacts.store import ArtifactStore
     from Data.modules.execution import ExecutionGateway, build_default_catalog
+    from Data.modules.function_runtime import FunctionRuntime
+    from Data.modules.function_runtime.builtins import build_default_registry
     from Data.modules.jobs.resources import ResourceManager
     from Data.modules.jobs.runtime import JobRuntime
     from Data.modules.jobs.store import JobStore
@@ -34,7 +39,26 @@ def build_minimal_job_context() -> dict[str, Any]:
     settings = load_settings()
     job_store = JobStore(settings.database_path)
     job_store.initialize()
-    gateway = ExecutionGateway(catalog=build_default_catalog())
+    function_registry = build_default_registry()
+    function_runtime = FunctionRuntime(function_registry)
+    db_parent = Path(settings.database_path).parent
+    artifact_root = getattr(getattr(settings, "artifacts", None), "root", None) or (
+        db_parent / "artifacts"
+    )
+    artifact_store = ArtifactStore(db_parent / "artifacts.db", Path(artifact_root))
+    try:
+        artifact_store.initialize()
+    except Exception:  # noqa: BLE001
+        pass
+    filesystem_root = getattr(settings, "project_root", None) or getattr(
+        getattr(settings, "coding", None), "workspace", None
+    )
+    gateway = ExecutionGateway(
+        catalog=build_default_catalog(),
+        function_runtime=function_runtime,
+        artifact_store=artifact_store,
+        filesystem_root=filesystem_root,
+    )
     resources = ResourceManager(settings.resources.max_job_concurrency)
     job_runtime = JobRuntime(job_store, gateway, resources)
     registry = WorkerRegistry(settings.database_path)
@@ -47,6 +71,8 @@ def build_minimal_job_context() -> dict[str, Any]:
         "job_store": job_store,
         "job_runtime": job_runtime,
         "gateway": gateway,
+        "function_runtime": function_runtime,
+        "artifact_store": artifact_store,
         "registry": registry,
         "admission": admission,
         "worker_settings": worker_settings,

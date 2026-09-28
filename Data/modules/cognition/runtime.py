@@ -1447,6 +1447,7 @@ class CognitiveRuntime:
 
         capability_id = request.capability_id
         timeout_seconds = 300.0
+        worker_pool = None
         try:
             defn = self.execution_gateway.catalog.get(capability_id) if self.execution_gateway else None
             meta = dict(getattr(defn, "metadata", None) or {}) if defn is not None else {}
@@ -1456,6 +1457,23 @@ class CognitiveRuntime:
             resource_class = str(meta.get("resource_class") or "NETWORK_BOUND")
         except Exception:  # noqa: BLE001
             resource_class = "NETWORK_BOUND"
+
+        # Generic heavy filesystem offload owns the file_io pool.
+        try:
+            from Data.modules.execution.file_io_dispatch import (
+                resource_class_for_file_capability,
+            )
+            from Data.modules.execution.file_io_thresholds import FILE_IO_CAPABILITIES
+            from Data.modules.workers.pools import pool_for_capability
+
+            if capability_id in FILE_IO_CAPABILITIES:
+                worker_pool = "file_io"
+                resource_class = resource_class_for_file_capability(capability_id)
+                timeout_seconds = max(timeout_seconds, 600.0)
+            else:
+                worker_pool = pool_for_capability(capability_id)
+        except Exception:  # noqa: BLE001
+            worker_pool = None
 
         # Strip cognition-only callbacks — workers receive JSON-serializable args.
         job_args = {
@@ -1473,9 +1491,10 @@ class CognitiveRuntime:
                 trace_id=request.trace_id,
                 idempotency_key=request.idempotency_key,
                 latency_class="interactive",
-                domain="external",
+                domain="file_io" if worker_pool == "file_io" else "external",
                 consumer="cognition",
                 resource_class=resource_class,
+                worker_pool=worker_pool,
                 timeout_seconds=timeout_seconds,
                 metadata={
                     "module_id": module_id_hint,

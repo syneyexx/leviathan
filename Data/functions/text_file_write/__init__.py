@@ -1,35 +1,45 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
-from Data.modules.common.atomic import atomic_write_text
-from Data.modules.common.hashing import sha256_text
+from Data.modules.execution.file_io_thresholds import load_file_io_thresholds
+from Data.modules.file_io.errors import FileIoError
+from Data.modules.file_io.ops import write_text_streaming
 
 
 def run(
     path: str,
-    content: str,
+    content: str | None = None,
     *,
     create_parents: bool = True,
+    content_path: str | None = None,
+    content_artifact_id: str | None = None,
 ) -> dict[str, Any]:
-    """Write UTF-8 text to a local file (atomic). Side effect: WRITE."""
-    target = Path(path).expanduser()
-    if create_parents:
-        target.parent.mkdir(parents=True, exist_ok=True)
-    hash_before = None
-    if target.is_file():
-        try:
-            hash_before = sha256_text(target.read_text(encoding="utf-8", errors="replace"))
-        except OSError:
-            hash_before = None
-    atomic_write_text(target, content if content is not None else "")
-    hash_after = sha256_text(content if content is not None else "")
-    return {
-        "path": str(target.resolve()) if target.exists() else str(target),
-        "bytes_written": len((content or "").encode("utf-8")),
-        "hash_before": hash_before,
-        "hash_after": hash_after,
-        "content_hash": hash_after,
-        "created": hash_before is None,
-    }
+    """Write UTF-8 text to a local file (atomic). Side effect: WRITE.
+
+    Large payloads should arrive via ``content_path`` / artifact staging rather
+    than multi-hundred-MB JSON ``content`` bodies.
+    """
+    thresholds = load_file_io_thresholds()
+    if content_artifact_id and not content_path:
+        raise ValueError(
+            "content_artifact_id requires a resolved content_path "
+            "(ArtifactStore staging) before dispatch"
+        )
+    if content is not None and content_path is None:
+        size = len(str(content).encode("utf-8"))
+        if size > thresholds.max_inline_write_bytes * 4:
+            # Hard refuse absurd inline bodies even on workers — use staging.
+            raise ValueError(
+                f"Inline content exceeds safe body limit ({size} bytes); "
+                "pass content_path / artifact staging instead"
+            )
+    try:
+        return write_text_streaming(
+            path,
+            content,
+            content_path=content_path,
+            create_parents=create_parents,
+        )
+    except FileIoError as exc:
+        raise ValueError(exc.message) from exc

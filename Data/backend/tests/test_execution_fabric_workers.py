@@ -292,7 +292,11 @@ class PoolMappingTests(unittest.TestCase):
         self.assertEqual(pool_for_capability("coding.advance"), "coding")
 
     def test_unknown_maps_general(self) -> None:
-        self.assertEqual(pool_for_capability("file.read"), "general")
+        self.assertEqual(pool_for_capability("totally.unknown.cap"), "general")
+
+    def test_file_caps_map_file_io(self) -> None:
+        self.assertEqual(pool_for_capability("file.read"), "file_io")
+        self.assertEqual(pool_for_capability("filesystem.scan"), "file_io")
 
 
 class KnowledgeCommitTests(unittest.TestCase):

@@ -24,6 +24,8 @@ def build_default_catalog() -> CapabilityCatalog:
                     "max_bytes": {"type": "integer"},
                     "start_line": {"type": "integer"},
                     "end_line": {"type": "integer"},
+                    "offset": {"type": "integer"},
+                    "length": {"type": "integer"},
                 },
             },
             output_schema={"type": "object"},
@@ -86,15 +88,169 @@ def build_default_catalog() -> CapabilityCatalog:
             provider_ref="text_file_write",
             input_schema={
                 "type": "object",
-                "required": ["path", "content"],
+                "required": ["path"],
                 "properties": {
                     "path": {"type": "string"},
                     "content": {"type": "string"},
+                    "content_path": {"type": "string"},
+                    "content_artifact_id": {"type": "string"},
                     "create_parents": {"type": "boolean"},
                 },
             },
             output_schema={"type": "object"},
             required_permissions=("filesystem.write",),
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="file.hash",
+            name="Hash File",
+            description="Streaming SHA-256 hash of a local file.",
+            side_effects=(SideEffect.READ,),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="file_hash",
+            input_schema={
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                    "path": {"type": "string"},
+                    "algorithm": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("filesystem.read",),
+            metadata={"tags": ["filesystem", "file_io"], "worker_kind": "file_io"},
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="file.copy",
+            name="Copy File",
+            description="Copy a single file (not a directory tree).",
+            side_effects=(SideEffect.WRITE,),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="file_copy",
+            input_schema={
+                "type": "object",
+                "required": ["source_path", "dest_path"],
+                "properties": {
+                    "source_path": {"type": "string"},
+                    "dest_path": {"type": "string"},
+                    "overwrite": {"type": "boolean"},
+                    "preserve_metadata": {"type": "boolean"},
+                    "compute_hashes": {"type": "boolean"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("filesystem.read", "filesystem.write"),
+            metadata={"tags": ["filesystem", "file_io"], "worker_kind": "file_io"},
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="file.parse_csv",
+            name="Parse CSV",
+            description="Streaming full CSV parse (external for large files).",
+            side_effects=(SideEffect.READ,),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="csv_parse",
+            input_schema={
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                    "path": {"type": "string"},
+                    "delimiter": {"type": "string"},
+                    "encoding": {"type": "string"},
+                    "max_rows": {"type": "integer"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("filesystem.read",),
+            metadata={
+                "tags": ["filesystem", "csv", "file_io"],
+                "execution_class": "EXTERNAL_REQUIRED",
+                "worker_kind": "file_io",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="file.profile_csv",
+            name="Profile CSV",
+            description="Streaming CSV profile with exact/approximate provenance.",
+            side_effects=(SideEffect.READ,),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="csv_profile",
+            input_schema={
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                    "path": {"type": "string"},
+                    "delimiter": {"type": "string"},
+                    "encoding": {"type": "string"},
+                    "exact_distinct_max": {"type": "integer"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("filesystem.read",),
+            metadata={
+                "tags": ["filesystem", "csv", "file_io"],
+                "execution_class": "EXTERNAL_REQUIRED",
+                "worker_kind": "file_io",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="file.process_parquet",
+            name="Process Parquet",
+            description="Minimal Parquet metadata inspect / row-group processing.",
+            side_effects=(SideEffect.READ,),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="parquet_process",
+            input_schema={
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                    "path": {"type": "string"},
+                    "mode": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("filesystem.read",),
+            metadata={
+                "tags": ["filesystem", "parquet", "file_io"],
+                "execution_class": "EXTERNAL_REQUIRED",
+                "worker_kind": "file_io",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="filesystem.scan",
+            name="Scan Filesystem",
+            description="Bounded recursive filesystem scan (always external).",
+            side_effects=(SideEffect.READ,),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="filesystem_scan",
+            input_schema={
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                    "path": {"type": "string"},
+                    "recursive": {"type": "boolean"},
+                    "max_depth": {"type": "integer"},
+                    "max_entries": {"type": "integer"},
+                    "follow_symlinks": {"type": "boolean"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("filesystem.read",),
+            metadata={
+                "tags": ["filesystem", "file_io"],
+                "execution_class": "EXTERNAL_REQUIRED",
+                "worker_kind": "file_io",
+            },
         )
     )
     catalog.register(

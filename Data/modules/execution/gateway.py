@@ -29,6 +29,7 @@ _PATH_ARGUMENT_KEYS = frozenset(
         "dest_path",
         "target",
         "output_path",
+        "content_path",
     }
 )
 
@@ -540,21 +541,28 @@ class ExecutionGateway:
     ) -> None:
         """Refuse inline API execution of EXTERNAL_REQUIRED capabilities.
 
-        Workers (``LEVIATHAN_WORKER_ID`` set) and developer mode
-        (``LEVIATHAN_WORKERS_EXTERNALIZE_API=false``) are exempt.
+        Uses request-aware classification AFTER path confinement so the same
+        capability can be INLINE_SAFE for small work and EXTERNAL_REQUIRED for
+        large / recursive / unbounded filesystem work.
+
+        Workers (``LEVIATHAN_WORKER_ID`` set) may execute their owned work;
+        request-escalated filesystem ops require the ``file_io`` pool.
+        Developer mode (``LEVIATHAN_WORKERS_EXTERNALIZE_API=false``) is exempt.
         Authorization/approval still apply independently.
         """
         from .workload import (
             ExecutionWorkloadClass,
             api_may_execute_inline,
-            classify_capability,
+            classify_request_workload,
         )
 
         meta = definition.normalized_metadata()
-        cls = classify_capability(
+        cls = classify_request_workload(
             definition.id,
+            request.arguments,
             metadata=meta,
             provider_kind=definition.provider_kind.value,
+            filesystem_root=self.filesystem_root,
         )
         if cls != ExecutionWorkloadClass.EXTERNAL_REQUIRED:
             return
@@ -562,6 +570,8 @@ class ExecutionGateway:
             definition.id,
             metadata=meta,
             provider_kind=definition.provider_kind.value,
+            arguments=request.arguments,
+            filesystem_root=self.filesystem_root,
         ):
             return
         raise GatewayRejection(
@@ -819,11 +829,31 @@ class ExecutionGateway:
             FunctionCallStatus.TIMEOUT: CapabilityStatus.TIMEOUT,
         }
         status = status_map.get(fn_result.status, CapabilityStatus.FAILED)
+        output = fn_result.output
+        if (
+            status == CapabilityStatus.COMPLETED
+            and isinstance(output, dict)
+            and definition.id.startswith(("file.", "filesystem.", "workspace."))
+        ):
+            try:
+                from Data.modules.file_io.spill import maybe_spill_result
+
+                output = maybe_spill_result(
+                    output,
+                    artifact_store=self.artifact_store,
+                    producer=f"capability:{definition.id}",
+                    artifact_type="file_io_result",
+                    filename="result.json",
+                    run_id=request.run_id,
+                    job_id=request.job_id,
+                )
+            except Exception:  # noqa: BLE001 — spill failure must not discard success
+                pass
         return CapabilityResult(
             request_id=request.request_id or "",
             capability_id=definition.id,
             status=status,
-            output=fn_result.output,
+            output=output,
             error=fn_result.error,
             telemetry={
                 "function_call_id": fn_result.call_id,

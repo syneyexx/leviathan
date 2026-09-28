@@ -22,6 +22,8 @@ def register_builtin_functions(registry: FunctionRegistry) -> FunctionRegistry:
                     "max_bytes": {"type": "integer"},
                     "start_line": {"type": "integer"},
                     "end_line": {"type": "integer"},
+                    "offset": {"type": "integer"},
+                    "length": {"type": "integer"},
                 },
             },
             output_schema={
@@ -109,10 +111,12 @@ def register_builtin_functions(registry: FunctionRegistry) -> FunctionRegistry:
             entrypoint="Data.functions.text_file_write:run",
             input_schema={
                 "type": "object",
-                "required": ["path", "content"],
+                "required": ["path"],
                 "properties": {
                     "path": {"type": "string"},
                     "content": {"type": "string"},
+                    "content_path": {"type": "string"},
+                    "content_artifact_id": {"type": "string"},
                     "create_parents": {"type": "boolean"},
                 },
             },
@@ -122,6 +126,154 @@ def register_builtin_functions(registry: FunctionRegistry) -> FunctionRegistry:
             filesystem_requirement=True,
             timeout_seconds=20.0,
             ram_expectation_mb=32,
+        )
+    )
+    registry.register(
+        FunctionDefinition(
+            id="file_hash",
+            name="File Hash",
+            version="1.0.0",
+            description="Streaming SHA-256 hash of a local file.",
+            entrypoint="Data.functions.file_hash:run",
+            input_schema={
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                    "path": {"type": "string"},
+                    "algorithm": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            lifecycle_mode=LifecycleMode.ON_DEMAND,
+            side_effects=(SideEffect.READ,),
+            filesystem_requirement=True,
+            timeout_seconds=120.0,
+            ram_expectation_mb=64,
+        )
+    )
+    registry.register(
+        FunctionDefinition(
+            id="file_copy",
+            name="File Copy",
+            version="1.0.0",
+            description="Copy a single file (not a directory tree).",
+            entrypoint="Data.functions.file_copy:run",
+            input_schema={
+                "type": "object",
+                "required": ["source_path", "dest_path"],
+                "properties": {
+                    "source_path": {"type": "string"},
+                    "dest_path": {"type": "string"},
+                    "overwrite": {"type": "boolean"},
+                    "preserve_metadata": {"type": "boolean"},
+                    "compute_hashes": {"type": "boolean"},
+                },
+            },
+            output_schema={"type": "object"},
+            lifecycle_mode=LifecycleMode.ON_DEMAND,
+            side_effects=(SideEffect.WRITE,),
+            filesystem_requirement=True,
+            timeout_seconds=300.0,
+            ram_expectation_mb=64,
+        )
+    )
+    registry.register(
+        FunctionDefinition(
+            id="csv_parse",
+            name="CSV Parse",
+            version="1.0.0",
+            description="Streaming CSV parse.",
+            entrypoint="Data.functions.csv_parse:run",
+            input_schema={
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                    "path": {"type": "string"},
+                    "delimiter": {"type": "string"},
+                    "encoding": {"type": "string"},
+                    "max_rows": {"type": "integer"},
+                },
+            },
+            output_schema={"type": "object"},
+            lifecycle_mode=LifecycleMode.ON_DEMAND,
+            side_effects=(SideEffect.READ,),
+            filesystem_requirement=True,
+            timeout_seconds=300.0,
+            ram_expectation_mb=128,
+        )
+    )
+    registry.register(
+        FunctionDefinition(
+            id="csv_profile",
+            name="CSV Profile",
+            version="1.0.0",
+            description="Streaming CSV profile.",
+            entrypoint="Data.functions.csv_profile:run",
+            input_schema={
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                    "path": {"type": "string"},
+                    "delimiter": {"type": "string"},
+                    "encoding": {"type": "string"},
+                    "exact_distinct_max": {"type": "integer"},
+                },
+            },
+            output_schema={"type": "object"},
+            lifecycle_mode=LifecycleMode.ON_DEMAND,
+            side_effects=(SideEffect.READ,),
+            filesystem_requirement=True,
+            timeout_seconds=600.0,
+            ram_expectation_mb=256,
+        )
+    )
+    registry.register(
+        FunctionDefinition(
+            id="parquet_process",
+            name="Parquet Process",
+            version="1.0.0",
+            description="Minimal Parquet inspect / row-group processing.",
+            entrypoint="Data.functions.parquet_process:run",
+            input_schema={
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                    "path": {"type": "string"},
+                    "mode": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            lifecycle_mode=LifecycleMode.ON_DEMAND,
+            side_effects=(SideEffect.READ,),
+            filesystem_requirement=True,
+            timeout_seconds=600.0,
+            ram_expectation_mb=256,
+        )
+    )
+    registry.register(
+        FunctionDefinition(
+            id="filesystem_scan",
+            name="Filesystem Scan",
+            version="1.0.0",
+            description="Bounded recursive filesystem scan.",
+            entrypoint="Data.functions.filesystem_scan:run",
+            input_schema={
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                    "path": {"type": "string"},
+                    "recursive": {"type": "boolean"},
+                    "max_depth": {"type": "integer"},
+                    "max_entries": {"type": "integer"},
+                    "follow_symlinks": {"type": "boolean"},
+                },
+            },
+            output_schema={"type": "object"},
+            lifecycle_mode=LifecycleMode.ON_DEMAND,
+            side_effects=(SideEffect.READ,),
+            filesystem_requirement=True,
+            timeout_seconds=600.0,
+            ram_expectation_mb=128,
         )
     )
     registry.register(
