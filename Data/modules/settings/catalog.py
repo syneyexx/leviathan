@@ -1239,7 +1239,7 @@ def build_catalog() -> tuple[SettingDefinition, ...]:
             "python",
             "Module Manager",
             "Enable the Universal Module Manager.",
-            default=False,
+            default=True,
             env="LEVIATHAN_FEATURE_MODULE_MANAGER",
             path=("features", "module_manager_enabled"),
             consumer="ModuleManager",
