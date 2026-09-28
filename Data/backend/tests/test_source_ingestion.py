@@ -55,9 +55,9 @@ def tmp_env(tmp_path: Path):
         snapshots_root=snaps,
         job_runtime=runtime,
     )
-    # Force in-process settings for tests
+    # Force TEST-ONLY in-process settings (mechanical allow gate opens under pytest).
     if service.source_ingestion is not None:
-        service.source_ingestion.settings.runner = "inprocess"
+        service.source_ingestion.settings.runner = "inprocess_test"
         service.source_ingestion.settings.max_member_count = 100
         service.source_ingestion.settings.max_compression_ratio = 50.0
         service.source_ingestion.settings.max_total_uncompressed_bytes = 50 * 1024 * 1024

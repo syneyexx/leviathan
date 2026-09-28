@@ -51,6 +51,9 @@ class ClassifyCapabilityTests(unittest.TestCase):
         for cap in (
             "research.advance",
             "source_ingestion.process",
+            "source_ingestion.brain_retry",
+            "ocr.extract",
+            "document_ai.ocr",
             "dataset.process",
             "knowledge.prepare",
             "embedding.batch",

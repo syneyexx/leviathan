@@ -536,20 +536,44 @@ Crash forensics are durable and bounded: each process generation gets a unique l
 
 The former standalone source-ingestion design is consolidated into the Worker Fabric `source_ingestion` pool. Canonical entrypoint: `Data.modules.workers.entrypoints.source_ingestion`.
 
+**Hard production boundary (Wave 1):** FastAPI / ResearchService are control-plane only for source ingestion. Heavy work — archive security validation, ZIP/TAR extraction, recursive archive inspection, document/Office/PDF parsing, and Brain retry orchestration — executes exclusively on the `source_ingestion` worker. OCR / Document AI executes exclusively on the `document_ai` worker. There is no production inline fallback when workers are absent (typed `SOURCE_INGESTION_UNAVAILABLE` / `OCR_UNAVAILABLE`).
+
+Topology:
+
+```text
+FastAPI / Research API / operator UI
+    |  auth, validate, stream upload, hash, metadata, enqueue
+    v
+JobRuntime (durable)
+    v
+source_ingestion worker  (source_ingestion.process / brain_retry)
+    |-- detection, archive security, ZIP/TAR extract, recursion
+    |-- document / Office / PDF / code / structured parse
+    |-- when OCR genuinely required:
+            durable child job (ocr.extract / document_ai.ocr)
+                v
+            document_ai worker  → typed receipt (OCR_UNAVAILABLE if no backend)
+    v
+canonical Knowledge / DB commit paths
+```
+
 Ingress rules:
 
 | Source path | Canonical owner/behavior |
 |---|---|
 | Research file upload | Research `accept_upload` creates source and enqueues `source_ingestion.process` |
 | Archive children | remain under parent ingestion job/lineage |
-| Brain retry | enqueues source-ingestion brain retry; no synchronous heavy Knowledge write |
+| Brain retry | enqueues `source_ingestion.brain_retry`; no synchronous heavy Knowledge write from API |
+| PDF / document parse | `source_ingestion` worker only |
+| OCR / Document AI | `document_ai` pool (`ocr.*` / `document_ai.*`); desired count may be 0 → UNAVAILABLE / OCR backend missing |
 | Research URL fetch | Research web/fetch worker path; not mislabeled as source-ingestion queue work |
 | Research coordinator local/seed/web source construction | Research source/evidence path; not a fake SI job |
-| Production externalized mode with SI unavailable | explicit `SOURCE_INGESTION_UNAVAILABLE`; no silent legacy parse fallback |
+| Production with SI unavailable | explicit `SOURCE_INGESTION_UNAVAILABLE`; no silent legacy parse fallback |
+| Test-only inprocess | `runner=inprocess_test` + mechanical allow gate / pytest; never production default |
 
-An idle READY source-ingestion worker with zero queue depth means **healthy idle/no work**, not failure.
+An idle READY source-ingestion worker with zero queue depth means **healthy idle/no work**, not failure. `document_ai` with desired=0 remains **UNAVAILABLE** (OCR backend missing) — do not start an empty worker to greenwash readiness.
 
-Canonical implementation: `Data/modules/source_ingestion/`, worker entrypoint above, Research routes/services under `Data/modules/research/` and `Data/backend/routes/research.py`.
+Canonical implementation: `Data/modules/source_ingestion/`, worker entrypoint above, Research routes/services under `Data/modules/research/` and `Data/backend/routes/research.py`. OCR owner: `Data/modules/workers/entrypoints/document_ai.py`.
 
 ---
 

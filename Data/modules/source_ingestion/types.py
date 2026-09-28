@@ -60,6 +60,13 @@ class DetectionConfidence(str, Enum):
 PARSER_VERSION = "1.0.0"
 CAPABILITY_PROCESS = "source_ingestion.process"
 CAPABILITY_BRAIN_RETRY = "source_ingestion.brain_retry"
+CAPABILITY_OCR_EXTRACT = "ocr.extract"
+CAPABILITY_DOCUMENT_AI_OCR = "document_ai.ocr"
+
+# Additive typed reason codes (backwards-compatible with PDF_NO_EXTRACTABLE_TEXT).
+ERROR_OCR_REQUIRED = "OCR_REQUIRED"
+ERROR_OCR_UNAVAILABLE = "OCR_UNAVAILABLE"
+ERROR_DOCUMENT_AI_UNAVAILABLE = "DOCUMENT_AI_UNAVAILABLE"
 
 
 @dataclass(frozen=True)

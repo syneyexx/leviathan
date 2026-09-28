@@ -62,8 +62,9 @@ class SourceIngestionSettings:
     worker_poll_interval: float = 0.5
     worker_concurrency: int = 1
     lease_ttl_seconds: float = 60.0
-    # inprocess | external | none  (mirrors dataset_jobs_runner)
-    runner: str = "inprocess"
+    # Production default: fabric (Worker Fabric source_ingestion pool).
+    # inprocess_test is TEST-ONLY and requires the mechanical allow gate.
+    runner: str = "fabric"
     dataset_route_min_bytes: int = 32 * 1024 * 1024
     dataset_route_formats: tuple[str, ...] = (
         ".parquet",
@@ -134,21 +135,14 @@ def load_source_ingestion_settings(
     research_integration: Any | None = None,
 ) -> SourceIngestionSettings:
     """Load settings from env with optional ResearchIntegrationSettings overlay."""
+    from .execution_gate import normalize_runner_value
+
     ri = research_integration
     runner = (os.environ.get("LEVIATHAN_SOURCE_INGESTION_RUNNER") or "").strip().lower()
     if not runner and ri is not None:
         runner = str(getattr(ri, "source_ingestion_runner", "") or "").strip().lower()
-    # Canonicalize; default production = fabric (legacy alias: external).
-    if runner in {"inprocess", "in-process", "internal", "thread", "inprocess_test"}:
-        runner = "inprocess_test"
-    elif runner in {"standalone", "standalone_legacy", "legacy_external", "legacy"}:
-        runner = "standalone_legacy"
-    elif runner in {"fabric", "external", "worker", "process"}:
-        runner = "fabric"
-    elif runner in {"none", "off", "disabled"}:
-        runner = "disabled"
-    else:
-        runner = "fabric"
+    # Canonicalize; default production = fabric. Ambiguous inprocess aliases fail closed.
+    runner = normalize_runner_value(runner)
 
     settings = SourceIngestionSettings(
         enabled=_env_bool("LEVIATHAN_SOURCE_INGESTION_ENABLED", True),

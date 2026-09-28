@@ -376,9 +376,14 @@ class ResearchService:
                 self.enqueue_queued_projects()
             return
 
+        # Even when externalize flag is off, SI background threads require the
+        # mechanical inprocess_test allow gate (no silent reactivation).
         if self.source_ingestion is not None:
             try:
-                self.source_ingestion.start_background()
+                from Data.modules.source_ingestion.execution_gate import allow_inprocess_execution
+
+                if allow_inprocess_execution(self.source_ingestion.settings):
+                    self.source_ingestion.start_background()
             except Exception:  # noqa: BLE001
                 pass
         if self._dispatcher_thread and self._dispatcher_thread.is_alive():
@@ -1371,25 +1376,20 @@ class ResearchService:
                 content_type=content_type,
             )
             is_archive = result.get("source_type") == "archive"
-            runner = getattr(self.source_ingestion.settings, "runner", "inprocess")
             source_id = str(result.get("source_id") or "")
-            # Domain runner owns drain policy: inprocess may claim in-request for tests;
-            # fabric SI never parses in the API process.
-            if runner in {"inprocess", "inprocess_test"} and not result.get("idempotent"):
-                if self.source_ingestion.jobs is not None:
-                    self.source_ingestion.process_next()
-                    # Archives may leave residual pending if cancelled mid-flight; drain once more.
-                    if is_archive:
-                        pending = self.source_ingestion.get_status(source_id).files_pending
-                        if pending > 0:
-                            self.source_ingestion.pipeline().process_source(source_id)
-                else:
-                    self.source_ingestion.pipeline().process_source(source_id)
+            # TEST-ONLY: inprocess_test drain under mechanical allow gate.
+            # Production fabric path never parses / extracts / OCR here.
+            self._maybe_drain_source_ingestion_inprocess(
+                source_id, is_archive=bool(is_archive), idempotent=bool(result.get("idempotent"))
+            )
             source = self.store.get_source(source_id)
             progress = self.source_ingestion.get_status(source_id)
             text_chars = 0
             page_count = None
-            if source and source.snapshot_path and runner in {"inprocess", "inprocess_test"}:
+            from Data.modules.source_ingestion.execution_gate import allow_inprocess_execution
+
+            inprocess = allow_inprocess_execution(self.source_ingestion.settings)
+            if source and source.snapshot_path and inprocess:
                 try:
                     text_chars = len(Path(source.snapshot_path).read_text(encoding="utf-8"))
                 except OSError:
@@ -1449,51 +1449,39 @@ class ResearchService:
                 "progress": progress.public_dict(),
             }
 
-        # Legacy fallback (UploadIngestor) if SI unavailable — never when externalized.
-        if self._runners_externalized():
-            raise ResearchError(
-                "SOURCE_INGESTION_UNAVAILABLE",
-                "Source ingestion worker path required; synchronous PDF parse fallback disabled",
-                http_status=503,
-                details={"filename": filename},
-            )
-        source, text = self.uploads.from_upload_stream(
-            project.project_id,
-            filename=filename,
-            stream=stream,
-            content_type=content_type,
+        # Fail closed: never fall back to synchronous UploadIngestor PDF/text parse.
+        raise ResearchError(
+            "SOURCE_INGESTION_UNAVAILABLE",
+            "Source ingestion worker path required; synchronous PDF parse fallback disabled",
+            http_status=503,
+            details={"filename": filename},
         )
-        self.store.add_event(
-            project_id,
-            "source_parsed",
-            source.title or filename,
-            {
-                "source_id": source.source_id,
-                "parse_status": source.parse_status.value,
-                "mime_type": source.mime_type,
-            },
-        )
-        synced = self.brain.sync_uploaded_source(source, text)
-        self.store.add_event(
-            project_id,
-            "brain_sync" if synced.brain_status.value == "synced" else "brain_sync_failed",
-            synced.brain_error or "Upload synced to Brain",
-            {
-                "source_id": synced.source_id,
-                "brain_status": synced.brain_status.value,
-                "brain_document_id": synced.brain_document_id,
-            },
-        )
-        return {
-            "source": synced.public_dict(),
-            "source_id": synced.source_id,
-            "job_id": None,
-            "status": synced.brain_status.value,
-            "source_type": "file",
-            "filename": filename,
-            "extracted_chars": len(text),
-            "page_count": (synced.provenance or {}).get("page_count"),
-        }
+
+    def _maybe_drain_source_ingestion_inprocess(
+        self,
+        source_id: str,
+        *,
+        is_archive: bool = False,
+        idempotent: bool = False,
+    ) -> None:
+        """TEST-ONLY helper: claim/process one SI job when inprocess_test allow gate is open.
+
+        Production ResearchService must never call process_next / process_source.
+        """
+        if idempotent or self.source_ingestion is None:
+            return
+        from Data.modules.source_ingestion.execution_gate import allow_inprocess_execution
+
+        if not allow_inprocess_execution(self.source_ingestion.settings):
+            return
+        if self.source_ingestion.jobs is not None:
+            self.source_ingestion.process_next()
+            if is_archive:
+                pending = self.source_ingestion.get_status(source_id).files_pending
+                if pending > 0:
+                    self.source_ingestion.pipeline().process_source(source_id)
+        else:
+            self.source_ingestion.pipeline().process_source(source_id)
 
     def get_ingestion_status(self, project_id: str, source_id: str) -> dict[str, Any]:
         self.get_project(project_id)
@@ -1550,8 +1538,11 @@ class ResearchService:
         if self.source_ingestion is None:
             raise ResearchError("SOURCE_INGESTION_UNAVAILABLE", "Not configured", http_status=503)
         result = self.source_ingestion.retry(source_id, failed_only=failed_only)
-        if self.source_ingestion.settings.runner in {"inprocess", "inprocess_test"}:
-            self.source_ingestion.process_next()
+        # TEST-ONLY drain — production only enqueues.
+        self._maybe_drain_source_ingestion_inprocess(source_id, is_archive=False, idempotent=False)
+        from Data.modules.source_ingestion.execution_gate import allow_inprocess_execution
+
+        if allow_inprocess_execution(self.source_ingestion.settings):
             result["progress"] = self.source_ingestion.get_status(source_id).public_dict()
         return result
 
@@ -1560,28 +1551,21 @@ class ResearchService:
         source = self.store.get_source(source_id)
         if source is None or source.project_id != project_id:
             raise ResearchError("SOURCE_NOT_FOUND", source_id, http_status=404)
-        si_runner = (
-            getattr(self.source_ingestion.settings, "runner", "inprocess")
-            if self.source_ingestion is not None
-            else None
-        )
-        prefer_enqueue = self._runners_externalized() and si_runner not in {
-            "inprocess",
-            "inprocess_test",
-        }
+        # Production: always durable enqueue. Never inline Knowledge sync / reparse.
         if self.source_ingestion is not None:
-            meta = source.metadata or {}
-            if meta.get("is_container") or (source.provenance or {}).get("is_archive"):
-                if prefer_enqueue:
-                    return self.source_ingestion.enqueue_brain_retry(source_id)
+            from Data.modules.source_ingestion.execution_gate import allow_inprocess_execution
+
+            if allow_inprocess_execution(self.source_ingestion.settings):
                 return self.source_ingestion.retry_brain(source_id)
-            if prefer_enqueue:
-                return self.source_ingestion.enqueue_brain_retry(source_id)
-            # inprocess SI / tests: worker-owned path still available via retry_brain
-            return self.source_ingestion.retry_brain(source_id)
-        if prefer_enqueue and self.job_runtime is not None:
+            return self.source_ingestion.enqueue_brain_retry(source_id)
+        if self.job_runtime is not None:
             return self._enqueue_source_brain_retry(project_id, source_id)
-        return self.retry_brain_sync(project_id, source_id)
+        raise ResearchError(
+            "SOURCE_INGESTION_UNAVAILABLE",
+            "Brain retry requires source_ingestion worker / JobRuntime",
+            http_status=503,
+            details={"source_id": source_id},
+        )
 
     def _enqueue_source_brain_retry(self, project_id: str, source_id: str) -> dict[str, Any]:
         job = self.job_runtime.enqueue(
@@ -1791,21 +1775,22 @@ class ResearchService:
         source = self.store.get_source(source_id)
         if source is None or source.project_id != project_id:
             raise ResearchError("SOURCE_NOT_FOUND", "Unknown source", http_status=404)
-        si_runner = (
-            getattr(self.source_ingestion.settings, "runner", "inprocess")
-            if self.source_ingestion is not None
-            else None
-        )
-        prefer_enqueue = self._runners_externalized() and si_runner not in {
-            "inprocess",
-            "inprocess_test",
-        }
-        if prefer_enqueue and self.job_runtime is not None:
-            if self.source_ingestion is not None:
-                return self.source_ingestion.enqueue_brain_retry(source_id)
+        # Production: enqueue only. Inline Knowledge sync is TEST-ONLY under allow gate.
+        if self.source_ingestion is not None:
+            from Data.modules.source_ingestion.execution_gate import allow_inprocess_execution
+
+            if allow_inprocess_execution(self.source_ingestion.settings):
+                synced = self.brain.retry_brain_sync(source_id)
+                return {"source": synced.public_dict()}
+            return self.source_ingestion.enqueue_brain_retry(source_id)
+        if self.job_runtime is not None:
             return self._enqueue_source_brain_retry(project_id, source_id)
-        synced = self.brain.retry_brain_sync(source_id)
-        return {"source": synced.public_dict()}
+        raise ResearchError(
+            "SOURCE_INGESTION_UNAVAILABLE",
+            "Brain retry requires source_ingestion worker / JobRuntime",
+            http_status=503,
+            details={"source_id": source_id},
+        )
 
     def list_workers(self, project_id: str):
         self.get_project(project_id)

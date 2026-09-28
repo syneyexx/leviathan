@@ -1307,6 +1307,130 @@ def build_default_catalog() -> CapabilityCatalog:
     )
     catalog.register(
         CapabilityDefinition(
+            id="ocr.extract",
+            name="OCR Extract",
+            description=(
+                "Optical character recognition / scanned-document text extraction. "
+                "Owned exclusively by the document_ai worker pool (EXTERNAL_REQUIRED). "
+                "When no OCR backend is configured the worker fails closed with OCR_UNAVAILABLE."
+            ),
+            side_effects=(SideEffect.READ, SideEffect.WRITE),
+            provider_kind=CapabilityProviderKind.EXTERNAL,
+            provider_ref="document_ai.worker",
+            input_schema={
+                "type": "object",
+                "required": ["source_id", "path"],
+                "properties": {
+                    "source_id": {"type": "string"},
+                    "project_id": {"type": "string"},
+                    "path": {"type": "string"},
+                    "relative_path": {"type": "string"},
+                    "mime_type": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("filesystem.read",),
+            metadata={
+                "tags": ["ocr", "document_ai", "ingestion"],
+                "domains": ["document_ai"],
+                "worker_kind": "document_ai",
+                "execution_class": "EXTERNAL_REQUIRED",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="document_ai.ocr",
+            name="Document AI OCR",
+            description=(
+                "Document-AI OCR capability alias. EXTERNAL_REQUIRED on document_ai pool. "
+                "Never executed inline by FastAPI or source_ingestion API callers."
+            ),
+            side_effects=(SideEffect.READ, SideEffect.WRITE),
+            provider_kind=CapabilityProviderKind.EXTERNAL,
+            provider_ref="document_ai.worker",
+            input_schema={
+                "type": "object",
+                "required": ["source_id"],
+                "properties": {
+                    "source_id": {"type": "string"},
+                    "project_id": {"type": "string"},
+                    "path": {"type": "string"},
+                    "relative_path": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("filesystem.read",),
+            metadata={
+                "tags": ["ocr", "document_ai"],
+                "domains": ["document_ai"],
+                "worker_kind": "document_ai",
+                "execution_class": "EXTERNAL_REQUIRED",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="document_ai.extract",
+            name="Document AI Extract",
+            description=(
+                "Document-AI extraction alias (OCR/layout). EXTERNAL_REQUIRED on document_ai. "
+                "Fails closed with DOCUMENT_AI_UNAVAILABLE when no backend is configured."
+            ),
+            side_effects=(SideEffect.READ, SideEffect.WRITE),
+            provider_kind=CapabilityProviderKind.EXTERNAL,
+            provider_ref="document_ai.worker",
+            input_schema={
+                "type": "object",
+                "required": ["source_id"],
+                "properties": {
+                    "source_id": {"type": "string"},
+                    "project_id": {"type": "string"},
+                    "path": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("filesystem.read",),
+            metadata={
+                "tags": ["ocr", "document_ai"],
+                "domains": ["document_ai"],
+                "worker_kind": "document_ai",
+                "execution_class": "EXTERNAL_REQUIRED",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="document_ai.process",
+            name="Document AI Process",
+            description=(
+                "Document-AI process alias. EXTERNAL_REQUIRED on document_ai pool."
+            ),
+            side_effects=(SideEffect.READ, SideEffect.WRITE),
+            provider_kind=CapabilityProviderKind.EXTERNAL,
+            provider_ref="document_ai.worker",
+            input_schema={
+                "type": "object",
+                "required": ["source_id"],
+                "properties": {
+                    "source_id": {"type": "string"},
+                    "project_id": {"type": "string"},
+                    "path": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("filesystem.read",),
+            metadata={
+                "tags": ["ocr", "document_ai"],
+                "domains": ["document_ai"],
+                "worker_kind": "document_ai",
+                "execution_class": "EXTERNAL_REQUIRED",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
             id="compute.numeric",
             name="Numeric Compute",
             description="Deterministic Tier-0 math/statistics (never the main LLM).",

@@ -22,12 +22,17 @@ from Data.modules.research.types import (
 from Data.modules.research.uploads import sanitize_filename, stream_hash_and_write
 
 from .detection import detect_source_type, MIME_BY_EXT
+from .execution_gate import allow_inprocess_execution
 from .pipeline import SourceIngestionPipeline
 from .settings import SourceIngestionSettings, load_source_ingestion_settings
 from .store import IngestionStore
 from .types import (
     CAPABILITY_BRAIN_RETRY,
+    CAPABILITY_DOCUMENT_AI_OCR,
+    CAPABILITY_OCR_EXTRACT,
     CAPABILITY_PROCESS,
+    ERROR_DOCUMENT_AI_UNAVAILABLE,
+    ERROR_OCR_UNAVAILABLE,
     IngestionError,
     IngestionPhase,
 )
@@ -128,6 +133,7 @@ class SourceIngestionService:
             staging_root=self.staging_root,
             dataset_service=self.dataset_service,
             emit=self._emit_research_event,
+            enqueue_ocr=self.enqueue_ocr,
         )
 
     def _emit_research_event(self, name: str, message: str, payload: dict[str, Any]) -> None:
@@ -294,7 +300,14 @@ class SourceIngestionService:
 
     def _enqueue_process(self, source_id: str, project_id: str) -> str | None:
         if self.jobs is None:
-            return None
+            if allow_inprocess_execution(self.settings):
+                return None
+            raise ResearchError(
+                "SOURCE_INGESTION_UNAVAILABLE",
+                "JobRuntime not bound; source_ingestion worker path required",
+                http_status=503,
+                details={"source_id": source_id, "project_id": project_id},
+            )
         try:
             job = self.jobs.enqueue(
                 capability_id=CAPABILITY_PROCESS,
@@ -310,8 +323,100 @@ class SourceIngestionService:
                 resource_class="IO_HEAVY",
             )
             return job.job_id
-        except Exception:  # noqa: BLE001
-            return None
+        except ResearchError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            if allow_inprocess_execution(self.settings):
+                return None
+            raise ResearchError(
+                "SOURCE_INGESTION_UNAVAILABLE",
+                f"Failed to enqueue source_ingestion.process: {exc}"[:400],
+                http_status=503,
+                details={"source_id": source_id},
+            ) from exc
+
+    def enqueue_ocr(
+        self,
+        *,
+        source_id: str,
+        project_id: str,
+        path: str,
+        relative_path: str | None = None,
+        parent_job_id: str | None = None,
+        root_job_id: str | None = None,
+        mime_type: str | None = None,
+        reason: str = "ocr_required",
+    ) -> dict[str, Any]:
+        """Enqueue durable OCR/document-AI child job (never runs OCR inline).
+
+        When no OCR backend exists the document_ai worker fails closed with
+        OCR_UNAVAILABLE — this method only establishes lineage + contract.
+        """
+        if self.jobs is None:
+            return {
+                "queued": False,
+                "job_id": None,
+                "status": ERROR_OCR_UNAVAILABLE,
+                "error_code": ERROR_OCR_UNAVAILABLE,
+                "reason": "JobRuntime not bound",
+                "truth": {"ocr_backend": "missing", "executed_inline": False},
+            }
+        arguments = {
+            "source_id": source_id,
+            "project_id": project_id,
+            "path": path,
+            "relative_path": relative_path or path,
+            "mime_type": mime_type,
+            "reason": reason,
+        }
+        idem = f"document_ai:ocr:{source_id}:{relative_path or path}"
+        try:
+            job = self.jobs.enqueue(
+                capability_id=CAPABILITY_OCR_EXTRACT,
+                arguments=arguments,
+                requested_by="source_ingestion.ocr_delegate",
+                idempotency_key=idem[:200],
+                metadata={
+                    "source_id": source_id,
+                    "project_id": project_id,
+                    "relative_path": relative_path or path,
+                    "human_title": relative_path or source_id,
+                    "delegated_from": CAPABILITY_PROCESS,
+                    "capability_alias": CAPABILITY_DOCUMENT_AI_OCR,
+                },
+                latency_class="background",
+                domain="document_ai",
+                domain_entity_type="source",
+                domain_entity_id=source_id,
+                worker_pool="document_ai",
+                resource_class="CPU_HEAVY",
+                parent_job_id=parent_job_id,
+                root_job_id=root_job_id or parent_job_id,
+            )
+            return {
+                "queued": True,
+                "job_id": job.job_id,
+                "job": job.public_dict(),
+                "status": "QUEUED",
+                "capability_id": CAPABILITY_OCR_EXTRACT,
+                "worker_pool": "document_ai",
+                "truth": {
+                    "ocr_backend": "delegated",
+                    "executed_inline": False,
+                    "parent_job_id": parent_job_id,
+                },
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "queued": False,
+                "job_id": None,
+                "status": ERROR_DOCUMENT_AI_UNAVAILABLE
+                if "DOCUMENT_AI" in str(exc).upper()
+                else ERROR_OCR_UNAVAILABLE,
+                "error_code": ERROR_OCR_UNAVAILABLE,
+                "reason": str(exc)[:300],
+                "truth": {"ocr_backend": "missing", "executed_inline": False},
+            }
 
     def get_status(self, source_id: str) -> Any:
         return self.pipeline().get_progress(source_id)
@@ -441,6 +546,21 @@ class SourceIngestionService:
         }
 
     def retry_brain(self, source_id: str) -> dict[str, Any]:
+        """Worker-owned brain retry. Callers in the API/control plane must enqueue.
+
+        Production ResearchService must use :meth:`enqueue_brain_retry`. This method
+        remains for the source_ingestion worker (and explicitly allowed inprocess_test).
+        """
+        if not allow_inprocess_execution(self.settings):
+            # Soft fence for accidental API callers — prefer enqueue when jobs bound.
+            if self.jobs is not None:
+                return self.enqueue_brain_retry(source_id)
+            raise ResearchError(
+                "SOURCE_INGESTION_UNAVAILABLE",
+                "Brain retry must execute on the source_ingestion worker",
+                http_status=503,
+                details={"source_id": source_id},
+            )
         container = self.ingestion.get_container(source_id)
         if container and container.get("archive_type"):
             progress = self.pipeline().retry_brain_only(source_id)
@@ -528,10 +648,23 @@ class SourceIngestionService:
                 current = claimed
         try:
             source_id = str(current.arguments.get("source_id") or "")
+            pipe = SourceIngestionPipeline(
+                research_store=self.research,
+                ingestion_store=self.ingestion,
+                settings=self.settings,
+                knowledge=self.knowledge,
+                snapshots_root=self.snapshots_root,
+                staging_root=self.staging_root,
+                dataset_service=self.dataset_service,
+                emit=self._emit_research_event,
+                enqueue_ocr=self.enqueue_ocr,
+                parent_job_id=current.job_id,
+                root_job_id=getattr(current, "root_job_id", None) or current.job_id,
+            )
             if current.capability_id == CAPABILITY_BRAIN_RETRY:
-                self.pipeline().retry_brain_only(source_id)
+                pipe.retry_brain_only(source_id)
             else:
-                self.pipeline().process_source(source_id)
+                pipe.process_source(source_id)
             fenced_transition(
                 store,
                 current.job_id,
@@ -563,6 +696,9 @@ class SourceIngestionService:
                     pass
 
     def start_background(self, *, poll_interval_s: float | None = None) -> None:
+        # Hard fence: never spawn API-thread ingestion unless inprocess_test allow gate.
+        if not allow_inprocess_execution(self.settings):
+            return
         if self.settings.runner not in {"inprocess", "inprocess_test"}:
             return
         interval = float(poll_interval_s if poll_interval_s is not None else self.settings.worker_poll_interval)
