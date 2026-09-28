@@ -691,7 +691,11 @@ def _assert_loopback_mutation_allowed(request: Request) -> None:
 
 
 def _evaluation_externalize() -> bool:
-    """Prefer external workers; fail closed toward externalization on probe errors."""
+    """Prefer external workers; fail closed toward externalization on probe errors.
+
+    Legacy name retained for evaluation/neuro call sites. Prefer
+    ``_workers_externalize`` for Knowledge control-plane gating.
+    """
     import os
 
     try:
@@ -702,6 +706,12 @@ def _evaluation_externalize() -> bool:
     except Exception:  # noqa: BLE001
         raw = (os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API") or "1").strip().lower()
         return raw in {"1", "true", "yes", "on"}
+
+
+def _workers_externalize() -> bool:
+    """Canonical workers-externalize predicate for Knowledge / heavy API work."""
+    return _evaluation_externalize()
+
 
 def _gate_outbound() -> GateCheck:
     """Report outbound posture truthfully — enabled outbound is not a failure.
@@ -2467,6 +2477,7 @@ app.include_router(
         atlas_store=atlas_store,
         deep_recall_service=deep_recall_service,
         why_library=why_library,
+        workers_externalize_fn=_workers_externalize,
         evaluation_externalize_fn=_evaluation_externalize,
         enqueue_ingest_scan_fn=_enqueue_ingest_scan,
     )

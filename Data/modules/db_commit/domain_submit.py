@@ -226,3 +226,71 @@ def submit_knowledge_prepared(
         source_job_id=source_job_id,
         record_count_hint=1,
     )
+
+
+def submit_knowledge_replace_chunks(
+    db_path: Path | str,
+    *,
+    document_id: str,
+    expected_content_hash: str,
+    chunks: list[dict[str, Any]],
+    title: str = "",
+    source: str = "manual",
+    finalize: bool = True,
+    document_content_for_fts: str = "",
+    source_job_id: str = "",
+    idempotency_key: str | None = None,
+) -> SubmitResult:
+    return producer_for(db_path, domain="knowledge").submit(
+        operation="knowledge.replace_chunks",
+        domain="knowledge",
+        payload={
+            "document_id": document_id,
+            "expected_content_hash": expected_content_hash,
+            "title": title,
+            "source": source,
+            "chunks": chunks,
+            "finalize": bool(finalize),
+            "document_content_for_fts": document_content_for_fts,
+        },
+        idempotency_key=idempotency_key,
+        priority=CommitPriority.P2_DOMAIN,
+        entity_type="knowledge_document",
+        entity_id=document_id,
+        safe_human_title=title or document_id,
+        source_job_id=source_job_id,
+        record_count_hint=len(chunks),
+        allow_critical=True,
+    )
+
+
+def submit_knowledge_chunk_embeddings(
+    db_path: Path | str,
+    *,
+    document_id: str,
+    embeddings: list[dict[str, Any]],
+    expected_content_hash: str = "",
+    provider_id: str = "",
+    finalize: bool = False,
+    source_job_id: str = "",
+    idempotency_key: str | None = None,
+) -> SubmitResult:
+    return producer_for(db_path, domain="knowledge").submit(
+        operation="knowledge.upsert_chunk_embeddings",
+        domain="knowledge",
+        payload={
+            "document_id": document_id,
+            "expected_content_hash": expected_content_hash,
+            "embeddings": embeddings,
+            "provider_id": provider_id,
+            "finalize": bool(finalize),
+        },
+        idempotency_key=idempotency_key,
+        priority=CommitPriority.P2_DOMAIN,
+        entity_type="knowledge_document",
+        entity_id=document_id,
+        safe_human_title=document_id,
+        source_job_id=source_job_id,
+        record_count_hint=len(embeddings),
+        allow_critical=True,
+    )

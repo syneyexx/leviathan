@@ -55,8 +55,8 @@ def build_brain_router(
         # Bounded projection only — never a full-corpus heavy recompute.
         graph = facade.query(limit=facade.max_nodes)
         truth = dict(graph.get("truth") or {})
-        truth.setdefault("bounded_projection": True)
-        truth.setdefault("stats_are_not_global_unless_corpus_fits_bound": True)
+        truth.setdefault("bounded_projection", True)
+        truth.setdefault("stats_are_not_global_unless_corpus_fits_bound", True)
         return {
             "stats": graph["stats"],
             "truth": truth,
