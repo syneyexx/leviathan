@@ -7,7 +7,7 @@ from typing import Annotated, Any, Callable
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from Data.modules.backup import BackupError
+from Data.modules.backup import BackupError  # noqa: F401 — re-exported for route typing/errors
 from Data.modules.chaos import ChaosPlan
 from Data.modules.common import ownership_public_dict
 from Data.modules.context import ContextBuilder
@@ -264,7 +264,43 @@ def build_platform_router(
 
     @router.get("/api/security/audit")
     def security_audit() -> dict:
-        return {"report": security_auditor.run().public_dict()}
+        """Bounded static posture — never a deep repository scan."""
+        report = security_auditor.run().public_dict()
+        report["truth"] = {
+            **dict(report.get("truth") or {}),
+            "staticAuditIsNotDeepScan": True,
+            "deepScanRequiresPost": True,
+        }
+        return {"report": report}
+
+    @router.post("/api/security/audit/deep")
+    def security_audit_deep(payload: dict | None = None) -> dict:
+        """Enqueue deep repository/dependency security audit."""
+        from Data.modules.workers.settings import load_worker_settings
+
+        wsettings = load_worker_settings()
+        if not (wsettings.enabled and wsettings.externalize_api_runners):
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "SECURITY_WORKER_UNAVAILABLE",
+                    "message": "Deep security audit requires the security worker",
+                },
+            )
+        scope = str((payload or {}).get("scope") or "all")
+        try:
+            job = job_runtime.enqueue(
+                capability_id="security.audit.deep",
+                arguments={"scope": scope},
+                requested_by="api",
+                domain="security",
+                worker_pool="security",
+                resource_class="CPU_HEAVY",
+                latency_class="background",
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"job": job.public_dict(), "queued": True}
 
     @router.get("/api/native/probe")
     def native_probe() -> dict:
@@ -289,37 +325,63 @@ def build_platform_router(
 
         include_corpus = bool(payload.include_corpus) if payload else False
         wsettings = load_worker_settings()
-        # BACKUP-005: heavy corpus/DB copy prefers worker fabric when enabled.
-        use_worker = wsettings.enabled and (
-            wsettings.externalize_api_runners or include_corpus
-        )
-        if use_worker:
-            try:
-                job = job_runtime.enqueue(
-                    capability_id="backup.create",
-                    arguments={
-                        "note": (payload.note if payload else None),
-                        "include_corpus": include_corpus,
-                    },
-                    requested_by="api",
-                    domain="backup",
-                    worker_pool="backup",
-                    resource_class="IO_HEAVY",
-                    latency_class="maintenance",
-                )
-            except KeyError as exc:
-                raise HTTPException(status_code=404, detail=str(exc)) from exc
-            metrics.incr("backups_enqueued")
-            return {"job": job.public_dict(), "queued": True}
-        try:
-            manifest = backup_service.create(
-                note=(payload.note if payload else None),
-                include_corpus=include_corpus,
+        # Production: backup.create is always external — no FastAPI BackupService.create fallback.
+        if not (wsettings.enabled and wsettings.externalize_api_runners):
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "BACKUP_WORKER_UNAVAILABLE",
+                    "message": "Backup creation requires the backup worker; inline fallback disabled",
+                },
             )
-        except BackupError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        metrics.incr("backups_created")
-        return {"backup": manifest.public_dict()}
+        try:
+            job = job_runtime.enqueue(
+                capability_id="backup.create",
+                arguments={
+                    "note": (payload.note if payload else None),
+                    "include_corpus": include_corpus,
+                },
+                requested_by="api",
+                domain="backup",
+                worker_pool="backup",
+                resource_class="IO_HEAVY",
+                latency_class="maintenance",
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        metrics.incr("backups_enqueued")
+        return {"job": job.public_dict(), "queued": True}
+
+    @router.post("/api/backup/verify")
+    def verify_backup(payload: dict) -> dict:
+        from Data.modules.workers.settings import load_worker_settings
+
+        wsettings = load_worker_settings()
+        if not (wsettings.enabled and wsettings.externalize_api_runners):
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "BACKUP_WORKER_UNAVAILABLE",
+                    "message": "Backup verification requires the backup worker",
+                },
+            )
+        backup_id = str((payload or {}).get("backup_id") or "")
+        level = str((payload or {}).get("level") or "HASH_VERIFIED")
+        if not backup_id:
+            raise HTTPException(status_code=400, detail="backup_id required")
+        try:
+            job = job_runtime.enqueue(
+                capability_id="backup.verify",
+                arguments={"backup_id": backup_id, "level": level},
+                requested_by="api",
+                domain="backup",
+                worker_pool="backup",
+                resource_class="IO_HEAVY",
+                latency_class="maintenance",
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"job": job.public_dict(), "queued": True}
 
     @router.get("/api/backup/restore/status")
     def backup_restore_status() -> dict:
@@ -330,47 +392,45 @@ def build_platform_router(
 
     @router.post("/api/backup/restore")
     def restore_backup(payload: BackupRestoreRequest, request: Request) -> dict:
-        # BACKUP-004: restore is operator-privileged (loopback / mutation guard).
+        # Restore mutates canonical DB files — maintenance.backup.restore only.
         assert_loopback_fn(request)
-        from Data.modules.backup import MaintenanceError
+        from Data.modules.workers.settings import load_worker_settings
 
-        coordinator = getattr(backup_service, "maintenance", None)
-        if coordinator is None:
+        if not payload.confirm:
+            raise HTTPException(status_code=400, detail="Restore refused: confirm=true is required")
+        wsettings = load_worker_settings()
+        if not (wsettings.enabled and wsettings.externalize_api_runners):
             raise HTTPException(
                 status_code=503,
-                detail="Maintenance coordinator unavailable — refuse restore",
+                detail={
+                    "code": "MAINTENANCE_UNAVAILABLE",
+                    "message": "Restore requires the maintenance worker; inline restore disabled",
+                },
             )
-        # API requests restore; server proves maintenance (bounded quiesce).
         try:
-            proof = coordinator.enter_for_restore(
-                reason="api_restore",
+            job = job_runtime.enqueue(
+                capability_id="maintenance.backup.restore",
+                arguments={
+                    "backup_id": payload.backup_id,
+                    "confirm": True,
+                },
+                requested_by="api",
+                domain="maintenance",
+                worker_pool="maintenance",
+                resource_class="MAINTENANCE_EXCLUSIVE",
+                latency_class="maintenance",
             )
-        except MaintenanceError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        try:
-            manifest = backup_service.restore(
-                payload.backup_id,
-                confirm=payload.confirm,
-                maintenance_proof=proof,
-            )
-        except BackupError as exc:
-            detail = str(exc)
-            status = 400
-            if "confirm" in detail.lower() or "maintenance" in detail.lower():
-                status = 400
-            elif "not found" in detail.lower():
-                status = 404
-            elif "hash" in detail.lower():
-                status = 409
-            elif "recovery required" in detail.lower() or "interrupted" in detail.lower():
-                status = 409
-            raise HTTPException(status_code=status, detail=detail) from exc
-        metrics.incr("backups_restored")
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        metrics.incr("backups_restore_enqueued")
         return {
-            "backup": manifest.public_dict(),
-            "warning": "process should be restarted after restore",
-            "restoreTerminalState": (manifest.metadata or {}).get("restoreTerminalState"),
-            "maintenance": coordinator.public_status(),
+            "job": job.public_dict(),
+            "queued": True,
+            "truth": {
+                "restoreIsMaintenanceOwned": True,
+                "confirmStillRequired": True,
+                "apiDoesNotReplaceDbFiles": True,
+            },
         }
 
     @router.get("/api/chaos")

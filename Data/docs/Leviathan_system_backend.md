@@ -939,7 +939,73 @@ Heavy integrity scans, checkpoint verification and large dataset hashing are **e
 
 ## Evaluation
 
-`Data/modules/evaluation/` owns benchmark/evaluation harnesses, ablations, scorecards/platform state. Missing model/provider measurements remain unavailable/unmeasured. Training may emit small validation metrics; full release evaluation remains evaluation-owned.
+`Data/modules/evaluation/` owns benchmark/evaluation harnesses, ablations,
+scorecards/platform state. Missing model/provider measurements remain
+unavailable/unmeasured. Training may emit small validation metrics; full
+release evaluation remains evaluation-owned.
+
+### Evaluation / DB / assurance externalization topology
+
+Production heavy work is fail-closed and external-only:
+
+```text
+EVALUATION:
+  FastAPI authorize/validate/enqueue
+    -> evaluation.* (pool evaluation, default=1 max=2)
+    -> EvaluationPlatform suites / typed release plans / statistics / soak / chaos
+    -> ArtifactStore + EvaluationStore
+  GET reports/scorecard/promotion/release status = cheap reads only
+  GET release/master gates NEVER execute suites
+
+HEAVY SQLITE READS:
+  SqliteManager (control surface)
+    -> classify_operator_query (central; LIMIT ≠ cost)
+    -> sqlite_ops.* (pool sqlite_ops, max=1, READ-ONLY)
+    -> bounded rows or ArtifactStore export
+  Never: INSERT/UPDATE/DELETE/VACUUM/ANALYZE/ATTACH/restore
+
+MAINTENANCE (singleton MAINTENANCE_EXCLUSIVE):
+  integrity / VACUUM / ANALYZE / blocking WAL checkpoint /
+  bounded lease reconcile / cleanup / migration verify /
+  maintenance.backup.restore
+  Durable maintenance_state.json fence is system-wide (not API-process-only)
+
+BACKUP (pool backup, max=1):
+  backup.create / backup.verify — always enqueue in production
+  Streaming SHA-256 only (no Path.read_bytes whole-DB hash)
+  Three-DB consistency truth: per-DB consistent; cross-DB PIT atomicity = UNAVAILABLE
+
+RESTORE:
+  POST /api/backup/restore -> maintenance.backup.restore
+  MaintenanceCoordinator quiescence + BackupService staged journaled cutover
+  API never replaces DB files
+
+BULK WRITES:
+  domain prepare -> typed commit -> db_commit (CONTROL/KNOWLEDGE/MARKET lanes)
+  db_commit never exposes arbitrary SQL
+
+SECURITY (pool security, max=1):
+  GET /api/security/audit = bounded static posture
+  POST /api/security/audit/deep = security.audit.deep
+  HADES/editor excluded; secrets redacted; missing scanner ≠ PASS
+
+TELEMETRY (pool telemetry, default disabled):
+  telemetry.sample / hardware_window / diagnostics.collect
+  Long samplers live in telemetry worker — not FastAPI
+  Missing sensors = UNMEASURED (never zero-fill)
+
+SOAK / CHAOS:
+  evaluation.soak / evaluation.chaos (explicit, bounded, loopback-gated)
+```
+
+SqliteManager remains the operator control surface only — not a persistence
+layer, migration engine, queue, or second DB writer. Canonical authorities
+preserved: DatabasePaths, table_ownership, sqlite_policy, MigrationRunner,
+DbCommitCoordinator, BackupService, MaintenanceCoordinator, EvaluationPlatform,
+SecurityAuditor, ArtifactStore, JobRuntime, Worker Fabric, ResourceAdmission.
+
+MarketSim scientific strategy qualification remains `market_sim` /
+QualificationAuthority — not EvaluationPlatform.
 
 ## Verification/quality
 

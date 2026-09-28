@@ -60,11 +60,60 @@ def get_active_maintenance_coordinator() -> "MaintenanceCoordinator | None":
         return _PROCESS_COORDINATOR
 
 
-def assert_writes_allowed(*, op: str = "write") -> None:
-    """Fail closed when the process coordinator has fenced writers."""
+def _resolve_backup_root_for_fence() -> Path | None:
+    """Best-effort backup root for cross-process durable fence reads."""
+    import os
+
+    raw = os.environ.get("LEVIATHAN_BACKUP_ROOT")
+    if raw:
+        return Path(raw)
+    coord = get_active_maintenance_coordinator()
+    if coord is not None:
+        return Path(coord.backup_root)
+    # Common default layout
+    candidate = Path("Data/backend/data/backups")
+    if candidate.is_dir():
+        return candidate
+    return None
+
+
+def durable_writes_fenced(backup_root: Path | None = None) -> bool:
+    """True when maintenance_state.json says writers are fenced (cross-process)."""
+    root = backup_root or _resolve_backup_root_for_fence()
+    if root is None:
+        return False
+    path = Path(root) / "maintenance_state.json"
+    if not path.is_file():
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return True  # unreadable fence → fail closed
+    state = str(payload.get("state") or "")
+    if bool(payload.get("writesFenced")):
+        return True
+    if state in {
+        MAINT_ENTERING,
+        MAINT_QUIESCING,
+        MAINT_QUIESCED,
+        MAINT_RESTORING,
+        MAINT_VERIFYING,
+        MAINT_RECOVERY_REQUIRED,
+    }:
+        return True
+    return False
+
+
+def assert_writes_allowed(*, op: str = "write", backup_root: Path | None = None) -> None:
+    """Fail closed when process coordinator OR durable maintenance fence is active."""
     coord = get_active_maintenance_coordinator()
     if coord is not None:
         coord.assert_writes_allowed(op=op)
+        return
+    if durable_writes_fenced(backup_root):
+        raise MaintenanceError(
+            f"writes rejected during durable maintenance fence (op={op})"
+        )
 
 
 @dataclass(frozen=True)

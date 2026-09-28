@@ -2421,10 +2421,152 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         description="Lease recovery, stale cleanup, and reconciliation sweep.",
         side_effects=(SideEffect.EXECUTE,),
         worker_kind="maintenance",
-        properties={"scope": {"type": "string"}},
+        properties={"scope": {"type": "string"}, "batch_limit": {"type": "integer"}},
         permissions=("process.execute",),
         tags=["maintenance", "reconcile"],
         domains=["jobs"],
+    )
+    _ext(
+        cap_id="maintenance.db.integrity",
+        name="Database Integrity Check",
+        description="Full PRAGMA integrity_check / heavy quick_check under maintenance exclusivity.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.READ),
+        worker_kind="maintenance",
+        properties={
+            "domain": {"type": "string"},
+            "kind": {"type": "string"},
+            "max_errors": {"type": "integer"},
+        },
+        permissions=("process.execute", "filesystem.read"),
+        tags=["maintenance", "integrity", "sqlite"],
+        domains=["database"],
+    )
+    _ext(
+        cap_id="maintenance.db.vacuum",
+        name="Database VACUUM",
+        description="Exclusive VACUUM rewrite of a canonical database domain.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="maintenance",
+        properties={"domain": {"type": "string"}},
+        permissions=("process.execute", "filesystem.write"),
+        tags=["maintenance", "vacuum", "sqlite"],
+        domains=["database"],
+    )
+    _ext(
+        cap_id="maintenance.db.analyze",
+        name="Database ANALYZE",
+        description="Large ANALYZE of planner statistics for a domain/table/index.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="maintenance",
+        properties={
+            "domain": {"type": "string"},
+            "table": {"type": "string"},
+            "index": {"type": "string"},
+        },
+        permissions=("process.execute",),
+        tags=["maintenance", "analyze", "sqlite"],
+        domains=["database"],
+    )
+    _ext(
+        cap_id="maintenance.db.checkpoint",
+        name="Blocking WAL Checkpoint",
+        description="FULL/RESTART/TRUNCATE WAL checkpoint under maintenance exclusivity.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="maintenance",
+        properties={"domain": {"type": "string"}, "mode": {"type": "string"}},
+        permissions=("process.execute",),
+        tags=["maintenance", "wal", "sqlite"],
+        domains=["database"],
+    )
+    _ext(
+        cap_id="maintenance.db.cleanup",
+        name="Database Retention Cleanup",
+        description="Bounded retention / stale-data cleanup under maintenance.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="maintenance",
+        properties={
+            "domain": {"type": "string"},
+            "policy": {"type": "string"},
+            "batch_limit": {"type": "integer"},
+            "dry_run": {"type": "boolean"},
+        },
+        permissions=("process.execute",),
+        tags=["maintenance", "cleanup"],
+        domains=["database"],
+    )
+    _ext(
+        cap_id="maintenance.db.import",
+        name="Controlled Database Import",
+        description="Typed operator table import under maintenance (never arbitrary executescript).",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="maintenance",
+        properties={
+            "domain": {"type": "string"},
+            "table": {"type": "string"},
+            "artifact_ref": {"type": "string"},
+            "dry_run": {"type": "boolean"},
+        },
+        permissions=("process.execute", "filesystem.write"),
+        tags=["maintenance", "import"],
+        domains=["database"],
+    )
+    _ext(
+        cap_id="maintenance.db.migration_verify",
+        name="Migration Verification",
+        description="Heavy post-migration verification (not a second migration engine).",
+        side_effects=(SideEffect.EXECUTE, SideEffect.READ),
+        worker_kind="maintenance",
+        properties={"domain": {"type": "string"}},
+        permissions=("process.execute",),
+        tags=["maintenance", "migration", "verify"],
+        domains=["database"],
+    )
+    _ext(
+        cap_id="maintenance.backup.restore",
+        name="Restore Backup Cutover",
+        description="System-wide maintenance restore via BackupService + MaintenanceCoordinator.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="maintenance",
+        properties={
+            "backup_id": {"type": "string"},
+            "confirm": {"type": "boolean"},
+        },
+        permissions=("process.execute", "filesystem.write"),
+        tags=["maintenance", "restore", "backup"],
+        domains=["backup"],
+    )
+    _ext(
+        cap_id="maintenance.artifacts.cleanup",
+        name="Artifact Store Cleanup",
+        description="Reference-aware ArtifactStore retention cleanup.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="maintenance",
+        properties={"dry_run": {"type": "boolean"}, "batch_limit": {"type": "integer"}},
+        permissions=("process.execute", "filesystem.write"),
+        tags=["maintenance", "artifacts", "cleanup"],
+        domains=["artifacts"],
+    )
+    _ext(
+        cap_id="maintenance.cache.cleanup",
+        name="Canonical Cache Cleanup",
+        description="Cleanup of known canonical cache roots only (path-escape safe).",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="maintenance",
+        properties={"dry_run": {"type": "boolean"}},
+        permissions=("process.execute", "filesystem.write"),
+        tags=["maintenance", "cache", "cleanup"],
+        domains=["system"],
+    )
+    _ext(
+        cap_id="maintenance.orphans.cleanup",
+        name="Orphan Cleanup",
+        description="Cross-domain orphan staging/partial cleanup when ownership is proven.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="maintenance",
+        properties={"dry_run": {"type": "boolean"}, "batch_limit": {"type": "integer"}},
+        permissions=("process.execute",),
+        tags=["maintenance", "orphans", "cleanup"],
+        domains=["system"],
     )
     _ext(
         cap_id="evaluation.run",
@@ -2438,6 +2580,106 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         },
         permissions=("process.execute",),
         tags=["evaluation", "run"],
+    )
+    _ext(
+        cap_id="evaluation.benchmark",
+        name="Run Evaluation Benchmark",
+        description="Execute a benchmark suite externally with provenance binding.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.READ),
+        worker_kind="evaluation",
+        properties={"suite_id": {"type": "string"}},
+        permissions=("process.execute",),
+        tags=["evaluation", "benchmark"],
+    )
+    _ext(
+        cap_id="evaluation.regression",
+        name="Run Regression Suite",
+        description="Execute immutable-identity regression corpus externally.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.READ),
+        worker_kind="evaluation",
+        properties={"suite_id": {"type": "string"}},
+        permissions=("process.execute",),
+        tags=["evaluation", "regression"],
+    )
+    _ext(
+        cap_id="evaluation.ablation",
+        name="Run Ablation Suite",
+        description="Execute feature ablation with explicit baseline/delta.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.READ),
+        worker_kind="evaluation",
+        properties={"suite_id": {"type": "string"}},
+        permissions=("process.execute",),
+        tags=["evaluation", "ablation"],
+    )
+    _ext(
+        cap_id="evaluation.scorecard",
+        name="Build Large Scorecard",
+        description="Aggregate existing measured evidence into a large scorecard (external).",
+        side_effects=(SideEffect.EXECUTE, SideEffect.READ),
+        worker_kind="evaluation",
+        properties={"scope": {"type": "string"}},
+        permissions=("process.execute",),
+        tags=["evaluation", "scorecard"],
+    )
+    _ext(
+        cap_id="evaluation.release.validate",
+        name="Release Validation",
+        description="Execute typed allowlisted release validation test plan externally.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.READ),
+        worker_kind="evaluation",
+        properties={"plan_id": {"type": "string"}},
+        permissions=("process.execute",),
+        tags=["evaluation", "release", "validate"],
+    )
+    _ext(
+        cap_id="evaluation.verify_tests",
+        name="Verify Test Suites",
+        description="Measured test-suite verification via typed allowlisted runners.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.READ),
+        worker_kind="evaluation",
+        properties={"suite_id": {"type": "string"}},
+        permissions=("process.execute",),
+        tags=["evaluation", "verify", "tests"],
+    )
+    _ext(
+        cap_id="evaluation.statistics",
+        name="Statistical Analysis",
+        description="Generic statistical qualification/analysis (not MarketSim QualificationAuthority).",
+        side_effects=(SideEffect.EXECUTE, SideEffect.READ),
+        worker_kind="evaluation",
+        properties={
+            "method": {"type": "string"},
+            "artifact_ref": {"type": "string"},
+            "seed": {"type": "integer"},
+        },
+        permissions=("process.execute",),
+        tags=["evaluation", "statistics"],
+    )
+    _ext(
+        cap_id="evaluation.soak",
+        name="Resource Soak Test",
+        description="Bounded soak experiment orchestrated by evaluation; telemetry measures.",
+        side_effects=(SideEffect.EXECUTE,),
+        worker_kind="evaluation",
+        properties={
+            "duration_seconds": {"type": "number"},
+            "profile": {"type": "string"},
+        },
+        permissions=("process.execute",),
+        tags=["evaluation", "soak"],
+    )
+    _ext(
+        cap_id="evaluation.chaos",
+        name="Chaos / Stress Experiment",
+        description="Bounded explicit chaos/stress experiment with durable cleanup.",
+        side_effects=(SideEffect.EXECUTE,),
+        worker_kind="evaluation",
+        properties={
+            "experiment_id": {"type": "string"},
+            "duration_seconds": {"type": "number"},
+        },
+        permissions=("process.execute",),
+        tags=["evaluation", "chaos"],
     )
     _ext(
         cap_id="training.control",
@@ -2746,9 +2988,191 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         description="Create a durable backup snapshot.",
         side_effects=(SideEffect.WRITE, SideEffect.EXECUTE),
         worker_kind="backup",
-        properties={"label": {"type": "string"}},
+        properties={"label": {"type": "string"}, "include_corpus": {"type": "boolean"}},
         permissions=("filesystem.write",),
         tags=["backup", "create"],
+    )
+    _ext(
+        cap_id="backup.verify",
+        name="Verify Backup",
+        description="External backup verification at explicit verification levels.",
+        side_effects=(SideEffect.READ, SideEffect.EXECUTE),
+        worker_kind="backup",
+        properties={
+            "backup_id": {"type": "string"},
+            "level": {"type": "string"},
+        },
+        permissions=("filesystem.read",),
+        tags=["backup", "verify"],
+    )
+    _ext(
+        cap_id="sqlite_ops.query",
+        name="Heavy SQLite Query",
+        description="Read-only heavy operator SQL with deadline and result bounds.",
+        side_effects=(SideEffect.READ, SideEffect.EXECUTE),
+        worker_kind="sqlite_ops",
+        properties={
+            "domain": {"type": "string"},
+            "sql": {"type": "string"},
+            "limit": {"type": "integer"},
+            "deadline_seconds": {"type": "number"},
+        },
+        permissions=("filesystem.read",),
+        tags=["sqlite_ops", "query"],
+        domains=["database"],
+    )
+    _ext(
+        cap_id="sqlite_ops.scan",
+        name="Heavy SQLite Table Scan",
+        description="Read-only large table scan / row browse for operator tooling.",
+        side_effects=(SideEffect.READ, SideEffect.EXECUTE),
+        worker_kind="sqlite_ops",
+        properties={
+            "domain": {"type": "string"},
+            "table": {"type": "string"},
+            "offset": {"type": "integer"},
+            "limit": {"type": "integer"},
+        },
+        permissions=("filesystem.read",),
+        tags=["sqlite_ops", "scan"],
+        domains=["database"],
+    )
+    _ext(
+        cap_id="sqlite_ops.search",
+        name="Heavy SQLite Search",
+        description="Bounded multi-column search across allowed tables (read-only).",
+        side_effects=(SideEffect.READ, SideEffect.EXECUTE),
+        worker_kind="sqlite_ops",
+        properties={
+            "domain": {"type": "string"},
+            "table": {"type": "string"},
+            "search": {"type": "string"},
+            "limit": {"type": "integer"},
+        },
+        permissions=("filesystem.read",),
+        tags=["sqlite_ops", "search"],
+        domains=["database"],
+    )
+    _ext(
+        cap_id="sqlite_ops.analytics",
+        name="Heavy SQLite Analytics",
+        description="Cross-table read analytics within one canonical domain.",
+        side_effects=(SideEffect.READ, SideEffect.EXECUTE),
+        worker_kind="sqlite_ops",
+        properties={"domain": {"type": "string"}, "sql": {"type": "string"}},
+        permissions=("filesystem.read",),
+        tags=["sqlite_ops", "analytics"],
+        domains=["database"],
+    )
+    _ext(
+        cap_id="sqlite_ops.export",
+        name="SQLite Export",
+        description="Stream table/query export to ArtifactStore (CSV/JSONL).",
+        side_effects=(SideEffect.READ, SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="sqlite_ops",
+        properties={
+            "domain": {"type": "string"},
+            "sql": {"type": "string"},
+            "table": {"type": "string"},
+            "format": {"type": "string"},
+        },
+        permissions=("filesystem.read", "filesystem.write"),
+        tags=["sqlite_ops", "export"],
+        domains=["database"],
+    )
+    _ext(
+        cap_id="security.audit.deep",
+        name="Deep Security Audit",
+        description="Deep repository/filesystem/config security audit (external).",
+        side_effects=(SideEffect.READ, SideEffect.EXECUTE),
+        worker_kind="security",
+        properties={"scope": {"type": "string"}},
+        permissions=("filesystem.read",),
+        tags=["security", "audit"],
+        domains=["security"],
+    )
+    _ext(
+        cap_id="security.repo.scan",
+        name="Repository Security Scan",
+        description="Bounded repository scan excluding HADES/editor; secrets redacted.",
+        side_effects=(SideEffect.READ, SideEffect.EXECUTE),
+        worker_kind="security",
+        properties={"root": {"type": "string"}},
+        permissions=("filesystem.read",),
+        tags=["security", "repo", "scan"],
+        domains=["security"],
+    )
+    _ext(
+        cap_id="security.dependencies.audit",
+        name="Dependency Security Audit",
+        description="Read-only dependency/manifest audit — never install or auto-fix.",
+        side_effects=(SideEffect.READ, SideEffect.EXECUTE),
+        worker_kind="security",
+        properties={"ecosystem": {"type": "string"}},
+        permissions=("filesystem.read",),
+        tags=["security", "dependencies"],
+        domains=["security"],
+    )
+    _ext(
+        cap_id="security.integrity.audit",
+        name="Integrity Audit",
+        description="Large integrity audit consuming domain evidence (not replacing domain owners).",
+        side_effects=(SideEffect.READ, SideEffect.EXECUTE),
+        worker_kind="security",
+        properties={"scope": {"type": "string"}},
+        permissions=("filesystem.read",),
+        tags=["security", "integrity"],
+        domains=["security"],
+    )
+    _ext(
+        cap_id="telemetry.sample",
+        name="Telemetry Sample",
+        description="Collect one bounded hardware/process telemetry snapshot.",
+        side_effects=(SideEffect.READ, SideEffect.EXECUTE),
+        worker_kind="telemetry",
+        properties={},
+        permissions=("process.execute",),
+        tags=["telemetry", "sample"],
+        domains=["observability"],
+    )
+    _ext(
+        cap_id="telemetry.hardware_window",
+        name="Hardware Telemetry Window",
+        description="Bounded high-frequency hardware sampling window inside telemetry worker.",
+        side_effects=(SideEffect.READ, SideEffect.EXECUTE),
+        worker_kind="telemetry",
+        properties={
+            "duration_seconds": {"type": "number"},
+            "interval_seconds": {"type": "number"},
+        },
+        permissions=("process.execute",),
+        tags=["telemetry", "hardware"],
+        domains=["observability"],
+    )
+    _ext(
+        cap_id="diagnostics.collect",
+        name="Collect Diagnostics Bundle",
+        description="Large redacted diagnostics collection bundled to ArtifactStore.",
+        side_effects=(SideEffect.READ, SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="telemetry",
+        properties={"sections": {"type": "array"}},
+        permissions=("process.execute", "filesystem.write"),
+        tags=["diagnostics", "collect"],
+        domains=["observability"],
+    )
+    _ext(
+        cap_id="diagnostics.process_window",
+        name="Process Diagnostics Window",
+        description="Bounded diagnostics for LEVIATHAN-owned process IDs only.",
+        side_effects=(SideEffect.READ, SideEffect.EXECUTE),
+        worker_kind="telemetry",
+        properties={
+            "pid": {"type": "integer"},
+            "duration_seconds": {"type": "number"},
+        },
+        permissions=("process.execute",),
+        tags=["diagnostics", "process"],
+        domains=["observability"],
     )
     _ext(
         cap_id="agent.advance",

@@ -361,7 +361,12 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
         default_count=1,
         job_kinds=("evaluation.",),
         resource_classes=("CPU_HEAVY", "MODEL_INFERENCE"),
-        description="Evaluation suite execution",
+        description=(
+            "Evaluation / benchmark / regression / ablation / release validation / "
+            "statistics / soak / chaos orchestration — max_count=2 so full suites "
+            "do not fan out unbounded"
+        ),
+        max_count=2,
     ),
     "training_control": PoolDefinition(
         pool_id="training_control",
@@ -386,7 +391,7 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
         default_count=1,
         job_kinds=("backup.",),
         resource_classes=("IO_HEAVY",),
-        description="Backup creation",
+        description="Backup creation and backup verification (not restore)",
         max_count=1,
     ),
     "maintenance": PoolDefinition(
@@ -395,15 +400,47 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
         default_count=1,
         job_kinds=("maintenance.",),
         resource_classes=("MAINTENANCE_EXCLUSIVE",),
-        description="Lease recovery, stale cleanup, reconciliation",
+        description=(
+            "Singleton exclusive DB/system maintenance — integrity/VACUUM/ANALYZE/"
+            "blocking checkpoint/reconcile/cleanup/restore cutover"
+        ),
+        max_count=1,
+    ),
+    "sqlite_ops": PoolDefinition(
+        pool_id="sqlite_ops",
+        entrypoint="Data.modules.workers.entrypoints.sqlite_ops",
+        default_count=1,
+        job_kinds=("sqlite_ops.",),
+        resource_classes=("IO_HEAVY", "CPU_HEAVY", "MEMORY_HEAVY"),
+        description=(
+            "Heavy READ-ONLY operator SQLite work — query/scan/search/analytics/"
+            "export. Never INSERT/UPDATE/DELETE/VACUUM/ANALYZE/restore."
+        ),
+        max_count=1,
+    ),
+    "security": PoolDefinition(
+        pool_id="security",
+        entrypoint="Data.modules.workers.entrypoints.security",
+        default_count=1,
+        job_kinds=("security.",),
+        resource_classes=("CPU_HEAVY", "IO_HEAVY"),
+        description=(
+            "Deep repository/dependency/integrity security audits — never "
+            "auto-fix dependencies; secrets redacted"
+        ),
         max_count=1,
     ),
     "telemetry": PoolDefinition(
         pool_id="telemetry",
         entrypoint="Data.modules.workers.entrypoints.telemetry",
         default_count=0,
-        job_kinds=("telemetry.",),
-        description="Optional external telemetry sampler (API owns by default)",
+        job_kinds=("telemetry.", "diagnostics."),
+        resource_classes=("CPU_LIGHT", "IO_HEAVY"),
+        description=(
+            "Heavy hardware sampling windows and diagnostics collection. "
+            "default_count=0 until explicitly enabled; not hosted in FastAPI "
+            "for long-running samplers."
+        ),
         max_count=1,
     ),
 }
