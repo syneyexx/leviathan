@@ -607,6 +607,7 @@ BehaviorProfile is **not** AuthorityProfile. Side effects that require approval 
 - `registry.py`, `pools.py`, `protocol.py`, `settings.py`;
 - `admission.py`, `sqlite_support.py` (re-exports canonical `sqlite_policy`);
 - `events.py` — centralized worker terminal observability (`WorkerEventEmitter`);
+- `crash_diagnostics.py` — bounded crash-log tails, classification, retention;
 - `entrypoints/` for domain-specific processes;
 - `Data/modules/db_commit/` — DB Commit Coordinator (serialized `COMMIT_WRITE`).
 
@@ -614,16 +615,33 @@ Current entrypoint families include agents, backup, coding, dataset, document AI
 
 Architecture rule: the FastAPI/chat process is the **control plane**; long I/O/CPU/GPU work must be externalized through JobRuntime/workers.
 
+**Production boot ordering (CURRENT):**
+1. Parent `bootstrap.run_all()` spawns the API process only.
+2. Parent waits on bounded loopback `GET /api/host/liveness` until FastAPI lifespan bootstrap is proven (`API_READY`).
+3. Only then does the parent spawn `WorkerSupervisor`.
+4. Supervisor verifies CONTROL schema readiness, then spawns pools.
+5. A worker counts as recovered only when process-alive + registered + READY + heartbeat observed — not merely because `Popen()` returned.
+
+**Worker crash forensics (CURRENT):**
+- Each worker process generation writes a unique immutable log under `{control_db_parent}/worker_logs/{pool}/…-pid{N}-{timestamp}.log` (never truncate predecessor).
+- Unexpected exits emit one human terminal crash line (no duplicate structured echo) plus structured `WORKER_CRASHED` metadata (exit, phase, error_code, crash_log_path, restart attempt).
+- Pool crash evidence (`last_crash_*`, `recent_crashes`) is retained across respawn.
+
 **Production defaults (CURRENT):**
 - `workers.enabled` / `supervisor_enabled` / `externalize_api_runners` = ON
-- Dataset / source-ingestion runners = `external` (inprocess is TEST/LEGACY only)
+- Dataset runner = `external`; Source Ingestion production owner = Worker Fabric `source_ingestion` pool (`LEVIATHAN_SOURCE_INGESTION_RUNNER=fabric`; legacy alias `external` maps to fabric). `inprocess_test` is TEST only; `standalone_legacy` is diagnostics-only and must not co-own the queue with fabric.
 - Agents / Coding / Signal Fabric / Reasoning = ON
 - `network.allow_outbound` = ON (SSRF, private-network, and ExecutionGateway restrictions still apply)
 - Manual recovery launcher: `run_leviathan_workers.bat` → one consolidated supervisor terminal for **all** pools
 - Operator launcher: `run_leviathan.exe` (Tauri backend host) starts `leviathan.py` in one window and does not open that bat. The bat stays the advanced/manual recovery path.
-- Operator read-model: `GET /api/workers/dashboard` (+ `/api/workers/{id}`) — pools + workers + job join + progress + resources
+- Do **not** manually start `scripts/source_ingestion_worker.py` during normal production — fabric owns SI.
+- Operator read-model: `GET /api/workers/dashboard` (+ `/api/workers/{id}`) — pools + workers + job join + progress + resources; `ready` requires READY workers (STARTING ≠ healthy).
 - Agents page → **Worker Fabric** monitor consumes that dashboard (never agentCount as “Active Workers”)
 - Process topology: API = control plane; WorkerSupervisor = spawn/lease/restart/drain; specialist workers = one OS process per slot; model serving remains a separate residency plane
+
+**SQLite slow-transaction telemetry (CURRENT):** attributed `store` / `operation` / `total_ms` / `begin_ms` / `body_ms` / `commit_ms` / `rows` (`UNMEASURED` when not counted). Core CONTROL paths (worker_registry, resource_admission, job_store) must not emit `store=unknown`.
+
+**Host liveness ownership (CURRENT):** Rust host controller owns STARTING readiness via `/api/host/liveness`. Launcher React polls that endpoint only after RUNNING (slow independent monitor); it does not burst-poll during PREFLIGHT/STARTING.
 
 Pool catalog (CURRENT shape): ~25 pools; optional/FEATURE_GATED include `rerank`, `document_ai`, `telemetry`; legacy `knowledge_commit` desired=0 (db_commit owns bulk writes).
 
@@ -817,6 +835,20 @@ API surfaces (backwards compatible): `GET/POST /api/datasets/catalog`, `POST /ap
 ## 15.2 Source ingestion — `Data/modules/source_ingestion/`
 
 Files include `service.py`, `pipeline.py`, `worker.py`, `store.py`, `types.py`, `settings.py`, `detection.py`, `handlers.py`, `skip_policy.py`, `secrets_policy.py` and archive/safety helpers. Uploaded/registered sources can feed knowledge/dataset workflows according to policy.
+
+**Production owner (CURRENT):** Worker Fabric pool `source_ingestion` (`Data.modules.workers.entrypoints.source_ingestion`). One `SourceIngestionService` instance is built per worker process and reused across jobs via `process_job` (never `process_next` re-claim inside the fabric handler).
+
+**Runner modes (`LEVIATHAN_SOURCE_INGESTION_RUNNER`):**
+| Mode | Meaning |
+|---|---|
+| `fabric` | Production — Worker Fabric pool (default). Legacy alias: `external`. |
+| `standalone_legacy` | Diagnostics-only `scripts/source_ingestion_worker.py` — refuse when fabric owns the pool. |
+| `inprocess_test` | API-thread runner for tests. Legacy alias: `inprocess`. |
+| `disabled` | No executor. |
+
+**Ingress → job contract:** Research `POST …/sources/upload` → `SourceIngestionService.accept_upload` → durable `source_ingestion.process` job (`worker_pool=source_ingestion`, idempotency `source_ingestion:process:{source_id}`). URL/web research sources use other capabilities (`research.fetch_url`, etc.) and must not silently look like SI idle forever without an explicit state. Idle with `queue=0` is healthy: `READY` / `IDLE_NO_WORK` / `reason=NO_QUEUED_WORK` on `/api/host/source-ingestion`.
+
+Do **not** start a second standalone SI worker when `LEVIATHAN_WORKERS_AUTOSTART=1` / WorkerSupervisor is enabled.
 
 ## 15.3 Documents — `Data/modules/documents/`
 

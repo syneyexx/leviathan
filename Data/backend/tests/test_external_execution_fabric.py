@@ -40,7 +40,8 @@ class ExternalDefaultsTests(unittest.TestCase):
     def test_runner_mode_unset_defaults_external(self) -> None:
         with mock.patch.dict(os.environ, {}, clear=True):
             self.assertEqual(resolve_dataset_runner(), "external")
-            self.assertEqual(resolve_si_runner(), "external")
+            # SI: 'external' is a legacy alias for fabric ownership.
+            self.assertEqual(resolve_si_runner(), "fabric")
             self.assertFalse(
                 __import__(
                     "Data.modules.datasets.worker", fromlist=["should_start_inprocess_runner"]

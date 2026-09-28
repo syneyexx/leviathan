@@ -893,6 +893,10 @@ class BootstrapParentRecoveryTests(unittest.TestCase):
             class S:
                 database_path = Path(tmp.name) / "boot.db"
 
+                class runtime:  # noqa: N801
+                    host = "127.0.0.1"
+                    port = 8765
+
             stub = types.ModuleType("Data.backend.config")
             stub.load_settings = lambda: S()  # type: ignore[attr-defined]
             prev = sys.modules.get("Data.backend.config")
@@ -902,6 +906,8 @@ class BootstrapParentRecoveryTests(unittest.TestCase):
                     "Data.modules.workers.settings.load_worker_settings"
                 ) as lws, mock.patch.object(boot.time, "sleep", side_effect=fake_sleep), mock.patch.object(
                     boot.signal, "signal"
+                ), mock.patch.object(
+                    boot, "wait_for_api_bootstrap", return_value="API_READY"
                 ):
                     lws.return_value = WorkerSettings(
                         restart_max_attempts=5,
@@ -988,6 +994,10 @@ class BootstrapParentRecoveryTests(unittest.TestCase):
             class S:
                 database_path = db
 
+                class runtime:  # noqa: N801
+                    host = "127.0.0.1"
+                    port = 8765
+
             stub = types.ModuleType("Data.backend.config")
             stub.load_settings = lambda: S()  # type: ignore[attr-defined]
             prev = sys.modules.get("Data.backend.config")
@@ -997,6 +1007,8 @@ class BootstrapParentRecoveryTests(unittest.TestCase):
                     "Data.modules.workers.settings.load_worker_settings"
                 ) as lws, mock.patch.object(boot.time, "sleep", side_effect=fake_sleep), mock.patch.object(
                     boot.signal, "signal"
+                ), mock.patch.object(
+                    boot, "wait_for_api_bootstrap", return_value="API_READY"
                 ):
                     lws.return_value = WorkerSettings(
                         restart_max_attempts=3,

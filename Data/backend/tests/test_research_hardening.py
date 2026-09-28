@@ -40,6 +40,8 @@ class ResearchHardeningTests(unittest.TestCase):
             {
                 "LEVIATHAN_WORKERS_EXTERNALIZE_API": "0",
                 "LEVIATHAN_RESEARCH_RUNNER": "inprocess",
+                # Unit tests exercise sync upload→brain path; fabric is production-only.
+                "LEVIATHAN_SOURCE_INGESTION_RUNNER": "inprocess_test",
             },
             clear=False,
         )

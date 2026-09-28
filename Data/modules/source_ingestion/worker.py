@@ -24,25 +24,71 @@ LOCK_ENV = "LEVIATHAN_SOURCE_INGESTION_WORKER_LOCK"
 
 
 def resolve_runner_mode(settings: Any | None = None) -> str:
-    """Return ``inprocess``, ``external``, or ``none``.
+    """Return canonical runner topology.
 
-    Production default is ``external``. ``inprocess`` is TEST/LEGACY only.
+    Canonical values:
+      fabric            — Worker Fabric source_ingestion pool (production)
+      standalone_legacy — scripts/source_ingestion_worker.py (dev/diagnostics)
+      inprocess_test    — API-thread runner (tests / explicit legacy)
+      disabled          — no executor
+
+    Backward-compat mappings:
+      external / worker / process → fabric
+      standalone / legacy_external → standalone_legacy
+      inprocess / in-process / internal / thread → inprocess_test
+      none / off / disabled → disabled
     """
     raw = (os.environ.get(RUNNER_ENV) or "").strip().lower()
     if not raw and settings is not None:
         ri = getattr(settings, "research_integration", None)
         raw = str(getattr(ri, "source_ingestion_runner", "") or "").strip().lower()
-    if raw in {"inprocess", "in-process", "internal", "thread"}:
-        return "inprocess"
-    if raw in {"external", "worker", "process"}:
-        return "external"
+    if raw in {"inprocess", "in-process", "internal", "thread", "inprocess_test"}:
+        return "inprocess_test"
+    if raw in {"standalone", "standalone_legacy", "legacy_external", "legacy"}:
+        return "standalone_legacy"
+    if raw in {"fabric", "external", "worker", "process"}:
+        return "fabric"
     if raw in {"none", "off", "disabled"}:
-        return "none"
-    return "external"
+        return "disabled"
+    return "fabric"
 
 
 def should_start_inprocess_runner(settings: Any | None = None) -> bool:
-    return resolve_runner_mode(settings) == "inprocess"
+    return resolve_runner_mode(settings) == "inprocess_test"
+
+
+def fabric_owns_source_ingestion(settings: Any | None = None) -> bool:
+    """True when Worker Fabric is the production SI executor owner."""
+    mode = resolve_runner_mode(settings)
+    if mode == "fabric":
+        return True
+    # Supervisor autostart / workers enabled implies fabric ownership even if
+    # an old env still says external (already mapped to fabric).
+    workers = (os.environ.get("LEVIATHAN_WORKERS_ENABLED") or "1").strip().lower()
+    supervisor = (os.environ.get("LEVIATHAN_WORKERS_SUPERVISOR") or "1").strip().lower()
+    if workers in {"1", "true", "yes", "on"} and supervisor in {"1", "true", "yes", "on"}:
+        if mode != "standalone_legacy":
+            return True
+    return False
+
+
+def assert_single_source_ingestion_owner(*, allow_standalone: bool = False) -> str:
+    """Fail closed when fabric and standalone both claim the queue.
+
+    Returns the active owner mode.
+    """
+    mode = resolve_runner_mode()
+    fabric = fabric_owns_source_ingestion()
+    if fabric and mode == "standalone_legacy" and not allow_standalone:
+        raise RuntimeError(
+            "SOURCE_INGESTION_OWNERSHIP_CONFLICT: Worker Fabric owns source_ingestion "
+            "while LEVIATHAN_SOURCE_INGESTION_RUNNER requests standalone_legacy. "
+            "Unset standalone or disable fabric workers. "
+            "Deprecated: 'external' now means fabric, not standalone."
+        )
+    if fabric:
+        return "fabric"
+    return mode
 
 
 def _default_lock_path(db_path: Path) -> Path:

@@ -247,8 +247,110 @@ def _spawn_supervisor(root: Path, *, restart_count: int) -> subprocess.Popen[Any
     )
 
 
+class ApiBootstrapError(RuntimeError):
+    """API bootstrap barrier failed before WorkerSupervisor may start."""
+
+    def __init__(self, state: str, message: str) -> None:
+        super().__init__(f"{state}: {message}")
+        self.state = state
+
+
+def _api_bootstrap_timeout_seconds() -> float:
+    raw = (os.environ.get("LEVIATHAN_API_BOOTSTRAP_TIMEOUT_SECONDS") or "").strip()
+    if raw:
+        try:
+            return max(5.0, float(raw))
+        except ValueError:
+            pass
+    return 120.0
+
+
+def wait_for_api_bootstrap(
+    api: subprocess.Popen[Any],
+    *,
+    host: str,
+    port: int,
+    timeout_seconds: float | None = None,
+    stop_flag: dict[str, bool] | None = None,
+) -> str:
+    """Block until GET /api/host/liveness proves FastAPI lifespan completed.
+
+    Loopback-only. Bounded backoff. Detects API child death. Validates JSON.
+    Returns ``API_READY`` on success; raises ``ApiBootstrapError`` otherwise.
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    timeout = float(timeout_seconds if timeout_seconds is not None else _api_bootstrap_timeout_seconds())
+    # Force loopback — never probe non-local interfaces from parent bootstrap.
+    loopback = "127.0.0.1"
+    if host in {"localhost", "::1", "127.0.0.1"}:
+        loopback = "127.0.0.1" if host != "::1" else "127.0.0.1"
+    elif host not in {"127.0.0.1", "localhost", "::1"}:
+        # Still only probe loopback; API must bind loopback in production.
+        loopback = "127.0.0.1"
+    url = f"http://{loopback}:{int(port)}/api/host/liveness"
+    deadline = time.monotonic() + timeout
+    delay = 0.05
+    print(f"[BOOT] WAITING_API_BOOTSTRAP url={url} timeout={timeout:.0f}s", flush=True)
+    last_error = "not_probed"
+    while time.monotonic() < deadline:
+        if stop_flag and stop_flag.get("flag"):
+            raise ApiBootstrapError("API_BOOTSTRAP_ABORTED", "stop requested during API wait")
+        if api.poll() is not None:
+            code = int(api.returncode or 0)
+            raise ApiBootstrapError(
+                "API_EXITED_DURING_BOOT",
+                f"API process exited code={code} before bootstrap readiness",
+            )
+        try:
+            req = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=1.5) as resp:  # noqa: S310 — loopback only
+                body = resp.read(4096)
+                if resp.status != 200:
+                    last_error = f"http_status={resp.status}"
+                else:
+                    try:
+                        payload = json.loads(body.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                        raise ApiBootstrapError(
+                            "API_BOOTSTRAP_INVALID_RESPONSE",
+                            f"liveness JSON invalid: {exc}",
+                        ) from exc
+                    if not isinstance(payload, dict):
+                        raise ApiBootstrapError(
+                            "API_BOOTSTRAP_INVALID_RESPONSE",
+                            "liveness payload is not an object",
+                        )
+                    ok = payload.get("ok") is True
+                    alive = str(payload.get("liveness") or "").lower() == "alive"
+                    bootstrapped = payload.get("bootstrapped", True) is True
+                    started = payload.get("started", True) is True
+                    if ok and alive and bootstrapped and started:
+                        print("[BOOT] API_READY — API bootstrap complete", flush=True)
+                        return "API_READY"
+                    last_error = f"semantic_not_ready payload_keys={sorted(payload.keys())}"
+        except ApiBootstrapError:
+            raise
+        except urllib.error.HTTPError as exc:
+            last_error = f"http_error={exc.code}"
+        except urllib.error.URLError as exc:
+            last_error = f"url_error={exc.reason}"
+        except TimeoutError:
+            last_error = "probe_timeout"
+        except OSError as exc:
+            last_error = f"os_error={exc}"
+        time.sleep(delay)
+        delay = min(1.0, delay * 1.6)
+    raise ApiBootstrapError(
+        "API_BOOTSTRAP_TIMEOUT",
+        f"API liveness not ready within {timeout:.0f}s ({last_error})",
+    )
+
+
 def run_all() -> int:
-    """Spawn API + supervisor as sibling processes (Windows-friendly).
+    """Spawn API, wait for bootstrap readiness, then start WorkerSupervisor.
 
     Supervisor death does NOT kill the API. Parent restarts supervisor with a
     rolling-window budget reused from WorkerSettings restart policy.
@@ -276,13 +378,6 @@ def run_all() -> int:
         shell=False,
         **stdio,
     )
-    supervisor: subprocess.Popen[Any] | None = subprocess.Popen(  # noqa: S603
-        [sys.executable, "-m", "Data.modules.workers.bootstrap", "supervisor"],
-        cwd=str(root),
-        env=env,
-        shell=False,
-        **stdio,
-    )
     stop = {"flag": False}
 
     def _stop(*_a: object) -> None:
@@ -291,6 +386,38 @@ def run_all() -> int:
     signal.signal(signal.SIGINT, _stop)
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, _stop)
+
+    # Deterministic barrier: never spawn workers while API DB/migrations race.
+    supervisor: subprocess.Popen[Any] | None = None
+    try:
+        wait_for_api_bootstrap(
+            api,
+            host=str(settings.runtime.host or "127.0.0.1"),
+            port=int(settings.runtime.port),
+            stop_flag=stop,
+        )
+    except ApiBootstrapError as exc:
+        print(f"[BOOT] {exc}", flush=True)
+        if api.poll() is None:
+            api.terminate()
+            try:
+                api.wait(timeout=15)
+            except Exception:  # noqa: BLE001
+                api.kill()
+        return 1 if exc.state != "API_EXITED_DURING_BOOT" else int(api.returncode or 1)
+
+    try:
+        supervisor = _spawn_supervisor(root, restart_count=0)
+        print("[BOOT] WorkerSupervisor gestart na API readiness", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[BOOT] supervisor spawn failed after API ready: {exc}", flush=True)
+        if api.poll() is None:
+            api.terminate()
+            try:
+                api.wait(timeout=15)
+            except Exception:  # noqa: BLE001
+                api.kill()
+        return 1
 
     exit_code = 0
     crash_timestamps: list[float] = []

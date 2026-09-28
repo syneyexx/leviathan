@@ -412,7 +412,7 @@ class ResearchService:
             "LEVIATHAN_DATASET_JOBS_RUNNER",
         ):
             raw = (os.environ.get(key) or "").strip().lower()
-            if raw in {"external", "worker", "process"}:
+            if raw in {"external", "worker", "process", "fabric"}:
                 return True
         try:
             from Data.modules.workers.settings import load_worker_settings
@@ -1374,8 +1374,8 @@ class ResearchService:
             runner = getattr(self.source_ingestion.settings, "runner", "inprocess")
             source_id = str(result.get("source_id") or "")
             # Domain runner owns drain policy: inprocess may claim in-request for tests;
-            # external SI never parses in the API process.
-            if runner == "inprocess" and not result.get("idempotent"):
+            # fabric SI never parses in the API process.
+            if runner in {"inprocess", "inprocess_test"} and not result.get("idempotent"):
                 if self.source_ingestion.jobs is not None:
                     self.source_ingestion.process_next()
                     # Archives may leave residual pending if cancelled mid-flight; drain once more.
@@ -1389,7 +1389,7 @@ class ResearchService:
             progress = self.source_ingestion.get_status(source_id)
             text_chars = 0
             page_count = None
-            if source and source.snapshot_path and runner == "inprocess":
+            if source and source.snapshot_path and runner in {"inprocess", "inprocess_test"}:
                 try:
                     text_chars = len(Path(source.snapshot_path).read_text(encoding="utf-8"))
                 except OSError:
@@ -1550,7 +1550,7 @@ class ResearchService:
         if self.source_ingestion is None:
             raise ResearchError("SOURCE_INGESTION_UNAVAILABLE", "Not configured", http_status=503)
         result = self.source_ingestion.retry(source_id, failed_only=failed_only)
-        if self.source_ingestion.settings.runner == "inprocess":
+        if self.source_ingestion.settings.runner in {"inprocess", "inprocess_test"}:
             self.source_ingestion.process_next()
             result["progress"] = self.source_ingestion.get_status(source_id).public_dict()
         return result
@@ -1565,7 +1565,10 @@ class ResearchService:
             if self.source_ingestion is not None
             else None
         )
-        prefer_enqueue = self._runners_externalized() and si_runner != "inprocess"
+        prefer_enqueue = self._runners_externalized() and si_runner not in {
+            "inprocess",
+            "inprocess_test",
+        }
         if self.source_ingestion is not None:
             meta = source.metadata or {}
             if meta.get("is_container") or (source.provenance or {}).get("is_archive"):
@@ -1793,7 +1796,10 @@ class ResearchService:
             if self.source_ingestion is not None
             else None
         )
-        prefer_enqueue = self._runners_externalized() and si_runner != "inprocess"
+        prefer_enqueue = self._runners_externalized() and si_runner not in {
+            "inprocess",
+            "inprocess_test",
+        }
         if prefer_enqueue and self.job_runtime is not None:
             if self.source_ingestion is not None:
                 return self.source_ingestion.enqueue_brain_retry(source_id)

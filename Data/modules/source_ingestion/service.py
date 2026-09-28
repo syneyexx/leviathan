@@ -478,44 +478,92 @@ class SourceIngestionService:
             )
         if job is None:
             return None
-        try:
-            from Data.modules.jobs.leases import fenced_transition
+        return self.process_job(job.job_id, worker_id=worker_id, already_claimed=True, job=job)
 
-            source_id = str(job.arguments.get("source_id") or "")
-            if job.capability_id == CAPABILITY_BRAIN_RETRY:
+    def process_job(
+        self,
+        job_id: str,
+        *,
+        worker_id: str = "",
+        already_claimed: bool = False,
+        job: Any | None = None,
+    ) -> str | None:
+        """Execute a specific source_ingestion job (fabric or standalone).
+
+        When ``already_claimed`` is True the JobStore lease is owned by the caller
+        (Worker Fabric claim). Do not re-claim.
+        """
+        if self.jobs is None:
+            return None
+        from Data.modules.jobs.leases import fenced_transition
+        from Data.modules.jobs.store import JobStore
+
+        store: JobStore = self.jobs.store
+        wid = worker_id or f"source-ingestion-{uuid.uuid4().hex[:10]}"
+        current = job
+        if current is None:
+            current = store.get(job_id)
+        if current is None:
+            return None
+        if not already_claimed:
+            # Standalone path may receive an id that still needs claiming — refuse
+            # to steal another worker's lease; only process if we can own it.
+            if current.state != JobState.QUEUED:
+                # Already ours / running elsewhere — execute only if lease matches.
+                if current.lease_owner and current.lease_owner != wid:
+                    raise RuntimeError(
+                        f"SOURCE_INGESTION_LEASE_MISMATCH: job={job_id} owner={current.lease_owner}"
+                    )
+            else:
+                claimed = store.claim_next_queued(
+                    worker_id=wid,
+                    lease_ttl_seconds=float(
+                        getattr(self.settings, "lease_ttl_seconds", 30.0) or 30.0
+                    ),
+                    capability_ids={CAPABILITY_PROCESS, CAPABILITY_BRAIN_RETRY},
+                    worker_pool="source_ingestion",
+                )
+                if claimed is None or claimed.job_id != job_id:
+                    return None
+                current = claimed
+        try:
+            source_id = str(current.arguments.get("source_id") or "")
+            if current.capability_id == CAPABILITY_BRAIN_RETRY:
                 self.pipeline().retry_brain_only(source_id)
             else:
                 self.pipeline().process_source(source_id)
             fenced_transition(
                 store,
-                job.job_id,
+                current.job_id,
                 JobState.COMPLETED,
-                worker_id=worker_id,
-                result={"source_id": source_id, "progress": self.get_status(source_id).public_dict()},
+                worker_id=wid,
+                result={
+                    "source_id": source_id,
+                    "progress": self.get_status(source_id).public_dict(),
+                },
             )
-            return job.job_id
+            return current.job_id
         except Exception as exc:  # noqa: BLE001
             try:
-                from Data.modules.jobs.leases import fenced_transition
-
                 fenced_transition(
                     store,
-                    job.job_id,
+                    current.job_id,
                     JobState.FAILED,
-                    worker_id=worker_id,
+                    worker_id=wid,
                     error=str(exc)[:500],
                 )
             except Exception:  # noqa: BLE001
                 pass
-            return job.job_id
+            return current.job_id
         finally:
-            try:
-                store.release_lease(job.job_id, worker_id=worker_id)
-            except Exception:  # noqa: BLE001
-                pass
+            if not already_claimed:
+                try:
+                    store.release_lease(current.job_id, worker_id=wid)
+                except Exception:  # noqa: BLE001
+                    pass
 
     def start_background(self, *, poll_interval_s: float | None = None) -> None:
-        if self.settings.runner != "inprocess":
+        if self.settings.runner not in {"inprocess", "inprocess_test"}:
             return
         interval = float(poll_interval_s if poll_interval_s is not None else self.settings.worker_poll_interval)
         with self._lock:

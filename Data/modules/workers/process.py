@@ -13,6 +13,8 @@ from typing import Any
 
 from Data.modules.common.process import pid_is_alive
 
+from .crash_diagnostics import generation_log_filename, retain_pool_logs
+
 
 # Only these module entrypoints may be spawned by the generic supervisor.
 ALLOWED_ENTRYPOINT_PREFIX = "Data.modules.workers.entrypoints."
@@ -71,12 +73,39 @@ def spawn_worker_process(
     log_path = None
     stdout: Any = subprocess.DEVNULL
     stderr: Any = subprocess.DEVNULL
+    log_handle: Any = None
     if log_dir is not None:
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_path = log_dir / f"{pool_id}-{slot}-{worker_id[:8]}.log"
-        # Bound growth: open truncate; workers should keep logs modest.
-        handle = open(log_path, "w", encoding="utf-8")  # noqa: SIM115
-        stdout = handle
+        pool_log_dir = Path(log_dir) / pool_id
+        pool_log_dir.mkdir(parents=True, exist_ok=True)
+        # Retention before spawn so crash history stays bounded but never
+        # truncates the generation we are about to create.
+        try:
+            retain_pool_logs(pool_log_dir)
+        except Exception:  # noqa: BLE001 — never block spawn on retention
+            pass
+        # Filename is finalized after Popen so it includes the real PID.
+        # Use a provisional open after fork via a pipe would lose the path;
+        # create unique path once PID is known, then reopen — for spawn we
+        # pre-open with a placeholder and rename is unsafe across open FDs.
+        # Instead: open DEVNULL first, then after Popen open unique file and
+        # leave stdout redirected... Actually Popen needs the handle at start.
+        # Solution: allocate unique name with worker_id + nanosecond timestamp
+        # before spawn; include pid after via a companion sidecar, OR include
+        # pid estimate. Spec wants pid in filename — we spawn with
+        # start_new_session and use a pre-created unique name that includes
+        # worker suffix + timestamp; then after Popen we hardlink/rename to
+        # include pid if the OS allows (handle stays open on inode).
+        started = time.time()
+        provisional = pool_log_dir / generation_log_filename(
+            pool_id=pool_id,
+            slot=slot,
+            worker_id=worker_id,
+            pid=0,
+            started_at=started,
+        )
+        log_handle = open(provisional, "x", encoding="utf-8")  # noqa: SIM115 — exclusive create
+        log_path = provisional
+        stdout = log_handle
         stderr = subprocess.STDOUT
 
     popen = subprocess.Popen(  # noqa: S603 — argv list, shell=False, allowlisted entrypoint
@@ -88,6 +117,30 @@ def spawn_worker_process(
         stderr=stderr,
     )
     identity = process_start_identity_for(int(popen.pid))
+
+    # Rename log to include real PID while keeping the open FD (same inode).
+    if log_path is not None and log_handle is not None:
+        final_name = pool_log_dir / generation_log_filename(
+            pool_id=pool_id,
+            slot=slot,
+            worker_id=worker_id,
+            pid=int(popen.pid),
+            started_at=started,
+        )
+        if final_name != log_path:
+            try:
+                log_path.rename(final_name)
+                log_path = final_name
+            except OSError:
+                # Keep provisional path; still unique per generation.
+                pass
+        child_env_note = f"# worker_id={worker_id} pid={popen.pid} pool={pool_id} slot={slot}\n"
+        try:
+            log_handle.write(child_env_note)
+            log_handle.flush()
+        except Exception:  # noqa: BLE001
+            pass
+
     return OwnedProcess(
         worker_id=worker_id,
         pool_id=pool_id,
@@ -96,6 +149,7 @@ def spawn_worker_process(
         process_start_identity=identity,
         popen=popen,
         log_path=log_path,
+        started_at=time.time(),
     )
 
 
