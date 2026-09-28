@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -118,6 +119,14 @@ class _Memory:
 
 class OrchestraTestBase(unittest.TestCase):
     def setUp(self) -> None:
+        # Domain-logic unit tests run mission bodies inline. CI/default may force
+        # EXTERNALIZE_API=true; clear that so these tests do not require Worker Fabric.
+        self._prev_externalize = os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API")
+        self._prev_agents_runner = os.environ.get("LEVIATHAN_AGENTS_RUNNER")
+        self._prev_agents_allow = os.environ.get("LEVIATHAN_AGENTS_ALLOW_INPROCESS_TEST")
+        os.environ["LEVIATHAN_WORKERS_EXTERNALIZE_API"] = "0"
+        os.environ["LEVIATHAN_AGENTS_RUNNER"] = "inprocess_test"
+        os.environ["LEVIATHAN_AGENTS_ALLOW_INPROCESS_TEST"] = "1"
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.db = self.root / "lev.db"
@@ -143,6 +152,14 @@ class OrchestraTestBase(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+        def _restore(key: str, prev: str | None) -> None:
+            if prev is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = prev
+        _restore("LEVIATHAN_WORKERS_EXTERNALIZE_API", self._prev_externalize)
+        _restore("LEVIATHAN_AGENTS_RUNNER", self._prev_agents_runner)
+        _restore("LEVIATHAN_AGENTS_ALLOW_INPROCESS_TEST", self._prev_agents_allow)
 
     def _desk(self, **mandate):
         payload = {"universe": ["BTCUSD"], "paperCapital": 50_000, **mandate}
