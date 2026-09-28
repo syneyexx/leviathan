@@ -104,6 +104,8 @@ class TradingOrchestraService:
             except Exception:  # noqa: BLE001
                 self.role_knowledge = None
         self.executor = TradingMissionExecutor(self)
+        # Optional gate set by Research Command. None preserves historical launch behavior.
+        self.mission_blocker: Any | None = None
 
     def bind_role_knowledge(self, role_knowledge: Any | None = None, *, trading_brain_adapter: Any | None = None) -> None:
         if trading_brain_adapter is not None:
@@ -389,6 +391,8 @@ class TradingOrchestraService:
         dry_run: bool = False,
     ) -> dict[str, Any]:
         self._require_enabled()
+        if self.mission_blocker is not None:
+            self.mission_blocker(orchestra_id)
         fleet = self._require_fleet()
         agent = self._get_orchestra_agent(orchestra_id)
         try:

@@ -4226,6 +4226,38 @@ def _m57_market_paper_deployments(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m58_research_command_sessions(conn: sqlite3.Connection) -> None:
+    """Operator session binding research orchestras to existing paper portfolios.
+
+    This is orchestration metadata only. It does not own orders, risk, or evolution.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_research_command_sessions (
+            session_id TEXT PRIMARY KEY,
+            orchestra_id TEXT NOT NULL,
+            portfolio_id TEXT,
+            paper_session_id TEXT,
+            lab_id TEXT,
+            state TEXT NOT NULL,
+            universe_json TEXT NOT NULL DEFAULT '[]',
+            watch_json TEXT NOT NULL DEFAULT '[]',
+            started_at TEXT,
+            paused_at TEXT,
+            ended_at TEXT,
+            as_of TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_research_command_sessions_orchestra "
+        "ON market_research_command_sessions(orchestra_id, state, updated_at)"
+    )
+
+
 def _m55_institutional_core(conn: sqlite3.Connection) -> None:
     """Institutional core additive tables (instruments, breaks, audit, exceptions)."""
     conn.execute(
@@ -4476,6 +4508,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=57,
         name="market_paper_deployments",
         apply=_m57_market_paper_deployments,
+    ),
+    Migration(
+        version=58,
+        name="research_command_sessions",
+        apply=_m58_research_command_sessions,
     ),
 )
 

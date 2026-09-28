@@ -42,7 +42,9 @@ from Data.backend.routes.agent_signals import build_signals_router
 from Data.backend.routes.analytics import build_analytics_router
 from Data.modules.market_sim import MarketSimControlPlane
 from Data.backend.routes.market_sim import build_market_sim_router
+from Data.backend.routes.research_command import build_research_command_router
 from Data.backend.routes.trading_orchestra import build_trading_orchestra_router
+from Data.modules.market_sim.research_command.service import ResearchCommandService
 from Data.modules.artifacts import ArtifactStore
 from Data.modules.evidence import EvidenceService, EvidenceStatus, EvidenceStore
 from Data.modules.execution import (
@@ -2399,6 +2401,15 @@ app.include_router(
     )
 )
 app.include_router(build_trading_orchestra_router(trading_orchestra_service))
+
+research_command_service = ResearchCommandService(
+    store=trading_orchestra_service.store,
+    trading=trading_orchestra_service,
+    portfolios=getattr(market_sim_service, "portfolios", None),
+    plane=market_sim_service,
+)
+trading_orchestra_service.mission_blocker = research_command_service.assert_missions_allowed
+app.include_router(build_research_command_router(research_command_service))
 app.include_router(build_cognition_router(cognition_runtime))
 app.include_router(build_team_router(team_orchestrator))
 app.include_router(build_tasks_router(task_service))

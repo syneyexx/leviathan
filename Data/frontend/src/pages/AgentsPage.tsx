@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useSystemTelemetry } from "../hooks/useSystemTelemetry";
 import { AppShell } from "../layouts/AppShell";
@@ -108,6 +109,8 @@ function architectureEntryAsAgent(arch: SystemArchitectureEntry): AgentDefinitio
 
 export function AgentsPage() {
   const toast = useAppToast();
+  const [searchParams] = useSearchParams();
+  const requestedAgentId = searchParams.get("agent");
   const { sample: telemetry } = useSystemTelemetry({ enabled: true, intervalMs: 4000 });
 
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
@@ -135,7 +138,7 @@ export function AgentsPage() {
   const [windowHours, setWindowHours] = useState(24);
   const [failureWindowHours, setFailureWindowHours] = useState(168);
 
-  const [selectedAgentId, setSelectedAgentId] = useState("");
+  const [selectedAgentId, setSelectedAgentId] = useState(requestedAgentId || "");
   const [selectedMissionId, setSelectedMissionId] = useState("");
   const [missionDetailOpen, setMissionDetailOpen] = useState(false);
   const [missionDetail, setMissionDetail] = useState<{
@@ -154,6 +157,10 @@ export function AgentsPage() {
   const [tradeOpen, setTradeOpen] = useState(false);
 
   const selectedAgentIdRef = useRef(selectedAgentId);
+
+  useEffect(() => {
+    if (requestedAgentId) setSelectedAgentId(requestedAgentId);
+  }, [requestedAgentId]);
   const windowsRef = useRef({ windowHours, failureWindowHours });
   const loadGen = useRef(0);
   const inflight = useRef(false);

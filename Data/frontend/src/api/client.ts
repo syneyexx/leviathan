@@ -177,6 +177,7 @@ import {
   requestBlob,
 } from "./http";
 import { marketSimLabApi } from "./domains/marketSimLab";
+import { researchCommandApi } from "./domains/researchCommand";
 import { parseChatDonePayload, streamEventText } from "./chatContract";
 
 export { ApiError, detailMessage, request, requestBlob };
@@ -2910,6 +2911,7 @@ export const api = {
   },
 
   ...marketSimLabApi,
+  ...researchCommandApi,
 
   // --- Trade orchestras / trading agents ---
 

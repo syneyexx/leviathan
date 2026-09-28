@@ -411,3 +411,106 @@ class OrchestraStore:
             mandate_fingerprint=row["mandate_fingerprint"] or "",
             created_at=row["created_at"],
         )
+
+    # --- Research Command sessions (orchestration bindings only) ---
+
+    def insert_research_session(self, row: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_research_command_sessions(
+                    session_id, orchestra_id, portfolio_id, paper_session_id, lab_id, state,
+                    universe_json, watch_json, started_at, paused_at, ended_at, as_of,
+                    created_at, updated_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["session_id"],
+                    row["orchestra_id"],
+                    row.get("portfolio_id"),
+                    row.get("paper_session_id"),
+                    row.get("lab_id"),
+                    row["state"],
+                    json.dumps(row.get("universe") or []),
+                    json.dumps(row.get("watch") or []),
+                    row.get("started_at"),
+                    row.get("paused_at"),
+                    row.get("ended_at"),
+                    row.get("as_of"),
+                    row["created_at"],
+                    row["updated_at"],
+                    json.dumps(row.get("metadata") or {}),
+                ),
+            )
+        return row
+
+    def update_research_session(self, row: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE market_research_command_sessions SET
+                    orchestra_id=?, portfolio_id=?, paper_session_id=?, lab_id=?, state=?,
+                    universe_json=?, watch_json=?, started_at=?, paused_at=?, ended_at=?,
+                    as_of=?, updated_at=?, metadata_json=?
+                WHERE session_id=?
+                """,
+                (
+                    row["orchestra_id"],
+                    row.get("portfolio_id"),
+                    row.get("paper_session_id"),
+                    row.get("lab_id"),
+                    row["state"],
+                    json.dumps(row.get("universe") or []),
+                    json.dumps(row.get("watch") or []),
+                    row.get("started_at"),
+                    row.get("paused_at"),
+                    row.get("ended_at"),
+                    row.get("as_of"),
+                    row["updated_at"],
+                    json.dumps(row.get("metadata") or {}),
+                    row["session_id"],
+                ),
+            )
+        return row
+
+    def get_research_session(self, session_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM market_research_command_sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        return self._research_session_from_row(row) if row else None
+
+    def active_research_session(self, orchestra_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM market_research_command_sessions
+                WHERE orchestra_id = ? AND state IN ('CREATED', 'RUNNING', 'PAUSED')
+                ORDER BY updated_at DESC LIMIT 1
+                """,
+                (orchestra_id,),
+            ).fetchone()
+        return self._research_session_from_row(row) if row else None
+
+    @staticmethod
+    def _research_session_from_row(row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        return {
+            "session_id": row["session_id"],
+            "orchestra_id": row["orchestra_id"],
+            "portfolio_id": row["portfolio_id"],
+            "paper_session_id": row["paper_session_id"],
+            "lab_id": row["lab_id"],
+            "state": row["state"],
+            "universe": list(_loads(row["universe_json"], [])),
+            "watch": list(_loads(row["watch_json"], [])),
+            "started_at": row["started_at"],
+            "paused_at": row["paused_at"],
+            "ended_at": row["ended_at"],
+            "as_of": row["as_of"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "metadata": dict(_loads(row["metadata_json"], {})),
+        }

@@ -448,6 +448,15 @@ def _dm4_external_capability_fabric(conn: sqlite3.Connection, domain: DatabaseDo
         """
     )
 
+def _dm5_research_command_sessions(conn: sqlite3.Connection, domain: DatabaseDomain) -> None:
+    """MARKET domain v5 — Research Command session bindings (no second trading engine)."""
+    if domain is not DatabaseDomain.MARKET:
+        return
+    from Data.backend.migrations import _m58_research_command_sessions
+
+    _m58_research_command_sessions(conn)
+
+
 DOMAIN_MIGRATIONS: tuple[DomainMigration, ...] = (
     DomainMigration(
         version=2,
@@ -463,6 +472,11 @@ DOMAIN_MIGRATIONS: tuple[DomainMigration, ...] = (
         version=4,
         name="external_capability_fabric",
         apply=_dm4_external_capability_fabric,
+    ),
+    DomainMigration(
+        version=5,
+        name="research_command_sessions",
+        apply=_dm5_research_command_sessions,
     ),
 )
 
