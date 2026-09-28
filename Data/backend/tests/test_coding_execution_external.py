@@ -387,7 +387,48 @@ class VerifyOpsTests(unittest.TestCase):
             self.assertEqual(out.get("exit_code"), 0)
 
 
-class SessionClaimFenceTests(unittest.TestCase):
+class LocalGitHarnessTests(unittest.TestCase):
+    def test_checkout_dirty_and_idempotent(self) -> None:
+        import subprocess
+
+        from Data.modules.coding import git_ops
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        repo = Path(tmp.name) / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+        (repo / "README").write_text("one\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True)
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
+        (repo / "dirty.txt").write_text("x", encoding="utf-8")
+        with self.assertRaises(CodingError) as ctx:
+            git_ops.git_checkout(repository=repo, ref=head)
+        self.assertEqual(ctx.exception.code, "GIT_DIRTY_WORKTREE")
+        (repo / "dirty.txt").unlink()
+
+        with self.assertRaises(CodingError):
+            git_ops.git_checkout(repository=repo, ref="--output=/tmp/evil")
+
+        out = git_ops.git_checkout(repository=repo, ref=head)
+        self.assertTrue(out.get("ok"))
+        self.assertTrue(out.get("idempotent"))
+
+    def test_validate_remote_rejects_injection(self) -> None:
+        for bad in ("; rm -rf /", "ext::sh -c evil", "--upload-pack=x"):
+            with self.assertRaises(CodingError):
+                validate_remote(bad)
+
     def test_production_process_next_refuses_without_allow(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

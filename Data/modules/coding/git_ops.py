@@ -247,9 +247,9 @@ def git_checkout(
             details=dirty_info,
         )
 
-    # Resolve to SHA first.
+    # Resolve to SHA first — use --end-of-options so SHAs/refs are never flags.
     rev = run_argv(
-        ["git", "rev-parse", "--verify", "--", target],
+        ["git", "rev-parse", "--verify", "--end-of-options", target],
         cwd=repo,
         timeout_seconds=30,
         env_extras=_git_env(),
