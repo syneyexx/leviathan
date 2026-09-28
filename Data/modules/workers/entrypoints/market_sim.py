@@ -134,7 +134,7 @@ def _handle_portfolio_tick(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
             raise ValueError("portfolio_id required for portfolio_tick")
         result = plane.portfolio_tick(portfolio_id)
         result["executed_via"] = "market_sim_worker"
-        # Continue while RUNNING
+        # Continue while RUNNING — durable enqueue, never while/sleep loop.
         pf = result.get("portfolio") or {}
         if pf.get("status") == "RUNNING" and plane.job_runtime is not None:
             try:
@@ -148,6 +148,7 @@ def _handle_portfolio_tick(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
                     domain_entity_id=portfolio_id,
                     worker_pool="market_sim",
                     latency_class="background",
+                    idempotency_key=f"market_sim:portfolio_tick:{portfolio_id}:{result.get('tick_id') or job.job_id}",
                 )
                 result["continuation_job_id"] = nxt.job_id
             except Exception:  # noqa: BLE001
@@ -156,6 +157,158 @@ def _handle_portfolio_tick(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
         return result
     except Exception as exc:  # noqa: BLE001
         fenced_transition(ctx["job_store"], job.job_id, JobState.FAILED, error=str(exc)[:500], worker_id=str(ctx.get("worker_id") or ""), ctx=ctx)
+        return {"error": str(exc)}
+
+
+def _handle_autonomous_step(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
+    """market_sim.autonomous_step — one durable autonomous paper step."""
+    from Data.modules.jobs.leases import fenced_transition
+    from Data.modules.jobs.states import JobState
+
+    args = dict(getattr(job, "arguments", None) or {})
+    deployment_id = str(args.get("deployment_id") or "")
+    side = str(args.get("side") or "HOLD")
+    qty = args.get("qty")
+    try:
+        from Data.modules.market_sim.service import MarketSimControlPlane
+
+        plane = MarketSimControlPlane.from_settings(ctx["settings"])
+        if ctx.get("job_runtime") is not None and hasattr(plane, "bind_job_runtime"):
+            plane.bind_job_runtime(ctx["job_runtime"])
+        if not deployment_id:
+            raise ValueError("deployment_id required for autonomous_step")
+        result = plane.autonomous_paper_step(
+            deployment_id,
+            side=side,
+            qty=float(qty) if qty is not None else None,
+        )
+        result["executed_via"] = "market_sim_worker"
+        fenced_transition(
+            ctx["job_store"], job.job_id, JobState.COMPLETED,
+            result=result, worker_id=str(ctx.get("worker_id") or ""), ctx=ctx,
+        )
+        return result
+    except Exception as exc:  # noqa: BLE001
+        fenced_transition(
+            ctx["job_store"], job.job_id, JobState.FAILED,
+            error=str(exc)[:500], worker_id=str(ctx.get("worker_id") or ""), ctx=ctx,
+        )
+        return {"error": str(exc)}
+
+
+def _handle_paper_forward_step(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
+    """market_sim.paper_forward_step — one bounded paper-forward evaluation step."""
+    from Data.modules.jobs.leases import fenced_transition
+    from Data.modules.jobs.states import JobState
+
+    args = dict(getattr(job, "arguments", None) or {})
+    session_id = str(args.get("session_id") or "")
+    side = str(args.get("side") or "HOLD")
+    qty = args.get("qty")
+    try:
+        from Data.modules.market_sim.service import MarketSimControlPlane
+
+        plane = MarketSimControlPlane.from_settings(ctx["settings"])
+        if ctx.get("job_runtime") is not None and hasattr(plane, "bind_job_runtime"):
+            plane.bind_job_runtime(ctx["job_runtime"])
+        if not session_id:
+            raise ValueError("session_id required for paper_forward_step")
+        result = plane.paper_forward_step(
+            session_id,
+            side=side,
+            qty=float(qty) if qty is not None else None,
+        )
+        result["executed_via"] = "market_sim_worker"
+        fenced_transition(
+            ctx["job_store"], job.job_id, JobState.COMPLETED,
+            result=result, worker_id=str(ctx.get("worker_id") or ""), ctx=ctx,
+        )
+        return result
+    except Exception as exc:  # noqa: BLE001
+        fenced_transition(
+            ctx["job_store"], job.job_id, JobState.FAILED,
+            error=str(exc)[:500], worker_id=str(ctx.get("worker_id") or ""), ctx=ctx,
+        )
+        return {"error": str(exc)}
+
+
+def _handle_chart_render_batch(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
+    """market_sim.chart.render_batch — bounded deterministic chart slice."""
+    from Data.modules.jobs.leases import fenced_transition
+    from Data.modules.jobs.states import JobState
+
+    args = dict(getattr(job, "arguments", None) or {})
+    specs = list(args.get("specs") or [])
+    batch_id = str(args.get("batch_id") or "")
+    offset = int(args.get("offset") or 0)
+    limit = args.get("limit")
+    try:
+        from Data.modules.market_sim.chart_batch import render_chart_batch_slice
+
+        artifact_store = ctx.get("artifact_store")
+        cancel_check = ctx.get("job_cancel_check")
+        result = render_chart_batch_slice(
+            specs,
+            artifact_store=artifact_store,
+            batch_id=batch_id or None,
+            offset=offset,
+            limit=int(limit) if limit is not None else None,
+            cancel_check=cancel_check if callable(cancel_check) else None,
+        )
+        result["executed_via"] = "market_sim_worker"
+        # Continuation for large batches — durable requeue, release worker.
+        if not result.get("complete") and result.get("next_offset") is not None:
+            runtime = ctx.get("job_runtime")
+            if runtime is not None:
+                try:
+                    nxt = runtime.enqueue(
+                        capability_id="market_sim.chart.render_batch",
+                        arguments={
+                            "batch_id": result.get("batch_id"),
+                            "specs": specs,
+                            "offset": result["next_offset"],
+                            "limit": result.get("limit"),
+                        },
+                        requested_by="market_sim_worker",
+                        parent_job_id=job.job_id,
+                        domain="market_sim",
+                        domain_entity_type="chart_batch",
+                        domain_entity_id=str(result.get("batch_id") or ""),
+                        worker_pool="market_sim",
+                        latency_class="batch",
+                        resource_class="CPU_HEAVY",
+                        idempotency_key=(
+                            f"market_sim:chart_batch:{result.get('batch_id')}:"
+                            f"{result['next_offset']}"
+                        ),
+                    )
+                    result["continuation_job_id"] = nxt.job_id
+                except Exception:  # noqa: BLE001
+                    pass
+        fenced_transition(
+            ctx["job_store"], job.job_id, JobState.COMPLETED,
+            result={
+                "batch_id": result.get("batch_id"),
+                "complete": result.get("complete"),
+                "rendered": result.get("rendered"),
+                "failed": result.get("failed"),
+                "total": result.get("total"),
+                "next_offset": result.get("next_offset"),
+                "continuation_job_id": result.get("continuation_job_id"),
+                "renderer_version": result.get("renderer_version"),
+                # Keep JobStore bounded — omit per-chart bytes; results are refs only.
+                "results": result.get("results"),
+                "failures": result.get("failures"),
+            },
+            worker_id=str(ctx.get("worker_id") or ""),
+            ctx=ctx,
+        )
+        return result
+    except Exception as exc:  # noqa: BLE001
+        fenced_transition(
+            ctx["job_store"], job.job_id, JobState.FAILED,
+            error=str(exc)[:500], worker_id=str(ctx.get("worker_id") or ""), ctx=ctx,
+        )
         return {"error": str(exc)}
 
 
@@ -305,6 +458,12 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
         return _handle_scan_batch(ctx, job)
     if cap == "market_sim.portfolio_tick":
         return _handle_portfolio_tick(ctx, job)
+    if cap == "market_sim.autonomous_step":
+        return _handle_autonomous_step(ctx, job)
+    if cap == "market_sim.paper_forward_step":
+        return _handle_paper_forward_step(ctx, job)
+    if cap == "market_sim.chart.render_batch":
+        return _handle_chart_render_batch(ctx, job)
 
     args = dict(getattr(job, "arguments", None) or {})
     simulation_id = str(args.get("simulation_id") or args.get("run_id") or "")

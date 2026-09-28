@@ -342,8 +342,8 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
         entrypoint="Data.modules.workers.entrypoints.training_control",
         default_count=1,
         job_kinds=("training.",),
-        resource_classes=("GPU_EXCLUSIVE", "BATCH"),
-        description="Training-control ownership of trainer subprocess",
+        resource_classes=("GPU_EXCLUSIVE", "BATCH", "IO_HEAVY", "CPU_HEAVY"),
+        description="Training-control ownership of trainer subprocess + integrity/hash",
         max_count=1,
     ),
     "market_sim": PoolDefinition(
