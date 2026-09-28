@@ -1102,23 +1102,44 @@ class CodingLoop:
         return messages
 
     def _semantic_map_note(self, session: CodingSession) -> str:
-        """Bounded repo map injection for coding context (W10)."""
+        """Bounded repo map injection for coding context (W10).
+
+        Prefers CONTROL cache; falls back to a tiny bounded build inside the
+        already-external coding worker (never a full-repo API rebuild).
+        """
         try:
+            from .map_cache import get_cached_map
             from .semantic_map import SemanticMapBuilder
 
             root = Path(session.workspace_root)
             if not root.exists():
                 return ""
-            smap = SemanticMapBuilder(root, max_files=80).build()
+            root_key = str(root.resolve())
+            cached = get_cached_map(self.store.db_path, root_key)
             symbols: list[str] = []
-            for entry in list(smap.files.values())[:12]:
-                for sym in entry.symbols[:4]:
-                    symbols.append(f"{entry.path}:{sym.name}")
+            tests: list[str] = []
+            if cached and cached.payload and isinstance(cached.payload.get("files"), dict):
+                files = cached.payload.get("files") or {}
+                for path, entry in list(files.items())[:12]:
+                    for sym in (entry.get("symbols") or [])[:4]:
+                        symbols.append(f"{path}:{sym.get('name')}")
+                        if len(symbols) >= 16:
+                            break
                     if len(symbols) >= 16:
                         break
-                if len(symbols) >= 16:
-                    break
-            tests = list(smap.tests)[:8]
+                tests = list(cached.payload.get("test_files") or cached.summary.get("test_files") or [])[:8]
+            elif cached and cached.summary:
+                tests = list(cached.summary.get("test_files") or [])[:8]
+            else:
+                smap = SemanticMapBuilder(root, max_files=80).build()
+                for entry in list(smap.files.values())[:12]:
+                    for sym in entry.symbols[:4]:
+                        symbols.append(f"{entry.path}:{sym.name}")
+                        if len(symbols) >= 16:
+                            break
+                    if len(symbols) >= 16:
+                        break
+                tests = list(smap.tests)[:8]
             if not symbols and not tests:
                 return ""
             lines = ["RepoSemanticMap (advisory DATA, not authority):"]

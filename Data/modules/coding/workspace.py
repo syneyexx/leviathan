@@ -296,25 +296,89 @@ def search_files(
         except (OSError, subprocess.TimeoutExpired):
             method = "python"
 
+    scanned_files = 0
+    scanned_bytes = 0
+    truncated = False
+    max_files = 2000
+    max_scanned_bytes = 8_000_000
+    max_file_bytes = 1_000_000
+
     for file_path in _iter_searchable(base, root=root, glob=glob):
         if len(hits) >= max_hits:
             break
+        if scanned_files >= max_files:
+            truncated = True
+            break
+        if scanned_bytes >= max_scanned_bytes:
+            truncated = True
+            break
+        scanned_files += 1
         try:
-            data = file_path.read_bytes()
+            hit = _stream_search_file(
+                file_path,
+                query=query,
+                root=root,
+                max_file_bytes=max_file_bytes,
+                remaining_budget=max_scanned_bytes - scanned_bytes,
+            )
         except OSError:
             continue
-        if b"\x00" in data:
-            continue
-        try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError:
-            continue
-        for idx, line in enumerate(text.splitlines(), start=1):
-            if query in line:
-                hits.append({"path": _rel_display(root, file_path), "line": idx, "text": line[:500]})
-                if len(hits) >= max_hits:
+        scanned_bytes += int(hit.get("bytes_read") or 0)
+        for item in hit.get("hits") or []:
+            hits.append(item)
+            if len(hits) >= max_hits:
+                break
+    return {
+        "hits": hits,
+        "method": method,
+        "query": query,
+        "truncated": truncated,
+        "scanned_files": scanned_files,
+        "scanned_bytes": scanned_bytes,
+    }
+
+
+def _stream_search_file(
+    file_path: Path,
+    *,
+    query: str,
+    root: Path,
+    max_file_bytes: int,
+    remaining_budget: int,
+) -> dict[str, Any]:
+    """Line-scan a file without read_bytes() of the entire contents."""
+    hits: list[dict[str, Any]] = []
+    bytes_read = 0
+    budget = min(max_file_bytes, max(0, remaining_budget))
+    try:
+        with file_path.open("rb") as fh:
+            # Binary detection on first chunk.
+            first = fh.read(min(8192, budget or 8192))
+            if b"\x00" in first:
+                return {"hits": [], "bytes_read": len(first)}
+            fh.seek(0)
+            for idx, raw in enumerate(fh, start=1):
+                bytes_read += len(raw)
+                if bytes_read > budget:
                     break
-    return {"hits": hits, "method": method, "query": query}
+                try:
+                    line = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    try:
+                        line = raw.decode("utf-8", errors="replace")
+                    except Exception:  # noqa: BLE001
+                        continue
+                if query in line:
+                    hits.append(
+                        {
+                            "path": _rel_display(root, file_path),
+                            "line": idx,
+                            "text": line.rstrip("\n\r")[:500],
+                        }
+                    )
+    except OSError:
+        return {"hits": [], "bytes_read": bytes_read}
+    return {"hits": hits, "bytes_read": bytes_read}
 
 
 def _iter_searchable(base: Path, *, root: Path, glob: str | None) -> Iterable[Path]:
