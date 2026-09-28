@@ -45,6 +45,209 @@ def _emit(plane: Any, kind: str, payload: dict[str, Any]) -> None:
             pass
 
 
+def _resolve_model_complete(plane: Any) -> Any | None:
+    """Best-effort TradingModelAdapter from plane orchestra/model fabric; else None (heuristic)."""
+    try:
+        orchestra = getattr(plane, "orchestra", None) or getattr(plane, "trading_orchestra", None)
+        if orchestra is not None and hasattr(orchestra, "model_adapter"):
+            adapter = orchestra.model_adapter
+            if adapter is not None and hasattr(adapter, "complete"):
+                return lambda messages, role: adapter.complete(messages, role=role)
+        adapter = getattr(plane, "model_adapter", None)
+        if adapter is not None and hasattr(adapter, "complete"):
+            return lambda messages, role: adapter.complete(messages, role=role)
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _best_effort_perception(plane: Any, run: StrategyLearningRun) -> dict[str, Any] | None:
+    """Build numeric research perception from source bars when available."""
+    try:
+        from pathlib import Path
+
+        from .ohlcv import iter_ohlcv, load_ohlcv
+        from .research_perception import build_research_perception
+
+        source = plane.data.get_source(run.source_id)
+        smeta = dict(source.metadata or {})
+        path = Path(smeta.get("absolute_path") or source.path)
+        if hasattr(plane.data, "absolute_path_for"):
+            try:
+                path = Path(plane.data.absolute_path_for(source))
+            except Exception:  # noqa: BLE001
+                pass
+        bars: list[Any] = []
+        if path.is_file():
+            try:
+                bars = list(load_ohlcv(path))
+            except Exception:  # noqa: BLE001
+                try:
+                    bars = list(iter_ohlcv(path))
+                except Exception:  # noqa: BLE001
+                    bars = []
+        if not bars:
+            return None
+        visible = bars[-500:] if len(bars) > 500 else bars
+        bar_dicts = [
+            {
+                "ts": getattr(b, "ts", None) or (b.get("ts") if isinstance(b, dict) else ""),
+                "open": getattr(b, "open", None) if not isinstance(b, dict) else b.get("open"),
+                "high": getattr(b, "high", None) if not isinstance(b, dict) else b.get("high"),
+                "low": getattr(b, "low", None) if not isinstance(b, dict) else b.get("low"),
+                "close": getattr(b, "close", None) if not isinstance(b, dict) else b.get("close"),
+                "volume": getattr(b, "volume", 0) if not isinstance(b, dict) else b.get("volume", 0),
+            }
+            for b in visible
+        ]
+        as_of = str(bar_dicts[-1].get("ts") or utc_now())
+        snap = build_research_perception(
+            bars=bar_dicts,
+            as_of=as_of,
+            symbol=str(getattr(source, "symbol", "") or ""),
+            timeframe=str(getattr(source, "timeframe", "") or "1h"),
+            source_id=run.source_id,
+            dataset_id=smeta.get("dataset_id"),
+            dataset_version=smeta.get("dataset_version"),
+            split_role="TRAIN",
+        )
+        return snap.public_dict() if hasattr(snap, "public_dict") else dict(snap or {})
+    except Exception:  # noqa: BLE001 — best-effort
+        return None
+
+
+def _run_research_cycle_for_generation(
+    plane: Any,
+    run: StrategyLearningRun,
+    *,
+    generation: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Run research generation cycle; return (author_proposals, cycle_public).
+
+    Skips gracefully when disabled. Persists hypothesis when produced.
+    """
+    meta = dict(run.metadata or {})
+    obj_meta = dict((run.objective_spec.metadata if run.objective_spec else {}) or {})
+    if "enable_research_cycle" in meta:
+        enable = bool(meta.get("enable_research_cycle"))
+    elif "enable_research_cycle" in obj_meta:
+        enable = bool(obj_meta.get("enable_research_cycle"))
+    else:
+        # Default on for AUTONOMOUS_DISCOVERY; SEED labs opt in via metadata
+        enable = str(meta.get("run_mode") or "") == "AUTONOMOUS_DISCOVERY"
+    if not enable:
+        return [], None
+
+    perception = _best_effort_perception(plane, run)
+    if perception is None:
+        perception = {
+            "as_of": utc_now(),
+            "regime": "unknown",
+            "symbol": "",
+            "timeframe": "1h",
+            "status": "UNMEASURED",
+        }
+
+    run.metadata = {
+        **meta,
+        "latest_perception": {
+            "generation": generation,
+            "as_of": perception.get("as_of"),
+            "regime": perception.get("regime"),
+            "snapshot": perception,
+            "updated_at": utc_now(),
+        },
+    }
+
+    prior_hyps: list[dict[str, Any]] = []
+    try:
+        if run.lab_id:
+            prior_hyps = plane.store.list_research_hypotheses(lab_id=run.lab_id, limit=10)
+    except Exception:  # noqa: BLE001
+        prior_hyps = []
+
+    model_complete = _resolve_model_complete(plane)
+    model_budget = int(meta.get("model_budget") or obj_meta.get("model_budget") or 6)
+    enable_chart = bool(meta.get("enable_chart_vision") or obj_meta.get("enable_chart_vision") or False)
+    objective_text = str(meta.get("research_objective") or meta.get("hypothesis") or "")
+
+    try:
+        from .research_cycle import run_research_generation_cycle
+
+        cycle = run_research_generation_cycle(
+            perception_snapshot=perception,
+            prior_lessons=[],
+            prior_hypotheses=prior_hyps,
+            objective_text=objective_text,
+            model_complete=model_complete,
+            model_budget=model_budget,
+            enable_chart_vision=enable_chart,
+            lab_id=run.lab_id,
+            learning_run_id=run.learning_run_id,
+            as_of=str(perception.get("as_of") or utc_now()),
+            now=utc_now(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        _emit(
+            plane,
+            "research.cycle.failed",
+            {
+                "learning_run_id": run.learning_run_id,
+                "generation": generation,
+                "error": str(exc)[:300],
+            },
+        )
+        return [], None
+
+    public = cycle.public_dict() if hasattr(cycle, "public_dict") else {}
+    for ev in list(getattr(cycle, "public_events", None) or public.get("public_events") or []):
+        etype = str(ev.get("type") or "research.cycle.event")
+        _emit(
+            plane,
+            etype,
+            {**ev, "learning_run_id": run.learning_run_id, "generation": generation},
+        )
+
+    hyp = getattr(cycle, "hypothesis", None) or public.get("hypothesis")
+    if hyp and isinstance(hyp, dict) and hyp.get("hypothesis_id"):
+        try:
+            hyp = {
+                **hyp,
+                "lab_id": run.lab_id or hyp.get("lab_id"),
+                "learning_run_id": run.learning_run_id,
+                "updated_at": utc_now(),
+            }
+            plane.store.upsert_research_hypothesis(hyp)
+            run.metadata["hypothesis_id"] = hyp["hypothesis_id"]
+            _emit(
+                plane,
+                "research.hypothesis.proposed",
+                {
+                    "hypothesis_id": hyp["hypothesis_id"],
+                    "learning_run_id": run.learning_run_id,
+                    "generation": generation,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    proposals = list(getattr(cycle, "author_proposals", None) or public.get("author_proposals") or [])
+    for prop in proposals:
+        _emit(
+            plane,
+            "research.candidate.proposed",
+            {
+                "learning_run_id": run.learning_run_id,
+                "generation": generation,
+                "family": (prop or {}).get("family"),
+                "content_hash": (prop or {}).get("content_hash"),
+                "hypothesis_id": (prop or {}).get("hypothesis_id")
+                or (hyp.get("hypothesis_id") if isinstance(hyp, dict) else None),
+            },
+        )
+    return proposals, public
+
+
 def _version_factory(plane: Any) -> Callable[..., StrategyVersion]:
     def _factory(
         *,
@@ -605,7 +808,63 @@ def run_learning_on_worker(plane: Any, learning_run_id: str) -> dict[str, Any]:
         if existing_gen and all(c.strategy_version > 0 for c in existing_gen):
             gen_candidates = existing_gen
         else:
-            raw = learner.propose_generation(parent_version=parent_ver, elite_specs=elite_specs or None)
+            # Research cycle → agent proposals (Wave 20–23); best-effort, non-fatal
+            agent_proposals, _cycle_public = _run_research_cycle_for_generation(
+                plane, run, generation=generation
+            )
+            # Deduplicate: skip candidates whose content_hash already trialled
+            trialled_hashes = {
+                str(c.content_hash)
+                for c in run.candidates
+                if c.content_hash and c.status not in {"PROPOSED", "SKIPPED_BUDGET"}
+            }
+            if agent_proposals and trialled_hashes:
+                filtered: list[dict[str, Any]] = []
+                for prop in agent_proposals:
+                    ch = str(prop.get("content_hash") or "")
+                    if ch and ch in trialled_hashes:
+                        continue
+                    filtered.append(prop)
+                agent_proposals = filtered
+            rate = float(
+                (run.metadata or {}).get("agent_proposal_rate")
+                or ((run.objective_spec.metadata if run.objective_spec else {}) or {}).get(
+                    "agent_proposal_rate"
+                )
+                or 0.15
+            )
+            agent_slots = max(
+                0,
+                int(round(min(run.objective_spec.population_size if run.objective_spec else 12, run.trial_budget - run.trials_used) * rate)),
+            )
+            raw = learner.propose_generation(
+                parent_version=parent_ver,
+                elite_specs=elite_specs or None,
+                agent_proposals=agent_proposals or None,
+                agent_proposal_slots=agent_slots,
+            )
+            # Post-filter raw population against already-trialled content hashes
+            if trialled_hashes:
+                kept: list[dict[str, Any]] = []
+                for item in raw:
+                    spec = item.get("spec") or {}
+                    try:
+                        from .strategy_eval import strategy_content_hash
+
+                        ch = strategy_content_hash(
+                            parameters=dict(spec.get("parameters") or {}),
+                            entry_rules=dict(spec.get("entry_rules") or {}),
+                            exit_rules=dict(spec.get("exit_rules") or {}),
+                            risk_rules=dict(spec.get("risk_rules") or {"max_position_pct": 25}),
+                            required_timeframes=["1h"],
+                            brain_dependencies=["knowledge", "memory", "neuro"],
+                        )
+                    except Exception:  # noqa: BLE001
+                        ch = ""
+                    if ch and ch in trialled_hashes:
+                        continue
+                    kept.append(item)
+                raw = kept or raw
             gen_candidates = learner.materialize_candidates(
                 raw, version_factory=factory, generation=generation
             )

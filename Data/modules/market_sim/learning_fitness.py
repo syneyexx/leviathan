@@ -113,6 +113,146 @@ def _component(name: str, value: float | None, *, present_invalid: bool = False)
     return FitnessComponent(name=name, value=float(value), status=MeasurementStatus.MEASURED.value)
 
 
+def derive_expectancy_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
+    """Derive expectancy / payoff metrics from measured trial data.
+
+    Never infers missing costs as zero. Missing → UNMEASURED.
+    High win_rate with negative expectancy is explicitly surfaced.
+    """
+    metrics = dict(metrics or {})
+    out: dict[str, Any] = {}
+
+    def _m(*keys: str) -> float | None:
+        return extract_metric(metrics, *keys)
+
+    win_rate = _m("win_rate", "winRate")
+    loss_rate = _m("loss_rate", "lossRate")
+    avg_win = _m("average_win", "avg_win", "averageWin")
+    avg_loss = _m("average_loss", "avg_loss", "averageLoss")
+    trade_count = _m("trade_count", "trades")
+    total_pnl = _m("total_pnl", "net_pnl", "realized_pnl")
+    gross_return = _m("gross_return", "gross_return_pct")
+    net_return = _m("net_return", "total_return_pct", "total_return", "net_return_pct")
+    fee_drag = _m("fee_drag", "fee_drag_pct", "total_fees")
+    slip_drag = _m("slippage_drag", "slippage_drag_pct", "total_slippage")
+    cost_drag = _m("cost_drag", "cost_drag_pct", "total_cost")
+    profit_factor = _m("profit_factor", "profitFactor")
+    expectancy = _m("expectancy_per_trade", "expectancy", "net_expectancy")
+
+    if loss_rate is None and win_rate is not None:
+        loss_rate = max(0.0, 1.0 - float(win_rate))
+
+    payoff_ratio = None
+    if avg_win is not None and avg_loss is not None and abs(float(avg_loss)) > 1e-12:
+        payoff_ratio = abs(float(avg_win) / float(avg_loss))
+
+    # Expectancy per trade = p(win)*avg_win - p(loss)*|avg_loss|
+    if expectancy is None and win_rate is not None and avg_win is not None and avg_loss is not None:
+        lr = float(loss_rate) if loss_rate is not None else max(0.0, 1.0 - float(win_rate))
+        expectancy = float(win_rate) * float(avg_win) - lr * abs(float(avg_loss))
+
+    # Prefer explicit net expectancy; else expectancy after known cost drag per trade
+    net_expectancy = _m("net_expectancy", "netExpectancy")
+    if net_expectancy is None and expectancy is not None:
+        # Only subtract cost_drag when measured — never assume zero costs
+        if cost_drag is not None and trade_count is not None and float(trade_count) > 0:
+            net_expectancy = float(expectancy) - (float(cost_drag) / float(trade_count))
+        elif fee_drag is not None and slip_drag is not None and trade_count is not None and float(trade_count) > 0:
+            net_expectancy = float(expectancy) - ((float(fee_drag) + float(slip_drag)) / float(trade_count))
+        elif cost_drag is None and fee_drag is None and slip_drag is None:
+            # Costs unmeasured → net expectancy UNMEASURED (do not treat as gross)
+            net_expectancy = None
+        else:
+            net_expectancy = float(expectancy)
+
+    if profit_factor is None and avg_win is not None and avg_loss is not None and win_rate is not None:
+        lr = float(loss_rate) if loss_rate is not None else max(0.0, 1.0 - float(win_rate))
+        gross_wins = float(win_rate) * abs(float(avg_win))
+        gross_losses = lr * abs(float(avg_loss))
+        if gross_losses > 1e-12:
+            profit_factor = gross_wins / gross_losses
+
+    def _pack(name: str, val: float | None) -> None:
+        if val is None:
+            out[name] = None
+            out[f"{name}_status"] = MeasurementStatus.UNMEASURED.value
+        else:
+            out[name] = float(val)
+            out[f"{name}_status"] = MeasurementStatus.MEASURED.value
+
+    _pack("win_rate", win_rate)
+    _pack("loss_rate", loss_rate)
+    _pack("average_win", avg_win)
+    _pack("average_loss", avg_loss)
+    _pack("win_loss_payoff_ratio", payoff_ratio)
+    _pack("expectancy_per_trade", expectancy)
+    _pack("net_expectancy", net_expectancy)
+    _pack("profit_factor", profit_factor)
+    _pack("gross_return", gross_return)
+    _pack("net_return", net_return)
+    _pack("total_pnl", total_pnl)
+    _pack("cost_drag", cost_drag)
+    _pack("fee_drag", fee_drag)
+    _pack("slippage_drag", slip_drag)
+
+    # Honesty flags for promotion language
+    out["truth"] = {
+        "win_rate_is_not_profitability": True,
+        "missing_costs_not_assumed_zero": True,
+        "net_expectancy_requires_measured_costs_or_explicit_net": True,
+        "high_win_rate_negative_expectancy_is_not_profitable": bool(
+            win_rate is not None
+            and net_expectancy is not None
+            and float(win_rate) >= 0.6
+            and float(net_expectancy) < 0
+        ),
+    }
+    return out
+
+
+def ranks_by_expectancy_not_win_rate(
+    case_a: dict[str, Any],
+    case_b: dict[str, Any],
+    *,
+    objective: LearningObjectiveSpec | None = None,
+) -> dict[str, Any]:
+    """Compare two metric packs: negative-expectancy high win-rate must not beat positive expectancy.
+
+    Used by Wave 12 tests (CASE 1 vs CASE 2).
+    """
+    obj = objective or LearningObjectiveSpec(objective_id="expectancy-rank")
+    fa = compute_fitness(candidate_id="a", split_role="TRAIN", metrics=case_a, objective=obj)
+    fb = compute_fitness(candidate_id="b", split_role="TRAIN", metrics=case_b, objective=obj)
+    ea = derive_expectancy_metrics(case_a)
+    eb = derive_expectancy_metrics(case_b)
+    a_trap = bool(ea.get("truth", {}).get("high_win_rate_negative_expectancy_is_not_profitable"))
+    # Prefer net expectancy when both measured; else scalar fitness
+    a_exp = ea.get("net_expectancy")
+    b_exp = eb.get("net_expectancy")
+    if a_exp is not None and b_exp is not None:
+        winner = "b" if float(b_exp) > float(a_exp) else "a"
+    else:
+        sa = fa.scalar_score
+        sb = fb.scalar_score
+        if sa is None and sb is None:
+            winner = "tie_unmeasured"
+        elif sa is None:
+            winner = "b"
+        elif sb is None:
+            winner = "a"
+        else:
+            winner = "b" if float(sb) > float(sa) else "a"
+    return {
+        "winner": winner,
+        "case_a_expectancy": ea,
+        "case_b_expectancy": eb,
+        "case_a_fitness": fa.public_dict() if hasattr(fa, "public_dict") else {"scalar": fa.scalar_score},
+        "case_b_fitness": fb.public_dict() if hasattr(fb, "public_dict") else {"scalar": fb.scalar_score},
+        "case_a_is_win_rate_trap": a_trap,
+        "truth": {"win_rate_not_authority": True},
+    }
+
+
 def compute_fitness(
     *,
     candidate_id: str,
@@ -241,6 +381,34 @@ def compute_fitness(
     if ret is not None and ret < 0:
         categories.append(FailureCategory.NEGATIVE_RETURN.value)
 
+    # --- Expectancy / payoff structure (Wave 12) ---
+    # Win rate alone must NEVER imply profitability.
+    expectancy_pack = derive_expectancy_metrics(metrics)
+    for key, mv in expectancy_pack.items():
+        if key.endswith("_status"):
+            continue
+        status_key = f"{key}_status"
+        st = expectancy_pack.get(status_key, MeasurementStatus.UNMEASURED.value)
+        if st == MeasurementStatus.MEASURED.value and mv is not None:
+            components[key] = _component(key, float(mv))
+        elif st == MeasurementStatus.INVALID.value:
+            components[key] = _component(key, None, present_invalid=True)
+        else:
+            components[key] = _component(key, None)
+
+    net_exp = expectancy_pack.get("net_expectancy")
+    win_rate = expectancy_pack.get("win_rate")
+    if (
+        net_exp is not None
+        and expectancy_pack.get("net_expectancy_status") == MeasurementStatus.MEASURED.value
+        and float(net_exp) < 0
+    ):
+        failures.append("net_expectancy_after_costs negative")
+        categories.append(FailureCategory.NEGATIVE_RETURN.value)
+        # High win-rate with negative expectancy is explicitly not profitable
+        if win_rate is not None and float(win_rate) >= 0.6:
+            failures.append("high_win_rate_negative_expectancy_trap")
+
     # Scalar fitness: only from MEASURED weighted components — never invent 0 for UNMEASURED
     weights = dict(objective.fitness_weights or {})
     required = list(required_components or objective.primary_objectives)
@@ -296,6 +464,12 @@ def compute_fitness(
             "max_drawdown_pct": dd,
             "sharpe": sharpe,
             "complexity_total": total_cx if complexity is not None else None,
+            "win_rate": expectancy_pack.get("win_rate"),
+            "net_expectancy": expectancy_pack.get("net_expectancy"),
+            "profit_factor": expectancy_pack.get("profit_factor"),
+            "win_loss_payoff_ratio": expectancy_pack.get("win_loss_payoff_ratio"),
+            "expectancy_per_trade": expectancy_pack.get("expectancy_per_trade"),
+            "cost_drag": expectancy_pack.get("cost_drag"),
         },
     )
 

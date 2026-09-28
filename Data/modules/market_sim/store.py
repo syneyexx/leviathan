@@ -3291,6 +3291,160 @@ class MarketSimStore:
             ).fetchall()
         return [r for r in (self._row_sealed_attempt(row) for row in rows) if r]
 
+    # --- Research hypotheses (Wave 7 / autonomous research lab) ---
+
+    def upsert_research_hypothesis(self, hyp: dict[str, Any]) -> dict[str, Any]:
+        """Persist a ResearchHypothesis row. Graceful no-op raise if table missing."""
+        now = utc_now()
+        payload = dict(hyp or {})
+        hypothesis_id = str(payload.get("hypothesis_id") or "").strip()
+        if not hypothesis_id:
+            raise MarketSimError("HYPOTHESIS_ID_REQUIRED", "hypothesis_id required", http_status=400)
+        statement = str(payload.get("statement") or "").strip()
+        if not statement:
+            raise MarketSimError("HYPOTHESIS_STATEMENT_REQUIRED", hypothesis_id, http_status=400)
+        status = str(payload.get("status") or "PROPOSED")
+        trust = str(payload.get("trust") or "AGENT_PROPOSED")
+        provenance_hash = str(payload.get("provenance_hash") or "")
+        as_of = str(payload.get("as_of") or payload.get("created_at") or now)
+        created_at = str(payload.get("created_at") or now)
+        updated_at = str(payload.get("updated_at") or now)
+        # Store full public body in payload_json (minus redundant top-level keys ok)
+        body = dict(payload)
+        body.setdefault("hypothesis_id", hypothesis_id)
+        body.setdefault("status", status)
+        body.setdefault("trust", trust)
+        body.setdefault("as_of", as_of)
+        body.setdefault("created_at", created_at)
+        body.setdefault("updated_at", updated_at)
+        if not provenance_hash:
+            try:
+                from Data.modules.common.hashing import sha256_text
+
+                provenance_hash = sha256_text(
+                    json.dumps(
+                        {k: v for k, v in body.items() if k not in {"provenance_hash", "updated_at"}},
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        default=str,
+                    )
+                )
+                body["provenance_hash"] = provenance_hash
+            except Exception:  # noqa: BLE001
+                provenance_hash = ""
+        try:
+            with self.connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO market_research_hypotheses(
+                        hypothesis_id, lab_id, learning_run_id, parent_hypothesis_id,
+                        status, trust, statement, payload_json, provenance_hash,
+                        as_of, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(hypothesis_id) DO UPDATE SET
+                        lab_id=excluded.lab_id,
+                        learning_run_id=excluded.learning_run_id,
+                        parent_hypothesis_id=excluded.parent_hypothesis_id,
+                        status=excluded.status,
+                        trust=excluded.trust,
+                        statement=excluded.statement,
+                        payload_json=excluded.payload_json,
+                        provenance_hash=excluded.provenance_hash,
+                        as_of=excluded.as_of,
+                        updated_at=excluded.updated_at
+                    """,
+                    (
+                        hypothesis_id,
+                        payload.get("lab_id"),
+                        payload.get("learning_run_id"),
+                        payload.get("parent_hypothesis_id"),
+                        status,
+                        trust,
+                        statement,
+                        json.dumps(body, default=str),
+                        provenance_hash,
+                        as_of,
+                        created_at,
+                        updated_at,
+                    ),
+                )
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).lower():
+                # Migration not applied — surface as soft miss for callers that try/except
+                raise MarketSimError(
+                    "RESEARCH_HYPOTHESES_TABLE_MISSING",
+                    "market_research_hypotheses missing — apply MARKET domain migration v7",
+                    http_status=503,
+                ) from exc
+            raise
+        return body
+
+    def get_research_hypothesis(self, hypothesis_id: str) -> dict[str, Any] | None:
+        try:
+            with self.connect() as conn:
+                row = conn.execute(
+                    "SELECT * FROM market_research_hypotheses WHERE hypothesis_id=?",
+                    (hypothesis_id,),
+                ).fetchone()
+        except sqlite3.OperationalError:
+            return None
+        return self._row_research_hypothesis(row)
+
+    def list_research_hypotheses(
+        self,
+        *,
+        lab_id: str | None = None,
+        learning_run_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        lim = max(1, int(limit))
+        clauses: list[str] = []
+        params: list[Any] = []
+        if lab_id:
+            clauses.append("lab_id=?")
+            params.append(lab_id)
+        if learning_run_id:
+            clauses.append("learning_run_id=?")
+            params.append(learning_run_id)
+        if status:
+            clauses.append("status=?")
+            params.append(status)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = (
+            f"SELECT * FROM market_research_hypotheses {where} "
+            f"ORDER BY updated_at DESC LIMIT ?"
+        )
+        params.append(lim)
+        try:
+            with self.connect() as conn:
+                rows = conn.execute(sql, tuple(params)).fetchall()
+        except sqlite3.OperationalError:
+            return []
+        return [r for r in (self._row_research_hypothesis(row) for row in rows) if r]
+
+    def _row_research_hypothesis(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        payload = _loads(row["payload_json"], {})
+        if not isinstance(payload, dict):
+            payload = {}
+        out = {
+            **payload,
+            "hypothesis_id": row["hypothesis_id"],
+            "lab_id": row["lab_id"],
+            "learning_run_id": row["learning_run_id"],
+            "parent_hypothesis_id": row["parent_hypothesis_id"],
+            "status": row["status"],
+            "trust": row["trust"],
+            "statement": row["statement"],
+            "provenance_hash": row["provenance_hash"],
+            "as_of": row["as_of"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+        return out
+
     # --- Market hypotheses (Wave 25) — reuse experiment/campaign metadata ---
 
     def save_market_hypothesis(

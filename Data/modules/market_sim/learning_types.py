@@ -72,14 +72,13 @@ class MeasurementStatus(str, Enum):
     INVALID = "INVALID"
 
 
-SUPPORTED_STRATEGY_FAMILIES = (
-    "ma_cross",
-    "mean_reversion",
-    "breakout",
-    "rsi",
-    "feature_compare",
-    "composite",
-)
+# Single source of truth — do not duplicate family lists here.
+from .strategy_families import SUPPORTED_STRATEGY_FAMILIES  # noqa: E402
+
+# Learning run genesis modes (Wave 2)
+class ResearchRunMode(str, Enum):
+    SEED_EXISTING_STRATEGY = "SEED_EXISTING_STRATEGY"
+    AUTONOMOUS_DISCOVERY = "AUTONOMOUS_DISCOVERY"
 
 
 @dataclass(frozen=True)

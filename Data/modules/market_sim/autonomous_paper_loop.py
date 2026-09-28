@@ -483,6 +483,7 @@ def review_loop_drift(
     baseline_metrics: dict[str, float],
     observed_metrics: dict[str, float],
     strategy_memory_writer: Any | None = None,
+    research_requester: Any | None = None,
     relative_threshold: float = 0.25,
     min_sample_size: int = 5,
 ) -> dict[str, Any]:
@@ -495,7 +496,23 @@ def review_loop_drift(
         sample_size=len(state.paper_step_receipts) or len(state.shadow_observations),
         min_sample_size=min_sample_size,
     )
-    persisted = persist_drift_lesson(review, strategy_memory_writer=strategy_memory_writer)
+    persisted = persist_drift_lesson(
+        review,
+        strategy_memory_writer=strategy_memory_writer,
+        research_requester=research_requester,
+    )
+    # Link research lab into ticket metadata when spawned
+    ticket = review.get("continualResearch")
+    if isinstance(ticket, dict) and isinstance(persisted.get("researchRequest"), dict):
+        req = persisted["researchRequest"]
+        ticket = {
+            **ticket,
+            "researchLabId": req.get("lab_id"),
+            "hypothesisId": req.get("hypothesis_id"),
+            "does_not_auto_promote": True,
+            "live_trading": "BLOCKED",
+        }
+        review["continualResearch"] = ticket
     state.drift_review = {**review, "persisted": persisted}
     state.stage = "DRIFT_REVIEW"
     state.updated_at = utc_now()
