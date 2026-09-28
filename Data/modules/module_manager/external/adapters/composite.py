@@ -60,10 +60,10 @@ class CompositeAdapter:
     def runtime_state(self) -> ExternalRuntimeState:
         return self._exec.runtime_state()
 
-    def ensure_installed(self, *, progress: ProgressCb | None = None, cancel_check: CancelCheck | None = None) -> dict[str, Any]:
+    def ensure_installed(self, **kwargs: Any) -> dict[str, Any]:
         results = []
         for child in self._children:
-            result = child.ensure_installed(progress=progress, cancel_check=cancel_check)
+            result = child.ensure_installed(**kwargs)
             results.append(result)
             failed = failure_from_lifecycle_result(result if isinstance(result, dict) else {"result": result})
             if failed is not None:

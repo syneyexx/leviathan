@@ -235,6 +235,7 @@ class ExternalCapabilityModule:
         active_jobs: list[str] | None = None,
         progress: Any = None,
         cancel_check: Any = None,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         from .versions import install_version
 
@@ -250,12 +251,19 @@ class ExternalCapabilityModule:
             module_id=self._manifest.module_id,
             config=self._config,
             data_root=data_root,
-            store=self._store,
+            store=kwargs.get("store", self._store),
             ref=ref,
             activate=activate,
             active_jobs=active_jobs,
             progress=progress,
             cancel_check=cancel_check,
+            force=bool(kwargs.get("force", False)),
+            plan_hash=kwargs.get("plan_hash"),
+            operation_id=kwargs.get("operation_id"),
+            auto_resolve_dependencies=bool(kwargs.get("auto_resolve_dependencies", True)),
+            approved_plan=kwargs.get("approved_plan"),
+            allow_system_deps=bool(kwargs.get("allow_system_deps", False)),
+            runner=kwargs.get("runner"),
         )
         if activate and self._adapter is not None and result.get("install_root"):
             self._adapter._install_root = result["install_root"]

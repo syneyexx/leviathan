@@ -2550,6 +2550,9 @@ app.include_router(
         observability=observability,
         job_runtime=job_runtime,
         approval_service=approval_service,
+        allow_sync_install_fallback=bool(
+            getattr(settings.features, "module_manager_allow_sync_install_fallback", False)
+        ),
     )
 )
 app.include_router(

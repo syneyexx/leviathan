@@ -112,6 +112,7 @@ class ApprovalService:
         *,
         capability_id: str,
         side_effects: tuple[SideEffect, ...],
+        arguments: dict[str, Any] | None = None,
     ) -> bool:
         record = self.get(approval_id)
         if record is None:
@@ -127,6 +128,16 @@ class ApprovalService:
             # Allow approvals that list the gated effects explicitly, or that
             # were issued for the same capability with a superset of effects.
             if not required.issubset(granted):
+                return False
+        # When arguments_digest was bound at request time, require a matching hash.
+        # NULL digest → legacy behavior (arguments not checked).
+        if record.arguments_digest is not None:
+            if arguments is None:
+                return False
+            digest = hashlib.sha256(
+                json.dumps(arguments, sort_keys=True, default=str).encode("utf-8")
+            ).hexdigest()
+            if digest != record.arguments_digest:
                 return False
         return True
 

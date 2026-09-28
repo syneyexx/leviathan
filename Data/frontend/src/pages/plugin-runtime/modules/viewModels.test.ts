@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { detailMessage } from "../../../api/http";
 import {
   actionAvailability,
+  dependencyStateLabel,
   deriveKpis,
   filterCounts,
   filterModules,
@@ -14,6 +15,8 @@ import {
   lifecycleFailureText,
   moduleId,
   parseCapabilities,
+  parseInstallPlan,
+  primaryInstallCta,
   redactSecrets,
   safeConfiguration,
   statusTone,
@@ -171,8 +174,37 @@ describe("Modules view models", () => {
     expect(installActionText("install-version", { status: "QUEUED", job_id: "job-2" })).toBe(
       "Version install queued",
     );
+    expect(installActionText("install", { status: "APPROVAL_REQUIRED" })).toContain("Approval required");
     expect(installActionText("install", { result: { status: "INSTALLED" } })).toBe("Installed successfully");
     expect(installActionText("install-version", { result: { status: "INSTALLED" } })).toBe("Version installed");
+  });
+
+  it("parses install plans and labels dependency states from backend evidence only", () => {
+    const plan = parseInstallPlan({
+      module_id: "ghosttrack",
+      requested_ref: "main",
+      strategies: ["GIT_CHECKOUT", "PYTHON_VENV"],
+      package_manager: "apt",
+      requires_approval: true,
+      installable: true,
+      plan_hash: "abc",
+      observations: [
+        { dependency_id: "python", state: "SATISFIED" },
+        { dependency_id: "git", state: "MISSING_INSTALLABLE", install_packages: ["git"] },
+        { dependency_id: "evil", state: "MISSING_UNSUPPORTED" },
+      ],
+      privileged_mutations: [{ dependency_id: "git", packages: ["git"] }],
+      application_actions: [{ action: "git_checkout" }],
+      blockers: [],
+      source: { source: "https://github.com/HunxByts/GhostTrack" },
+    });
+    expect(plan?.moduleId).toBe("ghosttrack");
+    expect(dependencyStateLabel("SATISFIED")).toBe("INSTALLED");
+    expect(dependencyStateLabel("MISSING_INSTALLABLE")).toBe("MISSING — WILL INSTALL");
+    expect(dependencyStateLabel("MISSING_UNSUPPORTED")).toBe("MISSING — UNSUPPORTED");
+    expect(primaryInstallCta(plan, "APPROVAL_REQUIRED")).toBe("APPROVE & INSTALL EVERYTHING");
+    expect(primaryInstallCta(plan, "QUEUED")).toBe("INSTALL IN PROGRESS");
+    expect(primaryInstallCta(plan, "FAILED")).toBe("RETRY INSTALL");
   });
 
   it("surfaces backend lifecycle detail instead of a generic HTTP failure", () => {

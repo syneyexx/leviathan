@@ -9,7 +9,7 @@ from ...types import ModuleHealth, ModuleResult, ModuleStatus
 from ..install import InstallationService
 from ..skills import SkillImporter
 from ..types import ExternalFailureCode, ExternalRuntimeState, normalize_capability_parts
-from .base import AdapterContext, CancelCheck, ProgressCb
+from .base import AdapterContext, CancelCheck, ProgressCb, forward_install_kwargs
 from .skill_pack import SkillPackAdapter
 
 
@@ -25,17 +25,19 @@ class CatalogSourceAdapter:
     def runtime_state(self) -> ExternalRuntimeState:
         return self._state
 
-    def ensure_installed(self, *, progress: ProgressCb | None = None, cancel_check: CancelCheck | None = None) -> dict[str, Any]:
+    def ensure_installed(self, **kwargs: Any) -> dict[str, Any]:
         if self.ctx.data_root:
+            install_kwargs = forward_install_kwargs(self.ctx, kwargs)
             result = InstallationService(Path(self.ctx.data_root)).ensure_installed(
                 module_id=self.ctx.module_id,
                 config=self.config,
-                progress=progress,
-                cancel_check=cancel_check,
+                **install_kwargs,
             )
             self._install_root = result.install_root
-            if self.ctx.store is not None:
-                self.ctx.store.add_version(
+            store = install_kwargs.get("store") or self.ctx.store
+            activate = bool(kwargs.get("activate", True))
+            if store is not None:
+                store.add_version(
                     version_id=result.version_id,
                     module_id=self.ctx.module_id,
                     install_root=result.install_root,
@@ -43,7 +45,7 @@ class CatalogSourceAdapter:
                     resolved_commit=result.resolved_commit,
                     content_hash=result.content_hash,
                     install_strategies=result.strategies,
-                    activate=True,
+                    activate=activate,
                     adapter="CATALOG_SOURCE",
                     name=self.ctx.module_id,
                 )

@@ -12,6 +12,22 @@ from ..types import ExternalConfig, ExternalRuntimeState
 CancelCheck = Callable[[], bool]
 ProgressCb = Callable[[float, str, str], None]
 
+# Kwargs accepted by InstallationService.ensure_installed (and adapter forwards).
+INSTALL_SERVICE_KWARGS = (
+    "ref",
+    "force",
+    "activate",
+    "plan_hash",
+    "operation_id",
+    "auto_resolve_dependencies",
+    "approved_plan",
+    "allow_system_deps",
+    "runner",
+    "store",
+    "progress",
+    "cancel_check",
+)
+
 
 @dataclass
 class AdapterContext:
@@ -26,10 +42,28 @@ class AdapterContext:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+def forward_install_kwargs(ctx: AdapterContext, kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    """Build InstallationService.ensure_installed kwargs; default store to ctx.store."""
+    return {
+        "progress": kwargs.get("progress"),
+        "cancel_check": kwargs.get("cancel_check"),
+        "ref": kwargs.get("ref"),
+        "force": bool(kwargs.get("force", False)),
+        "activate": bool(kwargs.get("activate", False)),
+        "plan_hash": kwargs.get("plan_hash"),
+        "operation_id": kwargs.get("operation_id"),
+        "auto_resolve_dependencies": bool(kwargs.get("auto_resolve_dependencies", True)),
+        "approved_plan": kwargs.get("approved_plan"),
+        "allow_system_deps": bool(kwargs.get("allow_system_deps", False)),
+        "runner": kwargs.get("runner"),
+        "store": kwargs["store"] if "store" in kwargs else ctx.store,
+    }
+
+
 class ExternalAdapter(Protocol):
     def runtime_state(self) -> ExternalRuntimeState: ...
 
-    def ensure_installed(self, *, progress: ProgressCb | None = None, cancel_check: CancelCheck | None = None) -> dict[str, Any]: ...
+    def ensure_installed(self, **kwargs: Any) -> dict[str, Any]: ...
 
     def start(self) -> dict[str, Any]: ...
 

@@ -14,8 +14,13 @@ import {
   lifecycleFailureText,
   moduleId,
   parseCapabilities,
+  parseInstallOperation,
+  parseInstallPlan,
+  primaryInstallCta,
   tryParseArgs,
   type DetailTabId,
+  type InstallOperationView,
+  type InstallPlanView,
   type ManagedModuleRow,
   type ModuleFilterId,
 } from "./viewModels";
@@ -71,6 +76,10 @@ export function useModulesWorkspace() {
     Record<string, Record<string, unknown> | null | undefined>
   >({});
   const [lastAction, setLastAction] = useState<string | null>(null);
+  const [installPlan, setInstallPlan] = useState<InstallPlanView | null>(null);
+  const [installOperation, setInstallOperation] = useState<InstallOperationView | null>(null);
+  const [installPanelOpen, setInstallPanelOpen] = useState(false);
+  const [installPolling, setInstallPolling] = useState(false);
 
   const applySnapshot = useCallback((next: ModuleSnapshot) => {
     setSnapshot(next);
@@ -99,11 +108,86 @@ export function useModulesWorkspace() {
     void load();
   }, [load]);
 
-  // Honor ?module= deep links from Brain / other pages.
-  useEffect(() => {
-    const fromUrl = searchParams.get("module");
-    if (fromUrl) setSelectedId(fromUrl);
-  }, [searchParams]);
+  function applyInstallResponse(res: Record<string, unknown>) {
+    const op = parseInstallOperation(res);
+    const plan = parseInstallPlan(res.plan) ?? op?.plan ?? null;
+    if (plan) setInstallPlan(plan);
+    if (op) setInstallOperation(op);
+    else if (plan) {
+      setInstallOperation({
+        operationId: res.operation_id == null ? null : String(res.operation_id),
+        status: String(res.status ?? "PLANNING").toUpperCase(),
+        phase: res.phase == null ? null : String(res.phase).toUpperCase(),
+        progress: typeof res.progress === "number" ? res.progress : null,
+        jobId: res.job_id == null ? null : String(res.job_id),
+        approvalId:
+          res.approval && typeof res.approval === "object"
+            ? String((res.approval as Record<string, unknown>).approval_id ?? "") || null
+            : res.approval_id == null
+              ? null
+              : String(res.approval_id),
+        planHash: plan.planHash,
+        errorCode: null,
+        errorDetail: null,
+        retryable: false,
+        plan,
+      });
+    }
+    setInstallPanelOpen(true);
+    setPanelJson(JSON.stringify(res, null, 2));
+    const status = String(res.status ?? "").toUpperCase();
+    if (status === "QUEUED" || status === "RUNNING" || res.job_id) {
+      setInstallPolling(true);
+    }
+    return installActionText("install", res);
+  }
+
+  async function approveAndInstallEverything() {
+    if (!selected) return;
+    const id = moduleId(selected);
+    const plan = installPlan;
+    const op = installOperation;
+    if (!plan) {
+      toast("No install plan available");
+      return;
+    }
+    setLifecycleBusy(true);
+    try {
+      let approvalId = op?.approvalId ?? null;
+      if (plan.requiresApproval || op?.status === "APPROVAL_REQUIRED") {
+        if (!approvalId) {
+          toast("Approval id missing from install plan");
+          return;
+        }
+        await api.approveApproval(approvalId, `Approve install plan ${plan.planHash.slice(0, 12)}`);
+      }
+      const res = await api.installModule(id, {
+        ref: plan.requestedRef || versionRef.trim() || undefined,
+        activate: true,
+        approval_id: approvalId ?? undefined,
+        plan_hash: plan.planHash || undefined,
+        auto_resolve_dependencies: true,
+      });
+      const text = applyInstallResponse(res);
+      toast(text);
+      setLastAction(text);
+      const snap = await api.listModules().catch(() => null);
+      if (snap) applySnapshot(snap);
+    } catch (err) {
+      const msg = lifecycleFailureText("install", errorMessage(err));
+      setLastAction(msg);
+      toast(msg);
+    } finally {
+      setLifecycleBusy(false);
+    }
+  }
+
+  async function retryInstall() {
+    if (!selected) return;
+    setInstallPlan(null);
+    setInstallOperation(null);
+    await onLifecycle("install");
+  }
 
   const modules = useMemo(() => snapshot?.modules ?? [], [snapshot]);
   const managerEnabled = snapshot != null && snapshot.enabled !== false;
@@ -138,6 +222,52 @@ export function useModulesWorkspace() {
     if (!id) return null;
     return modules.find((row) => moduleId(row) === id) ?? null;
   }, [modules, effectiveSelectedId]);
+
+  useEffect(() => {
+    setInstallPlan(null);
+    setInstallOperation(null);
+    setInstallPanelOpen(false);
+    setInstallPolling(false);
+  }, [effectiveSelectedId]);
+
+  useEffect(() => {
+    if (!installPolling || !effectiveSelectedId) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const res = await api.moduleInstallState(effectiveSelectedId);
+        if (cancelled) return;
+        const op = parseInstallOperation(res.operation ?? res);
+        if (op) {
+          setInstallOperation(op);
+          if (op.plan) setInstallPlan(op.plan);
+          const terminal = ["READY", "FAILED", "CANCELLED", "INSTALLED", "COMPLETED"].includes(op.status);
+          const phaseTerminal = ["READY", "FAILED", "CANCELLED"].includes(op.phase || "");
+          if (terminal || phaseTerminal) {
+            setInstallPolling(false);
+            const snap = await api.listModules().catch(() => null);
+            if (snap && !cancelled) applySnapshot(snap);
+            if (op.status === "READY" || op.phase === "READY") {
+              setLastAction("Install complete");
+              toast("Install complete");
+            } else if (op.status === "FAILED" || op.phase === "FAILED") {
+              const msg = [op.errorCode, op.errorDetail].filter(Boolean).join(": ") || "Install failed";
+              setLastAction(msg);
+              toast(msg);
+            }
+          }
+        }
+      } catch {
+        /* keep polling until terminal or unmount */
+      }
+    };
+    void tick();
+    const handle = window.setInterval(() => void tick(), 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(handle);
+    };
+  }, [installPolling, effectiveSelectedId, applySnapshot, toast]);
 
   useEffect(() => {
     const id = effectiveSelectedId;
@@ -216,9 +346,9 @@ export function useModulesWorkspace() {
     setLifecycleBusy(true);
     try {
       if (action === "install") {
-        const res = await api.installModule(id);
-        const text = installActionText("install", res);
-        setPanelJson(JSON.stringify(res, null, 2));
+        const ref = versionRef.trim() || undefined;
+        const res = await api.installModule(id, { ref, activate: true, auto_resolve_dependencies: true });
+        const text = applyInstallResponse(res);
         toast(text);
         setLastAction(text);
       } else if (action === "start") {
@@ -392,6 +522,14 @@ export function useModulesWorkspace() {
     setVersionId,
     updateEvidenceByModule,
     lastAction,
+    installPlan,
+    installOperation,
+    installPanelOpen,
+    setInstallPanelOpen,
+    installPolling,
+    approveAndInstallEverything,
+    retryInstall,
+    primaryInstallCta: primaryInstallCta(installPlan, installOperation?.status ?? null),
     actions,
     ops,
     lifecycleBusy,

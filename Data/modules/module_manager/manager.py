@@ -410,16 +410,104 @@ class ModuleManager:
                 continue
         return ready
 
-    def ensure_installed(self, module_id: str, **kwargs: Any) -> dict[str, Any]:
-        """Install a module. Operational adapter failures become ModuleManagerError."""
+    def plan_install(
+        self,
+        module_id: str,
+        *,
+        ref: str | None = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """Read-only install preflight; returns InstallPlan.public_dict()."""
         managed = self._ensure_instance(module_id)
         assert managed.instance is not None
+        config = getattr(managed.instance, "external_config", None)
+        if config is None:
+            raise ModuleManagerError(
+                f"module {module_id} does not support plan_install",
+                code="INVALID_RESULT",
+                module_id=module_id,
+                action="plan_install",
+                detail=f"module {module_id} does not support plan_install",
+            )
+        data_root = None
+        if self._last_context is not None:
+            data_root = self._last_context.data_root
+        if not data_root:
+            ctx_services = getattr(managed.instance, "_ctx_services", None) or {}
+            data_root = ctx_services.get("data_root") if isinstance(ctx_services, dict) else None
+        if not data_root:
+            raise ModuleManagerError(
+                "data_root required for plan_install",
+                code="INSTALL_FAILED",
+                module_id=module_id,
+                action="plan_install",
+                detail="data_root required for plan_install",
+            )
+        from .external.install import InstallationService
+
+        plan = InstallationService(Path(data_root)).plan_install(
+            module_id,
+            config,
+            ref=ref,
+            force=force,
+        )
+        return plan.public_dict()
+
+    def install(
+        self,
+        module_id: str,
+        *,
+        ref: str | None = None,
+        force: bool = False,
+        activate: bool = True,
+        operation_id: str | None = None,
+        plan_hash: str | None = None,
+        approval_id: str | None = None,
+        auto_resolve_dependencies: bool = True,
+        allow_system_deps: bool = False,
+        approved_plan: Any = None,
+        progress: Any = None,
+        cancel_check: Any = None,
+        runner: Any = None,
+        store: Any = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Canonical module install path — forwards all install kwargs to adapters."""
+        managed = self._ensure_instance(module_id)
+        assert managed.instance is not None
+        forwarded: dict[str, Any] = {
+            "ref": ref,
+            "force": force,
+            "activate": activate,
+            "operation_id": operation_id,
+            "plan_hash": plan_hash,
+            "auto_resolve_dependencies": auto_resolve_dependencies,
+            "allow_system_deps": allow_system_deps,
+            "approved_plan": approved_plan,
+            "progress": progress,
+            "cancel_check": cancel_check,
+            "runner": runner,
+        }
+        if store is not None:
+            forwarded["store"] = store
+        if approval_id is not None:
+            # Metadata pass-through for observability; InstallationService ignores unknown keys
+            # so keep it out of _call_install forwarding — stash on kwargs only for callers.
+            forwarded["_approval_id"] = approval_id
+        for key, value in kwargs.items():
+            if key not in forwarded and value is not None:
+                forwarded[key] = value
         return self._run_install(
             managed,
             action="install",
-            call=lambda: self._call_install(managed, **kwargs),
-            activate=True,
+            call=lambda: self._call_install(managed, **forwarded),
+            activate=activate,
         )
+
+    def ensure_installed(self, module_id: str, **kwargs: Any) -> dict[str, Any]:
+        """Install a module. Operational adapter failures become ModuleManagerError."""
+        kwargs.setdefault("activate", True)
+        return self.install(module_id, **kwargs)
 
     def start(self, module_id: str) -> dict[str, Any]:
         managed = self._ensure_instance(module_id)
@@ -554,16 +642,34 @@ class ModuleManager:
     ) -> dict[str, Any]:
         managed = self._ensure_instance(module_id)
         assert managed.instance is not None
-        if not hasattr(managed.instance, "install_version"):
+        if activate and managed.active_jobs:
             raise ModuleManagerError(
-                f"module {module_id} does not support install_version",
-                code="INVALID_RESULT",
+                f"cannot activate while jobs active: {', '.join(managed.active_jobs[:5])}",
+                code="UPDATE_BLOCKED_ACTIVE",
                 module_id=module_id,
                 action="install_version",
-                detail=f"module {module_id} does not support install_version",
+                detail=f"cannot activate while jobs active: {', '.join(managed.active_jobs[:5])}",
             )
-        progress = kwargs.get("progress")
-        cancel_check = kwargs.get("cancel_check")
+        if not hasattr(managed.instance, "install_version"):
+            # Fall back to canonical install path when module only exposes ensure_installed.
+            return self.install(module_id, ref=ref, activate=activate, **kwargs)
+
+        forwarded = {
+            key: kwargs[key]
+            for key in (
+                "progress",
+                "cancel_check",
+                "force",
+                "plan_hash",
+                "operation_id",
+                "auto_resolve_dependencies",
+                "approved_plan",
+                "allow_system_deps",
+                "runner",
+                "store",
+            )
+            if key in kwargs
+        }
 
         def _call() -> Any:
             assert managed.instance is not None
@@ -571,8 +677,7 @@ class ModuleManager:
                 ref=ref,
                 activate=activate,
                 active_jobs=list(managed.active_jobs),
-                progress=progress,
-                cancel_check=cancel_check,
+                **forwarded,
             )
 
         return self._run_install(managed, action="install_version", call=_call, activate=activate)
@@ -694,11 +799,31 @@ class ModuleManager:
         assert managed.instance is not None
         if not hasattr(managed.instance, "ensure_installed"):
             return {"status": "INSTALLED", "detail": "no_install_required"}
-        forwarded = {
-            key: kwargs[key]
-            for key in ("progress", "cancel_check")
-            if key in kwargs and kwargs[key] is not None
-        }
+        forwarded: dict[str, Any] = {}
+        for key in (
+            "progress",
+            "cancel_check",
+            "ref",
+            "force",
+            "activate",
+            "plan_hash",
+            "operation_id",
+            "auto_resolve_dependencies",
+            "approved_plan",
+            "allow_system_deps",
+            "runner",
+            "store",
+        ):
+            if key not in kwargs:
+                continue
+            value = kwargs[key]
+            # Forward explicit False/None for optional callbacks only when present;
+            # always forward bool flags even when False.
+            if key in {"progress", "cancel_check", "ref", "plan_hash", "operation_id", "approved_plan", "runner", "store"}:
+                if value is not None:
+                    forwarded[key] = value
+            else:
+                forwarded[key] = value
         return managed.instance.ensure_installed(**forwarded)
 
     def _run_install(

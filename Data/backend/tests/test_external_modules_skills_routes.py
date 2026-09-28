@@ -99,7 +99,12 @@ class ExternalModulesSkillsRouteTests(unittest.TestCase):
 
             app = FastAPI()
             app.include_router(
-                build_modules_router(module_manager=manager, observability=_Obs(), job_runtime=None)
+                build_modules_router(
+                    module_manager=manager,
+                    observability=_Obs(),
+                    job_runtime=None,
+                    allow_sync_install_fallback=True,
+                )
             )
             app.include_router(build_skills_router(external_store=store, observability=_Obs()))
             client = TestClient(app)

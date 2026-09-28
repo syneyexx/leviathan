@@ -27,7 +27,7 @@ class HttpOpenApiAdapter:
     def runtime_state(self) -> ExternalRuntimeState:
         return self._state
 
-    def ensure_installed(self, *, progress: ProgressCb | None = None, cancel_check: CancelCheck | None = None) -> dict[str, Any]:
+    def ensure_installed(self, **kwargs: Any) -> dict[str, Any]:
         # Remote-only HTTP needs no local install. Git/path + venv packages still install.
         strategies = [s.value if hasattr(s, "value") else str(s) for s in (self.config.install.strategies or [])]
         needs_local = any(s not in {"NONE", ""} for s in strategies) or self.config.source.source_type in {
@@ -38,17 +38,20 @@ class HttpOpenApiAdapter:
             from pathlib import Path
 
             from ..install import InstallationService
+            from .base import forward_install_kwargs
 
             service = InstallationService(Path(self.ctx.data_root))
+            install_kwargs = forward_install_kwargs(self.ctx, kwargs)
             result = service.ensure_installed(
                 module_id=self.ctx.module_id,
                 config=self.config,
-                progress=progress,
-                cancel_check=cancel_check,
+                **install_kwargs,
             )
             self._state = ExternalRuntimeState.INSTALLED
-            if self.ctx.store is not None:
-                self.ctx.store.add_version(
+            store = install_kwargs.get("store") or self.ctx.store
+            activate = bool(kwargs.get("activate", True))
+            if store is not None:
+                store.add_version(
                     version_id=result.version_id,
                     module_id=self.ctx.module_id,
                     install_root=result.install_root,
@@ -57,9 +60,9 @@ class HttpOpenApiAdapter:
                     content_hash=result.content_hash,
                     install_strategies=result.strategies,
                     dependency_versions=result.dependency_versions,
-                    activate=True,
+                    activate=activate,
                 )
-                self.ctx.store.set_runtime_state(self.ctx.module_id, ExternalRuntimeState.INSTALLED.value)
+                store.set_runtime_state(self.ctx.module_id, ExternalRuntimeState.INSTALLED.value)
             # Resolve base_url from install root placeholders when configured.
             if self._base_url and "$INSTALL_ROOT" in self._base_url and result.install_root:
                 self._base_url = self._base_url.replace("$INSTALL_ROOT", result.install_root)

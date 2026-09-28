@@ -544,17 +544,192 @@ export function installActionText(
   response: { status?: unknown; job_id?: unknown; result?: unknown } | null | undefined,
 ): string {
   const status = String(response?.status ?? "").toUpperCase();
+  if (status === "APPROVAL_REQUIRED") {
+    return "Approval required — review the install plan";
+  }
   const inFlight = status === "QUEUED" || status === "RUNNING" || status === "CREATED" || status === "RETRY_WAIT";
   const jobWithoutResult =
     Boolean(response?.job_id) &&
     response?.result == null &&
     status !== "COMPLETED" &&
-    status !== "INSTALLED";
+    status !== "INSTALLED" &&
+    status !== "READY";
   const queued = inFlight || jobWithoutResult;
   if (queued) {
     return action === "install" ? "Install queued" : "Version install queued";
   }
-  return action === "install" ? "Installed successfully" : "Version installed";
+  if (status === "READY" || status === "INSTALLED" || status === "COMPLETED") {
+    return action === "install" ? "Installed successfully" : "Version installed";
+  }
+  if (response?.result != null) {
+    return action === "install" ? "Installed successfully" : "Version installed";
+  }
+  return action === "install" ? "Install response received" : "Version install response received";
+}
+
+export type InstallObservationRow = {
+  dependencyId: string;
+  state: string;
+  detail: string | null;
+  packages: string[];
+  packageManager: string | null;
+};
+
+export type InstallPlanView = {
+  moduleId: string;
+  requestedRef: string;
+  strategies: string[];
+  packageManager: string | null;
+  privilegeState: string | null;
+  requiresApproval: boolean;
+  installable: boolean;
+  planHash: string;
+  missingDependencies: string[];
+  observations: InstallObservationRow[];
+  privilegedMutations: Array<Record<string, unknown>>;
+  applicationActions: Array<Record<string, unknown>>;
+  blockers: Array<Record<string, unknown>>;
+  source: Record<string, unknown>;
+};
+
+export type InstallOperationView = {
+  operationId: string | null;
+  status: string;
+  phase: string | null;
+  progress: number | null;
+  jobId: string | null;
+  approvalId: string | null;
+  planHash: string | null;
+  errorCode: string | null;
+  errorDetail: string | null;
+  retryable: boolean;
+  plan: InstallPlanView | null;
+};
+
+const INSTALL_PHASE_ORDER = [
+  "PLANNING",
+  "APPROVAL_REQUIRED",
+  "QUEUED",
+  "PREPARING",
+  "INSTALLING_SYSTEM_DEPENDENCIES",
+  "VERIFYING_SYSTEM_DEPENDENCIES",
+  "FETCHING_SOURCE",
+  "PREPARING_RUNTIME",
+  "INSTALLING_APPLICATION_DEPENDENCIES",
+  "POST_INSTALL",
+  "VERIFYING_INSTALLATION",
+  "ACTIVATING",
+  "READY",
+] as const;
+
+export function parseInstallPlan(raw: unknown): InstallPlanView | null {
+  if (!raw || typeof raw !== "object") return null;
+  const p = raw as Record<string, unknown>;
+  const observationsRaw = Array.isArray(p.observations) ? p.observations : [];
+  const observations: InstallObservationRow[] = observationsRaw
+    .filter((o): o is Record<string, unknown> => !!o && typeof o === "object")
+    .map((o) => ({
+      dependencyId: String(o.dependency_id ?? ""),
+      state: String(o.state ?? "UNMEASURED"),
+      detail: o.detail == null ? null : String(o.detail),
+      packages: Array.isArray(o.install_packages) ? o.install_packages.map(String) : [],
+      packageManager: o.package_manager == null ? null : String(o.package_manager),
+    }))
+    .filter((o) => o.dependencyId);
+  return {
+    moduleId: String(p.module_id ?? ""),
+    requestedRef: String(p.requested_ref ?? "main"),
+    strategies: Array.isArray(p.strategies) ? p.strategies.map(String) : [],
+    packageManager: p.package_manager == null ? null : String(p.package_manager),
+    privilegeState: p.privilege_state == null ? null : String(p.privilege_state),
+    requiresApproval: Boolean(p.requires_approval),
+    installable: p.installable !== false,
+    planHash: String(p.plan_hash ?? ""),
+    missingDependencies: Array.isArray(p.missing_dependencies) ? p.missing_dependencies.map(String) : [],
+    observations,
+    privilegedMutations: Array.isArray(p.privileged_mutations)
+      ? (p.privileged_mutations as Array<Record<string, unknown>>)
+      : [],
+    applicationActions: Array.isArray(p.application_actions)
+      ? (p.application_actions as Array<Record<string, unknown>>)
+      : [],
+    blockers: Array.isArray(p.blockers) ? (p.blockers as Array<Record<string, unknown>>) : [],
+    source: p.source && typeof p.source === "object" ? (p.source as Record<string, unknown>) : {},
+  };
+}
+
+export function parseInstallOperation(raw: unknown): InstallOperationView | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const planRaw = r.plan && typeof r.plan === "object" ? r.plan : null;
+  const status = String(r.status ?? "").toUpperCase();
+  return {
+    operationId: r.operation_id == null ? null : String(r.operation_id),
+    status,
+    phase: r.phase == null ? null : String(r.phase).toUpperCase(),
+    progress: typeof r.progress === "number" ? r.progress : null,
+    jobId: r.job_id == null ? null : String(r.job_id),
+    approvalId:
+      r.approval_id == null
+        ? r.approval && typeof r.approval === "object"
+          ? String((r.approval as Record<string, unknown>).approval_id ?? "") || null
+          : null
+        : String(r.approval_id),
+    planHash: r.plan_hash == null ? (planRaw ? String((planRaw as Record<string, unknown>).plan_hash ?? "") : null) : String(r.plan_hash),
+    errorCode: r.error_code == null ? null : String(r.error_code),
+    errorDetail: r.error_detail == null ? (r.detail == null ? null : String(r.detail)) : String(r.error_detail),
+    retryable: Boolean(r.retryable),
+    plan: parseInstallPlan(planRaw ?? r),
+  };
+}
+
+export function dependencyStateLabel(state: string): string {
+  const s = state.toUpperCase();
+  if (s === "SATISFIED") return "INSTALLED";
+  if (s === "MISSING_INSTALLABLE") return "MISSING — WILL INSTALL";
+  if (s === "MISSING_UNSUPPORTED") return "MISSING — UNSUPPORTED";
+  if (s === "VERSION_MISMATCH_INSTALLABLE") return "VERSION MISMATCH";
+  if (s === "VERSION_MISMATCH_UNSUPPORTED") return "VERSION MISMATCH";
+  if (s === "BLOCKED_PRIVILEGE") return "PRIVILEGE REQUIRED";
+  if (s === "UNMEASURED") return "UNMEASURED";
+  return s || "UNMEASURED";
+}
+
+export function dependencyStateTone(state: string): StatusTone {
+  const s = state.toUpperCase();
+  if (s === "SATISFIED") return "ok";
+  if (s === "MISSING_INSTALLABLE") return "warn";
+  if (s === "BLOCKED_PRIVILEGE" || s === "MISSING_UNSUPPORTED") return "err";
+  return "muted";
+}
+
+export function installPhaseSteps(currentPhase: string | null): Array<{ id: string; label: string; state: "done" | "active" | "pending" | "failed" }> {
+  const phase = (currentPhase || "").toUpperCase();
+  if (phase === "FAILED" || phase === "CANCELLED") {
+    return INSTALL_PHASE_ORDER.map((id) => ({
+      id,
+      label: id.replaceAll("_", " "),
+      state: "pending" as const,
+    }));
+  }
+  const idx = INSTALL_PHASE_ORDER.indexOf(phase as (typeof INSTALL_PHASE_ORDER)[number]);
+  return INSTALL_PHASE_ORDER.map((id, i) => {
+    let state: "done" | "active" | "pending" = "pending";
+    if (idx < 0) state = "pending";
+    else if (i < idx) state = "done";
+    else if (i === idx) state = phase === "READY" ? "done" : "active";
+    return { id, label: id.replaceAll("_", " "), state };
+  });
+}
+
+export function primaryInstallCta(plan: InstallPlanView | null, status: string | null): string {
+  const s = (status || "").toUpperCase();
+  if (s === "FAILED") return "RETRY INSTALL";
+  if (s === "QUEUED" || s === "RUNNING" || s === "CREATED" || s === "RETRY_WAIT") return "INSTALL IN PROGRESS";
+  if (s === "READY" || s === "INSTALLED" || s === "COMPLETED") return "INSTALLED";
+  if (!plan) return "INSTALL";
+  if (plan.requiresApproval || s === "APPROVAL_REQUIRED") return "APPROVE & INSTALL EVERYTHING";
+  return "INSTALL EVERYTHING";
 }
 
 export function lifecycleFailureText(action: string, detail: string): string {

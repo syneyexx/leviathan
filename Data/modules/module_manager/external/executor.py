@@ -106,8 +106,13 @@ class ExternalModuleExecutor:
                     provider_kind="module",
                     provider_ref=provider_ref,
                 )
-            versioned = "activate" in arguments or bool(arguments.get("ref"))
-            action = "install_version" if versioned else "install"
+            # Prefer explicit activate; default True for /install worker path when missing.
+            activate = bool(arguments["activate"]) if "activate" in arguments else True
+            action = "install_version" if arguments.get("ref") and not activate else "install"
+            # After gateway verified approval (plan_hash present), allow privileged system deps.
+            allow_system_deps = bool(arguments.get("allow_system_deps"))
+            if arguments.get("plan_hash") and not allow_system_deps:
+                allow_system_deps = True
             try:
                 if job_id:
                     self.module_manager.register_job(module_id, job_id)
@@ -115,21 +120,40 @@ class ExternalModuleExecutor:
                     "module.install.started",
                     {"module_id": module_id, "action": action, "job_id": job_id},
                 )
-                lifecycle_kwargs: dict[str, Any] = {}
+                install_kwargs: dict[str, Any] = {
+                    "ref": arguments.get("ref"),
+                    "force": bool(arguments.get("force", False)),
+                    "activate": activate,
+                    "plan_hash": arguments.get("plan_hash"),
+                    "operation_id": arguments.get("operation_id"),
+                    "auto_resolve_dependencies": bool(
+                        arguments.get("auto_resolve_dependencies", True)
+                    ),
+                    "allow_system_deps": allow_system_deps,
+                    "approval_id": arguments.get("approval_id"),
+                }
                 if progress is not None:
-                    lifecycle_kwargs["progress"] = progress
+                    install_kwargs["progress"] = progress
                 if cancel_check is not None:
-                    lifecycle_kwargs["cancel_check"] = cancel_check
-                if versioned:
-                    activate = bool(arguments.get("activate")) if "activate" in arguments else True
+                    install_kwargs["cancel_check"] = cancel_check
+                if hasattr(self.module_manager, "install"):
+                    result = self.module_manager.install(module_id, **install_kwargs)
+                elif arguments.get("ref") is not None or "activate" in arguments:
                     result = self.module_manager.install_version(
                         module_id,
                         ref=arguments.get("ref"),
                         activate=activate,
-                        **lifecycle_kwargs,
+                        **{
+                            k: v
+                            for k, v in install_kwargs.items()
+                            if k not in {"ref", "activate", "approval_id"}
+                        },
                     )
                 else:
-                    result = self.module_manager.ensure_installed(module_id, **lifecycle_kwargs)
+                    result = self.module_manager.ensure_installed(
+                        module_id,
+                        **{k: v for k, v in install_kwargs.items() if k != "approval_id"},
+                    )
                 self._metric("external.modules.installed", {"module_id": module_id})
                 self._metric(
                     "module.install.completed",

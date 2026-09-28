@@ -457,6 +457,76 @@ def _dm5_research_command_sessions(conn: sqlite3.Connection, domain: DatabaseDom
     _m58_research_command_sessions(conn)
 
 
+def _dm6_external_install_operations(conn: sqlite3.Connection, domain: DatabaseDomain) -> None:
+    """CONTROL domain v6 — durable install operations + dependency receipts."""
+    if domain is not DatabaseDomain.CONTROL:
+        return
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS external_install_operations (
+            operation_id TEXT PRIMARY KEY,
+            module_id TEXT NOT NULL,
+            requested_ref TEXT,
+            status TEXT NOT NULL,
+            phase TEXT NOT NULL,
+            progress REAL,
+            job_id TEXT,
+            approval_id TEXT,
+            plan_hash TEXT NOT NULL,
+            plan_json TEXT NOT NULL,
+            package_manager TEXT,
+            error_code TEXT,
+            error_detail TEXT,
+            retryable INTEGER NOT NULL DEFAULT 0,
+            rollback_status TEXT,
+            idempotency_key TEXT,
+            started_at TEXT,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(module_id) REFERENCES external_modules(module_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ext_install_ops_module
+            ON external_install_operations(module_id, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_ext_install_ops_status
+            ON external_install_operations(status);
+        CREATE INDEX IF NOT EXISTS idx_ext_install_ops_job
+            ON external_install_operations(job_id);
+        CREATE INDEX IF NOT EXISTS idx_ext_install_ops_idempotency
+            ON external_install_operations(idempotency_key);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_ext_install_ops_active_idempotency
+            ON external_install_operations(idempotency_key)
+            WHERE idempotency_key IS NOT NULL
+              AND status NOT IN ('SUCCEEDED', 'FAILED', 'CANCELLED', 'COMPLETED', 'READY');
+
+        CREATE TABLE IF NOT EXISTS external_install_dependency_receipts (
+            receipt_id TEXT PRIMARY KEY,
+            operation_id TEXT NOT NULL,
+            dependency_id TEXT NOT NULL,
+            state_before TEXT,
+            state_after TEXT,
+            package_manager TEXT,
+            packages_json TEXT NOT NULL DEFAULT '[]',
+            observed_version_before TEXT,
+            observed_version_after TEXT,
+            newly_installed INTEGER NOT NULL DEFAULT 0,
+            command_fingerprint TEXT,
+            started_at TEXT,
+            completed_at TEXT,
+            status TEXT NOT NULL,
+            error_code TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(operation_id) REFERENCES external_install_operations(operation_id)
+                ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ext_install_receipts_operation
+            ON external_install_dependency_receipts(operation_id);
+        """
+    )
+
+
 DOMAIN_MIGRATIONS: tuple[DomainMigration, ...] = (
     DomainMigration(
         version=2,
@@ -477,6 +547,11 @@ DOMAIN_MIGRATIONS: tuple[DomainMigration, ...] = (
         version=5,
         name="research_command_sessions",
         apply=_dm5_research_command_sessions,
+    ),
+    DomainMigration(
+        version=6,
+        name="external_install_operations",
+        apply=_dm6_external_install_operations,
     ),
 )
 

@@ -48,12 +48,18 @@ def register_external_control_capabilities(catalog: CapabilityCatalog) -> None:
         if cap_id in catalog:
             continue
         heavy = cap_id.startswith("external.module.") or cap_id == "external.knowledge.assimilate"
+        if cap_id == "external.module.install":
+            effects = (SideEffect.READ, SideEffect.WRITE, SideEffect.NETWORK, SideEffect.EXECUTE)
+        elif heavy:
+            effects = (SideEffect.READ, SideEffect.EXECUTE)
+        else:
+            effects = (SideEffect.READ,)
         catalog.register(
             CapabilityDefinition(
                 id=cap_id,
                 name=name,
                 description=description,
-                side_effects=(SideEffect.READ, SideEffect.EXECUTE) if heavy else (SideEffect.READ,),
+                side_effects=effects,
                 provider_kind=CapabilityProviderKind.MODULE,
                 provider_ref=ref,
                 input_schema={

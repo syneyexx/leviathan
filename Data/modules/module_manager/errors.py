@@ -29,10 +29,30 @@ _KNOWN_CODES = frozenset(
         "INVALID_RESULT",
         "REMOTE_ERROR",
         "DEPENDENCY_MISSING",
+        "DEPENDENCY_UNSUPPORTED",
+        "DEPENDENCY_VERIFY_FAILED",
+        "PACKAGE_MANAGER_UNAVAILABLE",
+        "PACKAGE_MANAGER_BUSY",
+        "PACKAGE_METADATA_REFRESH_FAILED",
+        "PACKAGE_INSTALL_FAILED",
+        "PRIVILEGE_REQUIRED",
+        "APPROVAL_REQUIRED",
+        "APPROVAL_INVALID",
+        "APPROVAL_EXPIRED",
+        "APPROVAL_SERVICE_UNAVAILABLE",
+        "PLAN_STALE_REAPPROVAL_REQUIRED",
+        "SOURCE_UNAVAILABLE",
+        "INSTALL_WORKER_UNAVAILABLE",
+        "INSTALL_QUEUE_FAILED",
+        "INSTALL_CONFLICT",
+        "NETWORK_POLICY_BLOCKED",
+        "INSTALLED_RESTART_REQUIRED",
         "CAPABILITY_NOT_FOUND",
         "PROTOCOL_ERROR",
         "CANCEL_UNSUPPORTED",
         "INSTALL_FAILED",
+        "VERIFY_FAILED",
+        "ROLLBACK_PARTIAL",
         "UPDATE_BLOCKED_ACTIVE",
         "NOT_AVAILABLE",
         "PORT_IN_USE",
@@ -64,16 +84,36 @@ _CONFLICT_CODES = frozenset(
         "CANCEL_UNSUPPORTED",
         "NOT_INSTALLED",
         "UPDATE_BLOCKED_ACTIVE",
+        "INSTALL_CONFLICT",
+        "PLAN_STALE_REAPPROVAL_REQUIRED",
+        "APPROVAL_REQUIRED",
+        "APPROVAL_INVALID",
+        "APPROVAL_EXPIRED",
     }
 )
 # Required external dependency or remote service is unavailable.
 _DEPENDENCY_CODES = frozenset(
     {
         "DEPENDENCY_MISSING",
+        "DEPENDENCY_UNSUPPORTED",
+        "DEPENDENCY_VERIFY_FAILED",
+        "PACKAGE_MANAGER_UNAVAILABLE",
+        "PACKAGE_MANAGER_BUSY",
+        "PACKAGE_METADATA_REFRESH_FAILED",
+        "PACKAGE_INSTALL_FAILED",
+        "PRIVILEGE_REQUIRED",
+        "SOURCE_UNAVAILABLE",
+        "NETWORK_POLICY_BLOCKED",
+        "INSTALLED_RESTART_REQUIRED",
         "NOT_AVAILABLE",
         "PROTOCOL_ERROR",
         "HEALTH_FAILED",
         "REMOTE_ERROR",
+        "APPROVAL_SERVICE_UNAVAILABLE",
+        "INSTALL_WORKER_UNAVAILABLE",
+        "INSTALL_QUEUE_FAILED",
+        "VERIFY_FAILED",
+        "ROLLBACK_PARTIAL",
     }
 )
 
@@ -201,6 +241,8 @@ def http_status_for_lifecycle_error(exc: ModuleManagerError) -> int:
         return 404
     if code == "UPDATE_BLOCKED_ACTIVE":
         return 409
+    if code in {"INSTALL_WORKER_UNAVAILABLE", "INSTALL_QUEUE_FAILED"}:
+        return 503
     if code in _DEPENDENCY_CODES:
         return 424
     if code == "TIMEOUT":

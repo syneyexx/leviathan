@@ -72,7 +72,14 @@ def _manager(tmp: Path, module_id: str, external: dict[str, Any]) -> ModuleManag
     return manager
 
 
-def _client(manager: ModuleManager, *, job_runtime: Any = None, approval_service: Any = None, obs: _Obs | None = None) -> TestClient:
+def _client(
+    manager: ModuleManager,
+    *,
+    job_runtime: Any = None,
+    approval_service: Any = None,
+    obs: _Obs | None = None,
+    allow_sync_install_fallback: bool = True,
+) -> TestClient:
     app = FastAPI()
     app.include_router(
         build_modules_router(
@@ -80,6 +87,7 @@ def _client(manager: ModuleManager, *, job_runtime: Any = None, approval_service
             observability=obs or _Obs(),
             job_runtime=job_runtime,
             approval_service=approval_service,
+            allow_sync_install_fallback=allow_sync_install_fallback,
         )
     )
     return TestClient(app, raise_server_exceptions=False)
@@ -170,7 +178,7 @@ class ModuleLifecycleErrorTests(unittest.TestCase):
         secret = "token=super-secret-value"
         noisy = secret + " " + ("log-line " * 400)
 
-        def _which(name: str) -> str | None:
+        def _which(name: str, path: str | None = None) -> str | None:
             if name == "git":
                 return "/usr/bin/git"
             return None
@@ -193,6 +201,7 @@ class ModuleLifecycleErrorTests(unittest.TestCase):
             )
             with (
                 patch("Data.modules.module_manager.external.install.shutil.which", side_effect=_which),
+                patch("Data.modules.module_manager.external.dependencies.shutil.which", side_effect=_which),
                 patch("Data.modules.module_manager.external.install.subprocess.run", side_effect=_run),
             ):
                 with self.assertRaises(ModuleManagerError) as caught:
@@ -224,7 +233,32 @@ class ModuleLifecycleErrorTests(unittest.TestCase):
             return "abc123"
 
         def _run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
-            return subprocess.CompletedProcess(list(cmd), 1, "", "No matching distribution for nope")
+            # Dependency probes and venv creation must succeed; only pip install fails.
+            if not cmd:
+                return subprocess.CompletedProcess([], 0, "", "")
+            joined = " ".join(str(x) for x in cmd)
+            if "sudo" in cmd[0] and "-n" in cmd:
+                return subprocess.CompletedProcess(list(cmd), 0, "", "")
+            if "--version" in cmd:
+                return subprocess.CompletedProcess(list(cmd), 0, "1.0.0\n", "")
+            if "-m" in cmd and "venv" in cmd:
+                # Create probe/real venv directories when a path argument is present.
+                for arg in cmd:
+                    text = str(arg)
+                    if text.endswith("probe-venv") or text.endswith(".venv") or "/venv" in text or text.endswith("venv"):
+                        Path(text).mkdir(parents=True, exist_ok=True)
+                        bin_dir = Path(text) / ("Scripts" if os.name == "nt" else "bin")
+                        bin_dir.mkdir(parents=True, exist_ok=True)
+                        py_name = "python.exe" if os.name == "nt" else "python"
+                        pip_name = "pip.exe" if os.name == "nt" else "pip"
+                        (bin_dir / py_name).write_text("", encoding="utf-8")
+                        (bin_dir / pip_name).write_text("", encoding="utf-8")
+                return subprocess.CompletedProcess(list(cmd), 0, "", "")
+            if "install" in cmd and ("-r" in cmd or any(str(x).endswith("requirements.txt") for x in cmd)):
+                return subprocess.CompletedProcess(list(cmd), 1, "", "No matching distribution for nope")
+            if "install" in joined:
+                return subprocess.CompletedProcess(list(cmd), 1, "", "No matching distribution for nope")
+            return subprocess.CompletedProcess(list(cmd), 0, "", "")
 
         with tempfile.TemporaryDirectory() as tmp_s:
             tmp = Path(tmp_s)
@@ -360,12 +394,15 @@ class ModuleLifecycleErrorTests(unittest.TestCase):
 
             jobs = _Jobs()
             obs = _Obs()
-            client = _client(manager, job_runtime=jobs, obs=obs)
-            ok = client.post("/api/modules/fixture-queue/install", json={})
-            self.assertEqual(ok.status_code, 200)
-            self.assertNotIn("QUEUED", json.dumps(ok.json()))
-            self.assertIn("result", ok.json())
-            self.assertEqual(manager.get("fixture-queue").status, ModuleStatus.INSTALLED)  # type: ignore[union-attr]
+            # Production: fail closed — no silent sync fallback.
+            prod = _client(
+                manager,
+                job_runtime=jobs,
+                obs=obs,
+                allow_sync_install_fallback=False,
+            ).post("/api/modules/fixture-queue/install", json={})
+            self.assertEqual(prod.status_code, 503)
+            self.assertEqual(prod.json()["detail"]["code"], "INSTALL_QUEUE_FAILED")
             self.assertEqual(jobs.calls, 1)
             self.assertIn("module.install.enqueue_failed", obs.names())
             failed = next(payload for name, payload in obs.events if name == "module.install.enqueue_failed")
@@ -374,6 +411,25 @@ class ModuleLifecycleErrorTests(unittest.TestCase):
             self.assertEqual(failed["error_class"], "RuntimeError")
             self.assertIn("queue offline", failed["error"])
 
+            # Dev flag: sync fallback remains observable and marked as non-production.
+            jobs2 = _Jobs()
+            obs2 = _Obs()
+            ok = _client(
+                manager,
+                job_runtime=jobs2,
+                obs=obs2,
+                allow_sync_install_fallback=True,
+            ).post("/api/modules/fixture-queue/install", json={})
+            self.assertEqual(ok.status_code, 200)
+            body = ok.json()
+            self.assertEqual(body.get("executed_via"), "sync_dev_fallback")
+            self.assertEqual(body.get("truth", {}).get("production_worker_path"), False)
+            self.assertIn("result", body)
+            self.assertEqual(manager.get("fixture-queue").status, ModuleStatus.INSTALLED)  # type: ignore[union-attr]
+            self.assertEqual(jobs2.calls, 1)
+            self.assertIn("module.install.enqueue_failed", obs2.names())
+            self.assertIn("module.install.sync_dev_fallback", obs2.names())
+
             manager_fail = _manager(
                 tmp,
                 "fixture-queue-fail",
@@ -381,20 +437,63 @@ class ModuleLifecycleErrorTests(unittest.TestCase):
                     "adapter": "CLI",
                     "source_type": "git",
                     "source": "https://example.invalid/fixture.git",
+                    "ref": "main",
                     "install": {
                         "strategy": ["GIT_CHECKOUT"],
-                        "dependencies": ["definitely-missing-binary-leviathan-xyz"],
                     },
                 },
             )
+
+            def _which(name: str, path: str | None = None) -> str | None:
+                if name == "git":
+                    return "/usr/bin/git"
+                return None
+
+            def _run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+                if cmd and "--version" in cmd:
+                    return subprocess.CompletedProcess(list(cmd), 0, "git version 2.0\n", "")
+                if cmd and "sudo" in str(cmd[0]) and "-n" in cmd:
+                    return subprocess.CompletedProcess(list(cmd), 0, "", "")
+                return subprocess.CompletedProcess(list(cmd), 128, "", "fatal: repository not found")
+
             obs_fail = _Obs()
-            bad = _client(manager_fail, job_runtime=_Jobs(), obs=obs_fail).post(
-                "/api/modules/fixture-queue-fail/install",
-                json={},
-            )
-            self.assertEqual(bad.status_code, 424)
-            self.assertEqual(bad.json()["detail"]["code"], "DEPENDENCY_MISSING")
+            # Production fail-closed on enqueue — never reaches sync install.
+            with (
+                patch("Data.modules.module_manager.external.install.shutil.which", side_effect=_which),
+                patch("Data.modules.module_manager.external.dependencies.shutil.which", side_effect=_which),
+                patch("Data.modules.module_manager.external.install.subprocess.run", side_effect=_run),
+            ):
+                bad_prod = _client(
+                    manager_fail,
+                    job_runtime=_Jobs(),
+                    obs=obs_fail,
+                    allow_sync_install_fallback=False,
+                ).post(
+                    "/api/modules/fixture-queue-fail/install",
+                    json={},
+                )
+            self.assertEqual(bad_prod.status_code, 503)
+            self.assertEqual(bad_prod.json()["detail"]["code"], "INSTALL_QUEUE_FAILED")
             self.assertIn("module.install.enqueue_failed", obs_fail.names())
+
+            obs_fail2 = _Obs()
+            with (
+                patch("Data.modules.module_manager.external.install.shutil.which", side_effect=_which),
+                patch("Data.modules.module_manager.external.dependencies.shutil.which", side_effect=_which),
+                patch("Data.modules.module_manager.external.install.subprocess.run", side_effect=_run),
+            ):
+                bad = _client(
+                    manager_fail,
+                    job_runtime=_Jobs(),
+                    obs=obs_fail2,
+                    allow_sync_install_fallback=True,
+                ).post(
+                    "/api/modules/fixture-queue-fail/install",
+                    json={},
+                )
+            self.assertEqual(bad.status_code, 409)
+            self.assertEqual(bad.json()["detail"]["code"], "INSTALL_FAILED")
+            self.assertIn("module.install.enqueue_failed", obs_fail2.names())
             self.assertEqual(manager_fail.get("fixture-queue-fail").status, ModuleStatus.FAILED)  # type: ignore[union-attr]
 
     def test_queue_response_is_not_a_completed_install(self) -> None:
@@ -593,13 +692,29 @@ class RealManifestSmokeTests(unittest.TestCase):
         self.assertTrue((REPO_MODULES / "agent-reach" / "module.json").is_file())
         self.assertTrue((REPO_MODULES / "desktop-commander-mcp" / "module.json").is_file())
 
-        def _which(name: str) -> str | None:
+        def _which(name: str, path: str | None = None) -> str | None:
             if name in {"git", "python3", "python", "curl", "pip", "pip3"}:
                 return f"/usr/bin/{name}"
             return None
 
         def _run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
-            if cmd and cmd[0] == "git":
+            if not cmd:
+                return subprocess.CompletedProcess([], 0, "", "")
+            if cmd and "sudo" in str(cmd[0]):
+                return subprocess.CompletedProcess(list(cmd), 0, "", "")
+            if "--version" in cmd or "-V" in cmd:
+                return subprocess.CompletedProcess(list(cmd), 0, "1.0.0\n", "")
+            if "-m" in cmd and "venv" in cmd:
+                for arg in cmd:
+                    text = str(arg)
+                    if "venv" in text:
+                        Path(text).mkdir(parents=True, exist_ok=True)
+                        bin_dir = Path(text) / ("Scripts" if os.name == "nt" else "bin")
+                        bin_dir.mkdir(parents=True, exist_ok=True)
+                        (bin_dir / ("python.exe" if os.name == "nt" else "python")).write_text("", encoding="utf-8")
+                        (bin_dir / ("pip.exe" if os.name == "nt" else "pip")).write_text("", encoding="utf-8")
+                return subprocess.CompletedProcess(list(cmd), 0, "", "")
+            if cmd and str(cmd[0]).endswith("git") or (cmd and cmd[0] == "git"):
                 return subprocess.CompletedProcess(list(cmd), 128, "", "fatal: repository not found")
             raise AssertionError(f"unexpected subprocess {cmd}")
 
@@ -616,6 +731,7 @@ class RealManifestSmokeTests(unittest.TestCase):
 
             with (
                 patch("Data.modules.module_manager.external.install.shutil.which", side_effect=_which),
+                patch("Data.modules.module_manager.external.dependencies.shutil.which", side_effect=_which),
                 patch("Data.modules.module_manager.external.install.subprocess.run", side_effect=_run),
             ):
                 with self.assertRaises(ModuleManagerError) as ghost:
