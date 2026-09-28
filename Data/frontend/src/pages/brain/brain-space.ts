@@ -342,7 +342,7 @@ export type BrainSpaceAnimationLoopOptions = {
   cancelAnimationFrame?: typeof globalThis.cancelAnimationFrame;
 };
 
-/** One bounded RAF chain. Resume never catches up wall-clock time spent paused. */
+/** One bounded RAF chain. Large background/resume wall-clock gaps are capped. */
 export function createBrainSpaceAnimationLoop(
   options: BrainSpaceAnimationLoopOptions,
 ): BrainSpaceAnimationLoop {
@@ -380,7 +380,6 @@ export function createBrainSpaceAnimationLoop(
     isRunning: () => running,
     getSimTime: () => simTime,
     setPaused(next) {
-      if (paused !== next) lastFrame = 0;
       paused = next;
     },
     getPaused: () => paused,
