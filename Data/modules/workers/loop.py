@@ -13,6 +13,13 @@ from Data.modules.jobs.leases import LeaseFenceError, observe_job_cancel_state, 
 from Data.modules.jobs.states import JobState, StaleLeaseError
 
 from .admission import ResourceAdmission, ResourceClass
+from .context import (
+    REQUIRED_BASE_KEYS,
+    REQUIRES_BASE,
+    WorkerContextError,
+    WorkerContextRequirements,
+    validate_worker_context,
+)
 from .events import get_worker_event_emitter, resolve_human_title
 from .pools import POOL_CATALOG
 from .protocol import WorkerInstanceState
@@ -23,8 +30,22 @@ from .settings import load_worker_settings
 HandlerFn = Callable[[Any, Any], dict[str, Any] | None]
 
 
+def _handler_requirements(handler: HandlerFn | None) -> WorkerContextRequirements:
+    """Handlers may declare ``worker_context_requirements``; default is full base ctx."""
+    if handler is None:
+        return REQUIRES_BASE
+    declared = getattr(handler, "worker_context_requirements", None)
+    if isinstance(declared, WorkerContextRequirements):
+        return declared
+    return REQUIRES_BASE
+
+
 def build_minimal_job_context() -> dict[str, Any]:
-    """Process-safe factories — never imports backend.main."""
+    """Process-safe factories — never imports backend.main.
+
+    Returns a dict that always satisfies ``REQUIRED_BASE_KEYS``. Callers that
+    need a typed view should wrap with ``WorkerExecutionContext``.
+    """
     from pathlib import Path
 
     from Data.backend.config import load_settings
@@ -35,6 +56,7 @@ def build_minimal_job_context() -> dict[str, Any]:
     from Data.modules.jobs.resources import ResourceManager
     from Data.modules.jobs.runtime import JobRuntime
     from Data.modules.jobs.store import JobStore
+    from Data.modules.training.hardware import probe_hardware
 
     settings = load_settings()
     job_store = JobStore(settings.database_path)
@@ -63,10 +85,69 @@ def build_minimal_job_context() -> dict[str, Any]:
     job_runtime = JobRuntime(job_store, gateway, resources)
     registry = WorkerRegistry(settings.database_path)
     registry.initialize()
-    admission = ResourceAdmission(settings.database_path)
+
+    def _worker_hardware_reader() -> dict[str, Any]:
+        """Adapt training probe_hardware into admission's devices contract."""
+        snap = probe_hardware()
+        devices: list[dict[str, Any]] = []
+        for idx, gpu in enumerate(getattr(snap, "gpus", ()) or ()):
+            g = gpu.public_dict() if hasattr(gpu, "public_dict") else dict(gpu)
+            uuid = g.get("uuid") or g.get("pciBusId") or g.get("name") or f"gpu-{idx}"
+            total = g.get("totalVramBytes") or g.get("total_vram_bytes")
+            free = g.get("freeVramBytes") or g.get("free_vram_bytes")
+            used = g.get("usedVramBytes") or g.get("used_vram_bytes")
+            devices.append(
+                {
+                    "stableDeviceId": str(uuid),
+                    "stable_device_id": str(uuid),
+                    "name": g.get("name"),
+                    "index": g.get("index", idx),
+                    "totalVramBytes": total,
+                    "freeVramBytes": free,
+                    "usedVramBytes": used,
+                    "provenance": "nvidia_smi_or_torch",
+                }
+            )
+        return {
+            "devices": devices,
+            "hostMemory": {
+                "totalBytes": getattr(snap, "ram_total_bytes", None),
+                "availableBytes": getattr(snap, "ram_available_bytes", None),
+            },
+            "measuredAt": getattr(snap, "measured_at", None),
+            "notes": list(getattr(snap, "notes", ()) or ()),
+        }
+
+    def _worker_telemetry_reader() -> dict[str, Any]:
+        snap = probe_hardware()
+        ram_avail = getattr(snap, "ram_available_bytes", None)
+        ram_mb = (float(ram_avail) / (1024.0 * 1024.0)) if ram_avail is not None else None
+        vram_free = None
+        for gpu in getattr(snap, "gpus", ()) or ():
+            g = gpu.public_dict() if hasattr(gpu, "public_dict") else {}
+            free = g.get("freeVramBytes") or g.get("free_vram_bytes")
+            if free is not None:
+                vram_free = (vram_free or 0) + int(free)
+        vram_mb = (float(vram_free) / (1024.0 * 1024.0)) if vram_free is not None else None
+        return {
+            "ram_available_mb": ram_mb,
+            "vram_available_mb": vram_mb,
+            "source": "probe_hardware",
+            "devices": _worker_hardware_reader()["devices"],
+        }
+
+    # Hook hardware discovery so GPU/VRAM admission shares measured truth.
+    # Preserve several GB headroom on 16 GB hosts (not just a few hundred MB).
+    admission = ResourceAdmission(
+        settings.database_path,
+        ram_headroom_mb=3072.0,
+        vram_headroom_mb=512.0,
+        hardware_reader=_worker_hardware_reader,
+        telemetry_reader=_worker_telemetry_reader,
+    )
     admission.initialize()
     worker_settings = load_worker_settings()
-    return {
+    ctx = {
         "settings": settings,
         "job_store": job_store,
         "job_runtime": job_runtime,
@@ -77,6 +158,9 @@ def build_minimal_job_context() -> dict[str, Any]:
         "admission": admission,
         "worker_settings": worker_settings,
     }
+    validate_worker_context(ctx, requirements=REQUIRES_BASE)
+    assert all(k in ctx for k in REQUIRED_BASE_KEYS)
+    return ctx
 
 
 def run_pool_loop(
@@ -454,7 +538,21 @@ def run_pool_loop(
                     pass
             else:
                 if handler is not None:
-                    result = handler(ctx, job)
+                    try:
+                        validate_worker_context(
+                            ctx, requirements=_handler_requirements(handler)
+                        )
+                    except WorkerContextError as ctx_exc:
+                        store.transition(
+                            job.job_id,
+                            JobState.FAILED,
+                            error=f"WORKER_CONTEXT_INVALID: {ctx_exc}",
+                            error_code="WORKER_CONTEXT_INVALID",
+                            expected_lease_owner=worker_id,
+                        )
+                        result = {"error": str(ctx_exc), "code": "WORKER_CONTEXT_INVALID"}
+                    else:
+                        result = handler(ctx, job)
                 else:
                     result = _default_gateway_execute(
                         runtime, store, job, worker_id, lease_ttl, ctx=ctx

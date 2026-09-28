@@ -315,29 +315,69 @@ def _migration_verify(settings: Any, args: dict[str, Any]) -> dict[str, Any]:
 def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
     from Data.modules.jobs.leases import fenced_transition
     from Data.modules.jobs.states import JobState
+    from Data.modules.workers.context import (
+        REQUIRES_MAINTENANCE,
+        WorkerContextError,
+        ensure_handler_context,
+    )
+
+    try:
+        ensure_handler_context(ctx, requirements=REQUIRES_MAINTENANCE)
+    except WorkerContextError as exc:
+        fenced_transition(
+            ctx.get("job_store"),
+            job.job_id,
+            JobState.FAILED,
+            error=f"WORKER_CONTEXT_INVALID: {exc}",
+            worker_id=str(ctx.get("worker_id") or ""),
+            ctx=ctx if isinstance(ctx, dict) else {},
+        )
+        return {"error": str(exc), "code": "WORKER_CONTEXT_INVALID"}
 
     cap = str(getattr(job, "capability_id", "") or "maintenance.reconcile")
     args = dict(getattr(job, "arguments", None) or {})
     worker_id = str(ctx.get("worker_id") or "")
 
+    def _needs_settings() -> Any:
+        if "settings" not in ctx or ctx["settings"] is None:
+            raise WorkerContextError(
+                "worker context missing required dependency: settings",
+                missing=["settings"],
+            )
+        return ctx["settings"]
+
+    # Exact / suffix matching — never substring traps like "import" in unrelated ids.
     try:
-        if cap.endswith(".reconcile") or cap == "maintenance.reconcile":
+        if cap in {"system.maintenance", "maintenance.reconcile"} or cap.endswith(".reconcile"):
             result = _reconcile(ctx, args)
-        elif "integrity" in cap:
-            result = _integrity(ctx["settings"], args)
-        elif "vacuum" in cap:
-            result = _vacuum(ctx["settings"], args)
-        elif "analyze" in cap:
-            result = _analyze(ctx["settings"], args)
-        elif "checkpoint" in cap:
-            result = _checkpoint(ctx["settings"], args)
-        elif "backup.restore" in cap or cap.endswith(".restore"):
+        elif cap.endswith(".integrity") or cap.endswith(".integrity_check") or cap == "maintenance.integrity":
+            result = _integrity(_needs_settings(), args)
+        elif cap.endswith(".vacuum") or cap == "maintenance.vacuum":
+            result = _vacuum(_needs_settings(), args)
+        elif cap.endswith(".analyze") or cap == "maintenance.analyze":
+            result = _analyze(_needs_settings(), args)
+        elif cap.endswith(".checkpoint") or cap == "maintenance.checkpoint":
+            result = _checkpoint(_needs_settings(), args)
+        elif cap.endswith(".backup.restore") or cap.endswith(".restore") or cap == "maintenance.backup.restore":
             result = _restore(ctx, args)
-        elif "migration_verify" in cap:
-            result = _migration_verify(ctx["settings"], args)
-        elif "import" in cap:
+        elif cap.endswith(".migration_verify") or cap == "maintenance.migration_verify":
+            result = _migration_verify(_needs_settings(), args)
+        elif cap.endswith(".db.import") or cap == "maintenance.db.import":
             result = _refuse_raw_import(args)
-        elif "artifacts.cleanup" in cap or "cache.cleanup" in cap or "orphans.cleanup" in cap or "db.cleanup" in cap:
+        elif any(
+            cap.endswith(suffix)
+            for suffix in (
+                ".artifacts.cleanup",
+                ".cache.cleanup",
+                ".orphans.cleanup",
+                ".db.cleanup",
+            )
+        ) or cap in {
+            "maintenance.artifacts.cleanup",
+            "maintenance.cache.cleanup",
+            "maintenance.orphans.cleanup",
+            "maintenance.db.cleanup",
+        }:
             result = {
                 "dryRun": bool(args.get("dry_run", True)),
                 "candidates": [],
@@ -373,6 +413,12 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
             ctx=ctx,
         )
         return {"error": str(exc)}
+
+
+# Declare required context for runtime pre-validation.
+from Data.modules.workers.context import REQUIRES_MAINTENANCE as _REQ  # noqa: E402
+
+_handler.worker_context_requirements = _REQ  # type: ignore[attr-defined]
 
 
 def main(argv: list[str] | None = None) -> int:
