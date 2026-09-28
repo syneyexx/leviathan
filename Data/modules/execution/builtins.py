@@ -2023,6 +2023,16 @@ def build_default_catalog() -> CapabilityCatalog:
     except Exception:  # noqa: BLE001
         # Catalog build must not fail closed on optional research chat surface.
         pass
+    try:
+        from Data.modules.module_manager.external.catalog_register import (
+            register_external_control_capabilities,
+        )
+
+        register_external_control_capabilities(catalog)
+    except Exception:  # noqa: BLE001
+        # External control caps are also registered at FastAPI startup; catalog
+        # build must still include them for EXTERNAL_WORKER_CAPABILITIES drift.
+        pass
     return catalog
 
 
@@ -3776,6 +3786,41 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         properties={},
         permissions=("process.execute",),
         tags=["model", "serving", "reconcile"],
+        domains=["model_runtime", "models"],
+        extra_meta={"idempotent": True},
+    )
+    _ext(
+        cap_id="model_runtime.start",
+        name="Model Runtime Start (alias)",
+        description="Alias for managed serving start — routes to model_runtime.load/serving.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="model_runtime",
+        required_args=["model_id"],
+        properties={
+            "model_id": {"type": "string"},
+            "command": {"type": "array"},
+            "endpoint": {"type": "string"},
+            "managed_by_leviathan": {"type": "boolean"},
+        },
+        permissions=("process.execute",),
+        tags=["model", "runtime", "start"],
+        domains=["model_runtime", "models"],
+        extra_meta={"idempotent": False},
+    )
+    _ext(
+        cap_id="model_runtime.stop",
+        name="Model Runtime Stop (alias)",
+        description="Alias for managed serving stop — never kills operator-owned servers.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="model_runtime",
+        properties={
+            "model_id": {"type": "string"},
+            "worker_id": {"type": "string"},
+            "launch_generation": {"type": "integer"},
+            "managed_by_leviathan": {"type": "boolean"},
+        },
+        permissions=("process.execute",),
+        tags=["model", "runtime", "stop"],
         domains=["model_runtime", "models"],
         extra_meta={"idempotent": True},
     )
