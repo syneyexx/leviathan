@@ -413,16 +413,18 @@ def persist_drift_lesson(
     strategy_memory_writer: Callable[[dict[str, Any]], Any] | None = None,
     research_requester: Callable[[str], Any] | None = None,
 ) -> dict[str, Any]:
-    """Persist drift as AGENT_PROPOSED StrategyMemory + optional research request.
+    """Persist drift as PAPER_OBSERVED StrategyMemory + optional research request.
 
     Does not auto-disable strategies. Does not promote to VALIDATED / verified knowledge.
-    PAPER_OBSERVED remains the observation class; lesson trust starts AGENT_PROPOSED.
+    Epistemic measurement class remains PAPER_OBSERVED (measured paper evidence).
+    Companion lesson trust starts AGENT_PROPOSED until repeated measured validation.
     """
     out: dict[str, Any] = {
         "memoryId": None,
         "researchRequest": None,
         "status": review.get("status"),
         "lessonTrust": "AGENT_PROPOSED",
+        "epistemicState": "PAPER_OBSERVED",
     }
     ticket = review.get("continualResearch")
     if not ticket:
@@ -457,7 +459,7 @@ def persist_drift_lesson(
                 rejected=False,
                 available_at=_utc_now(),
                 origin="PAPER_FORWARD_DRIFT",
-                epistemic_state="AGENT_PROPOSED",
+                epistemic_state="PAPER_OBSERVED",
                 validation_stage="PAPER_FORWARD",
                 extra_metadata={
                     "driftSignals": ticket.get("signals") or [],
@@ -467,6 +469,7 @@ def persist_drift_lesson(
                     "does_not_auto_disable": True,
                     "trust": lesson["trust"],
                     "lesson_id": lesson["lesson_id"],
+                    "lesson_trust": lesson["trust"],
                 },
             )
             saved = strategy_memory_writer(mem)
