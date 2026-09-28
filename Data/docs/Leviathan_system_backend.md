@@ -890,7 +890,48 @@ HTTP: `Data/backend/routes/datasets.py`. Knowledge ingestion: `Data/backend/rout
 
 ## Training
 
-`Data/modules/training/` owns durable recipes/jobs/training control/post-training data. `Data/backend/routes/training.py` exposes operations. A recipe definition is not proof a GPU training run completed.
+`Data/modules/training/` owns durable recipes/jobs/TrainingStore domain truth and post-training data. `Data/backend/routes/training.py` exposes bounded Control Plane operations (create/plan/preflight/start/cancel/resume/status). A recipe definition is not proof a GPU training run completed.
+
+### training_control ownership
+
+The Worker Fabric **`training_control` singleton pool** (`default_count=1`, `max_count=1`) is the trainer lifecycle authority:
+
+```text
+FastAPI
+  -> validate / plan / create durable TrainingStore job
+  -> JobRuntime enqueue training.control (GPU_EXCLUSIVE)
+  -> training_control worker
+       -> ResourceAdmission GPU_EXCLUSIVE
+       -> spawn trainer subprocess (scrubbed env)
+       -> supervise FULL lifetime (heartbeat lease)
+       -> observe cancel / crash
+       -> wait for trainer terminal state
+       -> then JobRuntime COMPLETED/FAILED/CANCELLED
+       -> release GPU reservation
+```
+
+Invariants:
+
+- FastAPI never `Popen`s a production trainer (`execution_gate.py`).
+- `training.control` does **not** complete merely because spawn succeeded.
+- GPU_EXCLUSIVE covers the entire actual trainer lifetime.
+- Trainer children receive an allow-listed env (`env_policy.py`) — no API/provider/broker secrets.
+- Offline/local asset preference (`HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE`) for production training.
+- Process generation + PID fingerprint fence stale cancel/reconcile.
+- Windows-safe process-tree termination on cancel.
+
+### Non-GPU training work
+
+Pool ownership is `training_control`, but resource class is job-specific:
+
+| Capability | Resource class |
+|---|---|
+| `training.control` (start/resume) | `GPU_EXCLUSIVE` + `BATCH` |
+| `training.integrity.verify` | `IO_HEAVY` / `CPU_HEAVY` |
+| `training.checkpoint.verify` | `IO_HEAVY` |
+| `training.dataset.hash` | `IO_HEAVY` / `CPU_HEAVY` |
+
+Heavy integrity scans, checkpoint verification and large dataset hashing are **external** — API reconcile only enqueues or performs bounded PID liveness. Model Registry publish requires integrity PASS. Partial/staging checkpoints are never resumable. Resume uses verified compatible checkpoint directories (not ambiguous parent paths).
 
 ## Flywheel
 
@@ -898,7 +939,7 @@ HTTP: `Data/backend/routes/datasets.py`. Knowledge ingestion: `Data/backend/rout
 
 ## Evaluation
 
-`Data/modules/evaluation/` owns benchmark/evaluation harnesses, ablations, scorecards/platform state. Missing model/provider measurements remain unavailable/unmeasured.
+`Data/modules/evaluation/` owns benchmark/evaluation harnesses, ablations, scorecards/platform state. Missing model/provider measurements remain unavailable/unmeasured. Training may emit small validation metrics; full release evaluation remains evaluation-owned.
 
 ## Verification/quality
 
@@ -1140,13 +1181,15 @@ Numeric market truth remains primary. Research perception uses causal bars/featu
 
 ```text
 as-of bounded OHLCV
- -> deterministic chart snapshot
- -> artifact/reference
+ -> deterministic chart snapshot (chart_perception / chart_batch)
+ -> ArtifactStore
  -> model selected through Model Control Plane
  -> only if VisionCapabilityProfile.charts == SUPPORTED
  -> schema-validated ChartObservation
  -> optional numeric-vs-visual conflict evidence
 ```
+
+Market chart batches use capability `market_sim.chart.render_batch` on the **market_sim** pool (bounded slices + continuation). There is **no ChartWorker**. Future bars are a hard refusal. Chart vision remains Model Control Plane inference; visual interpretation is advisory evidence only — never an order authority.
 
 No chart-capable model means honest UNAVAILABLE while numeric research continues. A VLM cannot place an order or override RiskGuard/qualification.
 
@@ -1224,7 +1267,25 @@ Key files:
 
 Progression is qualification-governed. Shadow is observe-only; autonomous paper uses simulated capital and RiskGuard. Kill-switch state is durable. Paper sessions restore wallet/orders on restart and client-order/event replay is idempotent.
 
-Forward evidence requires meaningful history; a few lucky observations do not become PASS. Drift can create a continual-research ticket but does not automatically promote a replacement or enable live execution.
+**One canonical paper step (no forever loops):**
+
+```text
+scheduler / market event / operator step
+  -> market_sim.autonomous_step | market_sim.portfolio_tick | market_sim.paper_forward_step
+  -> market_sim worker (one bounded step)
+  -> RiskGuard + kill switch
+  -> paper broker (LocalPaperBroker or provider.alpaca.paper → provider_io)
+  -> durable state + next due time
+  -> exit
+```
+
+API start/stop changes durable state / enqueues work — it does **not** start a Python `while/sleep` loop. Remote quotes/marks/market REST use `provider.market.fetch` → `provider_io`. Long-lived feeds remain `market_feed`. Alpaca paper remote HTTP is exclusively `provider.alpaca.paper` → `provider_io`. Uncertain broker writes reconcile before resubmit. **Live money remains BLOCKED.**
+
+Forward evidence requires meaningful history; a few lucky observations do not become PASS. Drift can create a continual-research ticket but does not automatically promote a replacement or enable live execution. Paper-forward evidence stays separate from sealed qualification evidence.
+
+### Trading news
+
+`market_sim.news.poll` remains market_sim-owned. Semantics/parsing/dedup/causal `published_at` / `fetched_at` / `available_at` stay in MarketSim; remote HTTP is `provider.http` → `provider_io`. Scheduler may cadence-enqueue polls (`ensure_news_poll_schedule`) — never a FastAPI poll daemon. Simulation may only observe news when `available_at <= as_of`.
 
 ## 20.9 Closed continual-research loop
 

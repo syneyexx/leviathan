@@ -104,10 +104,18 @@ def sync_completed_artifacts_to_models(
     *,
     model_store: ModelStore,
     training_store: TrainingStore,
+    job_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Register any completed artifacts missing registered_model_id after integrity gate."""
     synced: list[dict[str, Any]] = []
-    for job in training_store.list_jobs(limit=500):
+    jobs = (
+        [training_store.get_job(job_id)]
+        if job_id
+        else training_store.list_jobs(limit=500)
+    )
+    for job in jobs:
+        if job is None:
+            continue
         if not job.artifact_id:
             continue
         artifact = training_store.get_artifact(job.artifact_id)

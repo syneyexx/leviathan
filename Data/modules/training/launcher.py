@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -13,6 +12,7 @@ from Data.modules.common.atomic import atomic_write_text, ensure_dir
 from Data.modules.common.secrets import redact_secrets
 
 from .config import TrainingConfig
+from .env_policy import build_trainer_child_env
 
 
 class TrainingLauncher:
@@ -77,16 +77,18 @@ class TrainingLauncher:
             log_path=log_path,
             events_path=events_path,
         )
-        child_env = os.environ.copy()
-        if env:
-            child_env.update(env)
-        # Never pass secrets via argv; env keys that look like tokens stay in env only.
+        # Scrubbed env — never copy full host/API secrets into trainer.
+        child_env = build_trainer_child_env(env)
+        # Log sink is a file handle so a full pipe cannot deadlock the child.
         log_handle = log_path.open("a", encoding="utf-8")
-        return subprocess.Popen(  # noqa: S603 — argv list, shell=False
-            argv,
-            cwd=str(cwd) if cwd else None,
-            env=child_env,
-            stdout=log_handle,
-            stderr=subprocess.STDOUT,
-            shell=False,
-        )
+        popen_kwargs: dict[str, Any] = {
+            "cwd": str(cwd) if cwd else None,
+            "env": child_env,
+            "stdout": log_handle,
+            "stderr": subprocess.STDOUT,
+            "shell": False,
+        }
+        # New process group on POSIX so supervisor can kill the full tree.
+        if sys.platform != "win32":
+            popen_kwargs["start_new_session"] = True
+        return subprocess.Popen(argv, **popen_kwargs)  # noqa: S603 — argv list, shell=False

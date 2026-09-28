@@ -1710,6 +1710,75 @@ class MarketSimControlPlane:
                 broker.bind_job_runtime(self.job_runtime)
         return self._paper_brokers[broker_id]
 
+    def _fetch_paper_quote(
+        self,
+        *,
+        provider_id: str,
+        symbol: str,
+    ) -> tuple[dict[str, Any] | None, str, float | None]:
+        """Fetch a single quote. Production: provider_io only. No Control-Plane urllib."""
+        from Data.modules.provider_io.errors import ProviderError, ProviderErrorCode
+        from Data.modules.provider_io.facade import ProviderExecutionClient
+        from Data.modules.provider_io.readiness import provider_io_workers_ready
+
+        symbol_u = symbol.upper().replace("/", "").replace("-", "")
+        if not self._runners_externalized():
+            provider = self.providers.get(provider_id)
+            st = provider.status()
+            quote = provider.fetch_quote(symbol_u)
+            feed = "live" if st.reachable else "disconnected"
+            return quote, feed, st.latency_ms
+
+        if self.job_runtime is None:
+            raise MarketSimError(
+                ProviderErrorCode.PROVIDER_EXECUTION_UNAVAILABLE.value,
+                "job_runtime not bound; refusing Control Plane quote fallback",
+                http_status=503,
+            )
+        db_path = getattr(getattr(self.job_runtime, "store", None), "path", None)
+        if not provider_io_workers_ready(db_path):
+            raise MarketSimError(
+                ProviderErrorCode.PROVIDER_EXECUTION_UNAVAILABLE.value,
+                "provider_io workers unavailable; refusing Control Plane quote fallback",
+                http_status=503,
+            )
+        client = ProviderExecutionClient(self.job_runtime)
+        try:
+            exec_result = client.submit_and_wait(
+                provider=provider_id,
+                capability="market.fetch",
+                payload={
+                    "provider_id": provider_id,
+                    "symbol": symbol_u,
+                    "timeframe": "1m",
+                    "limit": 1,
+                    "markets_root": str(self.data.markets_root),
+                    "mode": "quote_only",
+                    "include_bars": False,
+                },
+                credential_ref="none",
+                latency_class="interactive",
+                requested_by="market_sim_paper_quote",
+                deadline_seconds=30.0,
+            )
+        except ProviderError as exc:
+            raise MarketSimError(
+                exc.code.value,
+                str(exc),
+                http_status=503 if exc.retryable else 502,
+            ) from exc
+        if exec_result.status != "succeeded" or not isinstance(exec_result.structured, dict):
+            err = (exec_result.error or {}).get("message") or "provider_io quote failed"
+            code = (exec_result.error or {}).get("code") or "PROVIDER_UNAVAILABLE"
+            raise MarketSimError(str(code), str(err), http_status=502)
+        structured = dict(exec_result.structured)
+        quote = structured.get("quote") if isinstance(structured.get("quote"), dict) else None
+        if quote is None and structured.get("bars"):
+            last = structured["bars"][-1]
+            quote = {"price": last.get("close"), "last": last.get("close"), "ts": last.get("ts")}
+        latency = structured.get("latency_ms")
+        return quote, "live" if quote else "disconnected", float(latency) if latency is not None else None
+
     def start_paper_session(
         self,
         *,
@@ -1749,11 +1818,9 @@ class MarketSimControlPlane:
         feed_status = "disconnected"
         latency = None
         try:
-            provider = self.providers.get(provider_id)
-            st = provider.status()
-            latency = st.latency_ms
-            feed_status = "live" if st.reachable else "disconnected"
-            quote = provider.fetch_quote(symbol)
+            quote, feed_status, latency = self._fetch_paper_quote(
+                provider_id=provider_id, symbol=symbol
+            )
         except Exception as exc:  # noqa: BLE001
             feed_status = f"error:{exc}"
 
@@ -1796,15 +1863,16 @@ class MarketSimControlPlane:
             raise MarketSimError("PAPER_SESSION_NOT_FOUND", session_id, http_status=404)
         # W18: durable session → in-memory broker wallet/order index after restart.
         self._hydrate_paper_broker_session(session)
-        # Refresh quote
+        # Refresh quote via provider_io when externalized (never Control-Plane urllib).
         try:
-            provider = self.providers.get(session["provider_id"])
-            quote = provider.fetch_quote(session["symbol"])
-            st = provider.status()
-            session["feed_status"] = "live" if st.reachable else "disconnected"
+            quote, feed_status, latency = self._fetch_paper_quote(
+                provider_id=str(session.get("provider_id") or "binance_public"),
+                symbol=str(session["symbol"]),
+            )
+            session["feed_status"] = feed_status
             session["metadata"] = dict(session.get("metadata") or {})
             session["metadata"]["last_quote"] = quote
-            session["metadata"]["feed_latency_ms"] = st.latency_ms
+            session["metadata"]["feed_latency_ms"] = latency
         except Exception as exc:  # noqa: BLE001
             session["feed_status"] = f"error:{exc}"
         broker = self._paper_brokers.get(session["broker_id"])
@@ -2267,6 +2335,140 @@ class MarketSimControlPlane:
         self.store.upsert_paper_deployment(row)
         return result
 
+    def request_autonomous_step(
+        self,
+        deployment_id: str,
+        *,
+        side: str = "HOLD",
+        qty: float | None = None,
+        requested_by: str = "api",
+    ) -> dict[str, Any]:
+        """Enqueue one durable autonomous paper step (or run inline only when not externalized)."""
+        self._require_enabled()
+        if self._runners_externalized():
+            if self.job_runtime is None:
+                raise MarketSimError(
+                    "TRADING_WORKER_UNAVAILABLE",
+                    "job_runtime not bound; refusing inline autonomous paper step",
+                    http_status=503,
+                )
+            # Occurrence identity: at most one active step per deployment+generation window.
+            occurrence = f"{deployment_id}:{utc_now()[:16]}"
+            job = self.job_runtime.enqueue(
+                capability_id="market_sim.autonomous_step",
+                arguments={
+                    "deployment_id": deployment_id,
+                    "side": side,
+                    "qty": qty,
+                },
+                requested_by=requested_by,
+                idempotency_key=f"market_sim:autonomous_step:{occurrence}",
+                domain="market_sim",
+                domain_entity_type="paper_deployment",
+                domain_entity_id=deployment_id,
+                worker_pool="market_sim",
+                latency_class="interactive",
+                resource_class="CPU_HEAVY",
+            )
+            return {
+                "queued": True,
+                "job_id": job.job_id,
+                "deployment_id": deployment_id,
+                "capability_id": "market_sim.autonomous_step",
+                "truth": {"simulated_capital": True, "live_money": "BLOCKED"},
+            }
+        return self.autonomous_paper_step(deployment_id, side=side, qty=qty)
+
+    def request_paper_forward_step(
+        self,
+        session_id: str,
+        *,
+        side: str = "HOLD",
+        qty: float | None = None,
+        requested_by: str = "api",
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        if self._runners_externalized():
+            if self.job_runtime is None:
+                raise MarketSimError(
+                    "TRADING_WORKER_UNAVAILABLE",
+                    "job_runtime not bound; refusing inline paper-forward step",
+                    http_status=503,
+                )
+            occurrence = f"{session_id}:{utc_now()[:16]}"
+            job = self.job_runtime.enqueue(
+                capability_id="market_sim.paper_forward_step",
+                arguments={"session_id": session_id, "side": side, "qty": qty},
+                requested_by=requested_by,
+                idempotency_key=f"market_sim:paper_forward:{occurrence}",
+                domain="market_sim",
+                domain_entity_type="paper_session",
+                domain_entity_id=session_id,
+                worker_pool="market_sim",
+                latency_class="background",
+                resource_class="CPU_HEAVY",
+            )
+            return {
+                "queued": True,
+                "job_id": job.job_id,
+                "session_id": session_id,
+                "capability_id": "market_sim.paper_forward_step",
+            }
+        return self.paper_forward_step(session_id, side=side, qty=qty)
+
+    def request_chart_render_batch(
+        self,
+        specs: list[dict[str, Any]],
+        *,
+        batch_id: str | None = None,
+        offset: int = 0,
+        limit: int | None = None,
+        requested_by: str = "api",
+    ) -> dict[str, Any]:
+        """Enqueue a bounded chart render batch on market_sim (no ChartWorker)."""
+        self._require_enabled()
+        from .chart_batch import clamp_batch_limit
+
+        batch_id = batch_id or str(uuid.uuid4())
+        slice_limit = clamp_batch_limit(limit)
+        if self._runners_externalized():
+            if self.job_runtime is None:
+                raise MarketSimError(
+                    "TRADING_WORKER_UNAVAILABLE",
+                    "job_runtime not bound; refusing inline chart batch",
+                    http_status=503,
+                )
+            job = self.job_runtime.enqueue(
+                capability_id="market_sim.chart.render_batch",
+                arguments={
+                    "batch_id": batch_id,
+                    "specs": specs,
+                    "offset": offset,
+                    "limit": slice_limit,
+                },
+                requested_by=requested_by,
+                idempotency_key=f"market_sim:chart_batch:{batch_id}:{offset}",
+                domain="market_sim",
+                domain_entity_type="chart_batch",
+                domain_entity_id=batch_id,
+                worker_pool="market_sim",
+                latency_class="batch",
+                resource_class="CPU_HEAVY",
+            )
+            return {
+                "queued": True,
+                "job_id": job.job_id,
+                "batch_id": batch_id,
+                "offset": offset,
+                "limit": slice_limit,
+                "total": len(specs),
+            }
+        from .chart_batch import render_chart_batch_slice
+
+        return render_chart_batch_slice(
+            specs, batch_id=batch_id, offset=offset, limit=slice_limit
+        )
+
     def autonomous_paper_step(
         self,
         deployment_id: str,
@@ -2274,7 +2476,11 @@ class MarketSimControlPlane:
         side: str = "HOLD",
         qty: float | None = None,
     ) -> dict[str, Any]:
-        """A4 paper forward step with RiskGuard — records receipt on deployment loop."""
+        """A4 paper forward step with RiskGuard — records receipt on deployment loop.
+
+        Canonical one-step mechanism. Production callers should use
+        ``request_autonomous_step`` so the market_sim worker owns execution.
+        """
         self._require_enabled()
         from .autonomous_paper_loop import (
             AUTONOMOUS_PAPER_MODE,
@@ -2329,9 +2535,14 @@ class MarketSimControlPlane:
         loop = loop_state_from_dict(row.get("loop_state_json") or {})
         if loop is None or not loop.paper_session_id:
             raise MarketSimError("PAPER_SESSION_MISSING", deployment_id, http_status=409)
+        # Deterministic decision identity for this tick.
+        decision_generation = int((row.get("metadata_json") or {}).get("decision_generation") or 0) + 1
+        decision_id = f"{deployment_id}:{decision_generation}:{side}"
         stepped = self.paper_forward_step(loop.paper_session_id, side=side, qty=qty)
         receipt = {
-            "step_id": str(uuid.uuid4()),
+            "step_id": decision_id,
+            "decision_id": decision_id,
+            "decision_generation": decision_generation,
             "checkpoint_step": (stepped.get("forward") or {}).get("checkpoint_step"),
             "allowed": (stepped.get("result") or {}).get("allowed"),
             "blocked": bool((stepped.get("result") or {}).get("blocked")),
@@ -2343,7 +2554,12 @@ class MarketSimControlPlane:
         loop.paper_step_receipts.append(receipt)
         loop.stage = "AUTONOMOUS_PAPER"
         loop.updated_at = utc_now()
+        meta = dict(row.get("metadata_json") or {})
+        meta["decision_generation"] = decision_generation
+        meta["last_decision_id"] = decision_id
+        meta["next_tick_at"] = utc_now()
         row["loop_state_json"] = loop.public_dict()
+        row["metadata_json"] = meta
         row["updated_at"] = utc_now()
         self.store.upsert_paper_deployment(row)
         return {
@@ -2351,6 +2567,7 @@ class MarketSimControlPlane:
             "receipt": receipt,
             "loop": loop.public_dict(),
             "truth": {"simulated_capital": True, "live_money": "BLOCKED"},
+            "executed_via": "inline" if not self._runners_externalized() else "direct_worker",
         }
 
     def review_deployment_drift(

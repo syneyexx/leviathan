@@ -2442,15 +2442,61 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
     _ext(
         cap_id="training.control",
         name="Training Control",
-        description="Own trainer subprocess lifecycle (start/stop/status).",
+        description=(
+            "Own trainer subprocess lifecycle for its FULL duration "
+            "(spawn, supervise, cancel, finalize). GPU_EXCLUSIVE while trainer runs."
+        ),
         side_effects=(SideEffect.EXECUTE,),
         worker_kind="training_control",
         properties={
+            "training_job_id": {"type": "string"},
             "job_id": {"type": "string"},
             "action": {"type": "string"},
         },
         permissions=("process.execute",),
         tags=["training", "control"],
+        domains=["training"],
+    )
+    _ext(
+        cap_id="training.integrity.verify",
+        name="Verify Training Artifact Integrity",
+        description=(
+            "Streaming integrity scan + optional model-registry publish gate. "
+            "IO_HEAVY/CPU_HEAVY — not GPU_EXCLUSIVE."
+        ),
+        side_effects=(SideEffect.READ, SideEffect.EXECUTE),
+        worker_kind="training_control",
+        properties={"training_job_id": {"type": "string"}},
+        permissions=("filesystem.read", "process.execute"),
+        tags=["training", "integrity"],
+        domains=["training"],
+    )
+    _ext(
+        cap_id="training.checkpoint.verify",
+        name="Verify Training Checkpoint",
+        description="Verify checkpoint completeness/compatibility (streaming hashes). IO_HEAVY.",
+        side_effects=(SideEffect.READ, SideEffect.EXECUTE),
+        worker_kind="training_control",
+        properties={
+            "training_job_id": {"type": "string"},
+            "checkpoint_path": {"type": "string"},
+        },
+        permissions=("filesystem.read", "process.execute"),
+        tags=["training", "checkpoint"],
+        domains=["training"],
+    )
+    _ext(
+        cap_id="training.dataset.hash",
+        name="Hash Training Dataset",
+        description="Streaming dataset content/manifest hash with change detection. IO_HEAVY/CPU_HEAVY.",
+        side_effects=(SideEffect.READ, SideEffect.EXECUTE),
+        worker_kind="training_control",
+        properties={
+            "training_job_id": {"type": "string"},
+            "path": {"type": "string"},
+        },
+        permissions=("filesystem.read", "process.execute"),
+        tags=["training", "dataset", "hash"],
         domains=["training"],
     )
     _ext(
@@ -2554,6 +2600,56 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         properties={"portfolio_id": {"type": "string"}},
         permissions=("process.execute",),
         tags=["market_sim", "paper", "portefeuille", "autonomous"],
+    )
+    _ext(
+        cap_id="market_sim.autonomous_step",
+        name="Autonomous Paper Step",
+        description=(
+            "One durable autonomous paper-forward step (RiskGuard + paper broker). "
+            "Scheduler/event cadence enqueues; never an infinite loop."
+        ),
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="market_sim",
+        properties={
+            "deployment_id": {"type": "string"},
+            "side": {"type": "string"},
+            "qty": {"type": "number"},
+        },
+        permissions=("process.execute",),
+        tags=["market_sim", "paper", "autonomous"],
+    )
+    _ext(
+        cap_id="market_sim.paper_forward_step",
+        name="Paper-Forward Evaluation Step",
+        description="One bounded paper-forward evaluation step with causal evidence only.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="market_sim",
+        properties={
+            "session_id": {"type": "string"},
+            "side": {"type": "string"},
+            "qty": {"type": "number"},
+        },
+        permissions=("process.execute",),
+        tags=["market_sim", "paper", "forward"],
+    )
+    _ext(
+        cap_id="market_sim.chart.render_batch",
+        name="Render Market Chart Batch",
+        description=(
+            "Bounded deterministic OHLCV chart render batch → ArtifactStore. "
+            "Continuation for large batches. No chart worker pool."
+        ),
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="market_sim",
+        properties={
+            "batch_id": {"type": "string"},
+            "specs": {"type": "array"},
+            "offset": {"type": "integer"},
+            "limit": {"type": "integer"},
+        },
+        permissions=("process.execute", "filesystem.write"),
+        tags=["market_sim", "chart", "batch"],
+        domains=["market_sim"],
     )
     _ext(
         cap_id="market_sim.news.poll",

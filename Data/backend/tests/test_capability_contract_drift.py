@@ -120,7 +120,14 @@ def _collect_string_literals_matching_caps(path: Path) -> set[str]:
 class CapabilityContractDriftTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        from Data.modules.module_manager.external.catalog_register import (
+            register_external_control_capabilities,
+        )
+
         cls.catalog = build_default_catalog()
+        # External control caps are registered at app composition (main.py), not in
+        # builtins alone — mirror that here so EXTERNAL_WORKER_CAPABILITIES stays ⊆ catalog.
+        register_external_control_capabilities(cls.catalog)
         cls.catalog_ids = {item.id for item in cls.catalog.list()}
 
     def test_coding_prompt_catalog_subseteq_catalog(self) -> None:

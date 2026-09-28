@@ -474,9 +474,91 @@ class TradingOrchestraService:
             updated_at=now,
         )
         self.store.upsert_feed(feed)
-        return feed.public_dict()
+        # Optional cadence: scheduler enqueues market_sim.news.poll (never a FastAPI loop).
+        poll_interval = payload.get("pollIntervalSeconds") or payload.get("poll_interval_seconds")
+        schedule_info = None
+        if poll_interval is not None:
+            try:
+                schedule_info = self.ensure_news_poll_schedule(
+                    feed_id=feed.feed_id,
+                    interval_seconds=int(poll_interval),
+                )
+            except Exception:  # noqa: BLE001 — feed create must not fail on schedule wiring
+                schedule_info = {"error": "schedule_ensure_failed"}
+        out = feed.public_dict()
+        if schedule_info is not None:
+            out["schedule"] = schedule_info
+        return out
 
-    def update_feed(self, feed_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def ensure_news_poll_schedule(
+        self,
+        *,
+        feed_id: str | None = None,
+        interval_seconds: int = 300,
+        schedule_store: Any | None = None,
+    ) -> dict[str, Any]:
+        """Ensure a durable schedule that enqueues ``market_sim.news.poll``.
+
+        Scheduler owns cadence only — it never fetches HTTP or parses feeds.
+        """
+        from Data.modules.schedules.store import ScheduleStore
+        from Data.modules.schedules.types import ScheduleTargetKind
+
+        interval = max(30, int(interval_seconds))
+        store = schedule_store
+        if store is None:
+            # Prefer CONTROL db co-located with job runtime when available.
+            db_path = None
+            if self.job_runtime is not None:
+                db_path = getattr(getattr(self.job_runtime, "store", None), "path", None)
+            if db_path is None and hasattr(self.store, "db_path"):
+                # Orchestra may live on MARKET; schedules live on CONTROL — require explicit store.
+                raise TradingOrchestraError(
+                    "SCHEDULE_STORE_REQUIRED",
+                    "schedule_store or job_runtime CONTROL db required for news cadence",
+                    http_status=503,
+                )
+            store = ScheduleStore(Path(db_path))
+            store.initialize()
+        name = f"news-poll:{feed_id or 'all'}"
+        # Idempotent: reuse existing schedule with same name if present.
+        existing = None
+        try:
+            for row in store.list(limit=200):
+                if str(getattr(row, "name", "") or "") == name:
+                    existing = row
+                    break
+        except Exception:  # noqa: BLE001
+            existing = None
+        if existing is not None:
+            return {
+                "schedule_id": existing.schedule_id,
+                "name": existing.name,
+                "interval_seconds": existing.interval_seconds,
+                "target_ref": existing.target_ref,
+                "reused": True,
+            }
+        record = store.create(
+            name=name,
+            target_kind=ScheduleTargetKind.JOB,
+            target_ref=NEWS_POLL_CAPABILITY,
+            interval_seconds=interval,
+            target_payload={
+                "arguments": {"feed_id": feed_id} if feed_id else {},
+            },
+            metadata={
+                "domain": "market_sim",
+                "purpose": "news_poll_cadence",
+                "feed_id": feed_id,
+            },
+        )
+        return {
+            "schedule_id": record.schedule_id,
+            "name": record.name,
+            "interval_seconds": record.interval_seconds,
+            "target_ref": record.target_ref,
+            "reused": False,
+        }
         self._require_enabled()
         feed = self.store.get_feed(feed_id)
         if feed is None:
