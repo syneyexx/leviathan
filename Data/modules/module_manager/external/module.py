@@ -201,9 +201,12 @@ class ExternalCapabilityModule:
         assert self._adapter is not None
         return self._adapter.start()
 
-    def stop(self) -> dict[str, Any]:
+    def stop(self, *, expected_generation: int | None = None) -> dict[str, Any]:
         assert self._adapter is not None
-        return self._adapter.stop()
+        try:
+            return self._adapter.stop(expected_generation=expected_generation)  # type: ignore[call-arg]
+        except TypeError:
+            return self._adapter.stop()
 
     def restart(self) -> dict[str, Any]:
         assert self._adapter is not None

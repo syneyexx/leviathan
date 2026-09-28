@@ -256,11 +256,30 @@ class ExternalModuleExecutor:
                     "restart": "restart",
                     "ensure_ready": "ensure_ready",
                 }[action]
-                result = getattr(self.module_manager, method)(module_id)
+                if action == "stop":
+                    gen = arguments.get("expected_generation")
+                    if gen is None:
+                        gen = arguments.get("launch_generation")
+                    if gen is not None:
+                        try:
+                            gen = int(gen)
+                        except (TypeError, ValueError):
+                            gen = None
+                    result = self.module_manager.stop(module_id, expected_generation=gen)
+                else:
+                    result = getattr(self.module_manager, method)(module_id)
+                status = CapabilityStatus.COMPLETED
+                if isinstance(result, dict) and result.get("refused") == "STALE_GENERATION":
+                    status = CapabilityStatus.FAILED
                 return CapabilityResult(
                     request_id=request_id or "",
                     capability_id=capability_id,
-                    status=CapabilityStatus.COMPLETED,
+                    status=status,
+                    error=(
+                        "MODULE_PROCESS_OWNERSHIP_UNPROVEN: stale process generation"
+                        if status == CapabilityStatus.FAILED
+                        else None
+                    ),
                     output=normalize_capability_parts(
                         summary=f"{action} {module_id}",
                         structured_data=result if isinstance(result, dict) else {"result": result},
