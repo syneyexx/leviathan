@@ -78,11 +78,13 @@ class BoundedDatasetEvidence:
             "filesInspected": list(self.files_inspected),
             "truncated": bool(self.truncated),
             "limits": dict(self.limits),
+            "evidenceClass": str(self.truth.get("evidenceClass") or ("SAMPLED" if self.truncated else "UNMEASURED")),
             "truth": {
                 "samplesAreDataOnly": True,
                 "neverExecuteSampleContent": True,
                 "streamingOnly": True,
                 "notFullCorpusLoad": True,
+                "modelLabelsAreNotFacts": True,
                 **dict(self.truth),
             },
         }
@@ -246,6 +248,13 @@ class BoundedDatasetProfiler:
             truth={
                 "elapsedSeconds": round(time.monotonic() - started, 4),
                 "sampleByteSize": sample_bytes,
+                "evidenceClass": (
+                    "UNMEASURED"
+                    if record_iter is None and not sample_rows
+                    else "SAMPLED"
+                    if truncated
+                    else "EXACT"
+                ),
             },
         )
         return evidence

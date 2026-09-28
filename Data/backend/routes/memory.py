@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from Data.modules.memory import MemoryKind, MemoryScope, MemoryStatus
@@ -24,7 +25,30 @@ class MemoryCreateRequest(BaseModel):
     user_id: str | None = None
 
 
-def build_memory_router(*, memory_store: Any) -> APIRouter:
+class MemoryConsolidateRequest(BaseModel):
+    scope: str | None = None
+    project_id: str | None = None
+    conversation_id: str | None = None
+    limit: int = Field(default=500, ge=1, le=5000)
+    min_cluster_size: int = Field(default=2, ge=2, le=50)
+    persist: bool = True
+
+
+def _runners_externalized() -> bool:
+    ext = (os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API") or "").strip().lower()
+    if ext in {"1", "true", "yes", "on"}:
+        return True
+    if ext in {"0", "false", "no", "off"}:
+        return False
+    try:
+        from Data.modules.workers.settings import load_worker_settings
+
+        return bool(load_worker_settings().externalize_api_runners)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def build_memory_router(*, memory_store: Any, job_runtime: Any | None = None) -> APIRouter:
     router = APIRouter(tags=["memory"])
 
     @router.get("/api/memory")
@@ -106,6 +130,83 @@ def build_memory_router(*, memory_store: Any) -> APIRouter:
             "memory": [item.public_dict() for item in items],
             "truth": {"scope_filter_required_for_retrieval": True},
         }
+
+    @router.post("/api/memory/consolidate")
+    def consolidate_memory(
+        response: Response,
+        payload: MemoryConsolidateRequest | None = None,
+    ) -> dict:
+        """Enqueue heavy Memory consolidation — never batch-inline in FastAPI when externalized."""
+        body = payload or MemoryConsolidateRequest()
+        if _runners_externalized():
+            if job_runtime is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "error": {
+                            "code": "MEMORY_WORKER_UNAVAILABLE",
+                            "message": "JobRuntime not bound; cannot enqueue memory.consolidate",
+                        }
+                    },
+                )
+            job = job_runtime.enqueue(
+                capability_id="memory.consolidate",
+                arguments={
+                    "action": "consolidate",
+                    "scope": body.scope,
+                    "project_id": body.project_id,
+                    "conversation_id": body.conversation_id,
+                    "limit": body.limit,
+                    "min_cluster_size": body.min_cluster_size,
+                    "persist": body.persist,
+                },
+                requested_by="api.memory.consolidate",
+                domain="memory",
+                worker_pool="memory",
+                resource_class="CPU_HEAVY",
+                latency_class="background",
+                metadata={
+                    "execution_class": "EXTERNAL_REQUIRED",
+                    "truth": {"model_confidence_is_not_memory_truth": True},
+                },
+            )
+            response.status_code = 202
+            return {
+                "queued": True,
+                "job": job.public_dict(),
+                "job_id": job.job_id,
+                "truth": {
+                    "executed_via": "memory_worker",
+                    "fastapi_does_not_consolidate": True,
+                    "model_confidence_is_not_memory_truth": True,
+                },
+            }
+        # Test / legacy in-process path when externalize is off.
+        from Data.modules.memory import MemoryConsolidator
+
+        episodic = memory_store.list(
+            status=MemoryStatus.ACTIVE,
+            kind=MemoryKind.EPISODIC,
+            limit=body.limit,
+            scope=MemoryScope(body.scope.upper()) if body.scope else None,
+            conversation_id=body.conversation_id,
+            project_id=body.project_id,
+        )
+        notes = memory_store.list(
+            status=MemoryStatus.ACTIVE,
+            kind=MemoryKind.NOTE,
+            limit=body.limit,
+            conversation_id=body.conversation_id,
+            project_id=body.project_id,
+        )
+        items = [i.public_dict() for i in list(episodic) + list(notes)]
+        for d in items:
+            if "trust" in d and "trust_state" not in d:
+                d["trust_state"] = d["trust"]
+        result = MemoryConsolidator().consolidate(
+            items, min_cluster_size=body.min_cluster_size
+        )
+        return {"queued": False, "result": result.public_dict()}
 
     @router.get("/api/memory/{memory_id}")
     def get_memory(memory_id: str) -> dict:

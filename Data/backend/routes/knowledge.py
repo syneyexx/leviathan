@@ -106,12 +106,27 @@ def build_knowledge_router(
     atlas_store: Any,
     deep_recall_service: Any,
     why_library: Any,
-    evaluation_externalize_fn: Callable[[], bool],
+    workers_externalize_fn: Callable[[], bool] | None = None,
+    evaluation_externalize_fn: Callable[[], bool] | None = None,
     enqueue_ingest_scan_fn: Callable[..., dict] | None = None,
 ) -> APIRouter:
+    """Knowledge HTTP surface — staging/enqueue/read only when workers are externalized.
+
+    ``workers_externalize_fn`` is the canonical predicate. ``evaluation_externalize_fn``
+    remains accepted as a deprecated alias for call-site compatibility.
+    """
+    from Data.modules.knowledge.execution_gate import (
+        refuse_inline_knowledge,
+        resolve_externalize_fn,
+    )
+
     router = APIRouter(tags=["knowledge"])
     enqueue_ingest_scan = enqueue_ingest_scan_fn or make_enqueue_ingest_scan(
         job_runtime, settings
+    )
+    externalize_fn = resolve_externalize_fn(
+        workers_externalize_fn or evaluation_externalize_fn,
+        settings=settings,
     )
 
     @router.get("/api/knowledge")
@@ -123,47 +138,53 @@ def build_knowledge_router(
         title = payload.title.strip()
         content = payload.content.strip()
         source = payload.source.strip()
-        if evaluation_externalize_fn():
-            staged = knowledge.stage_document(
+        if not externalize_fn():
+            # Explicit non-externalized mode (tests / operators) — still prefer stage+prepare
+            # style unless ALLOW_INLINE is set; never a silent production fallback.
+            from Data.modules.knowledge.execution_gate import inline_execution_explicitly_allowed
+
+            if not inline_execution_explicitly_allowed():
+                refuse_inline_knowledge(reason="externalize_disabled_without_inline_allow")
+            document = knowledge.upsert_document(
                 document_id=payload.id,
                 title=title,
                 content=content,
                 source=source,
             )
-            job = job_runtime.enqueue(
-                capability_id="knowledge.prepare",
-                arguments={
-                    "action": "prepare",
-                    "document_id": staged.document_id,
-                },
-                requested_by="api.knowledge.write",
-                domain="knowledge",
-                domain_entity_type="document",
-                domain_entity_id=staged.document_id,
-                worker_pool="knowledge_prepare",
-                resource_class="CPU_HEAVY",
-                latency_class="interactive",
-                idempotency_key=f"knowledge:prepare:{staged.document_id}:{staged.content_hash or 'x'}",
-                metadata={
-                    "human_title": title,
-                    "document_id": staged.document_id,
-                    "filename": title,
-                },
-            )
-            return {
-                "queued": True,
-                "job": job.public_dict(),
-                "document": staged.public_dict(),
-                "status": "INDEXING",
-                "truth": {"executed_via": "knowledge_prepare_worker", "chunking_deferred": True},
-            }
-        document = knowledge.upsert_document(
+            return {"document": document.public_dict(), "queued": False}
+        staged = knowledge.stage_document(
             document_id=payload.id,
             title=title,
             content=content,
             source=source,
         )
-        return {"document": document.public_dict()}
+        job = job_runtime.enqueue(
+            capability_id="knowledge.prepare",
+            arguments={
+                "action": "prepare",
+                "document_id": staged.document_id,
+            },
+            requested_by="api.knowledge.write",
+            domain="knowledge",
+            domain_entity_type="document",
+            domain_entity_id=staged.document_id,
+            worker_pool="knowledge_prepare",
+            resource_class="CPU_HEAVY",
+            latency_class="interactive",
+            idempotency_key=f"knowledge:prepare:{staged.document_id}:{staged.content_hash or 'x'}",
+            metadata={
+                "human_title": title,
+                "document_id": staged.document_id,
+                "filename": title,
+            },
+        )
+        return {
+            "queued": True,
+            "job": job.public_dict(),
+            "document": staged.public_dict(),
+            "status": "INDEXING",
+            "truth": {"executed_via": "knowledge_prepare_worker", "chunking_deferred": True},
+        }
 
     @router.get("/api/knowledge/search")
     def search_knowledge(
@@ -291,6 +312,13 @@ def build_knowledge_router(
         records = why_library.search(q, limit=limit) if q.strip() else why_library.list_recent(limit=limit)
         return {"available": True, "records": [item.public_dict() for item in records]}
 
+    @router.get("/api/knowledge/health")
+    def knowledge_index_health() -> dict:
+        """Bounded index health inspection — never repairs/rebuilds."""
+        if hasattr(knowledge, "index_health"):
+            return {"health": knowledge.index_health()}
+        return {"health": {"available": False}}
+
     @router.get("/api/knowledge/{document_id}")
     def get_knowledge_document(document_id: str) -> dict:
         document = knowledge.get_document(document_id)
@@ -312,57 +340,120 @@ def build_knowledge_router(
         try:
             resolved = knowledge.resolve_under_data_root(payload.path.strip())
         except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "KNOWLEDGE_PATH_INVALID", "message": str(exc)},
+            ) from exc
         except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        if evaluation_externalize_fn():
-            job = job_runtime.enqueue(
-                capability_id="knowledge.prepare",
-                arguments={"action": "ingest_path", "path": str(resolved)},
-                requested_by="api.knowledge.ingest_path",
-                domain="knowledge",
-                domain_entity_type="path",
-                domain_entity_id=str(resolved),
-                worker_pool="knowledge_prepare",
-                resource_class="IO_HEAVY",
-                latency_class="background",
-                idempotency_key=f"knowledge:ingest_path:{resolved}",
-                metadata={"human_title": resolved.name, "filename": resolved.name, "path": str(resolved)},
-            )
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "KNOWLEDGE_PATH_INVALID", "message": str(exc)},
+            ) from exc
+        if not externalize_fn():
+            from Data.modules.knowledge.execution_gate import inline_execution_explicitly_allowed
+
+            if not inline_execution_explicitly_allowed():
+                refuse_inline_knowledge(reason="externalize_disabled_without_inline_allow")
+            try:
+                record = knowledge.ingest_file(resolved)
+            except FileNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            if record is None:
+                return {"ingested": False, "reason": "unchanged", "queued": False}
             return {
-                "queued": True,
-                "job": job.public_dict(),
-                "path": str(resolved),
-                "truth": {"executed_via": "knowledge_prepare_worker"},
+                "ingested": True,
+                "queued": False,
+                "document": record.public_dict(),
+                "chunks": [chunk.public_dict() for chunk in knowledge.list_chunks(record.document_id)],
             }
-        try:
-            record = knowledge.ingest_file(resolved)
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        if record is None:
-            return {"ingested": False, "reason": "unchanged"}
+        job = job_runtime.enqueue(
+            capability_id="knowledge.ingest_path",
+            arguments={"action": "ingest_path", "path": str(resolved)},
+            requested_by="api.knowledge.ingest_path",
+            domain="knowledge",
+            domain_entity_type="path",
+            domain_entity_id=str(resolved),
+            worker_pool="knowledge_prepare",
+            resource_class="IO_HEAVY",
+            latency_class="background",
+            idempotency_key=f"knowledge:ingest_path:{resolved}",
+            metadata={"human_title": resolved.name, "filename": resolved.name, "path": str(resolved)},
+        )
         return {
-            "ingested": True,
-            "document": record.public_dict(),
-            "chunks": [chunk.public_dict() for chunk in knowledge.list_chunks(record.document_id)],
+            "queued": True,
+            "job": job.public_dict(),
+            "path": str(resolved),
+            "truth": {"executed_via": "knowledge_prepare_worker"},
         }
 
     @router.post("/api/knowledge/ingest/scan")
     def ingest_knowledge_scan(limit: int = 50) -> dict:
         safe_limit = min(max(limit, 1), 500)
+        if not externalize_fn():
+            from Data.modules.knowledge.execution_gate import inline_execution_explicitly_allowed
+
+            if not inline_execution_explicitly_allowed():
+                refuse_inline_knowledge(reason="externalize_disabled_without_inline_allow")
+            try:
+                docs = knowledge.scan_data_root(limit=safe_limit)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            return {
+                "scanned": len(docs),
+                "queued": False,
+                "data_root": str(settings.knowledge.data_root),
+                "documents": [doc.public_dict() for doc in docs],
+            }
+        return enqueue_ingest_scan(safe_limit, requested_by="api.knowledge.ingest_scan")
+
+    class KnowledgeReconcileBody(BaseModel):
+        dry_run: bool = True
+        apply: bool = False
+        limit: int = Field(default=100, ge=1, le=5000)
+
+    @router.post("/api/knowledge/reconcile")
+    def reconcile_knowledge(payload: KnowledgeReconcileBody | None = None) -> dict:
+        """Enqueue Knowledge semantic reconciliation (knowledge_prepare).
+
+        Dry-run diagnosis is the default. Apply repairs only when apply=true
+        and dry_run=false. Never mutates merely by opening a health page.
+        """
+        body = payload or KnowledgeReconcileBody()
         if evaluation_externalize_fn():
-            return enqueue_ingest_scan(safe_limit, requested_by="api.knowledge.ingest_scan")
-        # Developer/testing mode only — never silent fallback when externalization is on.
-        try:
-            docs = knowledge.scan_data_root(limit=safe_limit)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        return {
-            "scanned": len(docs),
-            "data_root": str(settings.knowledge.data_root),
-            "documents": [doc.public_dict() for doc in docs],
-        }
+            dry_run = bool(body.dry_run) and not bool(body.apply)
+            job = job_runtime.enqueue(
+                capability_id="knowledge.reconcile",
+                arguments={
+                    "dry_run": dry_run,
+                    "apply": bool(body.apply) and not dry_run,
+                    "limit": body.limit,
+                },
+                requested_by="api.knowledge.reconcile",
+                domain="knowledge",
+                worker_pool="knowledge_prepare",
+                resource_class="CPU_HEAVY",
+                latency_class="background",
+                metadata={"execution_class": "EXTERNAL_REQUIRED"},
+            )
+            return {
+                "queued": True,
+                "job": job.public_dict(),
+                "job_id": job.job_id,
+                "dry_run": dry_run,
+                "truth": {
+                    "executed_via": "knowledge_prepare_worker",
+                    "diagnosis_is_not_mutation": dry_run,
+                },
+            }
+        # In-process diagnosis only when externalize off (tests).
+        diagnosis = knowledge.diagnose_reconciliation(limit=body.limit)
+        result: dict[str, Any] = {"queued": False, "diagnosis": diagnosis, "applied": False}
+        if body.apply and not body.dry_run:
+            result["repair"] = knowledge.backfill_content(limit=body.limit)
+            result["applied"] = True
+            result["verification"] = knowledge.diagnose_reconciliation(limit=body.limit)
+        return result
 
     return router

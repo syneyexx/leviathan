@@ -1054,7 +1054,11 @@ def _run_install_http(
             )
         return {**queued, "plan": plan, "operation_id": operation_id}
     except HTTPException as exc:
-        if not allow_sync_install_fallback:
+        # Production: never fall back to inline pip/npm/venv on the API thread.
+        # TEST-ONLY: explicit allow gate may use _sync_install for deterministic fixtures.
+        from Data.modules.module_manager.external.install_gate import allow_sync_install_for_tests
+
+        if not (allow_sync_install_fallback and allow_sync_install_for_tests()):
             raise
         detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
         code = str(detail.get("code") or "INSTALL_QUEUE_FAILED")
@@ -1097,5 +1101,5 @@ def _run_install_http(
             "operation_id": operation_id,
             "plan": plan,
             "executed_via": "sync_dev_fallback",
-            "truth": {"production_worker_path": False},
+            "truth": {"production_worker_path": False, "test_only_sync": True},
         }

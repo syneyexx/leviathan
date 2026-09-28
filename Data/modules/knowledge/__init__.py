@@ -23,6 +23,17 @@ from .retrieval import (
 )
 from .staged_retrieval import StagedRetrievalResult, StagedRetriever, resolve_use_reranker
 from .store import KnowledgeStore
+from .preparation import (
+    NORMALIZATION_VERSION,
+    PreparedChunk,
+    PreparedDocumentIndex,
+    build_chunk_plan,
+    normalize_document_text,
+)
+from .execution_gate import (
+    workers_externalize_enabled,
+    refuse_inline_knowledge,
+)
 from .types import (
     ChunkRecord,
     DirectionalRelationAtom,
@@ -51,7 +62,10 @@ __all__ = [
     "IngestStatus",
     "KnowledgeStore",
     "LocalHashEmbeddingProvider",
+    "NORMALIZATION_VERSION",
     "NullEmbeddingProvider",
+    "PreparedChunk",
+    "PreparedDocumentIndex",
     "RelationClass",
     "RerankerProvider",
     "RetrievalHit",
@@ -66,7 +80,11 @@ __all__ = [
     "WhyLibrary",
     "WhyRecord",
     "bm25_relevance",
+    "build_chunk_plan",
     "build_embedding_provider",
+    "normalize_document_text",
     "reciprocal_rank_fusion",
+    "refuse_inline_knowledge",
     "resolve_use_reranker",
+    "workers_externalize_enabled",
 ]

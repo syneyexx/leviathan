@@ -8,6 +8,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -16,6 +17,9 @@ from typing import Any, Callable, Iterable
 
 from Data.modules.coding.workspace_gen import capture_workspace_generation
 
+
+MAX_SEMANTIC_FILES = 8_000
+MAX_SEMANTIC_FILE_BYTES = 2 * 1024 * 1024
 
 SKIP_DIRS = {
     ".git",
@@ -333,6 +337,11 @@ class SemanticMapBuilder:
         )
 
     def _iter_source_files(self) -> Iterable[Path]:
+        """Walk source files without descending into dependency/cache dirs.
+
+        Prefer ``git ls-files`` (+ untracked) when available; otherwise a bounded
+        ``os.walk``. Stays inside the coding worker — no per-file microjobs.
+        """
         if self.prefer_git_ls_files and (self.workspace_root / ".git").exists():
             yielded = False
             for path in self._iter_git_files():
@@ -340,14 +349,40 @@ class SemanticMapBuilder:
                 yield path
             if yielded:
                 return
-        for path in sorted(self.workspace_root.rglob("*")):
-            if not path.is_file():
-                continue
-            if any(part in SKIP_DIRS for part in path.parts):
-                continue
-            if path.suffix.lower() in {".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs"}:
-                yield path
-            elif path.name in {"package.json", "pyproject.toml", "setup.cfg", "Cargo.toml", "go.mod"}:
+
+        count = 0
+        root = self.workspace_root
+        for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+            dirnames[:] = [name for name in dirnames if name not in SKIP_DIRS]
+            for name in filenames:
+                if count >= MAX_SEMANTIC_FILES:
+                    return
+                path = Path(dirpath) / name
+                if path.is_symlink():
+                    continue
+                interesting = path.suffix.lower() in {
+                    ".py",
+                    ".ts",
+                    ".tsx",
+                    ".js",
+                    ".jsx",
+                    ".go",
+                    ".rs",
+                } or path.name in {
+                    "package.json",
+                    "pyproject.toml",
+                    "setup.cfg",
+                    "Cargo.toml",
+                    "go.mod",
+                }
+                if not interesting:
+                    continue
+                try:
+                    if path.stat().st_size > MAX_SEMANTIC_FILE_BYTES:
+                        continue
+                except OSError:
+                    continue
+                count += 1
                 yield path
 
     def _iter_git_files(self) -> Iterable[Path]:
@@ -390,6 +425,11 @@ class SemanticMapBuilder:
             if not path.is_file():
                 continue
             if any(part in SKIP_DIRS for part in Path(name).parts):
+                continue
+            try:
+                if path.stat().st_size > MAX_SEMANTIC_FILE_BYTES:
+                    continue
+            except OSError:
                 continue
             if path.suffix.lower() in {".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs"}:
                 yield path

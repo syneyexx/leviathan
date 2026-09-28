@@ -50,6 +50,7 @@ class ContaminationReport:
     hits: list[ContaminationHit] = field(default_factory=list)
     passed: bool = True
     threshold: float = 0.35
+    evidence_class: str = "UNMEASURED"
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -59,9 +60,12 @@ class ContaminationReport:
             "hit_count": len(self.hits),
             "passed": self.passed,
             "threshold": self.threshold,
+            "evidenceClass": self.evidence_class,
             "truth": {
                 "scan_against_sealed_eval_only": True,
                 "contamination_is_operator_gate": True,
+                "evidenceClass": self.evidence_class,
+                "noReferenceCorpusIsNotClean": self.evidence_class == "UNMEASURED",
             },
         }
 
@@ -125,10 +129,12 @@ def scan_contamination(
                         preview=body,
                     )
                 )
+    measured = len(sealed_index) > 0
     return ContaminationReport(
         scanned_records=scanned,
         sealed_cases=len(sealed_index),
         hits=hits,
-        passed=len(hits) == 0,
+        passed=measured and len(hits) == 0,
         threshold=threshold,
+        evidence_class="EXACT" if measured else "UNMEASURED",
     )

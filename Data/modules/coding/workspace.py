@@ -213,6 +213,57 @@ def should_skip_search_path(rel_path: str) -> bool:
     return False
 
 
+# Recursive listings above this cap are not inline-safe. file_io is not on
+# this build, so the control plane fails closed instead of walking the tree.
+RECURSIVE_INLINE_MAX_ENTRIES = 500
+SEARCH_INLINE_MAX_HITS = 200
+SEARCH_FILE_BYTE_CAP = 8 * 1024 * 1024
+SEARCH_CONTROL_PLANE_FILE_BUDGET = 4_000
+
+
+class WorkspaceScanExternalRequired(RuntimeError):
+    """Large workspace scan must not run inside FastAPI."""
+
+    code = "WORKSPACE_SCAN_EXTERNAL_REQUIRED"
+
+
+def _scan_allowed_inline() -> bool:
+    """Coding/dataset workers may scan with budgets. The API process may not."""
+    try:
+        from Data.modules.execution.workload import running_in_worker_process
+
+        return bool(running_in_worker_process())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _is_reparse(path: Path) -> bool:
+    try:
+        if path.is_symlink():
+            return True
+    except OSError:
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    if callable(is_junction):
+        try:
+            if is_junction():
+                return True
+        except OSError:
+            return True
+    return False
+
+
+def _reparse_escapes(root: Path, item: Path) -> bool:
+    if not _is_reparse(item):
+        return False
+    try:
+        target = item.resolve()
+        safe_relpath(Path(root).resolve() if Path(root).exists() else Path(root), target)
+    except (PathEscapeError, OSError, ValueError):
+        return True
+    return False
+
+
 def list_entries(
     root: Path,
     *,
@@ -220,6 +271,11 @@ def list_entries(
     recursive: bool = False,
     max_entries: int = 200,
 ) -> list[dict[str, Any]]:
+    if recursive and max_entries > RECURSIVE_INLINE_MAX_ENTRIES and not _scan_allowed_inline():
+        raise WorkspaceScanExternalRequired(
+            "recursive workspace.list above the inline cap requires file_io; "
+            "refusing to scan inside the control plane"
+        )
     base = confine(root, path)
     if not base.exists():
         return []
@@ -227,25 +283,52 @@ def list_entries(
         return [{"path": _rel_display(root, base), "type": "file", "size": base.stat().st_size}]
 
     entries: list[dict[str, Any]] = []
-    walker: Iterable[Path] = base.rglob("*") if recursive else base.iterdir()
-    for item in sorted(walker, key=lambda p: str(p).lower()):
+
+    def _accept(item: Path) -> None:
         if len(entries) >= max_entries:
-            break
+            return
         try:
             if is_denied(item, root=root):
-                continue
+                return
             confine(root, _rel_display(root, item))
         except (PathEscapeError, OSError, ValueError):
-            continue
-        if item.is_symlink():
-            try:
-                target = item.resolve()
-                safe_relpath(Path(root).resolve() if Path(root).exists() else Path(root), target)
-            except (PathEscapeError, OSError, ValueError):
-                continue
-        kind = "dir" if item.is_dir() else "file"
-        size = item.stat().st_size if item.is_file() else 0
+            return
+        if _reparse_escapes(root, item):
+            return
+        try:
+            kind = "dir" if item.is_dir() and not item.is_file() else "file"
+            size = item.stat().st_size if item.is_file() else 0
+        except OSError:
+            return
         entries.append({"path": _rel_display(root, item), "type": kind, "size": size})
+
+    if not recursive:
+        try:
+            children = sorted(base.iterdir(), key=lambda p: str(p).lower())
+        except OSError:
+            return []
+        for item in children:
+            if len(entries) >= max_entries:
+                break
+            _accept(item)
+        return entries
+
+    # Bounded walk. Do not sort(rglob("*")) — that materializes the whole tree.
+    for dirpath, dirnames, filenames in os.walk(base, followlinks=False):
+        kept_dirs: list[str] = []
+        for name in dirnames:
+            child = Path(dirpath) / name
+            if _reparse_escapes(root, child) or is_denied(child, root=root):
+                continue
+            kept_dirs.append(name)
+            _accept(child)
+            if len(entries) >= max_entries:
+                return entries
+        dirnames[:] = kept_dirs
+        for name in filenames:
+            if len(entries) >= max_entries:
+                return entries
+            _accept(Path(dirpath) / name)
     return entries
 
 
@@ -256,20 +339,43 @@ def search_files(
     path: str | None = None,
     glob: str | None = None,
     max_hits: int = 50,
+    cancel_check: Any | None = None,
 ) -> dict[str, Any]:
+    if max_hits > SEARCH_INLINE_MAX_HITS and not _scan_allowed_inline():
+        raise WorkspaceScanExternalRequired(
+            "large workspace.search must not run inside the control plane"
+        )
     base = confine(root, path)
     if not query:
-        return {"hits": [], "method": "python", "query": query}
+        return {
+            "hits": [],
+            "method": "python",
+            "query": query,
+            "truncated": False,
+            "scannedFiles": 0,
+            "skippedFiles": 0,
+        }
 
     method = "python"
     hits: list[dict[str, Any]] = []
     from shutil import which
 
     rg = which("rg")
-    if rg:
+    use_rg = bool(rg) and (_scan_allowed_inline() or max_hits <= SEARCH_INLINE_MAX_HITS)
+    if use_rg:
         import subprocess
 
-        cmd = [rg, "--line-number", "--no-heading", "--color", "never", "-F", query]
+        cmd = [
+            rg,
+            "--line-number",
+            "--no-heading",
+            "--color",
+            "never",
+            "-F",
+            "--max-filesize",
+            "8M",
+            query,
+        ]
         if glob:
             cmd.extend(["--glob", glob])
         for pattern in _SEARCH_IGNORE_GLOBS:
@@ -292,93 +398,117 @@ def search_files(
                 except (PathEscapeError, ValueError):
                     continue
                 hits.append({"path": rel, "line": number, "text": text[:500]})
-            return {"hits": hits, "method": method, "query": query}
+            return {
+                "hits": hits,
+                "method": method,
+                "query": query,
+                "truncated": len(proc.stdout.splitlines()) > len(hits),
+                "limitsReached": len(hits) >= max_hits,
+            }
         except (OSError, subprocess.TimeoutExpired):
             method = "python"
 
-    scanned_files = 0
-    scanned_bytes = 0
-    truncated = False
-    max_files = 2000
-    max_scanned_bytes = 8_000_000
-    max_file_bytes = 1_000_000
-
+    scanned = 0
+    skipped = 0
+    bytes_scanned = 0
+    file_budget = SEARCH_CONTROL_PLANE_FILE_BUDGET if not _scan_allowed_inline() else 100_000
+    limits_reached = False
     for file_path in _iter_searchable(base, root=root, glob=glob):
-        if len(hits) >= max_hits:
+        if cancel_check is not None and cancel_check():
+            limits_reached = True
             break
-        if scanned_files >= max_files:
-            truncated = True
+        if len(hits) >= max_hits or scanned >= file_budget:
+            limits_reached = True
             break
-        if scanned_bytes >= max_scanned_bytes:
-            truncated = True
-            break
-        scanned_files += 1
+        scanned += 1
         try:
-            hit = _stream_search_file(
+            file_hits, consumed, binary = _scan_file_lines(
                 file_path,
-                query=query,
+                query,
                 root=root,
-                max_file_bytes=max_file_bytes,
-                remaining_budget=max_scanned_bytes - scanned_bytes,
+                max_hits=max_hits - len(hits),
+                byte_cap=SEARCH_FILE_BYTE_CAP,
             )
         except OSError:
+            skipped += 1
             continue
-        scanned_bytes += int(hit.get("bytes_read") or 0)
-        for item in hit.get("hits") or []:
-            hits.append(item)
-            if len(hits) >= max_hits:
-                break
+        bytes_scanned += consumed
+        if binary:
+            skipped += 1
+            continue
+        hits.extend(file_hits)
     return {
         "hits": hits,
         "method": method,
         "query": query,
-        "truncated": truncated,
-        "scanned_files": scanned_files,
-        "scanned_bytes": scanned_bytes,
+        "truncated": limits_reached,
+        "scannedFiles": scanned,
+        "skippedFiles": skipped,
+        "bytesScanned": bytes_scanned,
+        "scanned_files": scanned,
+        "scanned_bytes": bytes_scanned,
+        "limitsReached": limits_reached,
     }
 
 
-def _stream_search_file(
+def _scan_file_lines(
     file_path: Path,
-    *,
     query: str,
+    *,
     root: Path,
-    max_file_bytes: int,
-    remaining_budget: int,
-) -> dict[str, Any]:
-    """Line-scan a file without read_bytes() of the entire contents."""
+    max_hits: int,
+    byte_cap: int,
+) -> tuple[list[dict[str, Any]], int, bool]:
+    """Stream a file. Never read_bytes() the whole object."""
     hits: list[dict[str, Any]] = []
-    bytes_read = 0
-    budget = min(max_file_bytes, max(0, remaining_budget))
-    try:
-        with file_path.open("rb") as fh:
-            # Binary detection on first chunk.
-            first = fh.read(min(8192, budget or 8192))
-            if b"\x00" in first:
-                return {"hits": [], "bytes_read": len(first)}
-            fh.seek(0)
-            for idx, raw in enumerate(fh, start=1):
-                bytes_read += len(raw)
-                if bytes_read > budget:
-                    break
+    scanned = 0
+    line_no = 0
+    with file_path.open("rb") as handle:
+        head = handle.read(min(8192, byte_cap))
+        scanned += len(head)
+        if b"\x00" in head:
+            return [], scanned, True
+        pending = head
+        while True:
+            while b"\n" in pending:
+                raw, pending = pending.split(b"\n", 1)
+                line_no += 1
                 try:
-                    line = raw.decode("utf-8")
+                    text = raw.decode("utf-8")
                 except UnicodeDecodeError:
-                    try:
-                        line = raw.decode("utf-8", errors="replace")
-                    except Exception:  # noqa: BLE001
-                        continue
-                if query in line:
+                    text = raw.decode("utf-8", errors="replace")
+                if query in text and len(hits) < max_hits:
                     hits.append(
                         {
                             "path": _rel_display(root, file_path),
-                            "line": idx,
-                            "text": line.rstrip("\n\r")[:500],
+                            "line": line_no,
+                            "text": text[:500],
                         }
                     )
-    except OSError:
-        return {"hits": [], "bytes_read": bytes_read}
-    return {"hits": hits, "bytes_read": bytes_read}
+                if len(hits) >= max_hits:
+                    return hits, scanned, False
+            if scanned >= byte_cap:
+                break
+            chunk = handle.read(min(65536, byte_cap - scanned))
+            if not chunk:
+                if pending:
+                    line_no += 1
+                    try:
+                        text = pending.decode("utf-8")
+                    except UnicodeDecodeError:
+                        text = pending.decode("utf-8", errors="replace")
+                    if query in text and len(hits) < max_hits:
+                        hits.append(
+                            {
+                                "path": _rel_display(root, file_path),
+                                "line": line_no,
+                                "text": text[:500],
+                            }
+                        )
+                break
+            scanned += len(chunk)
+            pending += chunk
+    return hits, scanned, False
 
 
 def _iter_searchable(base: Path, *, root: Path, glob: str | None) -> Iterable[Path]:
@@ -387,6 +517,8 @@ def _iter_searchable(base: Path, *, root: Path, glob: str | None) -> Iterable[Pa
         return
     for item in base.rglob("*"):
         if not item.is_file():
+            continue
+        if _reparse_escapes(root, item):
             continue
         if is_denied(item, root=root):
             continue

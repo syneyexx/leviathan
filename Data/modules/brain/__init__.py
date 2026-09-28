@@ -5,6 +5,7 @@ Brain is not canonical storage and not a second CognitiveRuntime.
 """
 
 from .access import BrainAccessFacade
+from .compute import ALGORITHM_VERSION, compute_derived_snapshot, process_brain_compute_job
 from .contracts import (
     BrainContext,
     BrainContextRequest,
@@ -19,6 +20,7 @@ from .contracts import (
 from .facade import BrainEdge, BrainNode, BrainQueryFacade
 
 __all__ = [
+    "ALGORITHM_VERSION",
     "BrainAccessFacade",
     "BrainContext",
     "BrainContextRequest",
@@ -32,4 +34,6 @@ __all__ = [
     "BrainSourceRef",
     "DomainContext",
     "RoleContext",
+    "compute_derived_snapshot",
+    "process_brain_compute_job",
 ]

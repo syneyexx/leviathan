@@ -10,14 +10,30 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from .chunking import chunk_text_spans
+from .chunking import chunk_text_spans  # noqa: F401 — re-exported for legacy callers
 from .embeddings import EmbeddingProvider, NullEmbeddingProvider, cosine_similarity
 from .hashing import content_sha256, estimate_tokens, file_sha256
+from .preparation import NORMALIZATION_VERSION, PreparedDocumentIndex, build_chunk_plan
 from .types import ChunkRecord, DirectionalRelationAtom, DocumentRecord, IngestStatus, RelationClass
 
 INGEST_VERSION = 3
 PARSER_VERSION = "1.0.0"
 TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".rst", ".csv", ".json", ".log"}
+
+# Raised when a commit intent targets a superseded document version.
+class StaleKnowledgeGenerationError(Exception):
+    """Stale prepare/commit must not overwrite a newer document version."""
+
+    def __init__(self, message: str = "KNOWLEDGE_STALE_GENERATION") -> None:
+        super().__init__(message)
+
+
+class DocumentMissingError(Exception):
+    """Commit/prepare targeting a deleted or absent document."""
+
+    def __init__(self, document_id: str) -> None:
+        self.document_id = document_id
+        super().__init__(f"document missing: {document_id}")
 
 
 def utc_now() -> str:
@@ -178,6 +194,88 @@ class KnowledgeStore:
             "status": "KNOWLEDGE_BACKFILL_PENDING" if remaining else "KNOWLEDGE_BACKFILL_DONE",
         }
 
+    def diagnose_reconciliation(self, *, limit: int = 100) -> dict[str, Any]:
+        """Read-only Knowledge semantic/index diagnosis (dry-run).
+
+        Reports missing chunks, docs lacking embeddings, and pending backfill.
+        Does not mutate. Apply repairs via knowledge.reconcile with apply=true
+        (worker) → backfill_content / prepare, then db_commit when COMMIT_WRITE.
+        """
+        safe_limit = min(max(int(limit), 1), 5000)
+        missing_chunks: list[str] = []
+        missing_embeddings: list[str] = []
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            rows = conn.execute(
+                """
+                SELECT d.id
+                FROM knowledge_documents d
+                WHERE COALESCE(d.status, 'READY') = 'READY'
+                  AND LENGTH(TRIM(COALESCE(d.content, ''))) > 0
+                  AND NOT EXISTS (
+                    SELECT 1 FROM knowledge_chunks c WHERE c.document_id = d.id
+                  )
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+            missing_chunks = [str(r["id"]) for r in rows]
+            # Chunks without embedding blobs (when embedding table exists).
+            try:
+                emb_rows = conn.execute(
+                    """
+                    SELECT c.chunk_id, c.document_id
+                    FROM knowledge_chunks c
+                    LEFT JOIN knowledge_chunk_embeddings e ON e.chunk_id = c.chunk_id
+                    WHERE e.chunk_id IS NULL
+                    LIMIT ?
+                    """,
+                    (safe_limit,),
+                ).fetchall()
+                missing_embeddings = [
+                    f"{r['document_id']}:{r['chunk_id']}" for r in emb_rows
+                ]
+            except Exception:  # noqa: BLE001 — embeddings table may be absent
+                missing_embeddings = []
+        pending_backfill = self.count_pending_content_backfill()
+        planned = []
+        if missing_chunks or pending_backfill:
+            planned.append(
+                {
+                    "repair": "backfill_content",
+                    "count": pending_backfill or len(missing_chunks),
+                    "severity": "medium",
+                }
+            )
+        if missing_embeddings:
+            planned.append(
+                {
+                    "repair": "reembed_chunks",
+                    "count": len(missing_embeddings),
+                    "severity": "low",
+                    "note": "Requires embedding worker / prepare path",
+                }
+            )
+        return {
+            "dry_run": True,
+            "mismatches": {
+                "missing_chunks": missing_chunks,
+                "missing_embeddings": missing_embeddings[:200],
+                "pending_backfill": pending_backfill,
+            },
+            "planned_repairs": planned,
+            "counts": {
+                "missing_chunks": len(missing_chunks),
+                "missing_embeddings": len(missing_embeddings),
+                "pending_backfill": pending_backfill,
+            },
+            "severity": "medium" if (missing_chunks or pending_backfill) else "ok",
+            "truth": {
+                "diagnosis_is_not_mutation": True,
+                "owner": "knowledge_prepare",
+            },
+        }
+
     def stage_document(
         self,
         *,
@@ -252,8 +350,45 @@ class KnowledgeStore:
         assert record is not None
         return record
 
+    def build_prepared_index(
+        self,
+        document_id: str,
+        *,
+        needs_embeddings: bool | None = None,
+    ) -> PreparedDocumentIndex:
+        """Pure preparation for a staged document — no SQLite mutation."""
+        doc = self.get_document(document_id)
+        if doc is None:
+            raise DocumentMissingError(document_id)
+        provider = self.embedding_provider
+        available = bool(provider is not None and provider.available())
+        want_embed = available if needs_embeddings is None else bool(needs_embeddings)
+        unavailable = ""
+        if want_embed and not available:
+            unavailable = "EMBEDDING_UNAVAILABLE"
+            want_embed = False
+        return build_chunk_plan(
+            document_id=document_id,
+            title=doc.title,
+            content=doc.content or "",
+            source=doc.source or "manual",
+            content_hash=doc.content_hash or content_sha256(doc.content or ""),
+            original_path=doc.original_path,
+            source_mtime=doc.source_mtime,
+            chunk_max_chars=self.chunk_max_chars,
+            chunk_overlap=self.chunk_overlap,
+            needs_embeddings=want_embed,
+            embedding_provider_id=getattr(provider, "provider_id", "") or "",
+            embedding_unavailable_reason=unavailable,
+        )
+
     def prepare_staged_document(self, document_id: str) -> DocumentRecord:
-        """Chunk + embed a previously staged INDEXING document (worker-side)."""
+        """Compat worker/test path: prepare chunks then commit locally (no embedding inference).
+
+        Production heavy path: knowledge_prepare → ``build_prepared_index`` → db_commit
+        (and embedding worker for vectors). This method remains for tests / explicit
+        inline allow; it does **not** call embedding backends.
+        """
         with self.connect() as conn:
             self._ensure_schema(conn)
             row = conn.execute(
@@ -274,7 +409,16 @@ class KnowledgeStore:
                     source_mtime=row["source_mtime"] if "source_mtime" in row.keys() else None,
                     document_hash=content_hash,
                     source=row["source"] or "manual",
+                    include_embeddings=False,
                 )
+                try:
+                    conn.execute("DELETE FROM knowledge_fts WHERE document_id = ?", (document_id,))
+                    conn.execute(
+                        "INSERT INTO knowledge_fts(document_id, title, content) VALUES (?, ?, ?)",
+                        (document_id, row["title"], content),
+                    )
+                except sqlite3.OperationalError:
+                    pass
                 conn.execute(
                     "UPDATE knowledge_documents SET status = ?, error = NULL, updated_at = ? WHERE id = ?",
                     (IngestStatus.READY.value, utc_now(), document_id),
@@ -517,6 +661,9 @@ class KnowledgeStore:
                     source_type=source_type,
                     confidence=confidence,
                     uncertainty_notes=uncertainty_notes,
+                    # Compat for fused research/dataset/test callers. Production
+                    # knowledge_prepare + apply_replace_chunks never embed here.
+                    include_embeddings=self.embedding_provider.available(),
                 )
                 try:
                     conn.execute("DELETE FROM knowledge_fts WHERE document_id = ?", (document_id,))
@@ -555,28 +702,66 @@ class KnowledgeStore:
         source_type: str = "document",
         confidence: float = 1.0,
         uncertainty_notes: str = "",
+        include_embeddings: bool = False,
+        prepared_chunks: list[dict[str, Any]] | None = None,
     ) -> list[ChunkRecord]:
+        """Replace chunk rows (+ optional chunk FTS). Embedding inference is NOT default.
+
+        Production embeddings are owned by the embedding worker + db_commit
+        ``knowledge.upsert_chunk_embeddings``. ``include_embeddings=True`` remains
+        only for explicit legacy/test callers and must never run in FastAPI.
+        """
         conn.execute("DELETE FROM knowledge_chunks WHERE document_id = ?", (document_id,))
         try:
             conn.execute("DELETE FROM knowledge_chunk_fts WHERE document_id = ?", (document_id,))
         except sqlite3.OperationalError:
             pass
+        # Drop stale embeddings for replaced chunks (ids change / content changes).
+        # Embeddings table is keyed by chunk_id; clean orphans for this document via join.
+        try:
+            conn.execute(
+                """
+                DELETE FROM knowledge_chunk_embeddings
+                WHERE chunk_id NOT IN (SELECT chunk_id FROM knowledge_chunks)
+                """
+            )
+        except sqlite3.OperationalError:
+            pass
 
-        parts = chunk_text_spans(content, max_chars=self.chunk_max_chars, overlap=self.chunk_overlap)
+        if prepared_chunks is None:
+            plan = build_chunk_plan(
+                document_id=document_id,
+                title=title,
+                content=content,
+                source=source,
+                content_hash=document_hash,
+                original_path=original_path,
+                source_mtime=source_mtime,
+                chunk_max_chars=self.chunk_max_chars,
+                chunk_overlap=self.chunk_overlap,
+                source_type=source_type,
+                confidence=confidence,
+                uncertainty_notes=uncertainty_notes,
+            )
+            chunk_dicts = [c.public_dict() for c in plan.chunks]
+        else:
+            chunk_dicts = list(prepared_chunks)
+
         records: list[ChunkRecord] = []
         embed_texts: list[str] = []
-        for index, part in enumerate(parts):
-            chunk_id = str(uuid.uuid4())
-            digest = content_sha256(part.text)
-            tokens = estimate_tokens(part.text)
-            provenance = {
-                "path": original_path,
-                "mtime": source_mtime,
-                "document_hash": document_hash,
-                "source": source,
-                "title": title,
-            }
-            metadata = {"title": title}
+        for item in chunk_dicts:
+            chunk_id = str(item.get("chunk_id") or uuid.uuid4())
+            index = int(item.get("chunk_index") or 0)
+            text = str(item.get("content") or "")
+            digest = str(item.get("content_hash") or content_sha256(text))
+            tokens = int(item.get("token_estimate") or estimate_tokens(text))
+            start = int(item.get("start_offset") or 0)
+            end = int(item.get("end_offset") or 0)
+            conf = float(item.get("confidence") if item.get("confidence") is not None else confidence)
+            notes = str(item.get("uncertainty_notes") or uncertainty_notes)
+            stype = str(item.get("source_type") or source_type)
+            provenance = dict(item.get("provenance") or {})
+            metadata = dict(item.get("metadata") or {"title": title})
             conn.execute(
                 """
                 INSERT INTO knowledge_chunks(
@@ -589,22 +774,22 @@ class KnowledgeStore:
                     chunk_id,
                     document_id,
                     index,
-                    part.text,
+                    text,
                     digest,
                     tokens,
                     json.dumps(metadata),
-                    part.start,
-                    part.end,
-                    confidence,
-                    uncertainty_notes,
-                    source_type,
+                    start,
+                    end,
+                    conf,
+                    notes,
+                    stype,
                     json.dumps(provenance),
                 ),
             )
             try:
                 conn.execute(
                     "INSERT INTO knowledge_chunk_fts(chunk_id, document_id, title, content) VALUES (?, ?, ?, ?)",
-                    (chunk_id, document_id, title, part.text),
+                    (chunk_id, document_id, title, text),
                 )
             except sqlite3.OperationalError:
                 pass
@@ -613,21 +798,21 @@ class KnowledgeStore:
                     chunk_id=chunk_id,
                     document_id=document_id,
                     chunk_index=index,
-                    content=part.text,
+                    content=text,
                     content_hash=digest,
                     token_estimate=tokens,
-                    start_offset=part.start,
-                    end_offset=part.end,
-                    confidence=confidence,
-                    uncertainty_notes=uncertainty_notes,
-                    source_type=source_type,
+                    start_offset=start,
+                    end_offset=end,
+                    confidence=conf,
+                    uncertainty_notes=notes,
+                    source_type=stype,
                     provenance=provenance,
                     metadata=metadata,
                 )
             )
-            embed_texts.append(part.text)
+            embed_texts.append(text)
 
-        if records and self.embedding_provider.available():
+        if include_embeddings and records and self.embedding_provider.available():
             vectors = self.embedding_provider.embed_documents(embed_texts)
             now = utc_now()
             for record, vector in zip(records, vectors):
@@ -653,6 +838,299 @@ class KnowledgeStore:
                     ),
                 )
         return records
+
+    def apply_replace_chunks(
+        self,
+        *,
+        document_id: str,
+        expected_content_hash: str,
+        title: str,
+        chunks: list[dict[str, Any]],
+        source: str = "manual",
+        finalize: bool = True,
+        document_content_for_fts: str = "",
+    ) -> dict[str, Any]:
+        """COMMIT_WRITE: replace chunks/FTS with optimistic version guard (no embedding)."""
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                "SELECT id, content_hash, status, content, title FROM knowledge_documents WHERE id = ?",
+                (document_id,),
+            ).fetchone()
+            if row is None:
+                raise DocumentMissingError(document_id)
+            current_hash = row["content_hash"] or ""
+            if expected_content_hash and current_hash and current_hash != expected_content_hash:
+                raise StaleKnowledgeGenerationError(
+                    f"KNOWLEDGE_STALE_GENERATION: expected={expected_content_hash[:16]} "
+                    f"current={current_hash[:16]}"
+                )
+            if str(row["status"] or "") == IngestStatus.DELETED.value:
+                raise DocumentMissingError(document_id)
+            self._replace_chunks(
+                conn,
+                document_id=document_id,
+                title=title or row["title"],
+                content=document_content_for_fts or row["content"] or "",
+                document_hash=expected_content_hash or current_hash,
+                source=source,
+                include_embeddings=False,
+                prepared_chunks=chunks,
+            )
+            fts_body = document_content_for_fts or row["content"] or ""
+            try:
+                conn.execute("DELETE FROM knowledge_fts WHERE document_id = ?", (document_id,))
+                conn.execute(
+                    "INSERT INTO knowledge_fts(document_id, title, content) VALUES (?, ?, ?)",
+                    (document_id, title or row["title"], fts_body),
+                )
+            except sqlite3.OperationalError:
+                pass
+            if finalize:
+                conn.execute(
+                    "UPDATE knowledge_documents SET status = ?, error = NULL, updated_at = ? WHERE id = ?",
+                    (IngestStatus.READY.value, utc_now(), document_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE knowledge_documents SET status = ?, error = NULL, updated_at = ? WHERE id = ?",
+                    (IngestStatus.INDEXING.value, utc_now(), document_id),
+                )
+        return {
+            "document_id": document_id,
+            "chunks": len(chunks),
+            "finalized": bool(finalize),
+            "expected_content_hash": expected_content_hash,
+        }
+
+    def persist_embedding_batch(
+        self,
+        document_id: str,
+        embeddings: list[dict[str, Any]],
+        *,
+        expected_content_hash: str | None = None,
+        finalize: bool = False,
+    ) -> int:
+        """COMMIT_WRITE: upsert embedding blobs for existing chunks (idempotent)."""
+        applied = 0
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                "SELECT content_hash, status FROM knowledge_documents WHERE id = ?",
+                (document_id,),
+            ).fetchone()
+            if row is None:
+                raise DocumentMissingError(document_id)
+            current_hash = row["content_hash"] or ""
+            if (
+                expected_content_hash
+                and current_hash
+                and current_hash != expected_content_hash
+            ):
+                raise StaleKnowledgeGenerationError(
+                    f"KNOWLEDGE_STALE_GENERATION: expected={expected_content_hash[:16]} "
+                    f"current={current_hash[:16]}"
+                )
+            now = utc_now()
+            for item in embeddings:
+                chunk_id = str(item.get("chunk_id") or "")
+                if not chunk_id:
+                    continue
+                # Ensure chunk still belongs to this document.
+                owner = conn.execute(
+                    "SELECT document_id, content_hash FROM knowledge_chunks WHERE chunk_id = ?",
+                    (chunk_id,),
+                ).fetchone()
+                if owner is None or owner["document_id"] != document_id:
+                    continue
+                vector = item.get("vector") or item.get("embedding") or []
+                if not isinstance(vector, list) or not vector:
+                    continue
+                provider_id = str(item.get("provider_id") or "unknown")
+                content_hash = str(item.get("content_hash") or owner["content_hash"] or "")
+                dims = int(item.get("dimensions") or len(vector))
+                if dims != len(vector):
+                    raise ValueError("EMBEDDING_DIMENSION_MISMATCH")
+                conn.execute(
+                    """
+                    INSERT INTO knowledge_chunk_embeddings(
+                        chunk_id, provider_id, dimensions, embedding, content_hash, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(chunk_id) DO UPDATE SET
+                        provider_id = excluded.provider_id,
+                        dimensions = excluded.dimensions,
+                        embedding = excluded.embedding,
+                        content_hash = excluded.content_hash,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        chunk_id,
+                        provider_id,
+                        dims,
+                        _pack_embedding([float(x) for x in vector]),
+                        content_hash,
+                        now,
+                    ),
+                )
+                applied += 1
+            if finalize:
+                conn.execute(
+                    "UPDATE knowledge_documents SET status = ?, error = NULL, updated_at = ? WHERE id = ?",
+                    (IngestStatus.READY.value, utc_now(), document_id),
+                )
+        return applied
+
+    def finalize_document(
+        self,
+        document_id: str,
+        *,
+        expected_content_hash: str | None = None,
+        status: IngestStatus | str = IngestStatus.READY,
+        title: str = "",
+        content_for_fts: str = "",
+        error: str | None = None,
+    ) -> DocumentRecord:
+        """COMMIT_WRITE: finalize document status (+ optional doc-level FTS refresh)."""
+        status_value = status.value if isinstance(status, IngestStatus) else str(status)
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                "SELECT * FROM knowledge_documents WHERE id = ?",
+                (document_id,),
+            ).fetchone()
+            if row is None:
+                raise DocumentMissingError(document_id)
+            current_hash = row["content_hash"] or ""
+            if (
+                expected_content_hash
+                and current_hash
+                and current_hash != expected_content_hash
+            ):
+                raise StaleKnowledgeGenerationError(
+                    f"KNOWLEDGE_STALE_GENERATION: expected={expected_content_hash[:16]} "
+                    f"current={current_hash[:16]}"
+                )
+            if content_for_fts or title:
+                try:
+                    conn.execute("DELETE FROM knowledge_fts WHERE document_id = ?", (document_id,))
+                    conn.execute(
+                        "INSERT INTO knowledge_fts(document_id, title, content) VALUES (?, ?, ?)",
+                        (
+                            document_id,
+                            title or row["title"],
+                            content_for_fts if content_for_fts else (row["content"] or ""),
+                        ),
+                    )
+                except sqlite3.OperationalError:
+                    pass
+            conn.execute(
+                "UPDATE knowledge_documents SET status = ?, error = ?, updated_at = ? WHERE id = ?",
+                (status_value, error, utc_now(), document_id),
+            )
+        record = self.get_document(document_id)
+        assert record is not None
+        return record
+
+    def index_health(self) -> dict[str, Any]:
+        """Bounded health inspection — never repairs."""
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            docs = conn.execute(
+                """
+                SELECT
+                  COUNT(*) AS total,
+                  SUM(CASE WHEN status = 'READY' THEN 1 ELSE 0 END) AS ready,
+                  SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failed,
+                  SUM(CASE WHEN status = 'INDEXING' THEN 1 ELSE 0 END) AS indexing
+                FROM knowledge_documents
+                """
+            ).fetchone()
+            chunks = conn.execute("SELECT COUNT(*) AS c FROM knowledge_chunks").fetchone()
+            embedded = conn.execute(
+                "SELECT COUNT(*) AS c FROM knowledge_chunk_embeddings"
+            ).fetchone()
+            fts_ok = True
+            try:
+                conn.execute("SELECT 1 FROM knowledge_fts LIMIT 1").fetchone()
+            except sqlite3.OperationalError:
+                fts_ok = False
+            chunk_total = int(chunks["c"] if chunks else 0)
+            emb_total = int(embedded["c"] if embedded else 0)
+            coverage = (100.0 * emb_total / chunk_total) if chunk_total else 0.0
+            provider_id = getattr(self.embedding_provider, "provider_id", "") or ""
+            provider_available = bool(self.embedding_provider.available())
+            return {
+                "documents_total": int(docs["total"] or 0),
+                "documents_ready": int(docs["ready"] or 0),
+                "documents_failed": int(docs["failed"] or 0),
+                "documents_indexing": int(docs["indexing"] or 0),
+                "chunks_total": chunk_total,
+                "chunks_embedded": emb_total,
+                "embedding_coverage_percent": round(coverage, 2),
+                "embedding_provider_id": provider_id,
+                "embedding_backend_ready": provider_available,
+                "fts_status": "READY" if fts_ok else "FTS_UNAVAILABLE",
+                "pending_backfill": self.count_pending_content_backfill(),
+                "normalization_version": NORMALIZATION_VERSION,
+                "ingest_version": INGEST_VERSION,
+                "entity_extraction": "NOT_CONFIGURED",
+                "truth": {
+                    "health_does_not_repair": True,
+                    "null_embeddings_are_not_complete": not provider_available,
+                },
+            }
+
+    def classify_ingest_path(self, path: Path) -> dict[str, Any]:
+        """Incremental scan classification without reading whole unchanged files into chunking."""
+        if not path.is_file():
+            return {"path": str(path), "classification": "MISSING"}
+        if path.suffix.lower() not in TEXT_SUFFIXES:
+            return {"path": str(path), "classification": "UNSUPPORTED"}
+        stat = path.stat()
+        if stat.st_size > 5 * 1024 * 1024:
+            return {"path": str(path), "classification": "SKIPPED_TOO_LARGE", "size_bytes": stat.st_size}
+        # Stream hash — do not load into Python str until changed.
+        digest = file_sha256(path.read_bytes())
+        mtime = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(timespec="seconds")
+        path_key = str(path)
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            existing = conn.execute(
+                "SELECT content_hash, document_id, status FROM knowledge_ingest_files WHERE path = ?",
+                (path_key,),
+            ).fetchone()
+        if (
+            existing
+            and existing["content_hash"] == digest
+            and existing["status"] == IngestStatus.READY.value
+            and existing["document_id"]
+        ):
+            return {
+                "path": path_key,
+                "classification": "UNCHANGED",
+                "document_id": existing["document_id"],
+                "content_hash": digest,
+                "mtime": mtime,
+                "size_bytes": stat.st_size,
+            }
+        if existing and existing["document_id"]:
+            return {
+                "path": path_key,
+                "classification": "CHANGED",
+                "document_id": existing["document_id"],
+                "content_hash": digest,
+                "mtime": mtime,
+                "size_bytes": stat.st_size,
+            }
+        return {
+            "path": path_key,
+            "classification": "NEW",
+            "document_id": None,
+            "content_hash": digest,
+            "mtime": mtime,
+            "size_bytes": stat.st_size,
+        }
+
 
     def get_document(self, document_id: str) -> DocumentRecord | None:
         with self.connect() as conn:

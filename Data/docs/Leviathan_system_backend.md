@@ -373,7 +373,10 @@ Multimodal routes: `Data/backend/routes/multimodal.py`. Model vision capability 
 
 - `access.py` — access contracts;
 - `contracts.py` — Brain-facing types;
-- `facade.py` — unified query across canonical stores.
+- `facade.py` — unified query across canonical stores;
+- `compute.py` — heavy **derived** Brain computation (snapshots/analysis) for the `brain_compute` worker pool.
+
+Bounded UI reads (`GET /api/brain/graph`, `GET /api/brain/stats`) remain inline and capped by `max_nodes`/`max_edges`. Heavy snapshot/rebuild/analyze work is enqueued as `brain.compute.snapshot` / `brain.rebuild` / `brain.analyze` onto the Worker Fabric `brain_compute` pool (`default_count=1`, `max_count=2`). Results are advisory ArtifactStore snapshots with algorithm/version provenance — never a competing Brain/graph database and never a silent Knowledge/Memory mutation.
 
 Cognition/perception should use Brain instead of inventing private direct retrieval paths.
 
@@ -381,22 +384,63 @@ Cognition/perception should use Brain instead of inventing private direct retrie
 
 `Data/modules/knowledge/` owns durable documents/chunks and retrieval:
 
-- `store.py`, `types.py` — persistence/provenance;
-- `retrieval.py` — lexical+dense hybrid retrieval;
+- `store.py`, `types.py` — persistence/provenance / bounded CONTROL_WRITE staging;
+- `preparation.py` — deterministic normalize/chunk/embedding-plan (no DB mutation);
+- `execution_gate.py` — production refuses FastAPI-inline heavy Knowledge work;
+- `commit_submit.py` — typed Knowledge CommitIntent helpers;
+- `retrieval.py` — lexical+dense hybrid retrieval (bounded, synchronous);
 - `staged_retrieval.py` — staged/deep policy;
-- `embeddings.py` — embedding interface/providers;
+- `embeddings.py` — embedding interface/providers (inference owned by embedding worker);
 - `deep_recall.py` — DeepRecall;
 - `atlas.py` — Atlas;
 - `why_library.py` — Why Library;
 - `economy.py` — retrieval budgets;
 - `chunking.py`, `hashing.py`, `index_generations.py` — indexing mechanics;
-- `pipeline/artifact.py`, `curator.py`, `committer.py` — preparation/commit.
+- `pipeline/artifact.py`, `curator.py`, `committer.py` — artifact preparation/commit.
 
-Heavy ingest/index commits respect worker/DB-commit ownership.
+### Knowledge execution topology (production)
+
+```
+FastAPI control plane
+  validate / stage (CONTROL_WRITE) / enqueue / status / bounded search
+        |
+        v
+knowledge_prepare  (EXTERNAL_REQUIRED)
+  scan / path ingest / normalize / chunk / embedding plan
+        |
+        +--> embedding.batch  (EXTERNAL_REQUIRED; actual vector inference)
+        |
+        v
+typed CommitIntent (replace_chunks / upsert_chunk_embeddings / finalize)
+        |
+        v
+db_commit singleton  (EXTERNAL_REQUIRED; only COMMIT_WRITE bulk mutator)
+        |
+        v
+canonical Knowledge SQLite  -> verify -> READY
+```
+
+Ownership:
+
+| Owner | Responsibility |
+|---|---|
+| FastAPI | auth, validation, bounded staging/metadata, enqueue, cancel, status, bounded retrieval |
+| `knowledge_prepare` | data-root scan, path ingest, normalization, chunk computation, provenance, embedding request prep |
+| `embedding` | batch embedding inference (GPU/CPU backend); no Knowledge bulk SQLite writes |
+| `db_commit` | chunk/embedding/FTS/relation bulk mutation; document finalize; single writer |
+| `KnowledgeStore` | domain model, bounded reads, staging CONTROL_WRITE, typed commit helpers, invariants |
+
+Deprecated `knowledge_commit` pool remains desired/default 0 — bulk Knowledge commit is `db_commit` only.
+
+Production never silently falls back to inline `upsert_document` / `ingest_file` / `scan_data_root` when workers are externalized. Worker unavailability fails closed (503 / typed UNAVAILABLE). Entity extraction is currently `NOT_CONFIGURED` (relation atoms remain dataset-owned); do not invent fake entities.
+
+Heavy ingest/index commits respect worker/DB-commit ownership. Semantic reconciliation (`knowledge.reconcile`) is owned by `knowledge_prepare`: dry-run diagnosis (missing chunks / stale embeddings) is separable from apply; bulk mutations remain `db_commit` when classified COMMIT_WRITE.
 
 ## 9.3 Memory
 
-`Data/modules/memory/store.py`, `types.py` and `consolidation.py` own durable scoped memory. Trust states distinguish agent proposal, user statement, source-derived, verified, conflicted and revoked memory. Preference corrections supersede earlier scoped preference/fact rows; retrieval stays on current ACTIVE truth.
+`Data/modules/memory/store.py`, `types.py`, `consolidation.py` and `worker.py` own durable scoped memory. Trust states distinguish agent proposal, user statement, source-derived, verified, conflicted and revoked memory. Preference corrections supersede earlier scoped preference/fact rows; retrieval stays on current ACTIVE truth.
+
+Small Memory CRUD/search remains control-plane inline. Batch/heavy consolidation and enrichment execute on the Worker Fabric `memory` pool (`memory.consolidate` / `memory.enrich` / `memory.reconcile`). Consolidation may admit `AGENT_PROPOSED` candidates; **model confidence never becomes VERIFIED truth**.
 
 Do not collapse conversation history, cognition WorkingMemory, durable MemoryStore, Knowledge documents, VerifiedExperience and SkillLibrary into one concept.
 
@@ -524,7 +568,7 @@ Important invariants:
 
 ## 12.2 Worker Fabric
 
-`Data/modules/workers/` is the external execution plane. Domain entrypoints include agents, coding, research, datasets/documents, embeddings/reranking, evaluation/training, market simulation, MCP, model downloads, provider I/O, source ingestion, **file_io** (generic heavy filesystem reads/writes/copies/hashes/CSV/Parquet/scans), scheduler/workflows, maintenance/backup, telemetry and DB commit.
+`Data/modules/workers/` is the external execution plane. Domain entrypoints include agents, coding, research, memory, brain_compute, datasets/documents, embeddings/reranking, evaluation/training, market simulation, MCP, model downloads, provider I/O, source ingestion, **file_io** (generic heavy filesystem reads/writes/copies/hashes/CSV/Parquet/scans), scheduler/workflows, maintenance/backup, telemetry and DB commit.
 
 Generic heavy filesystem jobs (`file.read` when oversized, `file.write` when oversized, `file.copy`, `file.hash`, `file.parse_csv`, `file.profile_csv`, `file.process_parquet`, `filesystem.scan`, recursive `workspace.list`) enqueue with `worker_pool=file_io`. API-local JobRuntime only claims `general`/unassigned jobs and cannot steal specialist file_io work. Small interactive file operations remain INLINE_SAFE in the control plane.
 
@@ -574,6 +618,26 @@ Ingress rules:
 An idle READY source-ingestion worker with zero queue depth means **healthy idle/no work**, not failure. `document_ai` with desired=0 remains **UNAVAILABLE** (OCR backend missing) — do not start an empty worker to greenwash readiness.
 
 Canonical implementation: `Data/modules/source_ingestion/`, worker entrypoint above, Research routes/services under `Data/modules/research/` and `Data/backend/routes/research.py`. OCR owner: `Data/modules/workers/entrypoints/document_ai.py`.
+
+## 12.4 Dataset data plane, provider metadata, and filesystem scans
+
+FastAPI is the dataset control plane: validate, create catalog rows, enqueue, and report status. It does not download, materialize, validate, profile in full, scan for contamination, transform, index, export, or publish dataset bytes.
+
+| Work | Owner |
+|---|---|
+| Dataset lifecycle (import, HF bulk transfer, materialize, validate, contamination, transform, index/re-index, export, local publish) | `dataset` pool, capability `dataset.process`, `DatasetJobRunner` → `DatasetService` handlers |
+| Bounded Hugging Face repository listing / metadata | `provider_io` via `provider.hf.list` |
+| Generic large workspace scans, generic artifact transforms/packages | `file_io` when that pool exists |
+
+`file_io` is not part of this tree. Large recursive workspace scans and large artifact hash verification fail closed in the API (`WORKSPACE_SCAN_EXTERNAL_REQUIRED` / `ARTIFACT_VERIFY_EXTERNAL_REQUIRED`) instead of running inline. Small non-recursive workspace listings and bounded searches stay inline. A coding session already running inside the `coding` worker may use the streaming workspace helpers directly.
+
+Production dataset mode is `LEVIATHAN_DATASET_JOBS_RUNNER=external`. `inprocess_test` is the only in-process runner, and only when explicitly selected. A missing dataset worker leaves the job queued or returns `DATASET_EXECUTION_UNAVAILABLE` (HTTP 503). There is no “worker missing, run it in FastAPI” path.
+
+Hugging Face tokens are resolved inside the worker from environment/settings or an ephemeral credential reference. They are not stored in JobStore arguments, dataset job results, or error strings. Bulk HF transfer (resume, checkpoints, hashing, materialization) stays in the dataset worker. `provider_io` is not a bulk download engine.
+
+ArtifactStore `create_from_bytes` is bounded. Larger artifacts use `create_from_file` (copy) or `adopt_staged_file` (ownership transfer), both streaming. Huge results stay file-backed; job results carry references.
+
+Local dataset publish remains prepare → verify → atomic replace → metadata. Remote Hugging Face dataset upload is not implemented.
 
 ---
 
@@ -676,16 +740,30 @@ High-level chain:
 
 ```text
 ResearchPage/API
- -> ResearchService
- -> JobRuntime research.advance
+ -> ResearchService (validate / authorize / enqueue)
+ -> JobRuntime research.plan | research.advance | research.fetch_url | research.report.generate | research.web.probe
  -> research worker
- -> ResearchRunner/Coordinator
- -> local retrieval + optional web search/fetch
+ -> ResearchRunner/Coordinator (retrieve/synthesize/verify phases stay coordinator-internal)
+ -> specialist deps: source_ingestion / embedding / rerank when required
  -> sources/snapshots
  -> evidence/claims/conflicts
  -> report/citation audit/quality
  -> optional Brain/Knowledge assimilation
 ```
+
+Production ownership (fail closed — no FastAPI inline heavy fallback when externalized):
+
+| Workload | Owner |
+|---|---|
+| Plan generation / regeneration | `research.plan` → research worker |
+| Manual bounded plan metadata edits | Control Plane CONTROL_WRITE |
+| Research runs | `research.advance` → research worker → `execute_queued_run` |
+| Live web probe (network) | `research.web.probe` → research worker |
+| Web readiness (config) | Control Plane INLINE_SAFE |
+| URL fetch | `research.fetch_url` → research worker |
+| Report regenerate | `research.report.generate` → research worker |
+| Physical source parse | `source_ingestion` (unchanged) |
+| Embedding / rerank batches | `embedding` / `rerank` specialist pools |
 
 Web permission and web search readiness are different. Outbound enabled does not mean a search provider is configured. Best-effort public search must remain labeled best-effort; fetch-only/search-unavailable states are explicit.
 
@@ -694,6 +772,24 @@ Search hit ≠ fetched source ≠ evidence span ≠ supported claim ≠ knowledg
 HTTP: `Data/backend/routes/research.py`.
 
 ---
+
+# 15A. Brain / Memory / Embedding / Rerank external execution
+
+```text
+CONTROL PLANE
+  -> DURABLE JOB
+  -> CORRECT DOMAIN WORKER
+  -> SPECIALIST MODEL/IO WORKERS WHEN REQUIRED
+  -> CANONICAL DOMAIN OUTPUT
+  -> CANONICAL COMMIT PATH
+```
+
+- **Brain facade** — bounded query stays inline; heavy derived compute → `brain_compute`.
+- **Memory** — bounded CRUD inline; heavy consolidation/enrichment → `memory`.
+- **Embedding / Rerank** — specialist inference pools; worker READY ≠ backend/model READY; rerank default_count remains 0 until configured; unavailable rerank must not be labeled neural.
+- **Knowledge reconcile** — `knowledge_prepare` diagnosis → typed repair → `db_commit` when COMMIT_WRITE.
+- **db_commit** — sole bulk SQLite COMMIT_WRITE lane (`default 1 / max 1`).
+- Product DBs remain CONTROL / KNOWLEDGE / MARKET only — never brain.db / memory.db / research_v2.db.
 
 # 16. Datasets, documents and ingestion
 
@@ -767,7 +863,32 @@ plan install
 
 Primary install authority is `Data/modules/module_manager/external/install.py`; dependency/package-manager helpers and adapters live beside it under `Data/modules/module_manager/external/`. Lifecycle composition remains in `Data/modules/module_manager/manager.py`; routes are `Data/backend/routes/modules.py`.
 
-Privileged system dependency approval is bound to request arguments/plan hash. Normal production execution uses JobRuntime/Worker Fabric; synchronous install fallback is default-off and must be explicitly enabled. Installation state/receipts are persisted in CONTROL domain migration v6.
+Privileged system dependency approval is bound to request arguments/plan hash.
+Production classifies `external.module.install` as **EXTERNAL_REQUIRED** and routes
+it exclusively to the Worker Fabric `module_runtime` pool (venv/pip/npm/build/
+staging/promotion). FastAPI may plan/approve/enqueue only — never run pip/npm
+inline. Synchronous install fallback is mechanically gated to explicit
+`inprocess_test` allow (`LEVIATHAN_MODULE_ALLOW_SYNC_INSTALL_TEST`) and is
+unreachable in production. Installation state/receipts are persisted in CONTROL
+domain migration v6.
+
+## 18.2b Agent / Signal / Workflow / Scheduler ownership (externalization wave)
+
+| Concern | Owner pool | Production rule |
+|---------|------------|-----------------|
+| Module dependency install | `module_runtime` | EXTERNAL_REQUIRED; staged install only |
+| Long-running agent missions / multi-agent | `agents` | `agent.advance` units; durable children; no ThreadPoolExecutor wait; no `jobs.process_next()` |
+| Signal delivery / retry / housekeeping | `agent_signals` | enqueue deliver; handlers create/enqueue missions — never run mission bodies |
+| Workflow continuation | `workflow` | one `workflow.advance` unit; EXTERNAL_REQUIRED steps become specialist child jobs; no busy-wait |
+| Schedule evaluation | `scheduler` (singleton) | enqueue-only; never execute targets; never call/monkeypatch `process_next`; specialist pool routing via `pool_for_capability` |
+
+FastAPI remains the control plane (validate / authorize / enqueue). ExecutionGateway
+authorization remains mandatory for capability work. Parent cancellation propagates
+to child missions and pending specialist jobs where owned.
+
+Primary install authority is `Data/modules/module_manager/external/install.py`; dependency/package-manager helpers and adapters live beside it under `Data/modules/module_manager/external/`. Lifecycle composition remains in `Data/modules/module_manager/manager.py`; routes are `Data/backend/routes/modules.py`.
+
+Privileged system dependency approval is bound to request arguments/plan hash. Installation state/receipts are persisted in CONTROL domain migration v6.
 
 ## 18.3 Skills
 

@@ -5,7 +5,6 @@ Side effects always go through AgentRuntime → ExecutionGateway / JobRuntime.
 
 from __future__ import annotations
 
-import concurrent.futures
 import copy
 from typing import Any
 
@@ -155,24 +154,15 @@ class AgentFleetService:
 
     @staticmethod
     def _runners_externalized() -> bool:
-        import os
+        from Data.modules.agents.execution_gate import runners_externalized
 
-        ext = (os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API") or "").strip().lower()
-        if ext in {"1", "true", "yes", "on"}:
-            return True
-        if ext in {"0", "false", "no", "off"}:
-            return False
-        raw = (os.environ.get("LEVIATHAN_AGENTS_RUNNER") or "").strip().lower()
-        if raw in {"external", "worker", "process"}:
-            return True
-        if raw in {"inprocess", "thread", "api"}:
-            return False
-        try:
-            from Data.modules.workers.settings import load_worker_settings
+        return runners_externalized()
 
-            return bool(load_worker_settings().externalize_api_runners)
-        except Exception:  # noqa: BLE001
-            return False
+    @staticmethod
+    def _allow_inprocess_execution() -> bool:
+        from Data.modules.agents.execution_gate import allow_inprocess_mission_execution
+
+        return allow_inprocess_mission_execution()
 
     def enqueue_advance(
         self,
@@ -248,7 +238,7 @@ class AgentFleetService:
         # In-process legacy: no background thread — launch_mission executes inline.
 
     def advance_mission(self, mission_id: str, *, use_jobs: bool | None = None) -> AgentMission:
-        """Advance one queued mission to completion (agents worker unit of work)."""
+        """Advance one mission unit of work (agents worker durable continuation)."""
         mission = self.store.get_mission(mission_id)
         if mission is None:
             raise AgentFleetError(
@@ -256,13 +246,32 @@ class AgentFleetService:
                 f"Mission not found: {mission_id}",
                 http_status=404,
             )
-        if mission.status != MissionStatus.QUEUED:
-            return mission
         if mission.cancel_requested:
-            mission.status = MissionStatus.CANCELLED
-            mission.finished_at = utc_now()
-            mission.updated_at = mission.finished_at
-            self.store.update_mission(mission)
+            if mission.status in {
+                MissionStatus.QUEUED,
+                MissionStatus.RUNNING,
+                MissionStatus.STARTING,
+            }:
+                self._cancel_child_missions(mission)
+                mission.status = MissionStatus.CANCELLED
+                mission.finished_at = utc_now()
+                mission.updated_at = mission.finished_at
+                mission.metadata = {
+                    **dict(mission.metadata or {}),
+                    "wait_reason": None,
+                }
+                self.store.update_mission(mission)
+            return mission
+
+        wait_reason = str((mission.metadata or {}).get("wait_reason") or "")
+        if mission.status == MissionStatus.RUNNING and wait_reason == "WAITING_CHILDREN":
+            return self._resume_orchestrator_children(mission)
+        if mission.status == MissionStatus.RUNNING and wait_reason == "WAITING_CHILD_JOB":
+            return self._resume_tool_child_job(mission)
+        if mission.status == MissionStatus.RUNNING and wait_reason == "WAITING_APPROVAL":
+            return mission
+
+        if mission.status != MissionStatus.QUEUED:
             return mission
         agent = self.get_agent(mission.agent_id)
         depth = int((mission.metadata or {}).get("depth") or 0)
@@ -854,31 +863,58 @@ class AgentFleetService:
             )
             return mission
 
-        # Top-level missions: durable enqueue when workers are externalized.
-        # Nested orchestrator children stay inline inside the claiming worker.
-        if (
-            parent_mission_id is None
-            and self._runners_externalized()
-            and self.job_runtime is not None
-        ):
+        # Production: persist QUEUED + enqueue agent.advance; never execute body inline.
+        # Nested children also enqueue (durable multi-agent). In-process only under
+        # mechanical inprocess_test allow gate.
+        if self._runners_externalized() and self.job_runtime is not None:
             try:
                 job = self.enqueue_advance(
                     mission.mission_id,
                     requested_by="agent_fleet.launch_mission",
+                    parent_job_id=(mission.metadata or {}).get("parent_job_id"),
+                    root_job_id=(mission.metadata or {}).get("root_job_id"),
                 )
                 mission.job_ids = [job.job_id]
                 mission.updated_at = utc_now()
                 self.store.update_mission(mission)
-            except Exception as exc:  # noqa: BLE001 — fall back to inline
+            except Exception as exc:  # noqa: BLE001 — fail closed, never inline
+                mission.status = MissionStatus.FAILED
+                mission.error = f"MISSION_WORKER_UNAVAILABLE: {exc}"
+                mission.finished_at = utc_now()
+                mission.updated_at = mission.finished_at
+                self.store.update_mission(mission)
                 self._emit(
                     agent_id=agent_id,
                     mission_id=mission.mission_id,
                     category="errors",
-                    message=f"Enqueue agent.advance failed; executing inline: {exc}",
-                    level="warn",
+                    message=f"Enqueue agent.advance failed (no inline fallback): {exc}",
+                    level="error",
                 )
-                return self._execute_mission(mission, agent, depth=depth, use_jobs=use_jobs)
+                raise AgentFleetError(
+                    "MISSION_WORKER_UNAVAILABLE",
+                    f"Failed to enqueue agent.advance: {exc}",
+                    http_status=503,
+                ) from exc
             return mission
+
+        if self._runners_externalized() and self.job_runtime is None:
+            mission.status = MissionStatus.FAILED
+            mission.error = "MISSION_WORKER_UNAVAILABLE: job_runtime not bound"
+            mission.finished_at = utc_now()
+            mission.updated_at = mission.finished_at
+            self.store.update_mission(mission)
+            raise AgentFleetError(
+                "MISSION_WORKER_UNAVAILABLE",
+                "job_runtime not bound; cannot enqueue agent.advance",
+                http_status=503,
+            )
+
+        if not self._allow_inprocess_execution():
+            raise AgentFleetError(
+                "MISSION_WORKER_UNAVAILABLE",
+                "In-process mission execution is disabled outside inprocess_test",
+                http_status=503,
+            )
 
         return self._execute_mission(mission, agent, depth=depth, use_jobs=use_jobs)
 
@@ -943,15 +979,44 @@ class AgentFleetService:
                 result = self._run_kind_executor(executor, mission, agent)
             elif agent.kind == AgentDefinitionKind.ORCHESTRATOR:
                 result = self._run_orchestrator(mission, agent, depth=depth, use_jobs=use_jobs)
+                # Durable orchestrator may yield waiting for children.
+                if str((mission.metadata or {}).get("wait_reason") or "") == "WAITING_CHILDREN":
+                    mission.result = result
+                    mission.updated_at = utc_now()
+                    self.store.update_mission(mission)
+                    return mission
             else:
                 outcome = self.runtime.execute(
                     mission.request,
                     kind=self._execution_kind(agent),
                     use_jobs=use_jobs,
+                    idempotency_key=f"mission:{mission.mission_id}:gen:{mission.created_at}",
+                    trace_id=mission.trace_id,
                 )
                 result = outcome.public_dict()
                 mission.run_id = outcome.run_id
-                mission.job_ids = list(outcome.job_ids)
+                mission.job_ids = list(dict.fromkeys(list(mission.job_ids) + list(outcome.job_ids)))
+                if outcome.status == "WAITING_CHILD":
+                    pending = None
+                    for step in outcome.steps or []:
+                        if step.get("delegated") and step.get("job_id"):
+                            pending = step["job_id"]
+                            break
+                    mission.status = MissionStatus.RUNNING
+                    mission.progress = max(0.1, float(mission.progress or 0.05))
+                    mission.metadata = {
+                        **dict(mission.metadata or {}),
+                        "wait_reason": "WAITING_CHILD_JOB",
+                        "pending_child_job_id": pending,
+                        "tool_steps": list(outcome.steps or []),
+                        "tools_used": len(
+                            [s for s in (outcome.steps or []) if s.get("kind") == "CAPABILITY"]
+                        ),
+                    }
+                    mission.result = result
+                    mission.updated_at = utc_now()
+                    self.store.update_mission(mission)
+                    return mission
                 if outcome.status in {"FAILED", "DISABLED", "UNVERIFIED"}:
                     mission.status = (
                         MissionStatus.DISABLED if outcome.status == "DISABLED" else MissionStatus.FAILED
@@ -986,6 +1051,17 @@ class AgentFleetService:
         if mission.cancel_requested and mission.status == MissionStatus.RUNNING:
             mission.status = MissionStatus.CANCELLED
 
+        # Do not finalize missions that are waiting on durable children.
+        wait_reason = str((mission.metadata or {}).get("wait_reason") or "")
+        if mission.status == MissionStatus.RUNNING and wait_reason in {
+            "WAITING_CHILDREN",
+            "WAITING_CHILD_JOB",
+            "WAITING_APPROVAL",
+        }:
+            mission.updated_at = utc_now()
+            self.store.update_mission(mission)
+            return mission
+
         mission.finished_at = utc_now()
         mission.updated_at = mission.finished_at
         if mission.status == MissionStatus.COMPLETED and mission.progress < 1.0:
@@ -999,7 +1075,37 @@ class AgentFleetService:
             level="error" if mission.status == MissionStatus.FAILED else "info",
         )
         self._emit_lifecycle_signal(mission, agent)
+        self._wake_parent_if_waiting(mission)
         return mission
+
+    def _wake_parent_if_waiting(self, mission: AgentMission) -> None:
+        """When a child reaches a terminal state, enqueue parent continuation."""
+        if mission.parent_mission_id is None:
+            return
+        if mission.status not in {
+            MissionStatus.COMPLETED,
+            MissionStatus.FAILED,
+            MissionStatus.CANCELLED,
+            MissionStatus.DISABLED,
+            MissionStatus.INTERRUPTED,
+        }:
+            return
+        if self.job_runtime is None:
+            return
+        parent = self.store.get_mission(mission.parent_mission_id)
+        if parent is None:
+            return
+        wait = str((parent.metadata or {}).get("wait_reason") or "")
+        if wait != "WAITING_CHILDREN":
+            return
+        try:
+            self.enqueue_advance(
+                parent.mission_id,
+                requested_by="agent_fleet.child_wake",
+                generation=f"{parent.created_at}:wake:{mission.mission_id}:{mission.status.value}",
+            )
+        except Exception:  # noqa: BLE001
+            return
 
     def _emit_lifecycle_signal(self, mission: AgentMission, agent: AgentDefinition) -> None:
         fabric = self.signal_fabric
@@ -1088,9 +1194,8 @@ class AgentFleetService:
                 http_status=422,
             )
         self._validate_orchestrator(orch, self_id=agent.agent_id, role=agent.role)
-        if orch.strategy == "parallel_bounded":
-            return self._run_orchestrator_parallel(mission, agent, orch, depth=depth, use_jobs=use_jobs)
-        return self._run_orchestrator_sequential(mission, agent, orch, depth=depth, use_jobs=use_jobs)
+        # Durable multi-agent: create/enqueue children, yield — never ThreadPoolExecutor wait.
+        return self._orchestrate_durable(mission, agent, orch, depth=depth, use_jobs=use_jobs)
 
     def _launch_child(
         self,
@@ -1176,13 +1281,18 @@ class AgentFleetService:
                     "memory_scope": frame.memory_scope,
                     "shared_orchestrator_scope": frame.shared_orchestrator_scope,
                     "governance": frame.public_dict(),
+                    "root_mission_id": (mission.metadata or {}).get("root_mission_id")
+                    or mission.mission_id,
+                    "parent_job_id": (mission.job_ids[0] if mission.job_ids else None),
+                    "root_job_id": (mission.metadata or {}).get("root_job_id")
+                    or (mission.job_ids[0] if mission.job_ids else None),
                 },
             )
             return child
         finally:
             self.governor.close(frame.child_id)
 
-    def _run_orchestrator_sequential(
+    def _orchestrate_durable(
         self,
         mission: AgentMission,
         agent: AgentDefinition,
@@ -1191,90 +1301,325 @@ class AgentFleetService:
         depth: int,
         use_jobs: bool,
     ) -> dict[str, Any]:
-        child_results: list[dict[str, Any]] = []
-        for member_id in orch.member_agent_ids:
-            if mission.cancel_requested:
-                mission.status = MissionStatus.CANCELLED
-                break
-            child = self._launch_child(mission, member_id, depth=depth, use_jobs=use_jobs)
-            child_results.append(child.public_dict())
-            mission.job_ids.extend(child.job_ids)
-            mission.progress = min(0.95, len(child_results) / max(1, len(orch.member_agent_ids)))
+        """Create bounded durable child missions and yield until they complete.
+
+        No in-process ThreadPoolExecutor wait for production multi-agent work.
+        """
+        meta = dict(mission.metadata or {})
+        child_ids = list(meta.get("child_mission_ids") or [])
+        members = list(orch.member_agent_ids)
+        limit = max(1, int(orch.parallelism_limit or 1))
+        if orch.strategy != "parallel_bounded":
+            limit = 1  # sequential: one active child at a time
+
+        if not child_ids:
+            # First unit: create all children as QUEUED via launch_mission (enqueues).
+            # Respect parallelism: only enqueue advance for the first `limit` —
+            # launch_mission already enqueues; for sequential we still create all
+            # but cancel extras on fail_fast later. To bound concurrency, create
+            # only up to limit initially for parallel; for sequential create first only.
+            to_create = members if orch.strategy == "parallel_bounded" else members[:1]
+            # For parallel_bounded with 100 members and limit=2: create all records
+            # but only the first `limit` get advance jobs... launch_mission always
+            # enqueues. So create only `limit` initially; resume creates next batch.
+            to_create = members[:limit]
+            meta["pending_member_ids"] = members[limit:]
+            meta["orchestrator_strategy"] = orch.strategy
+            meta["failure_strategy"] = orch.failure_strategy
+            meta["parallelism_limit"] = limit
+            for member_id in to_create:
+                if mission.cancel_requested:
+                    break
+                child = self._launch_child(mission, member_id, depth=depth, use_jobs=use_jobs)
+                child_ids.append(child.mission_id)
+                mission.job_ids.extend(child.job_ids)
+            meta["child_mission_ids"] = child_ids
+            meta["wait_reason"] = "WAITING_CHILDREN"
+            mission.metadata = meta
+            mission.status = MissionStatus.RUNNING
+            mission.progress = min(0.5, len(child_ids) / max(1, len(members)) * 0.5)
             mission.updated_at = utc_now()
             self.store.update_mission(mission)
-            if child.status in {MissionStatus.FAILED, MissionStatus.DISABLED, MissionStatus.INTERRUPTED}:
-                if orch.failure_strategy == "fail_fast":
-                    mission.status = MissionStatus.FAILED
-                    mission.error = child.error or f"Child mission failed: {child.mission_id}"
+            # Inprocess_test path: launch_mission may have already executed children
+            # synchronously — aggregate immediately when no active children remain.
+            active_or_queued = False
+            for cid in child_ids:
+                child = self.store.get_mission(cid)
+                if child is None:
+                    continue
+                if child.status.value in ACTIVE_MISSION_STATUSES or child.status == MissionStatus.QUEUED:
+                    active_or_queued = True
                     break
-        else:
-            if mission.status == MissionStatus.RUNNING:
-                mission.status = MissionStatus.COMPLETED
-                mission.progress = 1.0
-        return {
+            if (not active_or_queued) and not meta.get("pending_member_ids"):
+                return self._resume_orchestrator_children(mission).result or {
+                    "orchestrator": True,
+                    "children": child_ids,
+                }
+            return {
+                "orchestrator": True,
+                "strategy": orch.strategy,
+                "parallelismLimit": limit,
+                "children": child_ids,
+                "wait_reason": "WAITING_CHILDREN",
+                "truth": {
+                    "orchestrator_uses_shared_gateway": True,
+                    "no_private_orchestrator_execution": True,
+                    "durable_child_missions": True,
+                    "no_thread_pool_wait": True,
+                },
+            }
+
+        # Should not reach here on first execute — resume path handles continuation.
+        return self._resume_orchestrator_children(mission).result or {
             "orchestrator": True,
-            "strategy": orch.strategy,
-            "children": child_results,
-            "truth": {
-                "orchestrator_uses_shared_gateway": True,
-                "no_private_orchestrator_execution": True,
-            },
+            "children": child_ids,
         }
 
-    def _run_orchestrator_parallel(
-        self,
-        mission: AgentMission,
-        agent: AgentDefinition,
-        orch: OrchestratorConfig,
-        *,
-        depth: int,
-        use_jobs: bool,
-    ) -> dict[str, Any]:
-        """Bounded parallel member delegation — still uses shared AgentRuntime/gateway."""
-        members = list(orch.member_agent_ids)
-        child_results: list[dict[str, Any]] = []
-        failed = False
-        workers = max(1, min(orch.parallelism_limit, len(members) or 1))
+    def _resume_orchestrator_children(self, mission: AgentMission) -> AgentMission:
+        meta = dict(mission.metadata or {})
+        child_ids = list(meta.get("child_mission_ids") or [])
+        pending_members = list(meta.get("pending_member_ids") or [])
+        limit = max(1, int(meta.get("parallelism_limit") or 1))
+        failure_strategy = str(meta.get("failure_strategy") or "fail_fast")
+        strategy = str(meta.get("orchestrator_strategy") or "sequential")
 
-        def _run_one(member_id: str) -> AgentMission:
-            return self._launch_child(mission, member_id, depth=depth, use_jobs=use_jobs)
+        children = []
+        active = 0
+        failed_child = None
+        for cid in child_ids:
+            child = self.store.get_mission(cid)
+            if child is None:
+                continue
+            children.append(child)
+            if child.status.value in ACTIVE_MISSION_STATUSES or child.status == MissionStatus.QUEUED:
+                active += 1
+            if child.status in {
+                MissionStatus.FAILED,
+                MissionStatus.DISABLED,
+                MissionStatus.INTERRUPTED,
+            }:
+                if failed_child is None:
+                    failed_child = child
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_run_one, mid): mid for mid in members}
-            for fut in concurrent.futures.as_completed(futures):
-                if mission.cancel_requested:
-                    mission.status = MissionStatus.CANCELLED
-                    break
-                child = fut.result()
-                child_results.append(child.public_dict())
-                mission.job_ids.extend(child.job_ids)
-                mission.progress = min(0.95, len(child_results) / max(1, len(members)))
-                mission.updated_at = utc_now()
-                self.store.update_mission(mission)
-                if child.status in {MissionStatus.FAILED, MissionStatus.DISABLED, MissionStatus.INTERRUPTED}:
-                    if orch.failure_strategy == "fail_fast":
-                        failed = True
-                        mission.status = MissionStatus.FAILED
-                        mission.error = child.error or f"Child mission failed: {child.mission_id}"
-                        # Cancel remaining futures best-effort (in-flight children finish).
-                        for pending in futures:
-                            pending.cancel()
-                        break
+        if mission.cancel_requested:
+            self._cancel_child_missions(mission)
+            mission.status = MissionStatus.CANCELLED
+            mission.finished_at = utc_now()
+            mission.updated_at = mission.finished_at
+            meta["wait_reason"] = None
+            mission.metadata = meta
+            mission.result = {
+                "orchestrator": True,
+                "cancelled": True,
+                "children": [c.public_dict() for c in children],
+            }
+            self.store.update_mission(mission)
+            return mission
 
-        if mission.status == MissionStatus.RUNNING and not failed:
+        if failed_child is not None and failure_strategy == "fail_fast":
+            # Cancel remaining queued/running children and pending members.
+            self._cancel_child_missions(mission)
+            meta["pending_member_ids"] = []
+            meta["wait_reason"] = None
+            mission.metadata = meta
+            mission.status = MissionStatus.FAILED
+            mission.error = failed_child.error or f"Child mission failed: {failed_child.mission_id}"
+            mission.finished_at = utc_now()
+            mission.updated_at = mission.finished_at
+            mission.result = {
+                "orchestrator": True,
+                "strategy": strategy,
+                "children": [c.public_dict() for c in children],
+                "truth": {"durable_child_missions": True, "no_thread_pool_wait": True},
+            }
+            self.store.update_mission(mission)
+            self._emit_lifecycle_signal(mission, self.get_agent(mission.agent_id))
+            return mission
+
+        # Enqueue next bounded batch when slots free.
+        agent = self.get_agent(mission.agent_id)
+        depth = int(meta.get("depth") or 0)
+        while pending_members and active < limit:
+            member_id = pending_members.pop(0)
+            child = self._launch_child(mission, member_id, depth=depth, use_jobs=False)
+            child_ids.append(child.mission_id)
+            mission.job_ids.extend(child.job_ids)
+            if child.status.value in ACTIVE_MISSION_STATUSES or child.status == MissionStatus.QUEUED:
+                active += 1
+            if child.status in {
+                MissionStatus.FAILED,
+                MissionStatus.DISABLED,
+                MissionStatus.INTERRUPTED,
+            } and failure_strategy == "fail_fast":
+                failed_child = child
+                break
+
+        meta["child_mission_ids"] = child_ids
+        meta["pending_member_ids"] = pending_members
+
+        if failed_child is not None and failure_strategy == "fail_fast":
+            self._cancel_child_missions(mission)
+            meta["wait_reason"] = None
+            mission.metadata = meta
+            mission.status = MissionStatus.FAILED
+            mission.error = failed_child.error or f"Child mission failed: {failed_child.mission_id}"
+            mission.finished_at = utc_now()
+            mission.updated_at = mission.finished_at
+            mission.result = {
+                "orchestrator": True,
+                "strategy": strategy,
+                "children": [c.public_dict() for c in children],
+            }
+            self.store.update_mission(mission)
+            self._emit_lifecycle_signal(mission, agent)
+            return mission
+
+        all_terminal = active == 0 and not pending_members
+        if not all_terminal:
+            meta["wait_reason"] = "WAITING_CHILDREN"
+            mission.metadata = meta
+            mission.status = MissionStatus.RUNNING
+            total = max(1, len(child_ids) + len(pending_members))
+            done = sum(
+                1
+                for c in children
+                if c.status
+                in {
+                    MissionStatus.COMPLETED,
+                    MissionStatus.FAILED,
+                    MissionStatus.CANCELLED,
+                    MissionStatus.DISABLED,
+                    MissionStatus.INTERRUPTED,
+                }
+            )
+            mission.progress = min(0.95, done / total)
+            mission.updated_at = utc_now()
+            self.store.update_mission(mission)
+            # Do not self-requeue in a busy loop — child terminal states wake the parent.
+            return mission
+
+        # All children terminal — aggregate.
+        if any(
+            c.status
+            in {MissionStatus.FAILED, MissionStatus.DISABLED, MissionStatus.INTERRUPTED}
+            for c in children
+        ) and failure_strategy == "fail_fast":
+            mission.status = MissionStatus.FAILED
+            mission.error = "One or more child missions failed"
+        else:
+            # continue strategy: record failures honestly but complete parent.
             mission.status = MissionStatus.COMPLETED
             mission.progress = 1.0
-        return {
+        meta["wait_reason"] = None
+        mission.metadata = meta
+        mission.finished_at = utc_now()
+        mission.updated_at = mission.finished_at
+        mission.result = {
             "orchestrator": True,
-            "strategy": orch.strategy,
-            "parallelismLimit": orch.parallelism_limit,
-            "children": child_results,
+            "strategy": strategy,
+            "parallelismLimit": limit,
+            "children": [c.public_dict() for c in children],
             "truth": {
                 "orchestrator_uses_shared_gateway": True,
                 "no_private_orchestrator_execution": True,
-                "parallel_bounded_uses_thread_pool": True,
+                "durable_child_missions": True,
+                "no_thread_pool_wait": True,
             },
         }
+        self.store.update_mission(mission)
+        self._emit(
+            agent_id=agent.agent_id,
+            mission_id=mission.mission_id,
+            category="tasks",
+            message=f"Mission {mission.status.value}: {mission.title}",
+            level="error" if mission.status == MissionStatus.FAILED else "info",
+        )
+        self._emit_lifecycle_signal(mission, agent)
+        return mission
+
+    def _resume_tool_child_job(self, mission: AgentMission) -> AgentMission:
+        meta = dict(mission.metadata or {})
+        pending = meta.get("pending_child_job_id")
+        if not pending or self.job_runtime is None:
+            mission.status = MissionStatus.FAILED
+            mission.error = "TOOL_CHILD_UNAVAILABLE"
+            mission.finished_at = utc_now()
+            mission.updated_at = mission.finished_at
+            meta["wait_reason"] = None
+            mission.metadata = meta
+            self.store.update_mission(mission)
+            return mission
+        job = self.job_runtime.store.get(str(pending))
+        if job is None:
+            mission.status = MissionStatus.FAILED
+            mission.error = "TOOL_CHILD_UNAVAILABLE"
+            mission.finished_at = utc_now()
+            mission.updated_at = mission.finished_at
+            meta["wait_reason"] = None
+            mission.metadata = meta
+            self.store.update_mission(mission)
+            return mission
+        from Data.modules.jobs.states import JobState
+
+        if job.state not in {JobState.COMPLETED, JobState.FAILED, JobState.CANCELLED}:
+            # Still waiting — agents entrypoint may soft-requeue; do not busy-wait here.
+            mission.updated_at = utc_now()
+            self.store.update_mission(mission)
+            return mission
+
+        steps = list(meta.get("tool_steps") or [])
+        for step in steps:
+            if step.get("job_id") == pending:
+                step["status"] = job.state.value
+                step["result"] = job.result
+                step["error"] = job.error
+        meta["tool_steps"] = steps
+        meta["pending_child_job_id"] = None
+        meta["wait_reason"] = None
+        mission.metadata = meta
+        if job.state != JobState.COMPLETED:
+            mission.status = MissionStatus.FAILED
+            mission.error = job.error or "TOOL_FAILED"
+            mission.finished_at = utc_now()
+            mission.updated_at = mission.finished_at
+            mission.result = {"steps": steps, "failed_job_id": pending}
+            self.store.update_mission(mission)
+            return mission
+
+        # Child succeeded — for this wave, complete the mission with consumed receipt.
+        # Full multi-step plan resume can continue in a later advance if more steps remain.
+        mission.status = MissionStatus.COMPLETED
+        mission.progress = 1.0
+        mission.finished_at = utc_now()
+        mission.updated_at = mission.finished_at
+        mission.result = {"steps": steps, "child_job_id": pending, "child_result": job.result}
+        self.store.update_mission(mission)
+        agent = self.get_agent(mission.agent_id)
+        self._emit_lifecycle_signal(mission, agent)
+        return mission
+
+    def _cancel_child_missions(self, mission: AgentMission) -> None:
+        meta = dict(mission.metadata or {})
+        for cid in list(meta.get("child_mission_ids") or []):
+            try:
+                child = self.store.get_mission(str(cid))
+                if child is None:
+                    continue
+                if child.status.value in ACTIVE_MISSION_STATUSES or child.status == MissionStatus.QUEUED:
+                    child.cancel_requested = True
+                    if child.status == MissionStatus.QUEUED:
+                        child.status = MissionStatus.CANCELLED
+                        child.finished_at = utc_now()
+                    child.updated_at = utc_now()
+                    self.store.update_mission(child)
+            except Exception:  # noqa: BLE001
+                continue
+        pending_job = meta.get("pending_child_job_id")
+        if pending_job and self.job_runtime is not None:
+            try:
+                self.job_runtime.cancel(str(pending_job))
+            except Exception:  # noqa: BLE001
+                pass
 
     def cancel_mission(self, mission_id: str) -> AgentMission:
         mission = self.store.get_mission(mission_id)
@@ -1284,6 +1629,7 @@ class AgentFleetService:
             # Idempotent cancel on terminals
             return mission
         mission.cancel_requested = True
+        self._cancel_child_missions(mission)
         if mission.status == MissionStatus.QUEUED:
             mission.status = MissionStatus.CANCELLED
             mission.finished_at = utc_now()
@@ -1291,9 +1637,11 @@ class AgentFleetService:
             mission.status = MissionStatus.CANCELLING
         mission.updated_at = utc_now()
         self.store.update_mission(mission)
-        # Best-effort cancel child missions
+        # Best-effort cancel child missions by parent link
         for child in self.store.list_missions(limit=200):
-            if child.parent_mission_id == mission_id and child.status.value in ACTIVE_MISSION_STATUSES:
+            if child.parent_mission_id == mission_id and (
+                child.status.value in ACTIVE_MISSION_STATUSES or child.status == MissionStatus.QUEUED
+            ):
                 child.cancel_requested = True
                 child.status = MissionStatus.CANCELLED
                 child.finished_at = utc_now()

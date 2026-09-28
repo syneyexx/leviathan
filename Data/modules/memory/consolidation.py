@@ -71,8 +71,11 @@ class MemoryConsolidator:
         *,
         existing_semantic: Sequence[dict[str, Any]] | None = None,
         min_cluster_size: int = 2,
+        max_items: int = 5000,
     ) -> ConsolidationResult:
-        clusters = self._cluster(list(episodic))
+        # Bound input — refuse accidental O(N²) over unbounded corpora.
+        items = list(episodic)[: max(1, int(max_items))]
+        clusters = self._cluster(items)
         candidates: list[SemanticCandidate] = []
         existing = list(existing_semantic or [])
         for cluster in clusters:
@@ -112,6 +115,8 @@ class MemoryConsolidator:
                     "cluster_size": len(cluster),
                     "created_at": utc_now(),
                     "content_hash": hashlib.sha256(content.encode()).hexdigest()[:16],
+                    "max_items": max_items,
+                    "items_considered": len(items),
                 },
                 contradictions=contradictions,
                 evidence_refs=evidence_refs,

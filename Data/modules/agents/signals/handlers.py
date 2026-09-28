@@ -125,16 +125,19 @@ class TaskSignalHandler(SignalHandler):
             request=request,
             title=str(payload.get("title") or signal.subject or "signal-handoff")[:200],
             priority=str(payload.get("priority") or "med"),
+            # Lineage parent is recorded; production launch_mission enqueues
+            # durable agent.advance (never inline on the signal worker).
             parent_mission_id=signal.mission_id,
             depth=int(payload.get("depth") or 0) + 1,
             dry_run=bool(payload.get("dryRun") or False),
-            use_jobs=bool(payload.get("useJobs") or False),
+            use_jobs=False,
             metadata={
                 "signalFabricKey": dedupe,
                 "parentSignalId": signal.signal_id,
                 "correlationId": signal.correlation_id,
                 "traceId": signal.trace_id,
                 "source": "signal_fabric",
+                "root_mission_id": signal.mission_id,
                 meta_marker: True,
             },
         )
@@ -211,6 +214,7 @@ class VerificationSignalHandler(SignalHandler):
                     "parentSignalId": signal.signal_id,
                     "verification": True,
                     "source": "signal_fabric",
+                    "root_mission_id": signal.mission_id,
                 },
             )
             return {

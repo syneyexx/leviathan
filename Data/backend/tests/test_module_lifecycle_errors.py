@@ -660,8 +660,16 @@ class JobRuntimeInstallTests(unittest.TestCase):
                 idempotency_key="fail-1",
             )
             self.assertEqual(failed.state, JobState.QUEUED)
-            done_fail = runtime.process_next()
-            assert done_fail is not None
+            # API-local process_next must not steal module_runtime work.
+            self.assertIsNone(runtime.process_next())
+            claimed_fail = runtime.store.claim_next_queued(
+                worker_id="module_runtime-test",
+                lease_ttl_seconds=60.0,
+                worker_pool="module_runtime",
+            )
+            assert claimed_fail is not None
+            runtime.worker_id = "module_runtime-test"
+            done_fail = runtime._execute_claimed(claimed_fail)
             self.assertEqual(done_fail.state, JobState.FAILED)
             self.assertIn("DEPENDENCY_MISSING", done_fail.error or "")
             self.assertEqual(done_fail.error_code, "DEPENDENCY_MISSING")
@@ -676,14 +684,27 @@ class JobRuntimeInstallTests(unittest.TestCase):
                 idempotency_key="ok-1",
             )
             self.assertEqual(ok.state, JobState.QUEUED)
-            done_ok = runtime.process_next()
-            assert done_ok is not None
+            self.assertIsNone(runtime.process_next())
+            claimed_ok = runtime.store.claim_next_queued(
+                worker_id="module_runtime-test",
+                lease_ttl_seconds=60.0,
+                worker_pool="module_runtime",
+            )
+            assert claimed_ok is not None
+            done_ok = runtime._execute_claimed(claimed_ok)
             self.assertEqual(done_ok.state, JobState.COMPLETED)
             self.assertEqual(manager.get("job-ok").status, ModuleStatus.INSTALLED)  # type: ignore[union-attr]
             self.assertIsNone(manager.get("job-ok").error)  # type: ignore[union-attr]
             self.assertEqual(manager.active_jobs("job-ok"), [])
             self.assertTrue(progress)
             self.assertIsNone(runtime.process_next())
+            self.assertIsNone(
+                runtime.store.claim_next_queued(
+                    worker_id="module_runtime-test",
+                    lease_ttl_seconds=60.0,
+                    worker_pool="module_runtime",
+                )
+            )
 
 
 class RealManifestSmokeTests(unittest.TestCase):

@@ -10,6 +10,7 @@ from .types import (
     MemoryTrustState,
     normalize_trust_state,
 )
+from .worker import process_memory_job
 
 __all__ = [
     "ConsolidationResult",
@@ -22,4 +23,5 @@ __all__ = [
     "MemoryTrustState",
     "SemanticCandidate",
     "normalize_trust_state",
+    "process_memory_job",
 ]

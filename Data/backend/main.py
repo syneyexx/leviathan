@@ -691,7 +691,11 @@ def _assert_loopback_mutation_allowed(request: Request) -> None:
 
 
 def _evaluation_externalize() -> bool:
-    """Prefer external workers; fail closed toward externalization on probe errors."""
+    """Prefer external workers; fail closed toward externalization on probe errors.
+
+    Legacy name retained for evaluation/neuro call sites. Prefer
+    ``_workers_externalize`` for Knowledge control-plane gating.
+    """
     import os
 
     try:
@@ -702,6 +706,12 @@ def _evaluation_externalize() -> bool:
     except Exception:  # noqa: BLE001
         raw = (os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API") or "1").strip().lower()
         return raw in {"1", "true", "yes", "on"}
+
+
+def _workers_externalize() -> bool:
+    """Canonical workers-externalize predicate for Knowledge / heavy API work."""
+    return _evaluation_externalize()
+
 
 def _gate_outbound() -> GateCheck:
     """Report outbound posture truthfully — enabled outbound is not a failure.
@@ -2088,12 +2098,14 @@ async def lifespan(_: FastAPI):
             payload={"error": str(exc)},
             level="warning",
         )
-    dataset_service.reconcile()
     from Data.modules.datasets.worker import should_start_inprocess_runner
     from Data.modules.workers.settings import load_worker_settings
 
     worker_settings = load_worker_settings()
     externalize = bool(worker_settings.enabled and worker_settings.externalize_api_runners)
+    # Metadata reconcile only. Orphan/sidecar filesystem sweeps run in the
+    # dataset worker (see DatasetService.reconcile(include_heavy=...)).
+    dataset_service.reconcile(include_heavy=not externalize)
 
     if (not externalize) and should_start_inprocess_runner(settings):
         dataset_service.runner.start_background()
@@ -2428,7 +2440,7 @@ app.include_router(
         job_store=job_store,
     )
 )
-app.include_router(build_brain_router(brain_facade))
+app.include_router(build_brain_router(brain_facade, job_runtime=job_runtime))
 app.include_router(build_mcp_router(mcp_bridge, execution_gateway))
 app.include_router(
     build_market_sim_router(
@@ -2465,6 +2477,7 @@ app.include_router(
         atlas_store=atlas_store,
         deep_recall_service=deep_recall_service,
         why_library=why_library,
+        workers_externalize_fn=_workers_externalize,
         evaluation_externalize_fn=_evaluation_externalize,
         enqueue_ingest_scan_fn=_enqueue_ingest_scan,
     )
@@ -2517,7 +2530,7 @@ app.include_router(
         version=app.version,
     )
 )
-app.include_router(build_memory_router(memory_store=memory_store))
+app.include_router(build_memory_router(memory_store=memory_store, job_runtime=job_runtime))
 app.include_router(build_evidence_router(evidence_service=evidence_service))
 app.include_router(
     build_capabilities_router(
@@ -2590,6 +2603,8 @@ app.include_router(
         observability=observability,
         job_runtime=job_runtime,
         approval_service=approval_service,
+        # Production: sync install fallback is unreachable. Feature flag alone is
+        # insufficient — routes also require the mechanical test allow gate.
         allow_sync_install_fallback=bool(
             getattr(settings.features, "module_manager_allow_sync_install_fallback", False)
         ),

@@ -381,6 +381,15 @@ class DatasetJobRunner:
         return done
 
     def start_background(self, *, poll_seconds: float = 0.5) -> None:
+        """Start the API-thread runner only in explicit ``inprocess_test`` mode.
+
+        Production (``external`` / ``none``) must not drain dataset jobs inside
+        FastAPI when the dataset worker is absent.
+        """
+        from Data.modules.datasets.worker import resolve_runner_mode
+
+        if resolve_runner_mode() != "inprocess_test":
+            return
         with self._lock:
             if self._thread and self._thread.is_alive():
                 return
@@ -437,6 +446,9 @@ def _resource_admission_for_domain_job(domain_job: DatasetJob) -> tuple[str, dic
         else str(domain_job.job_type)
     )
     if job_type not in MEMORY_HEAVY_JOB_TYPES:
+        # IMPORT_LOCAL / IMPORT_HF / SHARD_INGEST / DUPLICATE stay IO_HEAVY.
+        # IMPORT_HF is also network-bound; a single resource_class cannot
+        # express both, so network is recorded on kernel metadata.
         return "IO_HEAVY", {}
 
     from Data.modules.datasets.memory_policy import resolve_dataset_memory_policy
@@ -463,6 +475,10 @@ def enqueue_kernel_for_domain_job(
         }
         if resource_request:
             metadata["requested"] = dict(resource_request)
+        job_type = metadata["job_type"]
+        if job_type == "import_hf":
+            metadata["networkBound"] = True
+            metadata["networkOwner"] = "dataset"
         return job_runtime.enqueue(
             capability_id=CAPABILITY_PROCESS,
             arguments={
