@@ -45,6 +45,9 @@ def _ollama_root(endpoint: str) -> str:
 
 class OllamaAdapter:
     provider_type = "ollama"
+    # Default: operator-owned daemon. LEVIATHAN may discover/route but not kill
+    # unless ownership was explicitly configured managed_by_leviathan=true.
+    managed_by_leviathan: bool = False
 
     def __init__(
         self,

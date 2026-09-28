@@ -242,8 +242,28 @@ class HttpTransport:
                 "Outbound HTTP MCP blocked by network policy",
                 details={"host": host},
             )
-        # Basic SSRF guard for non-loopback when outbound is allowed — still refuse metadata IPs.
-        if host in {"169.254.169.254", "metadata.google.internal"}:
+        # SSRF: reuse research URL policy. Configured loopback MCP is allowed only
+        # when outbound is disabled (typical local trusted endpoint) or host is
+        # explicitly loopback. Non-loopback must pass private/link-local/metadata checks.
+        if not loopback:
+            try:
+                from Data.modules.research.ssrf import validate_url_for_fetch
+
+                decision = validate_url_for_fetch(self.url, resolve_dns=True)
+                if not decision.allowed:
+                    raise McpError(
+                        MCP_NETWORK_BLOCKED,
+                        f"MCP HTTP SSRF blocked: {decision.reason}",
+                        details=decision.public_dict(),
+                    )
+            except McpError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                raise McpError(
+                    MCP_NETWORK_BLOCKED,
+                    f"MCP HTTP SSRF validation failed: {exc}",
+                ) from exc
+        elif host in {"169.254.169.254", "metadata.google.internal"}:
             raise McpError(MCP_NETWORK_BLOCKED, "Metadata endpoint blocked for MCP HTTP")
         self._client = _httpx().Client(
             timeout=self.timeout_seconds,

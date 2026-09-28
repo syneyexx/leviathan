@@ -66,8 +66,78 @@ class McpCallRequest(BaseModel):
     run_id: str | None = None
 
 
-def build_mcp_router(bridge: McpBridge, gateway: ExecutionGateway) -> APIRouter:
+def _mcp_externalize_enabled() -> bool:
+    import os
+
+    raw = (os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API") or "1").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _queue_mcp_live_op(
+    *,
+    job_runtime: Any | None,
+    capability_id: str,
+    server_id: str,
+    arguments: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Enqueue live MCP connect/list onto mcp_execution — never spawn in FastAPI."""
+    if job_runtime is None or not hasattr(job_runtime, "enqueue"):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "MCP_EXECUTION_UNAVAILABLE",
+                "message": "JobRuntime unavailable for live MCP operations",
+                "server_id": server_id,
+                "capability_id": capability_id,
+            },
+        )
+    try:
+        job = job_runtime.enqueue(
+            capability_id=capability_id,
+            arguments={"server_id": server_id, **dict(arguments or {})},
+            requested_by=f"api.mcp.{capability_id}",
+            worker_pool="mcp_execution",
+            resource_class="NETWORK_BOUND",
+            latency_class="interactive",
+            domain="mcp",
+            consumer="api.mcp",
+            metadata={"worker_kind": "mcp_execution", "execution_class": "EXTERNAL_REQUIRED"},
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "MCP_EXECUTION_UNAVAILABLE",
+                "message": str(exc)[:300],
+                "server_id": server_id,
+                "capability_id": capability_id,
+            },
+        ) from exc
+    return {
+        "queued": True,
+        "job_id": getattr(job, "job_id", None),
+        "capability_id": capability_id,
+        "worker_pool": "mcp_execution",
+        "server_id": server_id,
+        "truth": {
+            "fastapi_does_not_spawn_mcp_stdio": True,
+            "fastapi_does_not_perform_live_mcp_handshake": True,
+        },
+    }
+
+
+def build_mcp_router(
+    bridge: McpBridge,
+    gateway: ExecutionGateway,
+    *,
+    job_runtime: Any | None = None,
+) -> APIRouter:
     router = APIRouter(tags=["mcp"])
+    # Prefer explicit job_runtime; fall back to gateway-bound MCP provider.
+    jobs = job_runtime
+    if jobs is None:
+        mcp_exec = getattr(gateway, "mcp_executor", None)
+        jobs = getattr(mcp_exec, "job_runtime", None)
 
     @router.get("/api/mcp/health")
     def mcp_health() -> dict:
@@ -148,26 +218,53 @@ def build_mcp_router(bridge: McpBridge, gateway: ExecutionGateway) -> APIRouter:
     @router.post("/api/mcp/servers/{server_id}/connect")
     def connect_server(server_id: str) -> dict:
         try:
-            runtime = bridge.connect(server_id)
+            bridge.require_server(server_id)
         except McpError as exc:
             raise_mcp_error(exc)
-        return {"server": bridge.get_server_public(server_id), "runtime": runtime.public_dict()}
+        if _mcp_externalize_enabled():
+            return _queue_mcp_live_op(
+                job_runtime=jobs,
+                capability_id="mcp.connect",
+                server_id=server_id,
+                arguments={"expand_tools": True},
+            )
+        # Test / developer mode only — production externalize defaults on.
+        try:
+            connected = bridge.connect(server_id)
+        except McpError as exc:
+            raise_mcp_error(exc)
+        return {
+            "server": bridge.get_server_public(server_id),
+            "runtime": connected.public_dict(),
+            "truth": {"inprocess_test_only": True},
+        }
 
     @router.post("/api/mcp/servers/{server_id}/disconnect")
     def disconnect_server(server_id: str) -> dict:
         try:
-            runtime = bridge.disconnect(server_id)
+            disconnected = bridge.disconnect(server_id)
         except McpError as exc:
             raise_mcp_error(exc)
-        return {"server": bridge.get_server_public(server_id), "runtime": runtime.public_dict()}
+        return {"server": bridge.get_server_public(server_id), "runtime": disconnected.public_dict()}
 
     @router.post("/api/mcp/servers/{server_id}/refresh-tools")
     def refresh_tools(server_id: str) -> dict:
         try:
+            bridge.require_server(server_id)
+        except McpError as exc:
+            raise_mcp_error(exc)
+        if _mcp_externalize_enabled():
+            return _queue_mcp_live_op(
+                job_runtime=jobs,
+                capability_id="mcp.list_tools",
+                server_id=server_id,
+                arguments={"force_refresh": True, "expand_tools": True},
+            )
+        try:
             tools = bridge.refresh_tools(server_id)
         except McpError as exc:
             raise_mcp_error(exc)
-        return {"tools": [item.public_dict() for item in tools]}
+        return {"tools": [item.public_dict() for item in tools], "truth": {"inprocess_test_only": True}}
 
     @router.get("/api/mcp/servers/{server_id}/tools")
     def server_tools(server_id: str) -> dict:
@@ -181,10 +278,10 @@ def build_mcp_router(bridge: McpBridge, gateway: ExecutionGateway) -> APIRouter:
     @router.get("/api/mcp/servers/{server_id}/health")
     def server_health(server_id: str) -> dict:
         try:
-            runtime = bridge.server_health(server_id)
+            health = bridge.server_health(server_id)
         except McpError as exc:
             raise_mcp_error(exc)
-        return {"health": runtime.public_dict()}
+        return {"health": health.public_dict()}
 
     @router.get("/api/mcp/tools")
     def list_tools(server_id: str | None = None) -> dict:

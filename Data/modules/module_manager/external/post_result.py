@@ -62,11 +62,6 @@ def queue_or_run_assimilation(
     if mode == AssimilationMode.NONE or str(status).upper() not in {"COMPLETED", "OK", "SUCCESS"}:
         return {"queued": False, "mode": mode.value, "reason": "skipped"}
 
-    # Process-local cache is an OPTIMIZATION only — durable idempotency uses JobStore key.
-    idem_key = assimilation_idempotency_key(capability_id, request_id or "")
-    if request_id and not mark_assim_seen(idem_key):
-        return {"queued": False, "mode": mode.value, "reason": "duplicate_skipped", "idempotency_key": idem_key}
-
     out = dict(output or {})
     sources = list(out.get("source_refs") or out.get("sources") or [])
     published_candidates = []
@@ -78,10 +73,17 @@ def queue_or_run_assimilation(
             if src.get("available_at"):
                 available_candidates.append(str(src["available_at"]))
     meta_out = dict(out.get("metadata") or {})
-    retrieved_at = str(meta_out.get("retrieved_at") or utc_now())
+    # Prefer stable retrieved_at from output metadata; do not mint a new timestamp
+    # into the durable fingerprint on every retry.
+    retrieved_at = str(meta_out.get("retrieved_at") or meta_out.get("result_retrieved_at") or "")
     result_fingerprint = content_hash_for(
-        f"{capability_id}|{request_id}|{mode.value}|{retrieved_at}|{len(sources)}"
+        f"{capability_id}|{request_id}|{mode.value}|{retrieved_at}|{len(sources)}|{out.get('summary')}"
     )
+    # Process-local cache is OPTIMIZATION only — JobStore idempotency_key is canonical.
+    durable_key = f"assim:{capability_id}:{request_id}:{result_fingerprint}:v1"
+    if request_id and peek_assim_seen(durable_key):
+        return {"queued": False, "mode": mode.value, "reason": "duplicate_skipped", "idempotency_key": durable_key}
+
     payload = {
         "mode": mode.value,
         "capability_id": capability_id,
@@ -91,7 +93,7 @@ def queue_or_run_assimilation(
         "job_id": job_id,
         "observation_id": observation_id,
         "output": _bounded_output(output),
-        "retrieved_at": retrieved_at,
+        "retrieved_at": retrieved_at or utc_now(),
         "published_at": published_candidates[0] if published_candidates else meta_out.get("published_at"),
         "available_at": available_candidates[0] if available_candidates else meta_out.get("available_at"),
         "source_count": len(sources),
@@ -125,9 +127,6 @@ def queue_or_run_assimilation(
         return {"queued": False, "mode": mode.value, "evidence_id": evidence_id, "completed": True}
 
     # Knowledge candidate / auto — MUST go to knowledge_prepare via JobRuntime.
-    durable_key = (
-        f"assim:{capability_id}:{request_id}:{result_fingerprint}:v{payload['assimilation_version']}"
-    )
     if job_runtime is not None:
         try:
             job = job_runtime.enqueue(
@@ -146,6 +145,7 @@ def queue_or_run_assimilation(
                     "result_fingerprint": result_fingerprint,
                 },
             )
+            mark_assim_seen(durable_key)
             _emit(
                 observability,
                 "knowledge.assimilation_queued",
@@ -170,6 +170,7 @@ def queue_or_run_assimilation(
     if assimilation_service is not None and allow_inprocess_assimilation_for_tests():
         try:
             receipt = assimilation_service.assimilate_external_capability(**payload)
+            mark_assim_seen(durable_key)
             _emit(
                 observability,
                 "knowledge.assimilated",
@@ -260,9 +261,16 @@ def assimilation_idempotency_key(capability_id: str, request_id: str) -> str:
     return f"assim:{capability_id}:{request_id}"
 
 
-def mark_assim_seen(key: str) -> bool:
-    """Return True if this is the first time seeing the key (should run).
+def peek_assim_seen(key: str) -> bool:
+    """True if process-local optimization cache already saw this key."""
+    with _idempotency_lock:
+        return key in _seen_keys
 
+
+def mark_assim_seen(key: str) -> bool:
+    """Record key in process-local optimization cache.
+
+    Returns True if this is the first time seeing the key.
     Process-local optimization only — NOT canonical durability.
     """
     with _idempotency_lock:
@@ -273,6 +281,12 @@ def mark_assim_seen(key: str) -> bool:
             _seen_keys.clear()
             _seen_keys.add(key)
         return True
+
+
+def clear_assim_seen_for_tests() -> None:
+    """TEST-ONLY — simulate process restart by clearing local cache."""
+    with _idempotency_lock:
+        _seen_keys.clear()
 
 
 def content_hash_for(text: str) -> str:

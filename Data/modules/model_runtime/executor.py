@@ -478,7 +478,19 @@ class ModelRuntimeExecutor:
         """Direct ServingSupervisor start (model.serving.* wave path)."""
         from Data.modules.model_runtime.serving import WorkerState, get_serving_supervisor
 
-        managed = bool(args.get("managed_by_leviathan", True))
+        managed = args.get("managed_by_leviathan")
+        backend = str(args.get("backend_kind") or args.get("provider_id") or "").lower()
+        if managed is None:
+            # Operator-owned runtimes are never assumed LEVIATHAN-managed.
+            managed = backend not in {
+                "lm_studio",
+                "lmstudio",
+                "ollama",
+                "openai_compatible",
+                "openai",
+            }
+        else:
+            managed = bool(managed)
         if not managed:
             return {
                 "status": "unavailable",

@@ -97,6 +97,7 @@ class OwnedProcess:
     started_at: str | None = None
     exit_code: int | None = None
     restart_count: int = 0
+    launch_generation: int = 0
     proc: subprocess.Popen[bytes] | None = field(default=None, repr=False)
     stdout_buf: BoundedLogBuffer = field(default_factory=BoundedLogBuffer)
     stderr_buf: BoundedLogBuffer = field(default_factory=BoundedLogBuffer)
@@ -113,7 +114,12 @@ class OwnedProcess:
             )
 
             # Never inherit ambient API secrets into external module processes.
-            env = scrub_child_environment(extras=dict(self.env or {}))
+            # Explicit module env is applied as extras; secret-shaped keys still
+            # require an explicit permit list (none by default).
+            env = scrub_child_environment(
+                extras=dict(self.env or {}),
+                permit_secret_extras=False,
+            )
             popen_kwargs = owned_child_popen_kwargs()
             self.proc = subprocess.Popen(
                 self.command,
@@ -128,6 +134,8 @@ class OwnedProcess:
             self.pid = int(self.proc.pid)
             self.started_at = utc_now()
             self.exit_code = None
+            if self.launch_generation <= 0:
+                self.launch_generation = 1
             self.fingerprint = process_fingerprint(self.pid, self.command, self.cwd)
             self._start_drainers()
             return self.pid
@@ -222,6 +230,7 @@ class OwnedProcess:
             "started_at": self.started_at,
             "exit_code": self.exit_code,
             "restart_count": self.restart_count,
+            "launch_generation": self.launch_generation,
             "alive": self.is_alive(),
             "stdout_tail": self.stdout_buf.snapshot(50),
             "stderr_tail": self.stderr_buf.snapshot(50),

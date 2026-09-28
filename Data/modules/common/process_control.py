@@ -73,11 +73,14 @@ def scrub_child_environment(
     allowlist: frozenset[str] | None = None,
     extras: Mapping[str, str] | None = None,
     inherit_all: bool = False,
+    permit_secret_extras: bool = False,
+    permitted_secret_keys: frozenset[str] | None = None,
 ) -> dict[str, str]:
     """Build a child environment without ambient secrets.
 
     Default: allowlisted keys only. ``inherit_all=True`` still strips secret-shaped
-    keys unless they appear in ``extras`` (explicit lease).
+    keys unless they appear in ``extras`` *and* ``permit_secret_extras`` is set
+    (or the key is in ``permitted_secret_keys``).
     """
     base = dict(source if source is not None else os.environ)
     out: dict[str, str] = {}
@@ -95,9 +98,16 @@ def scrub_child_environment(
             if val:
                 out[key] = val
     if extras:
+        permitted = permitted_secret_keys or frozenset()
         for key, val in extras.items():
-            if val is not None:
-                out[str(key)] = str(val)
+            if val is None:
+                continue
+            key_s = str(key)
+            if is_secret_env_key(key_s) and not (
+                permit_secret_extras or key_s in permitted
+            ):
+                continue
+            out[key_s] = str(val)
     return out
 
 

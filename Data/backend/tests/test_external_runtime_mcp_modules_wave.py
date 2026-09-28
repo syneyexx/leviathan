@@ -261,5 +261,178 @@ class SandboxHonestyTests(unittest.TestCase):
         self.assertEqual(ProbeOutcome.UNMEASURED.value, "UNMEASURED")
 
 
+class CriticalGapHardeningTests(unittest.TestCase):
+    def test_mcp_connect_route_queues_when_externalized(self) -> None:
+        from Data.backend.routes import mcp as mcp_routes
+
+        class _Bridge:
+            def require_server(self, server_id: str) -> None:
+                return None
+
+            def connect(self, server_id: str):  # pragma: no cover — must not run
+                raise AssertionError("bridge.connect must not run when externalized")
+
+        class _Jobs:
+            def enqueue(self, **kwargs):
+                self.kwargs = kwargs
+                return type("J", (), {"job_id": "job-mcp-1"})()
+
+        jobs = _Jobs()
+        with mock.patch.dict(os.environ, {"LEVIATHAN_WORKERS_EXTERNALIZE_API": "1"}):
+            out = mcp_routes._queue_mcp_live_op(
+                job_runtime=jobs,
+                capability_id="mcp.connect",
+                server_id="srv-1",
+            )
+        self.assertTrue(out["queued"])
+        self.assertEqual(jobs.kwargs["worker_pool"], "mcp_execution")
+        self.assertEqual(jobs.kwargs["capability_id"], "mcp.connect")
+
+    def test_fastapi_mcp_connect_does_not_call_bridge_connect(self) -> None:
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from Data.backend.routes.mcp import build_mcp_router
+
+        class _Bridge:
+            enabled = True
+            telemetry = {}
+
+            def require_server(self, server_id: str) -> None:
+                return None
+
+            def connect(self, server_id: str):
+                raise AssertionError("StdioTransport must not start from FastAPI")
+
+            def health_summary(self):
+                return type("H", (), {"public_dict": lambda self: {}})()
+
+        class _Jobs:
+            def enqueue(self, **kwargs):
+                return type("J", (), {"job_id": "queued-1"})()
+
+        class _Gateway:
+            mcp_executor = type("P", (), {"job_runtime": _Jobs()})()
+
+        app = FastAPI()
+        app.include_router(build_mcp_router(_Bridge(), _Gateway(), job_runtime=_Jobs()))
+        with mock.patch.dict(os.environ, {"LEVIATHAN_WORKERS_EXTERNALIZE_API": "1"}):
+            client = TestClient(app)
+            resp = client.post("/api/mcp/servers/s1/connect")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertTrue(body.get("queued"))
+        self.assertEqual(body.get("worker_pool"), "mcp_execution")
+
+    def test_process_service_env_does_not_inherit_api_secrets(self) -> None:
+        from Data.modules.common.process_control import scrub_child_environment
+
+        os.environ["OPENAI_API_KEY"] = "sk-leak-me"
+        try:
+            # Simulate previous buggy merge of full os.environ as extras.
+            leaked = scrub_child_environment(
+                extras={**os.environ, "MODULE_FLAG": "1"},
+                permit_secret_extras=False,
+            )
+            self.assertNotIn("OPENAI_API_KEY", leaked)
+            self.assertEqual(leaked.get("MODULE_FLAG"), "1")
+        finally:
+            os.environ.pop("OPENAI_API_KEY", None)
+
+    def test_stale_process_generation_refuses_stop(self) -> None:
+        from Data.modules.module_manager.external.adapters.process_service import ProcessServiceAdapter
+        from Data.modules.module_manager.external.process import OwnedProcess
+        from Data.modules.module_manager.external.types import ExternalRuntimeState
+
+        adapter = ProcessServiceAdapter.__new__(ProcessServiceAdapter)
+        adapter._state = ExternalRuntimeState.RUNNING
+        adapter.ctx = type("C", (), {"store": None, "module_id": "m1"})()
+        adapter._owned = OwnedProcess(
+            module_id="m1",
+            command=["true"],
+            cwd=None,
+            env={},
+            launch_generation=2,
+        )
+        # Fake alive process handle without real Popen.
+        adapter._owned.proc = mock.Mock()
+        adapter._owned.proc.poll.return_value = None
+        adapter._owned.pid = 4242
+        out = adapter.stop(expected_generation=1)
+        self.assertEqual(out.get("refused"), "STALE_GENERATION")
+        self.assertEqual(out.get("current_generation"), 2)
+        adapter._owned.proc.terminate.assert_not_called()
+
+    def test_mcp_http_ssrf_blocks_private(self) -> None:
+        from Data.modules.mcp.limits import DEFAULT_MCP_LIMITS
+        from Data.modules.mcp.transports import HttpTransport
+        from Data.modules.mcp.errors import McpError
+
+        transport = HttpTransport(
+            url="http://10.0.0.1:8080/mcp",
+            limits=DEFAULT_MCP_LIMITS,
+            timeout_seconds=1.0,
+            allow_outbound=True,
+        )
+        with self.assertRaises(McpError) as ctx:
+            transport.start()
+        self.assertEqual(ctx.exception.code, "MCP_NETWORK_BLOCKED")
+
+    def test_lm_studio_and_ollama_default_unmanaged(self) -> None:
+        from Data.modules.models.providers.lm_studio import LMStudioAdapter
+        from Data.modules.models.providers.ollama import OllamaAdapter
+
+        self.assertFalse(LMStudioAdapter.managed_by_leviathan)
+        self.assertFalse(OllamaAdapter.managed_by_leviathan)
+
+    def test_assimilation_durable_key_survives_local_cache_clear(self) -> None:
+        from Data.modules.module_manager.external.post_result import (
+            clear_assim_seen_for_tests,
+            queue_or_run_assimilation,
+        )
+        from Data.modules.module_manager.external.types import AssimilationMode
+
+        enqueues: list[dict] = []
+
+        class _Jobs:
+            def enqueue(self, **kwargs):
+                enqueues.append(kwargs)
+                return type("J", (), {"job_id": f"j-{len(enqueues)}"})()
+
+        jobs = _Jobs()
+        args = dict(
+            mode=AssimilationMode.KNOWLEDGE_CANDIDATE,
+            capability_id="ext.demo",
+            module_id="m",
+            request_id="req-durable-1",
+            run_id="run-1",
+            job_id=None,
+            output={"summary": "hello", "metadata": {"retrieved_at": "2020-01-01T00:00:00Z"}},
+            status="COMPLETED",
+            job_runtime=jobs,
+        )
+        first = queue_or_run_assimilation(**args)
+        self.assertTrue(first["queued"])
+        clear_assim_seen_for_tests()  # simulate process restart
+        second = queue_or_run_assimilation(**args)
+        self.assertTrue(second["queued"])
+        # Durable JobStore key must be identical across restarts.
+        self.assertEqual(enqueues[0]["idempotency_key"], enqueues[1]["idempotency_key"])
+        self.assertEqual(enqueues[0]["worker_pool"], "knowledge_prepare")
+
+    def test_ast_guard_mcp_connect_route_external(self) -> None:
+        source = Path("Data/backend/routes/mcp.py").read_text(encoding="utf-8")
+        self.assertIn("_queue_mcp_live_op", source)
+        self.assertIn("mcp.connect", source)
+        self.assertIn("fastapi_does_not_spawn_mcp_stdio", source)
+
+    def test_ast_guard_process_service_no_full_environ_merge(self) -> None:
+        source = Path(
+            "Data/modules/module_manager/external/adapters/process_service.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("{**_os.environ", source)
+        self.assertNotIn("{**os.environ", source)
+        self.assertIn("scrub_child_environment", source)
+
+
 if __name__ == "__main__":
     unittest.main()
