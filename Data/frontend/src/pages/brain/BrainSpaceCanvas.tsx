@@ -23,7 +23,7 @@ type Point3 = { x: number; y: number; z: number };
 type ScreenPoint = { x: number; y: number; z: number; scale: number };
 type CameraState = { yaw: number; pitch: number; zoom: number; panX: number; panY: number };
 
-type BrainSpaceCanvasProps = {
+export type BrainSpaceCanvasProps = {
   nodes: LiveBrainNode[];
   edges: LiveBrainEdge[];
   selectedId: string | null;
@@ -361,6 +361,7 @@ export function BrainSpaceCanvas({
         drawNebula(ctx, width * 0.72, height * 0.25, 300, [95, 78, 184]);
         drawNebula(ctx, width * 0.33, height * 0.73, 350, [30, 101, 168]);
         drawNebula(ctx, width * 0.79, height * 0.71, 255, [64, 124, 88]);
+        drawNebula(ctx, width * 0.21, height * 0.23, 245, [128, 70, 155]);
 
         for (const star of starfield) {
           const x = star.x * width + Math.sin(wallNow * 0.00004 * (1 + star.depth) + star.phase) * 3 * star.depth;
@@ -371,6 +372,43 @@ export function BrainSpaceCanvas({
           ctx.fillRect(x, y, star.size, star.size);
         }
         ctx.globalAlpha = 1;
+
+        const archive = projectPoint({ x: 0, y: -210, z: -160 }, width, height, activeCamera);
+        const archiveRadius = clamp(14 * archive.scale * 1.4, 6, 22);
+        if (activeProjection.archivedCount > 0) {
+          const archiveGlow = ctx.createRadialGradient(
+            archive.x,
+            archive.y,
+            0,
+            archive.x,
+            archive.y,
+            archiveRadius * 5,
+          );
+          archiveGlow.addColorStop(0, "rgba(8,10,16,0.95)");
+          archiveGlow.addColorStop(0.35, "rgba(40,28,58,0.35)");
+          archiveGlow.addColorStop(1, "rgba(40,28,58,0)");
+          ctx.fillStyle = archiveGlow;
+          ctx.beginPath();
+          ctx.arc(archive.x, archive.y, archiveRadius * 5, 0, TAU);
+          ctx.fill();
+          ctx.fillStyle = "#05060C";
+          ctx.beginPath();
+          ctx.arc(archive.x, archive.y, archiveRadius, 0, TAU);
+          ctx.fill();
+          ctx.strokeStyle = "rgba(160,130,210,0.18)";
+          ctx.beginPath();
+          ctx.arc(archive.x, archive.y, archiveRadius + 4, 0, TAU);
+          ctx.stroke();
+          if (live.showLabels) {
+            ctx.font = "600 8px 'IBM Plex Sans', 'Segoe UI', sans-serif";
+            ctx.fillStyle = "rgba(180,168,210,0.55)";
+            ctx.fillText(
+              `Archive Singularity · ${activeProjection.archivedCount}`,
+              archive.x + archiveRadius + 6,
+              archive.y + 3,
+            );
+          }
+        }
 
         const screenById = new Map<string, { node: BrainSpaceNode; point: ScreenPoint }>();
         const simpleScreenMap = new Map<string, ScreenPoint>();
