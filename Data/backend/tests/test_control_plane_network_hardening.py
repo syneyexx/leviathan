@@ -43,7 +43,14 @@ class _FakeHFHandler(BaseHTTPRequestHandler):
     delay_seconds = 0.0
     stall = False
     status_override: int | None = None
-    body = b"MODELBYTES" * 10000  # ~100KB
+    # Minimal valid GGUF header (magic + version + tensor/metadata counts) + payload.
+    # Must satisfy model_download artifact_verify.validate_gguf_header after #220.
+    body = (
+        b"GGUF"
+        + __import__("struct").pack("<I", 3)
+        + __import__("struct").pack("<QQ", 1, 0)
+        + (b"MODELBYTES" * 10000)
+    )  # ~100KB+
     calls = 0
 
     def log_message(self, format: str, *args) -> None:  # noqa: A003
