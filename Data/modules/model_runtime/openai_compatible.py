@@ -64,11 +64,38 @@ class OpenAICompatibleLLM:
             return raw if raw.endswith("/v1") else f"{raw}/v1"
         return raw if raw.endswith("/v1") else f"{raw}/v1"
 
+    def _ensure_endpoint_allowed(self, endpoint: str | None = None) -> str:
+        """Trusted local endpoints may use this transport; remote SaaS must use provider_io."""
+        from Data.modules.provider_io.endpoint_locality import (
+            EndpointLocality,
+            assert_local_or_externalized_remote,
+            classify_endpoint_locality,
+        )
+
+        raw = endpoint or self.settings.llm_base_url
+        try:
+            locality = assert_local_or_externalized_remote(
+                raw,
+                settings=self.settings,
+                context="openai_compatible",
+            )
+        except PermissionError as exc:
+            raise LLMUnavailable(
+                "PROVIDER_EXECUTION_UNAVAILABLE: "
+                f"remote LLM endpoint requires provider_io ({exc})"
+            ) from exc
+        except ValueError as exc:
+            raise LLMUnavailable(str(exc)) from exc
+        if locality == EndpointLocality.REMOTE:
+            # Dev/test escape only — still classified for observability.
+            _ = classify_endpoint_locality(raw, settings=self.settings)
+        return self._base_url(endpoint)
+
     async def resolve_model(self, *, endpoint: str | None = None, api_key: str | None = None) -> str:
         if self._resolved_model:
             return self._resolved_model
 
-        base = self._base_url(endpoint)
+        base = self._ensure_endpoint_allowed(endpoint)
         try:
             async with httpx.AsyncClient(timeout=min(self.settings.llm_timeout_seconds, 10.0)) as client:
                 response = await client.get(f"{base}/models", headers=self._headers(api_key))
@@ -352,7 +379,7 @@ class OpenAICompatibleLLM:
             stream=False,
             provider_hints=adaptation.payload_fields,
         )
-        base = self._base_url(endpoint)
+        base = self._ensure_endpoint_allowed(endpoint)
         try:
             async with httpx.AsyncClient(timeout=self.settings.llm_timeout_seconds) as client:
                 response = await client.post(
@@ -623,7 +650,7 @@ class OpenAICompatibleLLM:
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
         )
-        base = self._base_url(endpoint)
+        base = self._ensure_endpoint_allowed(endpoint)
         headers = self._headers(api_key)
         headers["Accept"] = "text/event-stream"
         normalizer = StreamNormalizer()

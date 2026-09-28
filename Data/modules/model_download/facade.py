@@ -88,6 +88,52 @@ class ModelDownloadClient:
             consumer="model_download",
         )
 
+    def submit_local_import(
+        self,
+        *,
+        import_id: str,
+        path: str,
+        display_name: str | None = None,
+        allowed_roots: list[str] | None = None,
+        requested_by: str = "api",
+        timeout_seconds: float | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> Any:
+        """Enqueue large local model import/verification on model_download pool."""
+        self.require_workers_ready()
+        arguments: dict[str, Any] = {
+            "import_id": import_id,
+            "path": path,
+            "source": "local_file",
+        }
+        if display_name:
+            arguments["display_name"] = display_name
+        if allowed_roots:
+            arguments["allowed_roots"] = list(allowed_roots)
+
+        cap_id = "model_import.local"
+        worker_pool = pool_for_capability(cap_id)
+        timeout = float(
+            timeout_seconds
+            if timeout_seconds is not None
+            else float(os.environ.get("LEVIATHAN_MODEL_IMPORT_JOB_TIMEOUT") or 0)
+            or (2 * 3600.0)
+        )
+        return self.job_runtime.enqueue(
+            capability_id=cap_id,
+            arguments=arguments,
+            requested_by=requested_by,
+            metadata=metadata,
+            idempotency_key=f"model_import:local:{path}:{import_id}",
+            latency_class="background",
+            worker_pool=worker_pool or "model_download",
+            resource_class="IO_HEAVY",
+            priority=70,
+            timeout_seconds=timeout,
+            domain="model_download",
+            consumer="model_import",
+        )
+
     def cancel(self, job_id: str, *, reason: str | None = None) -> Any:
         return self.job_runtime.cancel(job_id, reason=reason or "model_download_cancel")
 

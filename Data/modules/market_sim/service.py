@@ -2894,7 +2894,6 @@ class MarketSimControlPlane:
 
         from Data.modules.provider_io.errors import ProviderError, ProviderErrorCode
         from Data.modules.provider_io.facade import ProviderExecutionClient
-        from Data.modules.provider_io.readiness import provider_io_workers_ready
         from .feed.types import FeedConnectionState
 
         payload = {
@@ -2918,14 +2917,16 @@ class MarketSimControlPlane:
                     http_status=503,
                 )
             db_path = getattr(getattr(self.job_runtime, "store", None), "path", None)
-            if not provider_io_workers_ready(db_path) and not self._market_feed_pool_ready(db_path):
+            from Data.modules.provider_io.market_feed_readiness import market_feed_workers_ready
+
+            if not market_feed_workers_ready(db_path):
                 session.set_status(
                     FeedConnectionState.FAILED,
                     error="market_feed workers unavailable",
                 )
                 raise MarketSimError(
                     ProviderErrorCode.PROVIDER_EXECUTION_UNAVAILABLE.value,
-                    "market_feed/provider_io workers unavailable; refusing Control Plane WS fallback",
+                    "market_feed workers unavailable; refusing Control Plane WS fallback",
                     http_status=503,
                 )
             client = ProviderExecutionClient(self.job_runtime)
@@ -2971,13 +2972,10 @@ class MarketSimControlPlane:
         }
 
     def _market_feed_pool_ready(self, db_path: Any) -> bool:
-        del db_path
-        try:
-            from Data.modules.workers.pools import POOL_CATALOG
+        """Registry-backed readiness — never treat catalog presence as READY."""
+        from Data.modules.provider_io.market_feed_readiness import market_feed_workers_ready
 
-            return "market_feed" in POOL_CATALOG
-        except Exception:  # noqa: BLE001
-            return False
+        return market_feed_workers_ready(db_path)
 
     def stop_feed(self, feed_id: str) -> dict[str, Any]:
         self._require_enabled()

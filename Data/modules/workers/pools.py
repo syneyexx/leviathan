@@ -139,11 +139,15 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
         pool_id="model_download",
         entrypoint="Data.modules.workers.entrypoints.model_download",
         default_count=1,
-        job_kinds=("model_download.", "model_download.start"),
-        resource_classes=("IO_HEAVY", "NETWORK_BOUND", "MEMORY_HEAVY"),
+        job_kinds=(
+            "model_download.",
+            "model_download.start",
+            "model_import.local",
+        ),
+        resource_classes=("IO_HEAVY", "NETWORK_BOUND", "MEMORY_HEAVY", "CPU_HEAVY"),
         description=(
-            "Heavy model artifact downloads (Hugging Face / Ollama pull) — "
-            "not provider_io, not Model Control Plane serving"
+            "Heavy model acquisition (Hugging Face / Ollama pull) and large "
+            "local model import/verification — not provider_io, not serving"
         ),
         max_count=2,
     ),

@@ -2501,6 +2501,27 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         extra_meta={"idempotent": False},
     )
     _ext(
+        cap_id="model_import.local",
+        name="Local Model Import",
+        description=(
+            "Large local model file import/verification in model_download workers "
+            "(streaming hash/header inspect — never Control Plane read_bytes)."
+        ),
+        side_effects=(SideEffect.WRITE, SideEffect.EXECUTE),
+        worker_kind="model_download",
+        required_args=["path"],
+        properties={
+            "path": {"type": "string"},
+            "display_name": {"type": "string"},
+            "import_id": {"type": "string"},
+            "allowed_roots": {"type": "array"},
+        },
+        permissions=("filesystem.read", "filesystem.write"),
+        tags=["model", "import", "local"],
+        domains=["model_download", "models"],
+        extra_meta={"idempotent": True},
+    )
+    _ext(
         cap_id="mcp.call",
         name="MCP Tool Call",
         description="Long MCP tools/call execution in mcp_execution workers.",

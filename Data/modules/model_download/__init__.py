@@ -2,7 +2,8 @@
 
 Owned by the ``model_download`` worker pool under the generic WorkerSupervisor.
 The Control Plane validates requests and submits durable jobs; workers own
-HTTP transfer, resume, verification, progress, and cancellation.
+HTTP transfer, resume, verification, progress, cancellation, and large local
+model import/fingerprint (streaming — never whole-file ``read_bytes``).
 
 Local model residency/serving remains owned by the Model Control Plane.
 Bulk dataset downloads remain owned by the dataset worker.

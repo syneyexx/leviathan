@@ -551,21 +551,25 @@ print("STATUS", result.get("status"))
         from Data.modules.provider_io.policy import ProviderIoSettings
 
         client.settings = ProviderIoSettings(queue_capacity=2)
-        # Fill queue without workers
-        for i in range(2):
-            client.submit(
-                provider="fake",
-                capability="http",
-                payload={"url": f"{self.base.replace('/v1', '')}/health"},
-                credential_ref="none",
-            )
-        with self.assertRaises(ProviderError) as ctx:
-            client.submit(
-                provider="fake",
-                capability="http",
-                payload={"url": f"{self.base.replace('/v1', '')}/health"},
-                credential_ref="none",
-            )
+        # Fill queue without workers (readiness mocked — capacity is under test)
+        with mock.patch(
+            "Data.modules.provider_io.readiness.provider_io_workers_ready",
+            return_value=True,
+        ):
+            for i in range(2):
+                client.submit(
+                    provider="fake",
+                    capability="http",
+                    payload={"url": f"{self.base.replace('/v1', '')}/health"},
+                    credential_ref="none",
+                )
+            with self.assertRaises(ProviderError) as ctx:
+                client.submit(
+                    provider="fake",
+                    capability="http",
+                    payload={"url": f"{self.base.replace('/v1', '')}/health"},
+                    credential_ref="none",
+                )
         self.assertEqual(ctx.exception.code, ProviderErrorCode.EXECUTION_CAPACITY_EXHAUSTED)
 
 

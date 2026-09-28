@@ -9,6 +9,11 @@ Bulk dataset downloads remain owned by the dataset worker.
 """
 
 from .errors import ProviderError, ProviderErrorCode
+from .endpoint_locality import (
+    EndpointLocality,
+    classify_endpoint_locality,
+    is_trusted_local_endpoint,
+)
 from .facade import ProviderExecutionClient, get_provider_client
 from .types import (
     ProviderExecutionResult,
@@ -18,6 +23,7 @@ from .types import (
 )
 
 __all__ = [
+    "EndpointLocality",
     "ProviderError",
     "ProviderErrorCode",
     "ProviderExecutionClient",
@@ -25,5 +31,7 @@ __all__ = [
     "ProviderRequest",
     "StreamEvent",
     "StreamEventType",
+    "classify_endpoint_locality",
     "get_provider_client",
+    "is_trusted_local_endpoint",
 ]

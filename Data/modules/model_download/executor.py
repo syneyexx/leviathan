@@ -130,6 +130,14 @@ class ModelDownloadExecutor:
     def execute_job(self, ctx: dict[str, Any], job: Any) -> dict[str, Any]:
         store = ctx["job_store"]
         args = dict(job.arguments or {})
+        capability = str(getattr(job, "capability_id", "") or "")
+        worker_id = str(ctx.get("worker_id") or f"model_download-{os.getpid()}")
+        if capability == "model_import.local" or (
+            str(args.get("source") or "").strip().lower() == "local_file"
+            and not str(args.get("download_id") or "").strip()
+        ):
+            return self._execute_local_import(ctx, job, args, worker_id=worker_id)
+
         download_id = str(args.get("download_id") or "").strip()
         if not download_id:
             raise ModelDownloadError(
@@ -137,7 +145,6 @@ class ModelDownloadExecutor:
                 "model_download.start requires download_id",
                 http_status=422,
             )
-        worker_id = str(ctx.get("worker_id") or f"model_download-{os.getpid()}")
         source = str(args.get("source") or "huggingface").strip().lower()
 
         def _download_cancel(_current: Any) -> bool:
@@ -334,6 +341,123 @@ class ModelDownloadExecutor:
                 result=payload,
             )
             return payload
+
+    def _execute_local_import(
+        self,
+        ctx: dict[str, Any],
+        job: Any,
+        args: dict[str, Any],
+        *,
+        worker_id: str,
+    ) -> dict[str, Any]:
+        """Verify + register an existing allowed local model file (no copy)."""
+        from Data.modules.models.errors import ModelControlError
+        from Data.modules.models.import_service import ImportService
+
+        store = ctx["job_store"]
+        cancel_check, heartbeat = make_lease_bound_checks(
+            ctx,
+            store,
+            job.job_id,
+            worker_id=worker_id,
+            ttl_seconds=float(ctx.get("lease_ttl_seconds") or 60.0),
+        )
+        path = str(args.get("path") or "").strip()
+        display_name = args.get("display_name")
+        allowed_raw = args.get("allowed_roots") or []
+        allowed_roots = [Path(str(r)) for r in allowed_raw] if allowed_raw else [
+            self.download_root,
+            Path.home(),
+        ]
+        importer = ImportService(self.store, self.registry, allowed_roots=allowed_roots)
+
+        def _cancel() -> bool:
+            return bool(cancel_check())
+
+        try:
+            try:
+                store.update_progress(job.job_id, progress=0.05, phase="validating", message="path")
+            except Exception:  # noqa: BLE001
+                pass
+            heartbeat()
+            resolved = importer.validate_import_path(path)
+            try:
+                store.update_progress(job.job_id, progress=0.2, phase="fingerprinting", message=str(resolved))
+            except Exception:  # noqa: BLE001
+                pass
+            model = importer._register_verified(
+                resolved,
+                display_name=str(display_name) if display_name else None,
+                measure_hash=True,
+                cancel_check=_cancel,
+            )
+            heartbeat()
+            result = {
+                "status": "succeeded",
+                "import_id": args.get("import_id"),
+                "model_id": model.id,
+                "path": str(resolved),
+                "sha256": (model.metadata or {}).get("sha256"),
+                "hash_status": (model.metadata or {}).get("hashStatus"),
+                "manifest": (model.metadata or {}).get("importManifest"),
+                "worker_pid": os.getpid(),
+                "executed_via": "model_download",
+            }
+            fenced_transition(
+                store,
+                job.job_id,
+                JobState.COMPLETED,
+                worker_id=worker_id,
+                ctx=ctx,
+                result=result,
+            )
+            return result
+        except ModelControlError as exc:
+            payload = {
+                "status": "failed",
+                "error": exc.public_dict(),
+                "worker_pid": os.getpid(),
+                "import_id": args.get("import_id"),
+            }
+            fenced_transition(
+                store,
+                job.job_id,
+                JobState.FAILED,
+                worker_id=worker_id,
+                ctx=ctx,
+                error=exc.code,
+                result=payload,
+            )
+            return payload
+        except ModelDownloadError as exc:
+            cancelled = exc.code == ModelDownloadErrorCode.MODEL_DOWNLOAD_CANCELLED
+            payload = {
+                "status": "cancelled" if cancelled else "failed",
+                "error": exc.public_dict(),
+                "worker_pid": os.getpid(),
+                "import_id": args.get("import_id"),
+            }
+            target = JobState.CANCELLED if cancelled else JobState.FAILED
+            try:
+                fenced_transition(
+                    store,
+                    job.job_id,
+                    target,
+                    worker_id=worker_id,
+                    ctx=ctx,
+                    error=exc.code.value,
+                    result=payload,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            return payload
+        except LeaseFenceError as exc:
+            record_stale_lease_fence(ctx)
+            return {
+                "status": "failed",
+                "error": {"code": "LEASE_FENCE", "message": str(exc)},
+                "worker_pid": os.getpid(),
+            }
 
     def _auth_headers(self, credential_ref: str | None) -> dict[str, str]:
         cred = resolve_credential(credential_ref or "huggingface")
