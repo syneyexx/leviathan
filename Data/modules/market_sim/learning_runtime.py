@@ -743,8 +743,17 @@ def _append_trial(
     return trial_id
 
 
-def run_learning_on_worker(plane: Any, learning_run_id: str) -> dict[str, Any]:
-    """Execute/resume Strategy Learning Loop on the market_sim worker."""
+def run_learning_on_worker(
+    plane: Any,
+    learning_run_id: str,
+    *,
+    max_generations_this_job: int | None = None,
+) -> dict[str, Any]:
+    """Execute/resume Strategy Learning Loop on the market_sim worker.
+
+    When ``max_generations_this_job`` is set, complete at most that many
+    generations then return with ``needs_continuation``.
+    """
     run = load_learning_run(plane.store, learning_run_id)
     if run.cancel_requested or run.status == LearningRunStatus.CANCELLED.value:
         run.status = LearningRunStatus.CANCELLED.value
@@ -771,9 +780,26 @@ def run_learning_on_worker(plane: Any, learning_run_id: str) -> dict[str, Any]:
 
     learner = AdaptiveEvolutionaryLearner(run)
     factory = _version_factory(plane)
+    generations_this_job = 0
+    # Only slice when the worker explicitly requests a per-job bound.
+    # Inline/control-plane callers (max_generations_this_job=None) run to
+    # natural completion — do not treat generation_budget as a yield point.
+    slice_limit = (
+        max(1, int(max_generations_this_job))
+        if max_generations_this_job is not None
+        else None
+    )
 
     # Resume: continue from current_generation (completed gens are checkpointed)
     while True:
+        if slice_limit is not None and generations_this_job >= slice_limit:
+            run.status = LearningRunStatus.RUNNING.value
+            run.updated_at = utc_now()
+            persist_learning_run(plane.store, run)
+            out = run.public_dict()
+            out["needs_continuation"] = True
+            out["generations_this_job"] = generations_this_job
+            return out
         # Reload flags
         fresh = load_learning_run(plane.store, learning_run_id)
         run.pause_requested = fresh.pause_requested
@@ -1055,6 +1081,7 @@ def run_learning_on_worker(plane: Any, learning_run_id: str) -> dict[str, Any]:
             "learning_generation.completed",
             {"learning_run_id": learning_run_id, "generation": generation, "summary": summary},
         )
+        generations_this_job += 1
         _emit(
             plane,
             "learner.updated",

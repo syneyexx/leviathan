@@ -407,24 +407,255 @@ class MarketSimControlPlane:
             "truth": {
                 "paper_sim_only": True,
                 "no_real_broker_orders": True,
-                "worker_is_daemon_thread_by_default": True,
-                "subprocess_entrypoint": "scripts/market_sim_worker.py",
+                "live_trading_blocked": True,
+                "worker_fabric_pool": "market_sim",
+                "worker_is_daemon_thread_by_default": False,
+                "subprocess_entrypoint": "Data.modules.workers.entrypoints.market_sim",
                 "causality_enforced": True,
                 "next_bar_open_fills": True,
                 "commit_reveal_multi_wallet": True,
                 "ohlcv_not_orderbook": True,
                 "profitable_backtest_is_not_proof": True,
+                "qualification_authority_is_sole_scientific_owner": True,
             },
         }
 
     # --- Market data ---
 
     def scan_market_data(self) -> list[dict[str, Any]]:
+        """Direct scan helper — production API must enqueue ``market_sim.data.scan``."""
         self._require_enabled()
         self.ensure_seed_fixtures()
         sources = self.data.scan(register=True)
         self._emit_event("market_data.scan", {"count": len(sources)})
         return [s.public_dict() for s in sources]
+
+    def enqueue_market_data_scan(
+        self,
+        *,
+        max_entries: int = 200,
+        cursor: dict[str, Any] | None = None,
+        deep_validate: bool = True,
+        requested_by: str = "api.market_sim",
+        parent_job_id: str | None = None,
+    ) -> Any:
+        self._require_enabled()
+        if self.job_runtime is None:
+            raise MarketSimError(
+                "MARKET_DATA_WORKER_UNAVAILABLE",
+                "JobRuntime required for market_sim.data.scan",
+                http_status=503,
+            )
+        import uuid as _uuid
+
+        return self.job_runtime.enqueue(
+            capability_id="market_sim.data.scan",
+            arguments={
+                "max_entries": int(max_entries),
+                "cursor": dict(cursor or {}),
+                "deep_validate": bool(deep_validate),
+                "register": True,
+            },
+            requested_by=requested_by,
+            parent_job_id=parent_job_id,
+            domain="market_sim",
+            domain_entity_type="market_data_scan",
+            domain_entity_id=str(self.data.markets_root),
+            worker_pool="market_sim",
+            resource_class="IO_HEAVY",
+            latency_class="batch",
+            idempotency_key=f"market_sim:data.scan:{_uuid.uuid4().hex[:10]}",
+        )
+
+    def enqueue_market_data_import(
+        self,
+        path: str,
+        *,
+        symbol: str | None = None,
+        timeframe: str | None = None,
+        seal: bool = False,
+        role: str = "RESEARCH",
+        provider: str = "csv_local",
+        requested_by: str = "api.market_sim",
+    ) -> Any:
+        self._require_enabled()
+        if self.job_runtime is None:
+            raise MarketSimError(
+                "MARKET_DATA_WORKER_UNAVAILABLE",
+                "JobRuntime required for market_sim.data.import",
+                http_status=503,
+            )
+        import uuid as _uuid
+
+        return self.job_runtime.enqueue(
+            capability_id="market_sim.data.import",
+            arguments={
+                "path": path,
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "seal": seal,
+                "role": role,
+                "provider": provider,
+            },
+            requested_by=requested_by,
+            domain="market_sim",
+            domain_entity_type="market_data_import",
+            domain_entity_id=str(path),
+            worker_pool="market_sim",
+            resource_class="IO_HEAVY",
+            latency_class="batch",
+            idempotency_key=f"market_sim:data.import:{_uuid.uuid4().hex[:10]}",
+        )
+
+    def enqueue_scan_batch(
+        self,
+        *,
+        symbols: list[str] | None = None,
+        provider_id: str = "binance_public",
+        timeframe: str = "1m",
+        limit: int = 100,
+        requested_by: str = "api.market_sim",
+    ) -> Any:
+        self._require_enabled()
+        if self.job_runtime is None:
+            raise MarketSimError(
+                "MARKET_SIM_WORKER_UNAVAILABLE",
+                "JobRuntime required for market_sim.scan_batch",
+                http_status=503,
+            )
+        import uuid as _uuid
+
+        return self.job_runtime.enqueue(
+            capability_id="market_sim.scan_batch",
+            arguments={
+                "symbols": list(symbols or []),
+                "provider_id": provider_id,
+                "timeframe": timeframe,
+                "limit": int(limit),
+            },
+            requested_by=requested_by,
+            domain="market_sim",
+            domain_entity_type="market_sim_scan_batch",
+            domain_entity_id=provider_id,
+            worker_pool="market_sim",
+            resource_class="IO_HEAVY",
+            latency_class="batch",
+            idempotency_key=f"market_sim:scan_batch:{_uuid.uuid4().hex[:10]}",
+        )
+
+    def enqueue_portfolio_tick(
+        self,
+        portfolio_id: str,
+        *,
+        requested_by: str = "api.market_sim",
+        not_before: str | None = None,
+        parent_job_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        self._require_enabled()
+        if self.job_runtime is None:
+            raise MarketSimError(
+                "MARKET_SIM_WORKER_UNAVAILABLE",
+                "JobRuntime required for market_sim.portfolio_tick",
+                http_status=503,
+            )
+        key = idempotency_key or f"market_sim:portfolio_tick:{portfolio_id}:{not_before or 'now'}"
+        return self.job_runtime.enqueue(
+            capability_id="market_sim.portfolio_tick",
+            arguments={"portfolio_id": portfolio_id, "not_before": not_before},
+            requested_by=requested_by,
+            parent_job_id=parent_job_id,
+            domain="market_sim",
+            domain_entity_type="market_sim_portfolio",
+            domain_entity_id=portfolio_id,
+            worker_pool="market_sim",
+            latency_class="background",
+            idempotency_key=key,
+            metadata={"not_before": not_before} if not_before else None,
+        )
+
+    def enqueue_assurance_scan(self, *, requested_by: str = "api.market_sim") -> Any:
+        self._require_enabled()
+        if self.job_runtime is None:
+            raise MarketSimError(
+                "MARKET_SIM_WORKER_UNAVAILABLE",
+                "JobRuntime required for market_sim.assurance.scan",
+                http_status=503,
+            )
+        import uuid as _uuid
+
+        return self.job_runtime.enqueue(
+            capability_id="market_sim.assurance.scan",
+            arguments={},
+            requested_by=requested_by,
+            domain="market_sim",
+            domain_entity_type="market_sim_assurance",
+            domain_entity_id="institutional",
+            worker_pool="market_sim",
+            resource_class="CPU_HEAVY",
+            latency_class="batch",
+            idempotency_key=f"market_sim:assurance:{_uuid.uuid4().hex[:10]}",
+        )
+
+    def run_market_data_scan_slice(
+        self,
+        *,
+        max_entries: int = 200,
+        cursor: dict[str, Any] | None = None,
+        deep_validate: bool = True,
+        register: bool = True,
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        self.ensure_seed_fixtures()
+        result = self.data.scan_slice(
+            register=register,
+            max_entries=max_entries,
+            cursor=cursor,
+            deep_validate=deep_validate,
+        )
+        self._emit_event(
+            "market_data.scan_slice",
+            {"processed": result.get("processed"), "done": result.get("done")},
+        )
+        return {
+            "sources": result.get("sources_public") or [],
+            "processed": result.get("processed"),
+            "done": result.get("done"),
+            "cursor": result.get("cursor"),
+            "remaining_estimate": result.get("remaining_estimate"),
+            "truth": result.get("truth"),
+        }
+
+    def institutional_assurance_cached(self) -> dict[str, Any]:
+        """Cheap status read — last cached assurance summary only."""
+        cached = getattr(self, "_assurance_cache", None)
+        if isinstance(cached, dict):
+            return {
+                **cached,
+                "truth": {
+                    **dict(cached.get("truth") or {}),
+                    "status_does_not_run_assurance_scan": True,
+                    "enqueue_market_sim_assurance_scan_to_refresh": True,
+                },
+            }
+        return {
+            "status": "UNMEASURED",
+            "findings": [],
+            "scannedFiles": 0,
+            "truth": {
+                "status_does_not_run_assurance_scan": True,
+                "enqueue_market_sim_assurance_scan_to_refresh": True,
+                "unexecuted_is_not_pass": True,
+            },
+        }
+
+    def institutional_assurance(self) -> dict[str, Any]:
+        """Direct assurance helper — production API must enqueue ``market_sim.assurance.scan``."""
+        from .institutional_core.assurance import run_assurance
+
+        report = run_assurance().public_dict()
+        self._assurance_cache = report
+        return report
 
     def ensure_seed_fixtures(self) -> list[dict[str, Any]]:
         """Copy built-in OHLCV fixtures into markets_root when the tree is empty.
@@ -4286,12 +4517,17 @@ class MarketSimControlPlane:
             worker_pool="market_sim",
         )
 
-    def run_research_campaign_on_worker(self, campaign_id: str) -> dict[str, Any]:
+    def run_research_campaign_on_worker(
+        self, campaign_id: str, *, max_iterations_this_job: int | None = None
+    ) -> dict[str, Any]:
         """Execute/resume campaign iterations on the worker (checkpoint resume).
 
         Each trial completes only after a canonical gym/simulation episode commits
         metrics. Fabricated wins, all-trials-as-wins, and zero-risk promotion
         inputs are forbidden.
+
+        When ``max_iterations_this_job`` is set, perform at most that many
+        iterations then return with ``needs_continuation`` so the worker yields.
         """
         from .promotion import evaluate_promotion
         from .research_campaign import ResearchCampaign, advance_campaign_iteration
@@ -4328,13 +4564,37 @@ class MarketSimControlPlane:
         campaign.status = "RUNNING"
         self.store.upsert_research_campaign(campaign.public_dict())
 
-        wins = 0
-        measured_returns: list[float] = []
-        measured_drawdowns: list[float] = []
-        last_run_metrics: dict[str, Any] = {}
-        last_run_id: str | None = None
+        wins = int((campaign.metadata or {}).get("accepted_wins") or 0)
+        measured_returns: list[float] = list((campaign.metadata or {}).get("measured_returns") or [])
+        measured_drawdowns: list[float] = list((campaign.metadata or {}).get("measured_drawdowns") or [])
+        last_run_metrics: dict[str, Any] = dict((campaign.metadata or {}).get("last_run_metrics") or {})
+        last_run_id: str | None = (campaign.metadata or {}).get("last_run_id")
+        iterations_this_job = 0
+        # Only slice when the worker explicitly requests a per-job bound.
+        # Inline callers (max_iterations_this_job=None) run to completion.
+        slice_limit = (
+            max(1, int(max_iterations_this_job))
+            if max_iterations_this_job is not None
+            else None
+        )
 
         while campaign.checkpoint_iteration < campaign.max_iterations:
+            if slice_limit is not None and iterations_this_job >= slice_limit:
+                campaign.status = "RUNNING"
+                campaign.updated_at = utc_now()
+                campaign.metadata = {
+                    **dict(campaign.metadata),
+                    "accepted_wins": wins,
+                    "measured_returns": measured_returns[-32:],
+                    "measured_drawdowns": measured_drawdowns[-32:],
+                    "last_run_metrics": last_run_metrics,
+                    "last_run_id": last_run_id,
+                }
+                self.store.upsert_research_campaign(campaign.public_dict())
+                out = campaign.public_dict()
+                out["needs_continuation"] = True
+                out["iterations_this_job"] = iterations_this_job
+                return out
             it = campaign.checkpoint_iteration + 1
             trial_id = str(uuid.uuid4())
             trial_status = "failed"
@@ -4490,6 +4750,7 @@ class MarketSimControlPlane:
                 iteration_result=iteration_result,
             )
             self.store.upsert_research_campaign(campaign.public_dict())
+            iterations_this_job += 1
 
         trials = len(campaign.trial_ids)
         # Scorecard from measured outcomes only — zeros are UNMEASURED when no metrics.
@@ -4542,7 +4803,10 @@ class MarketSimControlPlane:
             "last_run_id": last_run_id,
         }
         self.store.upsert_research_campaign(campaign.public_dict())
-        return campaign.public_dict()
+        out = campaign.public_dict()
+        out["needs_continuation"] = False
+        out["iterations_this_job"] = iterations_this_job
+        return out
 
     def readiness_ladder(self) -> dict[str, Any]:
         from .readiness import readiness_ladder
@@ -5238,11 +5502,15 @@ class MarketSimControlPlane:
             parent_job_id=parent_job_id,
         )
 
-    def run_learning_on_worker(self, learning_run_id: str) -> dict[str, Any]:
+    def run_learning_on_worker(
+        self, learning_run_id: str, *, max_generations_this_job: int | None = None
+    ) -> dict[str, Any]:
         """Execute/resume learning run (market_sim worker only)."""
         from .learning_runtime import run_learning_on_worker
 
-        return run_learning_on_worker(self, learning_run_id)
+        return run_learning_on_worker(
+            self, learning_run_id, max_generations_this_job=max_generations_this_job
+        )
 
     def get_lab_learning(self, lab_id: str) -> dict[str, Any]:
         lab = self.get_agent_lab(lab_id)
@@ -5382,11 +5650,6 @@ class MarketSimControlPlane:
         from .institutional_core.api_surface import api_catalog_public
 
         return api_catalog_public()
-
-    def institutional_assurance(self) -> dict[str, Any]:
-        from .institutional_core.assurance import run_assurance
-
-        return run_assurance().public_dict()
 
     def institutional_multi_asset(self) -> dict[str, Any]:
         from .institutional_core.multi_asset import build_multi_asset_truth_pack

@@ -97,11 +97,14 @@ class BrowserMediaPoolOwnershipTests(unittest.TestCase):
             )
             self.assertNotEqual(pool_for_capability(cap), "general", msg=cap)
 
-    def test_voice_unchanged_preferred(self) -> None:
+    def test_voice_external_required(self) -> None:
+        # Voice wave: production voice.* is EXTERNAL_REQUIRED (singleton pool),
+        # same fail-closed class as browser/media — not EXTERNAL_PREFERRED.
         self.assertEqual(
             classify_capability("voice.transcribe"),
-            ExecutionWorkloadClass.EXTERNAL_PREFERRED,
+            ExecutionWorkloadClass.EXTERNAL_REQUIRED,
         )
+        self.assertEqual(pool_for_capability("voice.transcribe"), "voice")
 
     def test_qa_status_inline_safe(self) -> None:
         self.assertEqual(

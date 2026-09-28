@@ -95,6 +95,7 @@ _EXTERNAL_REQUIRED_PREFIXES: tuple[str, ...] = (
     "ocr.",
     "browser.",
     "media.",
+    "voice.",
 )
 
 # Cheap control-plane / trivial capabilities.
@@ -120,9 +121,7 @@ KNOWN_INLINE_SAFE: frozenset[str] = frozenset(
     }
 )
 
-_EXTERNAL_PREFERRED_PREFIXES: tuple[str, ...] = (
-    "voice.",
-)
+_EXTERNAL_PREFERRED_PREFIXES: tuple[str, ...] = ()
 
 
 def parse_execution_class(value: Any) -> ExecutionWorkloadClass | None:
@@ -232,6 +231,7 @@ def classify_capability(
             "scheduler",
             "browser",
             "media",
+            "voice",
         }
         if worker_kind in heavy_kinds:
             return ExecutionWorkloadClass.EXTERNAL_REQUIRED

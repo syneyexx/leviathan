@@ -1,4 +1,7 @@
-"""Supervised realtime voice service — fixture ASR/TTS with barge-in (U250–U258).
+"""Supervised realtime voice service — FIXTURE ASR/TTS with barge-in (U250–U258).
+
+TEST / DEV ONLY. Not production ASR/TTS. Production voice execution lives on the
+``voice`` Worker Fabric pool via ``VoiceService`` + real/unavailable backends.
 
 Uses the shared conversation/run/context model — no parallel voice memory.
 Fixture backend: no Whisper/TTS binaries required in CI.

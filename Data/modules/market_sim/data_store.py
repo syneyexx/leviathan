@@ -55,28 +55,178 @@ class MarketDataStore:
             raise MarketSimError("PATH_ESCAPE", str(exc), http_status=400) from exc
 
     def scan(self, *, register: bool = True) -> list[MarketDataSource]:
+        """Full scan helper — prefer ``scan_slice`` for production worker execution."""
+        result = self.scan_slice(register=register, max_entries=1_000_000, max_directories=1_000_000)
+        return list(result.get("sources") or [])
+
+    def scan_slice(
+        self,
+        *,
+        register: bool = True,
+        max_entries: int = 200,
+        max_directories: int = 100,
+        cursor: dict[str, Any] | None = None,
+        deep_validate: bool = True,
+        cancel_check: Any | None = None,
+    ) -> dict[str, Any]:
+        """Bounded deterministic directory scan with checkpoint cursor.
+
+        Does not follow symlinks. Only scans under markets_root. Skips hidden
+        paths. Discovery does not require deep profile unless deep_validate=True.
+        """
         self.ensure_root()
-        found: list[MarketDataSource] = []
-        for path in sorted(self.markets_root.rglob("*")):
-            if not path.is_file():
+        root = self.markets_root.resolve()
+        cur = dict(cursor or {})
+        start_after = str(cur.get("last_relative_path") or "")
+        discovered = int(cur.get("discovered_count") or 0)
+        valid_count = int(cur.get("valid_candidate_count") or 0)
+        skipped = int(cur.get("skipped_count") or 0)
+        errors = int(cur.get("error_count") or 0)
+        dirs_seen = int(cur.get("directories_seen") or 0)
+
+        # Deterministic lexical walk — collect relative file paths in sorted order.
+        # Do not follow symlinks (os.walk followlinks=False by default via Path.rglob
+        # may still follow; use os.walk explicitly).
+        import os
+
+        candidates: list[str] = []
+        dir_count = 0
+        for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+            dir_count += 1
+            # Skip hidden directories in-place (stable sorted)
+            dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+            rel_dir = os.path.relpath(dirpath, root)
+            if rel_dir == ".":
+                rel_dir = ""
+            if any(part.startswith(".") for part in Path(rel_dir).parts if part not in (".", "")):
+                dirnames[:] = []
                 continue
-            if path.suffix.lower() not in self.SUPPORTED_SUFFIXES:
-                continue
-            if path.name.startswith("."):
-                continue
+            for name in sorted(filenames):
+                if name.startswith("."):
+                    skipped += 1
+                    continue
+                suffix = Path(name).suffix.lower()
+                if suffix not in self.SUPPORTED_SUFFIXES:
+                    skipped += 1
+                    continue
+                rel = str(Path(rel_dir) / name) if rel_dir else name
+                # Symlink escape protection
+                abs_path = Path(dirpath) / name
+                try:
+                    if abs_path.is_symlink():
+                        skipped += 1
+                        continue
+                    resolved = abs_path.resolve()
+                    safe_relpath(root, resolved)
+                except (PathEscapeError, OSError):
+                    skipped += 1
+                    errors += 1
+                    continue
+                candidates.append(rel.replace("\\", "/"))
+            if dir_count >= max_directories + dirs_seen and not candidates:
+                break
+
+        candidates = sorted(set(candidates))
+        # Resume after cursor
+        if start_after:
+            candidates = [c for c in candidates if c > start_after]
+
+        sources: list[MarketDataSource] = []
+        processed = 0
+        last_rel = start_after
+        for rel in candidates:
+            if cancel_check is not None and cancel_check():
+                break
+            if processed >= max_entries:
+                break
+            if dir_count > max_directories + dirs_seen and processed >= max_entries:
+                break
             try:
-                rel_parts = safe_relpath(self.markets_root.resolve(), path.resolve()).parts
-            except PathEscapeError:
-                continue
-            if any(part.startswith(".") for part in rel_parts):
-                continue
-            try:
-                rel = str(safe_relpath(self.markets_root.resolve(), path.resolve()))
-            except PathEscapeError:
-                continue
-            source = self.inspect_path(rel, register=register)
-            found.append(source)
-        return found
+                if deep_validate:
+                    source = self.inspect_path(rel, register=register)
+                else:
+                    source = self.inspect_path_metadata_only(rel, register=register)
+                sources.append(source)
+                discovered += 1
+                if source.status == SourceStatus.READY.value:
+                    valid_count += 1
+            except Exception:  # noqa: BLE001
+                errors += 1
+            processed += 1
+            last_rel = rel
+
+        remaining = len(candidates) - processed
+        done = remaining <= 0
+        next_cursor = {
+            "last_relative_path": last_rel,
+            "discovered_count": discovered,
+            "valid_candidate_count": valid_count,
+            "skipped_count": skipped,
+            "error_count": errors,
+            "directories_seen": dirs_seen + dir_count,
+            "root": str(root),
+        }
+        return {
+            "sources": sources,
+            "sources_public": [s.public_dict() for s in sources],
+            "processed": processed,
+            "remaining_estimate": max(0, remaining),
+            "done": done,
+            "cursor": next_cursor,
+            "truth": {
+                "bounded_scan": True,
+                "deterministic_order": True,
+                "no_symlink_follow": True,
+                "markets_root_confined": True,
+            },
+        }
+
+    def inspect_path_metadata_only(
+        self, relative_path: str, *, register: bool = True
+    ) -> MarketDataSource:
+        """Cheap discovery metadata — no deep quality profile."""
+        path = self._abs_under_root(relative_path)
+        rel = str(safe_relpath(self.markets_root.resolve(), path))
+        symbol, timeframe = infer_symbol_timeframe(path)
+        now = utc_now()
+        try:
+            byte_size = path.stat().st_size
+        except OSError:
+            byte_size = 0
+        existing = self.store.get_source_by_path(rel)
+        source_id = existing.source_id if existing else str(uuid.uuid4())
+        source = MarketDataSource(
+            source_id=source_id,
+            symbol=symbol,
+            timeframe=timeframe,
+            kind=DataKind.OHLCV.value,
+            path=rel,
+            content_hash=existing.content_hash if existing else "",
+            status=SourceStatus.READY.value if existing else SourceStatus.DISCOVERED.value,
+            bar_count=existing.bar_count if existing else 0,
+            start_ts=existing.start_ts if existing else None,
+            end_ts=existing.end_ts if existing else None,
+            byte_size=byte_size,
+            validation_error=None,
+            metadata={
+                "discovery_only": True,
+                "absolute_path": str(path),
+                "qualityVerdict": "UNMEASURED",
+                **(
+                    {"storageFormat": sf}
+                    if (sf := storage_format_for_path(path))
+                    else {}
+                ),
+            },
+            created_at=existing.created_at if existing else now,
+            updated_at=now,
+        )
+        if register and existing:
+            # Do not overwrite deep validation with discovery-only.
+            pass
+        elif register:
+            self.store.upsert_source(source)
+        return source
 
     def inspect_path(self, relative_path: str, *, register: bool = True) -> MarketDataSource:
         path = self._abs_under_root(relative_path)
@@ -88,12 +238,13 @@ class MarketDataStore:
         validation_error = validation.error
         quality_payload: dict[str, Any] | None = validation.quality
         quality_verdict = "UNMEASURED"
-        # Institutional W06 — schema parse is not a quality PASS; run full report.
+        # Institutional W06 — schema parse is not a quality PASS; run streaming report.
         if validation.ok:
             try:
-                bars = load_ohlcv(path)
-                report = analyze_bars(
-                    bars,
+                from .dataset_pipeline import analyze_bars_streaming
+
+                report = analyze_bars_streaming(
+                    iter_ohlcv(path),
                     timeframe=timeframe,
                     content_hash=validation.content_hash,
                     byte_size=validation.byte_size,
@@ -128,6 +279,8 @@ class MarketDataStore:
                 "gap_count": validation.gap_count,
                 "truth": {"parsed_csv_is_not_quality_pass": True},
             }
+            if validation.error == "MARKET_DATA_CHANGED_DURING_VALIDATION":
+                status = SourceStatus.INVALID.value
         existing = self.store.get_source_by_path(rel)
         source_id = existing.source_id if existing else str(uuid.uuid4())
         source = MarketDataSource(
@@ -150,6 +303,7 @@ class MarketDataStore:
                 "gap_count": validation.gap_count,
                 "quality": quality_payload,
                 "qualityVerdict": quality_verdict,
+                "streaming_validation": True,
                 **(
                     {"storageFormat": sf}
                     if (sf := storage_format_for_path(path))

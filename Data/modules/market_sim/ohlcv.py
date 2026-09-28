@@ -362,6 +362,7 @@ def count_ohlcv(
 
 
 def validate_ohlcv_file(path: Path) -> OhlcvValidation:
+    """Streaming OHLCV validation — does not materialize the full series."""
     path = Path(path)
     parquet_ok = _parquet_available()
     if not path.is_file():
@@ -375,31 +376,70 @@ def validate_ohlcv_file(path: Path) -> OhlcvValidation:
             error="file not found",
             parquet_available=parquet_ok,
         )
-    byte_size = path.stat().st_size
+    # Stat before deep validation/hash for mutation detection by callers.
+    try:
+        stat_before = path.stat()
+        byte_size = stat_before.st_size
+        mtime_before = getattr(stat_before, "st_mtime_ns", None) or stat_before.st_mtime
+    except OSError:
+        return OhlcvValidation(
+            ok=False,
+            bar_count=0,
+            start_ts=None,
+            end_ts=None,
+            content_hash="",
+            byte_size=0,
+            error="file not found",
+            parquet_available=parquet_ok,
+        )
     try:
         content_hash = sha256_file(path)
-        bars = load_ohlcv(path)
+        bar_count = 0
+        start_ts: str | None = None
+        end_ts: str | None = None
         gap_count = 0
-        if len(bars) >= 2:
-            # Lightweight gap count only — full quality report lives in dataset_pipeline.
-            prev_dt = datetime.fromisoformat(bars[0].ts.replace("Z", "+00:00"))
-            for bar in bars[1:]:
+        prev_dt: datetime | None = None
+        for bar in iter_ohlcv(path):
+            bar_count += 1
+            if start_ts is None:
+                start_ts = bar.ts
+            end_ts = bar.ts
+            try:
                 cur_dt = datetime.fromisoformat(bar.ts.replace("Z", "+00:00"))
-                if (cur_dt - prev_dt).total_seconds() > 86400 * 3:
-                    gap_count += 1
-                prev_dt = cur_dt
+            except ValueError:
+                continue
+            if prev_dt is not None and (cur_dt - prev_dt).total_seconds() > 86400 * 3:
+                gap_count += 1
+            prev_dt = cur_dt
+        if bar_count == 0:
+            raise MarketSimError("EMPTY_WINDOW", "No bars in file")
+        # Stat after — callers may compare; embed in quality payload.
+        try:
+            stat_after = path.stat()
+            mtime_after = getattr(stat_after, "st_mtime_ns", None) or stat_after.st_mtime
+            size_after = stat_after.st_size
+        except OSError:
+            mtime_after = mtime_before
+            size_after = byte_size
+        changed = (mtime_after != mtime_before) or (size_after != byte_size)
         return OhlcvValidation(
-            ok=True,
-            bar_count=len(bars),
-            start_ts=bars[0].ts,
-            end_ts=bars[-1].ts,
+            ok=not changed,
+            bar_count=bar_count,
+            start_ts=start_ts,
+            end_ts=end_ts,
             content_hash=content_hash,
             byte_size=byte_size,
+            error="MARKET_DATA_CHANGED_DURING_VALIDATION" if changed else None,
             columns=REQUIRED_OHLCV_COLUMNS,
             parquet_available=parquet_ok,
             duplicate_count=0,
             gap_count=gap_count,
-            quality={"gap_count": gap_count} if gap_count else None,
+            quality={
+                "gap_count": gap_count,
+                "streaming": True,
+                "exact_bar_count": True,
+                "changed_during_validation": changed,
+            },
         )
     except MarketSimError as exc:
         try:
@@ -418,6 +458,11 @@ def validate_ohlcv_file(path: Path) -> OhlcvValidation:
             parquet_available=parquet_ok,
             duplicate_count=dup,
         )
+
+
+def validate_ohlcv_file_streaming(path: Path) -> OhlcvValidation:
+    """Alias — streaming is now the canonical validate_ohlcv_file path."""
+    return validate_ohlcv_file(path)
 
 
 def infer_symbol_timeframe(path: Path) -> tuple[str, str]:

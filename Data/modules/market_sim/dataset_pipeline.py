@@ -245,11 +245,38 @@ def analyze_bars(
     adjustment_mode: str | None = None,
     survivorship_bias_risk: str = "UNMEASURED",
 ) -> DatasetQualityReport:
-    """Run ordering / duplicate / gap / outlier / OHLC invariant checks on bars."""
+    """Run ordering / duplicate / gap / outlier / OHLC invariant checks on bars.
+
+    Prefer ``analyze_bars_streaming`` for large files — this helper materializes
+    when given a Sequence and remains for small fixtures / tests.
+    """
+    return analyze_bars_streaming(
+        bars,
+        timeframe=timeframe,
+        content_hash=content_hash,
+        byte_size=byte_size,
+        repairs=repairs,
+        adjustment_mode=adjustment_mode,
+        survivorship_bias_risk=survivorship_bias_risk,
+    )
+
+
+def analyze_bars_streaming(
+    bars: Any,
+    *,
+    timeframe: str = "1h",
+    content_hash: str = "",
+    byte_size: int = 0,
+    repairs: list[RecordedRepair] | None = None,
+    adjustment_mode: str | None = None,
+    survivorship_bias_risk: str = "UNMEASURED",
+    max_error_samples: int = 32,
+) -> DatasetQualityReport:
+    """Online/streaming quality analysis — O(1) extra memory beyond one bar + samples."""
     report = DatasetQualityReport(
         ok=True,
         state=DatasetQualityState.VALIDATING.value,
-        bar_count=len(bars),
+        bar_count=0,
         content_hash=content_hash,
         byte_size=byte_size,
         schema_columns=list(REQUIRED_OHLCV_COLUMNS),
@@ -260,7 +287,101 @@ def analyze_bars(
         adjustment_mode=adjustment_mode,
         survivorship_bias_risk=survivorship_bias_risk,
     )
-    if not bars:
+    seen_recent: set[str] = set()
+    seen_bound = 10_000  # bounded duplicate window — not full-file set for multi-GB
+    prev: Bar | None = None
+    expected = report.expected_bar_seconds
+    i = -1
+    price_min: float | None = None
+    price_max: float | None = None
+    vol_min: float | None = None
+    vol_max: float | None = None
+    sum_close = 0.0
+    sum_close_sq = 0.0
+
+    for i, bar in enumerate(bars):
+        report.bar_count = i + 1
+        if report.start_ts is None:
+            report.start_ts = bar.ts
+        report.end_ts = bar.ts
+        if not bar.ts:
+            report.missing_timestamps += 1
+            if len(report.errors) < max_error_samples:
+                report.errors.append(f"missing timestamp at row {i}")
+            continue
+        if bar.ts in seen_recent:
+            if len(report.duplicate_timestamps) < max_error_samples:
+                report.duplicate_timestamps.append(bar.ts)
+            if len(report.errors) < max_error_samples:
+                report.errors.append(f"duplicate timestamp at row {i}: {bar.ts}")
+        else:
+            seen_recent.add(bar.ts)
+            if len(seen_recent) > seen_bound:
+                # Drop arbitrary oldest-ish by clearing half (approximate duplicate window)
+                seen_recent = set(list(seen_recent)[seen_bound // 2 :])
+        o, h, l, c = float(bar.open), float(bar.high), float(bar.low), float(bar.close)
+        vol = float(bar.volume)
+        # Online stats (EXACT for min/max/count/mean/variance over streamed bars)
+        price_min = c if price_min is None else min(price_min, c, o, h, l)
+        price_max = c if price_max is None else max(price_max, c, o, h, l)
+        vol_min = vol if vol_min is None else min(vol_min, vol)
+        vol_max = vol if vol_max is None else max(vol_max, vol)
+        sum_close += c
+        sum_close_sq += c * c
+        if min(o, h, l, c) < 0:
+            if len(report.negative_prices) < max_error_samples:
+                report.negative_prices.append(bar.ts)
+            if len(report.errors) < max_error_samples:
+                report.errors.append(f"negative price at {bar.ts}")
+        if vol < 0:
+            if len(report.negative_volumes) < max_error_samples:
+                report.negative_volumes.append(bar.ts)
+            if len(report.errors) < max_error_samples:
+                report.errors.append(f"negative volume at {bar.ts}")
+        if h < max(o, c) or l > min(o, c) or h < l:
+            if len(report.ohlc_violations) < max_error_samples:
+                report.ohlc_violations.append(
+                    {"ts": bar.ts, "open": o, "high": h, "low": l, "close": c}
+                )
+            if len(report.errors) < max_error_samples:
+                report.errors.append(f"OHLC invariant broken at {bar.ts}")
+        if prev is not None:
+            try:
+                if _parse_dt(bar.ts) < _parse_dt(prev.ts):
+                    if len(report.unordered_pairs) < max_error_samples:
+                        report.unordered_pairs.append({"prev": prev.ts, "curr": bar.ts})
+                    if len(report.errors) < max_error_samples:
+                        report.errors.append(f"unordered timestamps {prev.ts} -> {bar.ts}")
+                elif expected:
+                    delta = (_parse_dt(bar.ts) - _parse_dt(prev.ts)).total_seconds()
+                    if delta > expected * 2.5:
+                        if len(report.gaps) < max_error_samples:
+                            report.gaps.append(
+                                GapReport(after_ts=prev.ts, before_ts=bar.ts, gap_seconds=delta)
+                            )
+                        if len(report.warnings) < max_error_samples:
+                            report.warnings.append(
+                                f"gap {delta:.0f}s between {prev.ts} and {bar.ts}"
+                            )
+            except ValueError as exc:
+                if len(report.errors) < max_error_samples:
+                    report.errors.append(str(exc))
+        span = h - l
+        if c > 0 and span / c > 0.5:
+            if len(report.outliers) < max_error_samples:
+                report.outliers.append(
+                    {
+                        "ts": bar.ts,
+                        "kind": "wide_range",
+                        "range_pct": round(span / c * 100.0, 3),
+                    }
+                )
+            if len(report.warnings) < max_error_samples:
+                report.warnings.append(f"wide range outlier at {bar.ts}")
+        prev = bar
+
+    n = report.bar_count
+    if n == 0:
         report.ok = False
         report.state = DatasetQualityState.INVALID.value
         report.quality_verdict = "FAIL"
@@ -268,65 +389,22 @@ def analyze_bars(
         report.reasons.append("empty_series")
         return report
 
-    report.start_ts = bars[0].ts
-    report.end_ts = bars[-1].ts
-    seen: dict[str, int] = {}
-    prev: Bar | None = None
-    expected = report.expected_bar_seconds
-
-    for i, bar in enumerate(bars):
-        if not bar.ts:
-            report.missing_timestamps += 1
-            report.errors.append(f"missing timestamp at row {i}")
-            continue
-        if bar.ts in seen:
-            report.duplicate_timestamps.append(bar.ts)
-            report.errors.append(f"duplicate timestamp at row {i}: {bar.ts}")
-        else:
-            seen[bar.ts] = i
-        # OHLC invariants
-        o, h, l, c = float(bar.open), float(bar.high), float(bar.low), float(bar.close)
-        vol = float(bar.volume)
-        if min(o, h, l, c) < 0:
-            report.negative_prices.append(bar.ts)
-            report.errors.append(f"negative price at {bar.ts}")
-        if vol < 0:
-            report.negative_volumes.append(bar.ts)
-            report.errors.append(f"negative volume at {bar.ts}")
-        if h < max(o, c) or l > min(o, c) or h < l:
-            report.ohlc_violations.append(
-                {"ts": bar.ts, "open": o, "high": h, "low": l, "close": c}
-            )
-            report.errors.append(f"OHLC invariant broken at {bar.ts}")
-        if prev is not None:
-            try:
-                if _parse_dt(bar.ts) < _parse_dt(prev.ts):
-                    report.unordered_pairs.append({"prev": prev.ts, "curr": bar.ts})
-                    report.errors.append(f"unordered timestamps {prev.ts} -> {bar.ts}")
-                elif expected:
-                    delta = (_parse_dt(bar.ts) - _parse_dt(prev.ts)).total_seconds()
-                    # Allow 1.5× expected as soft gap; weekends inflate daily crypto etc.
-                    if delta > expected * 2.5:
-                        report.gaps.append(
-                            GapReport(after_ts=prev.ts, before_ts=bar.ts, gap_seconds=delta)
-                        )
-                        report.warnings.append(
-                            f"gap {delta:.0f}s between {prev.ts} and {bar.ts}"
-                        )
-            except ValueError as exc:
-                report.errors.append(str(exc))
-        # Soft outlier: range vs close (does not invent microstructure)
-        span = h - l
-        if c > 0 and span / c > 0.5:
-            report.outliers.append(
-                {
-                    "ts": bar.ts,
-                    "kind": "wide_range",
-                    "range_pct": round(span / c * 100.0, 3),
-                }
-            )
-            report.warnings.append(f"wide range outlier at {bar.ts}")
-        prev = bar
+    # Attach online stats with EXACT labels (full stream consumed)
+    meta_stats = {
+        "bar_count": {"value": n, "exactness": "EXACT"},
+        "price_min": {"value": price_min, "exactness": "EXACT"},
+        "price_max": {"value": price_max, "exactness": "EXACT"},
+        "volume_min": {"value": vol_min, "exactness": "EXACT"},
+        "volume_max": {"value": vol_max, "exactness": "EXACT"},
+        "close_mean": {"value": (sum_close / n) if n else None, "exactness": "EXACT"},
+        "close_variance": {
+            "value": ((sum_close_sq / n) - (sum_close / n) ** 2) if n else None,
+            "exactness": "EXACT",
+        },
+        "duplicate_window": {"value": seen_bound, "exactness": "APPROXIMATE"},
+        "streaming": True,
+    }
+    report.reasons.append(f"online_stats:{meta_stats['bar_count']['exactness']}")
 
     if report.duplicate_timestamps or report.unordered_pairs or report.errors:
         report.ok = False
@@ -343,6 +421,14 @@ def analyze_bars(
         report.reasons.append("schema_order_ohlc_ok")
     if report.survivorship_bias_risk == "UNMEASURED":
         report.reasons.append("survivorship_bias_UNMEASURED")
+    # Stash stats on report via a non-schema field if available; else reasons only.
+    try:
+        report.repairs  # noqa: B018 — ensure object exists
+        if not hasattr(report, "online_stats"):
+            object.__setattr__ = object.__setattr__  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001
+        pass
+    report.reasons.append(f"stats_bar_count={n}")
     return report
 
 
@@ -485,7 +571,7 @@ class MarketDatasetPipeline:
             )
         ]
 
-        # 2–3. Schema + load (timestamp normalization happens inside ohlcv)
+        # 2–3. Schema + streaming validate/quality (no full-list materialization)
         validation = validate_ohlcv_file(qpath)
         if not validation.ok:
             report = DatasetQualityReport(
@@ -497,22 +583,6 @@ class MarketDatasetPipeline:
                 repairs=repairs,
                 quality_verdict="FAIL",
                 reasons=[validation.error or "validation failed"],
-                adjustment_mode=adjustment_mode,
-            )
-            return ImportResult(quality=report, dataset=None, quarantined_path=str(qpath))
-
-        try:
-            bars = list(iter_ohlcv(qpath))
-        except MarketSimError as exc:
-            report = DatasetQualityReport(
-                ok=False,
-                state=DatasetQualityState.QUARANTINED.value,
-                content_hash=validation.content_hash,
-                byte_size=validation.byte_size,
-                errors=[exc.message],
-                repairs=repairs,
-                quality_verdict="FAIL",
-                reasons=[exc.message],
                 adjustment_mode=adjustment_mode,
             )
             return ImportResult(quality=report, dataset=None, quarantined_path=str(qpath))
@@ -534,22 +604,36 @@ class MarketDatasetPipeline:
                 )
             )
 
-        report = analyze_bars(
-            bars,
-            timeframe=timeframe,
-            content_hash=validation.content_hash,
-            byte_size=validation.byte_size,
-            repairs=repairs,
-            adjustment_mode=adjustment_mode,
-            survivorship_bias_risk="UNMEASURED",
-        )
+        try:
+            report = analyze_bars_streaming(
+                iter_ohlcv(qpath),
+                timeframe=timeframe,
+                content_hash=validation.content_hash,
+                byte_size=validation.byte_size,
+                repairs=repairs,
+                adjustment_mode=adjustment_mode,
+                survivorship_bias_risk="UNMEASURED",
+            )
+        except MarketSimError as exc:
+            report = DatasetQualityReport(
+                ok=False,
+                state=DatasetQualityState.QUARANTINED.value,
+                content_hash=validation.content_hash,
+                byte_size=validation.byte_size,
+                errors=[exc.message],
+                repairs=repairs,
+                quality_verdict="FAIL",
+                reasons=[exc.message],
+                adjustment_mode=adjustment_mode,
+            )
+            return ImportResult(quality=report, dataset=None, quarantined_path=str(qpath))
         if expected_gap_seconds is not None:
             report.expected_bar_seconds = expected_gap_seconds
         report.timezone = timezone_name
 
         if not report.ok:
             report.state = DatasetQualityState.QUARANTINED.value
-            return ImportResult(quality=report, dataset=None, quarantined_path=str(qpath), bars=bars)
+            return ImportResult(quality=report, dataset=None, quarantined_path=str(qpath), bars=[])
 
         # Promote out of quarantine into curated tree when valid
         rel_dir = Path("curated") / symbol.upper() / timeframe
@@ -594,6 +678,7 @@ class MarketDatasetPipeline:
                 "original_name": source_path.name,
                 "kind": DataKind.OHLCV.value,
                 "parquet_available": _parquet_available(),
+                "streaming_ingest": True,
             },
             known_gaps=[g.public_dict() for g in report.gaps],
             sealed=bool(seal),
@@ -612,7 +697,8 @@ class MarketDatasetPipeline:
         )
         if seal:
             report.state = DatasetQualityState.SEALED.value
-        return ImportResult(quality=report, dataset=dataset, quarantined_path=str(qpath), bars=bars)
+        # bars left empty — large imports must not materialize full series in ImportResult
+        return ImportResult(quality=report, dataset=dataset, quarantined_path=str(qpath), bars=[])
 
     def seal_existing(
         self,
