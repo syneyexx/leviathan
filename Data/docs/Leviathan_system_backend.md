@@ -2,7 +2,7 @@
 
 > **Canonical backend reference.** This file is the single human-readable source of truth for LEVIATHAN backend architecture, runtime ownership, persistence, execution, intelligence, research/trading systems, security boundaries, verification and exact code locations.
 >
-> **Snapshot:** `main` at `1c30a3d062b03f8b77eb14b9ae8dee16979fcb61` (2026-09-28), after the autonomous trading research closed-loop merge. Runtime code, schemas and executable tests remain authoritative when prose and behavior disagree.
+> **Snapshot:** institutional hardening branch tip (Waves 0–25 program). Baseline main was `35174d88edcccd87e7f40d34651ae2cc9bcc7abb` (2026-09-28). Runtime code, schemas and executable tests remain authoritative when prose and behavior disagree.
 >
 > Frontend companion: [`Leviathan_system_frontend.md`](./Leviathan_system_frontend.md).
 
