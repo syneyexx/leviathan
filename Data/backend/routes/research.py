@@ -259,6 +259,13 @@ def build_research_router(service: ResearchService) -> APIRouter:
             raise_research_error(exc)
         return result
 
+    @router.get("/api/research/ingestion/format-capabilities")
+    def ingestion_format_capabilities() -> dict:
+        from Data.modules.source_ingestion.capabilities import build_format_capabilities
+        from Data.modules.source_ingestion.settings import load_source_ingestion_settings
+
+        return build_format_capabilities(load_source_ingestion_settings())
+
     @router.get("/api/research/{project_id}/sources/{source_id}/ingestion")
     def ingestion_status(project_id: str, source_id: str) -> dict:
         try:

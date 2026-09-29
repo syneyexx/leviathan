@@ -482,6 +482,51 @@ class IngestionStore:
             ).fetchone()
         return bool(row and row["cancel_requested"])
 
+    def get_member(
+        self,
+        container_source_id: str,
+        relative_path: str,
+    ) -> ManifestMember | None:
+        """Indexed lookup by canonical (container, relative_path) key."""
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                """
+                SELECT * FROM source_ingestion_members
+                WHERE container_source_id=? AND relative_path=?
+                """,
+                (container_source_id, relative_path),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._member_from_row(row)
+
+    def get_child_source_id(self, container_source_id: str, relative_path: str) -> str | None:
+        member = self.get_member(container_source_id, relative_path)
+        if member is None:
+            return None
+        return member.child_source_id
+
+    def bind_child_source(
+        self,
+        container_source_id: str,
+        relative_path: str,
+        child_source_id: str,
+        *,
+        content_hash: str | None = None,
+    ) -> None:
+        now = utc_now()
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            conn.execute(
+                """
+                UPDATE source_ingestion_members
+                SET child_source_id=?, content_hash=COALESCE(?, content_hash), updated_at=?
+                WHERE container_source_id=? AND relative_path=?
+                """,
+                (child_source_id, content_hash, now, container_source_id, relative_path),
+            )
+
     def get_container(self, container_source_id: str) -> dict[str, Any] | None:
         with self.connect() as conn:
             self._ensure_schema(conn)

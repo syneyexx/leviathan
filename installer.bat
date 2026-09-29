@@ -82,7 +82,11 @@ if errorlevel 1 (
   goto :fail
 )
 echo        OK - Python packages installed
-
+echo.
+echo        Source Ingestion OCR: install Tesseract OCR and ensure tesseract.exe is on PATH.
+echo        Windows example: winget install UB-Mannheim.TesseractOCR
+echo        Verify: tesseract --version
+echo.
 REM ---- Environment file ----
 echo [4/8] Environment file...
 if not exist ".env" (

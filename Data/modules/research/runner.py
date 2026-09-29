@@ -13,7 +13,7 @@ from .coordinator import ResearchCoordinator
 from .evidence import EvidenceLedger
 from .local_retrieval import LocalResearchRetriever
 from .reports import ReportBuilder
-from .sources import SourceIngestor
+from .sources import ResearchSourceCollector
 from .store import ResearchStore, utc_now
 from .types import (
     ACTIVE_STATUSES,
@@ -42,7 +42,7 @@ class ResearchRunner:
         self.local = local
         self.web = web
         self.allow_outbound = bool(allow_outbound)
-        self.sources = SourceIngestor(store, snapshots_root)
+        self.sources = ResearchSourceCollector(store, snapshots_root)
         self.evidence = EvidenceLedger(store)
         self.claims = ClaimAnalyzer(store)
         self.conflicts = ConflictDetector(store)

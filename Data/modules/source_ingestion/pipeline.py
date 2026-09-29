@@ -33,9 +33,13 @@ from .handlers import get_default_registry
 from .secrets_policy import sample_file_prefix, should_quarantine
 from .settings import SourceIngestionSettings
 from .skip_policy import should_skip_path
+from .metrics import PhaseTimer, ingestion_metrics
 from .store import IngestionStore
 from .types import (
     ArchiveManifest,
+    DatasetRouteState,
+    ERROR_DATASET_ROUTE_FAILED,
+    ERROR_DATASET_ROUTE_UNAVAILABLE,
     ERROR_OCR_REQUIRED,
     ERROR_OCR_UNAVAILABLE,
     IngestionError,
@@ -44,6 +48,7 @@ from .types import (
     ManifestMember,
     MemberOutcome,
     NormalizedArtifact,
+    ContentRef,
     PARSER_VERSION,
     SourceKind,
 )
@@ -263,7 +268,14 @@ class SourceIngestionPipeline:
         cache_key_hash: str | None = None,
     ) -> IngestionProgress:
         if artifact.outcome == MemberOutcome.ROUTED and artifact.route_target == "dataset":
-            self._route_dataset(source, artifact)
+            route = self._route_dataset(source, artifact)
+            if route.get("state") in {
+                DatasetRouteState.ROUTE_FAILED.value,
+                DatasetRouteState.ROUTE_UNAVAILABLE.value,
+            }:
+                artifact.error_code = route.get("error_code") or ERROR_DATASET_ROUTE_FAILED
+                artifact.skip_reason = route.get("error_message") or "dataset route failed"
+                artifact.outcome = MemberOutcome.FAILED
             self._save_source_state(
                 source,
                 parse_status=ParseStatus.SKIPPED,
@@ -306,15 +318,21 @@ class SourceIngestionPipeline:
                 elif artifact.error_code == ERROR_OCR_REQUIRED:
                     # Child job enqueued; keep OCR_REQUIRED and record lineage.
                     artifact.provenance["ocr_status"] = "delegated_document_ai"
-            status = (
-                ParseStatus.FAILED
-                if artifact.outcome == MemberOutcome.FAILED
-                else ParseStatus.SKIPPED
-            )
+            ocr_queued = bool(ocr_receipt and ocr_receipt.get("queued"))
+            if ocr_queued:
+                status = ParseStatus.SKIPPED
+                brain = BrainStatus.PENDING
+            else:
+                status = (
+                    ParseStatus.FAILED
+                    if artifact.outcome == MemberOutcome.FAILED
+                    else ParseStatus.SKIPPED
+                )
+                brain = BrainStatus.SKIPPED
             self._save_source_state(
                 source,
                 parse_status=status,
-                brain_status=BrainStatus.SKIPPED,
+                brain_status=brain,
                 parser=artifact.parser,
                 text="",
                 detection=detection,
@@ -322,16 +340,17 @@ class SourceIngestionPipeline:
                 archive_filename=archive_filename,
                 parent_source_id=parent_source_id,
                 container_source_id=container_source_id,
-                brain_error=artifact.skip_reason or artifact.error_code,
+                brain_error=None if ocr_queued else (artifact.skip_reason or artifact.error_code),
             )
             if not is_child:
-                phase = (
-                    IngestionPhase.FAILED
-                    if artifact.outcome == MemberOutcome.FAILED
-                    else IngestionPhase.COMPLETED
-                )
-                if artifact.outcome == MemberOutcome.QUARANTINED:
+                if ocr_queued:
+                    phase = IngestionPhase.OCR_PENDING
+                elif artifact.outcome == MemberOutcome.QUARANTINED:
                     phase = IngestionPhase.QUARANTINED
+                elif artifact.outcome == MemberOutcome.FAILED:
+                    phase = IngestionPhase.FAILED
+                else:
+                    phase = IngestionPhase.COMPLETED
                 self.ingestion.upsert_container(
                     container_source_id=source.source_id,
                     project_id=source.project_id,
@@ -539,11 +558,10 @@ class SourceIngestionPipeline:
                     )
                     return self.get_progress(source.source_id)
 
-                batch = self.ingestion.list_pending_members(source.source_id, limit=50)
+                batch_size = max(1, int(getattr(self.settings, "archive_batch_size", 50) or 50))
+                batch = self.ingestion.list_pending_members(source.source_id, limit=batch_size)
                 if not batch:
                     break
-                info_by_name = {i.filename.replace("\\", "/"): i for i in zf.infolist()}
-                # Also index by normalized path
                 from .archives.security import normalize_member_path
                 from Data.modules.common.paths import PathEscapeError
 
@@ -554,23 +572,55 @@ class SourceIngestionPipeline:
                     except PathEscapeError:
                         continue
 
-                for member in batch:
-                    self._process_one_zip_member(
-                        source,
-                        zf,
-                        member,
-                        norm_map.get(member.relative_path),
-                        staging,
-                        nested_depth=nested_depth,
-                    )
-                    processed += 1
-                    if processed % 25 == 0:
-                        prog = self.get_progress(source.source_id)
-                        self._event(
-                            "ingestion_progress",
-                            f"{prog.files_ingested}/{prog.files_discovered}",
-                            prog.public_dict(),
+                concurrency = max(1, int(getattr(self.settings, "archive_parse_concurrency", 1) or 1))
+                archive_path = raw_path
+
+                def _run_member(member: ManifestMember) -> None:
+                    if concurrency <= 1:
+                        self._process_one_zip_member(
+                            source,
+                            zf,
+                            member,
+                            norm_map.get(member.relative_path),
+                            staging,
+                            nested_depth=nested_depth,
                         )
+                        return
+                    with open_zip(archive_path) as zf_local:
+                        local_map: dict[str, Any] = {}
+                        for info in zf_local.infolist():
+                            try:
+                                local_map[normalize_member_path(info.filename)] = info
+                            except PathEscapeError:
+                                continue
+                        self._process_one_zip_member(
+                            source,
+                            zf_local,
+                            member,
+                            local_map.get(member.relative_path),
+                            staging,
+                            nested_depth=nested_depth,
+                        )
+
+                if concurrency <= 1:
+                    for member in batch:
+                        _run_member(member)
+                        processed += 1
+                else:
+                    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+                    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+                        futures = [pool.submit(_run_member, member) for member in batch]
+                        for fut in as_completed(futures):
+                            fut.result()
+                            processed += 1
+                if processed % 25 == 0:
+                    prog = self.get_progress(source.source_id)
+                    self._event(
+                        "ingestion_progress",
+                        f"{prog.files_ingested}/{prog.files_discovered}",
+                        prog.public_dict(),
+                    )
 
         return self._finalize_container(source.source_id)
 
@@ -1028,10 +1078,23 @@ class SourceIngestionPipeline:
     ) -> None:
         member.parser = artifact.parser
         if artifact.outcome == MemberOutcome.ROUTED:
-            self._route_dataset(child, artifact)
-            member.outcome = MemberOutcome.ROUTED
-            member.skip_reason = artifact.skip_reason
-            member.parse_status = "skipped"
+            route = self._route_dataset(child, artifact)
+            member.metadata = {
+                **member.metadata,
+                "dataset_route": route,
+            }
+            if route.get("state") in {
+                DatasetRouteState.ROUTE_FAILED.value,
+                DatasetRouteState.ROUTE_UNAVAILABLE.value,
+            }:
+                member.outcome = MemberOutcome.FAILED
+                member.error_code = route.get("error_code")
+                member.skip_reason = route.get("error_message")
+                member.parse_status = "failed"
+            else:
+                member.outcome = MemberOutcome.ROUTED
+                member.skip_reason = artifact.skip_reason
+                member.parse_status = "skipped"
             member.child_source_id = child.source_id
             self.ingestion.upsert_member(member)
             return
@@ -1049,12 +1112,41 @@ class SourceIngestionPipeline:
                     artifact.error_code = artifact.error_code or ERROR_OCR_UNAVAILABLE
                 elif artifact.error_code == ERROR_OCR_REQUIRED:
                     artifact.provenance["ocr_status"] = "delegated_document_ai"
-            member.outcome = artifact.outcome
+            ocr_queued = bool(ocr_receipt and ocr_receipt.get("queued"))
+            if ocr_queued:
+                member.outcome = MemberOutcome.PENDING
+                member.parse_status = "ocr_pending"
+                member.metadata = {
+                    **member.metadata,
+                    "ocr_pending": True,
+                    "ocr_job_id": ocr_receipt.get("job_id"),
+                }
+                self.ingestion.upsert_container(
+                    container_source_id=parent.source_id,
+                    project_id=parent.project_id,
+                    phase=IngestionPhase.OCR_PENDING,
+                )
+            else:
+                member.outcome = artifact.outcome
+                member.parse_status = "failed" if artifact.outcome == MemberOutcome.FAILED else "skipped"
             member.skip_reason = artifact.skip_reason
             member.error_code = artifact.error_code
-            member.parse_status = "failed" if artifact.outcome == MemberOutcome.FAILED else "skipped"
             member.child_source_id = child.source_id
             self.ingestion.upsert_member(member)
+            if ocr_queued:
+                self._save_source_state(
+                    child,
+                    parse_status=ParseStatus.SKIPPED,
+                    brain_status=BrainStatus.PENDING,
+                    parser=artifact.parser,
+                    text="",
+                    detection=detection,
+                    artifact=artifact,
+                    archive_filename=parent.title,
+                    parent_source_id=parent.source_id,
+                    container_source_id=parent.source_id,
+                )
+                return
             self._save_source_state(
                 child,
                 parse_status=ParseStatus.FAILED if artifact.outcome == MemberOutcome.FAILED else ParseStatus.SKIPPED,
@@ -1325,6 +1417,7 @@ class SourceIngestionPipeline:
                 "truth": {"ocr_backend": "missing", "executed_inline": False},
             }
         raw_path = str((source.provenance or {}).get("raw_path") or "")
+        prov = source.provenance or {}
         try:
             return self.enqueue_ocr(
                 source_id=source.source_id,
@@ -1335,6 +1428,8 @@ class SourceIngestionPipeline:
                 root_job_id=self.root_job_id,
                 mime_type=artifact.mime_type,
                 reason=str(artifact.error_code or ERROR_OCR_REQUIRED),
+                container_source_id=prov.get("container_source_id") or prov.get("parent_source_id"),
+                native_pages=list(prov.get("pages") or artifact.provenance.get("pages") or []),
             )
         except Exception as exc:  # noqa: BLE001
             return {
@@ -1349,6 +1444,17 @@ class SourceIngestionPipeline:
     def _finalize_container(self, container_source_id: str) -> IngestionProgress:
         manifest = self.ingestion.build_manifest(container_source_id)
         phase = manifest.aggregate_phase()
+        # Prefer OCR_PENDING when any member is waiting on document_ai.
+        with self.ingestion.connect() as conn:
+            ocr_pending = conn.execute(
+                """
+                SELECT COUNT(*) AS n FROM source_ingestion_members
+                WHERE container_source_id=? AND parse_status='ocr_pending'
+                """,
+                (container_source_id,),
+            ).fetchone()
+        if ocr_pending and int(ocr_pending["n"] or 0) > 0:
+            phase = IngestionPhase.OCR_PENDING
         if self.ingestion.is_cancel_requested(container_source_id):
             phase = IngestionPhase.CANCELLED
         container = self.ingestion.get_container(container_source_id)
@@ -1447,13 +1553,10 @@ class SourceIngestionPipeline:
         detection: Any,
         raw_path: Path,
     ) -> ResearchSource:
-        # Idempotent: reuse existing child for same container+path
-        for existing in self.research.list_sources(parent.project_id, limit=2000):
-            prov = existing.provenance or {}
-            if (
-                prov.get("container_source_id") == parent.source_id
-                and prov.get("relative_path") == member.relative_path
-            ):
+        bound_id = self.ingestion.get_child_source_id(parent.source_id, member.relative_path)
+        if bound_id:
+            existing = self.research.get_source(bound_id)
+            if existing is not None:
                 return existing
 
         source_id = str(uuid.uuid4())
@@ -1510,7 +1613,96 @@ class SourceIngestionPipeline:
                 created_at=child.created_at,
             )
             stored = self.research.upsert_source(child)
+        self.ingestion.bind_child_source(
+            parent.source_id,
+            member.relative_path,
+            stored.source_id,
+            content_hash=member.content_hash,
+        )
+        member.child_source_id = stored.source_id
         return stored
+
+    def apply_ocr_continue(
+        self,
+        source_id: str,
+        *,
+        project_id: str,
+        container_source_id: str | None = None,
+        relative_path: str | None = None,
+        ocr_job_id: str | None = None,
+    ) -> IngestionProgress:
+        """Resume ingestion after document_ai OCR completes (parent lineage preserved)."""
+        metrics = ingestion_metrics()
+        with PhaseTimer("OCR_CONTINUE"):
+            source = self.research.get_source(source_id)
+            if source is None:
+                raise IngestionError("SOURCE_NOT_FOUND", f"Unknown source {source_id}")
+            snap_path = source.snapshot_path or (source.provenance or {}).get("ocr_snapshot_path")
+            if not snap_path:
+                raise IngestionError("OCR_SNAPSHOT_MISSING", "OCR snapshot not found")
+            text = Path(str(snap_path)).read_text(encoding="utf-8")
+            container_id = container_source_id or (source.provenance or {}).get("container_source_id") or source_id
+            rel = relative_path or (source.provenance or {}).get("relative_path") or source.title
+
+            if container_source_id and relative_path:
+                parent = self.research.get_source(container_source_id)
+                member = self.ingestion.get_member(container_source_id, relative_path)
+                if parent is not None and member is not None:
+                    detection = detect_source_type(
+                        filename=relative_path,
+                        sample=sample_file_prefix(Path(str((source.provenance or {}).get("raw_path") or snap_path))),
+                        allow_unknown_text=self.settings.allow_unknown_text,
+                    )
+                    artifact = NormalizedArtifact(
+                        source_kind=SourceKind.DOCUMENT,
+                        title=Path(relative_path).name,
+                        relative_path=relative_path,
+                        mime_type=source.mime_type,
+                        parser="ocr",
+                        parser_version=PARSER_VERSION,
+                        content_hash=source.content_hash or sha256_text(text),
+                        content=ContentRef(text=text),
+                        provenance={"ocr_job_id": ocr_job_id, **dict(source.provenance or {})},
+                        outcome=MemberOutcome.SUCCESS,
+                    )
+                    self._apply_child_artifact(parent, source, member, detection, artifact)
+                    return self._finalize_container(container_source_id)
+
+            updated = self._save_source_state(
+                source,
+                parse_status=ParseStatus.OK,
+                brain_status=BrainStatus.PENDING,
+                parser="ocr",
+                text=text,
+                detection=detect_source_type(
+                    filename=source.title or rel,
+                    sample=text[:4096].encode("utf-8", errors="ignore"),
+                    allow_unknown_text=self.settings.allow_unknown_text,
+                ),
+                snapshot_path=str(snap_path),
+            )
+            synced = self._brain_sync(updated, text)
+            if synced.brain_status == BrainStatus.FAILED:
+                metrics.inc("brain_sync_failed")
+            self._remember_parse_cache(
+                synced,
+                artifact=None,
+                snapshot_path=str(snap_path),
+                text=text,
+                cache_key_hash=updated.content_hash,
+            )
+            phase = (
+                IngestionPhase.COMPLETED
+                if synced.brain_status == BrainStatus.SYNCED
+                else IngestionPhase.PARTIAL
+            )
+            self.ingestion.upsert_container(
+                container_source_id=container_id,
+                project_id=project_id,
+                phase=phase,
+            )
+            metrics.inc("ocr_succeeded")
+            return self.get_progress(container_id)
 
     def _write_snapshot(self, project_id: str, source_id: str, text: str) -> Path:
         snap_dir = ensure_dir(self.snapshots_root / project_id)
@@ -1610,6 +1802,29 @@ class SourceIngestionPipeline:
         content_hash = source.content_hash or sha256_text(text)
         doc_id = f"research-upload:{content_hash}"
         prov = source.provenance or {}
+        alias = {
+            "project_id": source.project_id,
+            "source_id": source.source_id,
+            "container_source_id": prov.get("container_source_id"),
+            "relative_path": prov.get("relative_path"),
+            "original_filename": prov.get("original_filename") or source.title,
+            "archive_filename": prov.get("archive_filename"),
+            "content_hash": content_hash,
+            "source_type": source.source_type.value if hasattr(source.source_type, "value") else str(source.source_type),
+            "first_seen": prov.get("first_seen") or utc_now(),
+            "last_seen": utc_now(),
+        }
+        existing_locations: list[dict[str, Any]] = []
+        if self.knowledge is not None:
+            try:
+                prior = self.knowledge.get_document(doc_id)
+                if prior is not None and getattr(prior, "trust_metadata", None):
+                    existing_locations = list((prior.trust_metadata or {}).get("source_locations") or [])
+            except Exception:  # noqa: BLE001
+                existing_locations = []
+        loc_key = f"{alias.get('container_source_id')}:{alias.get('relative_path')}:{source.source_id}"
+        merged = [a for a in existing_locations if f"{a.get('container_source_id')}:{a.get('relative_path')}:{a.get('source_id')}" != loc_key]
+        merged.append(alias)
         trust = {
             "trust": "user_supplied",
             "source": "research_upload",
@@ -1625,6 +1840,7 @@ class SourceIngestionPipeline:
             "archive_filename": prov.get("archive_filename"),
             "relative_path": prov.get("relative_path"),
             "original_path": prov.get("relative_path") or source.original_uri,
+            "source_locations": merged,
         }
         # Page/slide/sheet provenance when present
         for key in ("page_count", "pages", "slides", "sheets", "locations", "language", "module_path"):
@@ -1690,19 +1906,96 @@ class SourceIngestionPipeline:
         )
         return self.research.save_source(updated)
 
-    def _route_dataset(self, source: ResearchSource, artifact: NormalizedArtifact) -> None:
-        if self.dataset_service is None:
-            return
+    def _route_dataset(self, source: ResearchSource, artifact: NormalizedArtifact) -> dict[str, Any]:
+        metrics = ingestion_metrics()
+        metrics.inc("dataset_routes_requested")
         raw = (artifact.provenance or {}).get("raw_path")
+        base: dict[str, Any] = {
+            "route_target": artifact.route_target or "dataset",
+            "attempt_count": 1,
+            "last_attempt_at": utc_now(),
+        }
         if not raw:
-            return
+            metrics.inc("dataset_routes_failed")
+            return {
+                **base,
+                "state": DatasetRouteState.ROUTE_FAILED.value,
+                "error_code": ERROR_DATASET_ROUTE_FAILED,
+                "error_message": "missing raw_path for dataset route",
+            }
+        if self.dataset_service is None:
+            metrics.inc("dataset_routes_failed")
+            return {
+                **base,
+                "state": DatasetRouteState.ROUTE_UNAVAILABLE.value,
+                "error_code": ERROR_DATASET_ROUTE_UNAVAILABLE,
+                "error_message": "DatasetService not bound",
+            }
+        enqueue = getattr(self.dataset_service, "enqueue_import_local", None)
+        if not callable(enqueue):
+            metrics.inc("dataset_routes_failed")
+            return {
+                **base,
+                "state": DatasetRouteState.ROUTE_UNAVAILABLE.value,
+                "error_code": ERROR_DATASET_ROUTE_UNAVAILABLE,
+                "error_message": "enqueue_import_local unavailable",
+            }
+        self.ingestion.upsert_container(
+            container_source_id=source.source_id,
+            project_id=source.project_id,
+            phase=IngestionPhase.DATASET_ROUTING,
+        )
         try:
-            # Best-effort: enqueue local import if API exists
-            enqueue = getattr(self.dataset_service, "enqueue_import_local", None)
-            if callable(enqueue):
-                enqueue(path=str(raw), label=source.title or Path(str(raw)).name)
-        except Exception:  # noqa: BLE001
-            pass
+            job = enqueue(path=str(raw), name=source.title or Path(str(raw)).name, materialize=True)
+            job_id = getattr(job, "job_id", None) or getattr(job, "id", None)
+            dataset_id = getattr(job, "dataset_id", None)
+            metrics.inc("dataset_routes_succeeded")
+            route = {
+                **base,
+                "state": DatasetRouteState.ROUTED.value,
+                "dataset_job_id": str(job_id) if job_id else None,
+                "dataset_id": str(dataset_id) if dataset_id else None,
+            }
+            prov = dict(source.provenance or {})
+            prov["dataset_route"] = route
+            updated = ResearchSource(
+                source_id=source.source_id,
+                project_id=source.project_id,
+                source_type=source.source_type,
+                created_at=source.created_at,
+                original_uri=source.original_uri,
+                canonical_uri=source.canonical_uri,
+                title=source.title,
+                author=source.author,
+                published_at=source.published_at,
+                fetched_at=source.fetched_at,
+                content_hash=source.content_hash,
+                mime_type=source.mime_type,
+                snapshot_path=source.snapshot_path,
+                parse_status=source.parse_status,
+                parser=source.parser,
+                brain_status=source.brain_status,
+                brain_document_id=source.brain_document_id,
+                brain_error=source.brain_error,
+                provenance=prov,
+                metadata=dict(source.metadata or {}),
+            )
+            self.research.save_source(updated)
+            self._event(
+                "dataset_route_queued",
+                route.get("dataset_job_id") or "queued",
+                {"source_id": source.source_id, **route},
+            )
+            return route
+        except Exception as exc:  # noqa: BLE001
+            metrics.inc("dataset_routes_failed")
+            msg = redact_secrets(str(exc))[:400]
+            return {
+                **base,
+                "state": DatasetRouteState.ROUTE_FAILED.value,
+                "error_code": ERROR_DATASET_ROUTE_FAILED,
+                "error_message": msg,
+            }
 
     def retry_failed_children(self, container_source_id: str) -> IngestionProgress:
         members = self.ingestion.list_members(container_source_id, limit=2000)

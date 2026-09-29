@@ -61,6 +61,10 @@ class SourceIngestionSettings:
     secret_policy: str = "quarantine"  # quarantine | skip | redact
     worker_poll_interval: float = 0.5
     worker_concurrency: int = 1
+    archive_parse_concurrency: int = 2
+    archive_batch_size: int = 50
+    large_file_concurrency: int = 1
+    ocr_concurrency: int = 1
     lease_ttl_seconds: float = 60.0
     # Production default: fabric (Worker Fabric source_ingestion pool).
     # inprocess_test is TEST-ONLY and requires the mechanical allow gate.
@@ -89,6 +93,12 @@ class SourceIngestionSettings:
             raise ValueError("source_ingestion.max_nested_archive_depth must be >= 0")
         if self.worker_concurrency < 1:
             raise ValueError("source_ingestion.worker_concurrency must be >= 1")
+        if self.archive_parse_concurrency < 1:
+            raise ValueError("source_ingestion.archive_parse_concurrency must be >= 1")
+        if self.archive_batch_size < 1:
+            raise ValueError("source_ingestion.archive_batch_size must be >= 1")
+        if self.ocr_concurrency < 1:
+            raise ValueError("source_ingestion.ocr_concurrency must be >= 1")
         if self.secret_policy not in {"quarantine", "skip", "redact"}:
             raise ValueError("source_ingestion.secret_policy must be quarantine|skip|redact")
         if self.runner not in {
@@ -122,6 +132,10 @@ class SourceIngestionSettings:
             "secret_policy": self.secret_policy,
             "worker_poll_interval": self.worker_poll_interval,
             "worker_concurrency": self.worker_concurrency,
+            "archive_parse_concurrency": self.archive_parse_concurrency,
+            "archive_batch_size": self.archive_batch_size,
+            "large_file_concurrency": self.large_file_concurrency,
+            "ocr_concurrency": self.ocr_concurrency,
             "lease_ttl_seconds": self.lease_ttl_seconds,
             "runner": self.runner,
             "dataset_route_min_bytes": self.dataset_route_min_bytes,
@@ -170,6 +184,7 @@ def load_source_ingestion_settings(
         max_path_depth=_env_int("LEVIATHAN_SOURCE_INGESTION_MAX_PATH_DEPTH", 64),
         max_filename_length=_env_int("LEVIATHAN_SOURCE_INGESTION_MAX_FILENAME_LENGTH", 255),
         allow_7z=_env_bool("LEVIATHAN_SOURCE_INGESTION_ALLOW_7Z", False),
+        allow_rar=_env_bool("LEVIATHAN_SOURCE_INGESTION_ALLOW_RAR", False),
         allow_unknown_text=_env_bool("LEVIATHAN_SOURCE_INGESTION_ALLOW_UNKNOWN_TEXT", True),
         secret_policy=(
             os.environ.get("LEVIATHAN_SOURCE_INGESTION_SECRET_POLICY") or "quarantine"
@@ -177,6 +192,10 @@ def load_source_ingestion_settings(
         or "quarantine",
         worker_poll_interval=_env_float("LEVIATHAN_SOURCE_INGESTION_WORKER_POLL", 0.5),
         worker_concurrency=_env_int("LEVIATHAN_SOURCE_INGESTION_WORKER_CONCURRENCY", 1),
+        archive_parse_concurrency=_env_int("LEVIATHAN_SOURCE_INGESTION_ARCHIVE_PARSE_CONCURRENCY", 2),
+        archive_batch_size=_env_int("LEVIATHAN_SOURCE_INGESTION_ARCHIVE_BATCH_SIZE", 50),
+        large_file_concurrency=_env_int("LEVIATHAN_SOURCE_INGESTION_LARGE_FILE_CONCURRENCY", 1),
+        ocr_concurrency=_env_int("LEVIATHAN_SOURCE_INGESTION_OCR_CONCURRENCY", 1),
         lease_ttl_seconds=_env_float("LEVIATHAN_SOURCE_INGESTION_LEASE_TTL", 60.0),
         runner=runner,
         dataset_route_min_bytes=_env_int(

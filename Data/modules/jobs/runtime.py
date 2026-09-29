@@ -18,6 +18,7 @@ EXTERNAL_WORKER_CAPABILITIES: frozenset[str] = frozenset(
     {
         "source_ingestion.process",
         "source_ingestion.brain_retry",
+        "source_ingestion.ocr_continue",
         "ocr.extract",
         "document_ai.ocr",
         "document_ai.extract",

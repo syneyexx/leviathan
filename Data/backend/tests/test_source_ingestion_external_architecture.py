@@ -293,6 +293,8 @@ class SourceIngestionExternalOwnershipTests(unittest.TestCase):
     def test_document_ai_handler_fails_closed_no_fake_ocr(self) -> None:
         from Data.modules.workers.entrypoints import document_ai as dai
         from Data.modules.jobs.states import JobState
+        from Data.modules.documents.ocr_backend import ReadinessState, OcrReadiness
+        from unittest import mock
 
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -315,7 +317,18 @@ class SourceIngestionExternalOwnershipTests(unittest.TestCase):
             worker_pool="document_ai",
         )
         self.assertIsNotNone(claimed)
-        receipt = dai._handler({"job_store": store, "worker_id": "doc-ai-test"}, claimed)
+        with mock.patch(
+            "Data.modules.documents.ocr_backend.get_document_ai_backend"
+        ) as get_backend:
+            backend = mock.Mock()
+            backend.name.return_value = "missing"
+            backend.probe.return_value = OcrReadiness(
+                state=ReadinessState.UNAVAILABLE,
+                backend_name="missing",
+                failure_reason="OCR backend missing",
+            )
+            get_backend.return_value = backend
+            receipt = dai._handler({"job_store": store, "worker_id": "doc-ai-test"}, claimed)
         self.assertEqual(receipt.get("extracted_chars"), 0)
         self.assertIsNone(receipt.get("extracted_text"))
         self.assertIn(receipt.get("error_code"), {"OCR_UNAVAILABLE", "DOCUMENT_AI_UNAVAILABLE"})
