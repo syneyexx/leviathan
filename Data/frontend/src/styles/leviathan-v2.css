@@ -2659,6 +2659,8 @@
   font-size: 12px;
   color: var(--lv2-text-secondary);
   line-height: 1.5;
+  max-height: 140px;
+  overflow: auto;
 }
 
 .lv-v2-reason-card__body ul {
@@ -3035,12 +3037,31 @@
   transform: translateX(14px);
 }
 
-.lv-v2-code-block {
-  margin: 8px 0;
-  border-radius: 8px;
-  border: 1px solid var(--lv2-border);
-  background: rgba(2, 6, 23, 0.75);
-  overflow: auto;
+.lv-v2-msg__stack {
+  min-width: 0;
+  flex: 1;
+}
+
+.lv-v2-msg--user .lv-v2-msg__stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.lv-v2-msg--user .lv-v2-msg__meta {
+  text-align: right;
+}
+
+.lv-v2-chat-messages {
+  scroll-behavior: auto;
+}
+
+.lv-v2-thread {
+  margin-bottom: 2px;
+}
+
+.lv-v2-select-card {
+  min-height: 58px;
 }
 
 .lv-v2-code-block pre {

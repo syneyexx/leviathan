@@ -62,11 +62,13 @@ export function formatConversationTime(value: string | null | undefined, now = n
   if (Number.isNaN(date.getTime())) return "";
   const day = startOfDay(date);
   const today = startOfDay(now);
-  if (day >= today) {
-    return date.toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" });
-  }
-  if (day >= today - 86_400_000) {
-    return date.toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" });
+  const time = date.toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" });
+  if (day >= today) return time;
+  if (day >= today - 86_400_000) return time;
+  // Within the last 7 days: weekday + time (e.g. "zo 19:34")
+  if (day >= today - 7 * 86_400_000) {
+    const weekday = date.toLocaleDateString("nl-NL", { weekday: "short" });
+    return `${weekday} ${time}`;
   }
   return date.toLocaleDateString("nl-NL", { day: "numeric", month: "short" });
 }

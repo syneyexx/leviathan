@@ -247,6 +247,7 @@ export const CHAT_V2_VISUAL_FIXTURE = {
         memory_hits: 24,
         evidence_hits: 0,
         latency_ms: 800,
+        reasoning_elapsed_ms: 23000,
         verification_mode: "REQUIRED",
         verification_passed: true,
         usage: { tokens_per_second: 25, output_tokens: 420 },

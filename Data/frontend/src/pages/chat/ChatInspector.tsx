@@ -144,10 +144,14 @@ export function ChatInspector({
   const live = systemTelemetry?.truth?.measured === true;
 
   const gpuMeters =
-    systemTelemetry?.gpu?.devices?.map((d, i) => ({
-      label: `GPU ${d.index ?? i}`,
-      pct: meterPct(d.utilizationPct ?? dash?.gpuPct),
-    })) ?? [];
+    systemTelemetry?.gpu?.devices?.map((d, i) => {
+      const shortName = (d.name || "").replace(/^NVIDIA\s+/i, "").trim();
+      const idx = d.index ?? i;
+      return {
+        label: shortName ? `GPU ${idx} - ${shortName}` : `GPU ${idx}`,
+        pct: meterPct(d.utilizationPct ?? dash?.gpuPct),
+      };
+    }) ?? [];
 
   return (
     <aside

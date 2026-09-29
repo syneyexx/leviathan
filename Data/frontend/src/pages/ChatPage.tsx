@@ -188,6 +188,26 @@ function buildChatSidebarStatus(
     tone: mem?.available ? "info" : "muted",
   });
 
+  const gpus = telemetry?.gpu?.devices ?? [];
+  if (gpus.length && telemetry?.gpu?.available) {
+    let used = 0;
+    let total = 0;
+    let ok = false;
+    for (const g of gpus) {
+      if (g.vramUsedBytes != null && g.vramTotalBytes != null) {
+        used += g.vramUsedBytes;
+        total += g.vramTotalBytes;
+        ok = true;
+      }
+    }
+    rows.push({
+      id: "vram",
+      label: "VRAM Total",
+      value: ok ? `${formatBytes(used)} / ${formatBytes(total)}` : "UNMEASURED",
+      tone: ok ? "info" : "muted",
+    });
+  }
+
   return rows;
 }
 
@@ -1075,6 +1095,7 @@ export function ChatPage() {
             onSearchChange={setSearchQuery}
             drawerOpen={historyDrawerOpen}
             searchInputRef={historySearchRef}
+            now={frozen ?? undefined}
           />
 
           <div className="lv-v2-chat-col lv-v2-chat-center">
@@ -1085,6 +1106,11 @@ export function ChatPage() {
                 cognitionPhase: lastTurn.cognitionPhase,
                 streaming: lastTurn.streaming,
                 telemetry: lastTurn.telemetry,
+                reasoningElapsedMs:
+                  typeof (lastTurn.telemetry as { reasoning_elapsed_ms?: number } | null)
+                    ?.reasoning_elapsed_ms === "number"
+                    ? (lastTurn.telemetry as { reasoning_elapsed_ms?: number }).reasoning_elapsed_ms
+                    : null,
               }}
             />
             <ChatComposer
@@ -1102,7 +1128,7 @@ export function ChatPage() {
               capabilities={capabilities}
               contextWindow={contextWindow}
               selectedModelId={selectedModelId}
-              quickPrompts={QUICK_PROMPTS}
+              quickPrompts={messages.length === 0 ? QUICK_PROMPTS : []}
               textareaRef={composerRef}
             />
             {diagnosticStrip.length > 0 || teamPanel || runtimeMeta ? (

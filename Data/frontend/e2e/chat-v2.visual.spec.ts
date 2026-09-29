@@ -55,6 +55,18 @@ test.describe("Chat V2 visual", () => {
     await expect(page.getByText("NVIDIA Runtime Docs")).toBeVisible();
     await expect(page.getByPlaceholder("Stel een vraag aan Hades AI...")).toBeVisible();
 
+    // Fixture conversation must hydrate before screenshot so quick prompts stay hidden
+    // and date groups resolve against frozen now (Vandaag / Gisteren / Vorige 7 dagen).
+    await expect(page.locator(".lv-v2-msg")).toHaveCount(2, { timeout: 15_000 });
+    await expect(page.locator(".lv-v2-quick-prompts")).toHaveCount(0);
+    await expect(page.locator(".lv-v2-chat-group__label")).toHaveText([
+      /Vandaag/i,
+      /Gisteren/i,
+      /Vorige 7 dagen/i,
+    ]);
+    await expect(page.getByText("GPU 0 - GTX 1060").first()).toBeVisible();
+    await expect(page.getByText("GPU 1 - RTX 5060 Ti").first()).toBeVisible();
+
     await page.waitForTimeout(600);
 
     await expect(page).toHaveScreenshot("chat-v2-1664x936.png", {

@@ -18,6 +18,8 @@ export type ConversationHistoryPanelProps = {
   /** Mobile drawer open — adds is-drawer-open for CSS. */
   drawerOpen?: boolean;
   searchInputRef?: RefObject<HTMLInputElement | null>;
+  /** Injected clock (visual tests / frozen now). */
+  now?: Date;
 };
 
 export function ConversationHistoryPanel({
@@ -31,6 +33,7 @@ export function ConversationHistoryPanel({
   onSearchChange,
   drawerOpen = false,
   searchInputRef,
+  now,
 }: ConversationHistoryPanelProps) {
   const [localQuery, setLocalQuery] = useState("");
   const query = searchQuery ?? localQuery;
@@ -42,7 +45,10 @@ export function ConversationHistoryPanel({
     return conversations.filter((item) => item.title.toLowerCase().includes(q));
   }, [conversations, query]);
 
-  const groups = useMemo(() => groupConversationsByDate(filtered), [filtered]);
+  const groups = useMemo(
+    () => groupConversationsByDate(filtered, now ?? new Date()),
+    [filtered, now],
+  );
 
   return (
     <aside
@@ -116,9 +122,12 @@ export function ConversationHistoryPanel({
                     </span>
                     <span>
                       <span className="lv-v2-thread__title">{item.title || "Zonder titel"}</span>
+                      {item.pinned ? (
+                        <span className="lv-v2-thread__preview">Vastgezet</span>
+                      ) : null}
                     </span>
                     <span className="lv-v2-thread__time">
-                      {formatConversationTime(item.updated_at || item.created_at)}
+                      {formatConversationTime(item.updated_at || item.created_at, now ?? new Date())}
                     </span>
                   </button>
                 );

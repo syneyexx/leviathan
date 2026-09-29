@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { media } from "../../assets/media";
 import type {
   AssistantTurnTelemetry,
@@ -20,6 +20,8 @@ export type MessageListLastTurn = {
   cognitionPhase?: string | null;
   streaming?: "idle" | "streaming" | "degraded" | "complete" | "failed";
   telemetry?: AssistantTurnTelemetry | null;
+  /** Optional measured reasoning elapsed (ms) — never invent. */
+  reasoningElapsedMs?: number | null;
 };
 
 export type MessageListProps = {
@@ -38,15 +40,40 @@ function formatElapsed(ms: number | null | undefined): string | null {
   return `${Math.round(ms)} ms`;
 }
 
+/** Minimal safe inline formatting: **bold** + newlines. No HTML injection. */
+function renderPlainContent(content: string): ReactNode {
+  const lines = content.split("\n");
+  return lines.map((line, lineIdx) => {
+    const parts: ReactNode[] = [];
+    const re = /\*\*(.+?)\*\*/g;
+    let last = 0;
+    let match: RegExpExecArray | null;
+    let key = 0;
+    while ((match = re.exec(line)) != null) {
+      if (match.index > last) parts.push(line.slice(last, match.index));
+      parts.push(<strong key={`b-${lineIdx}-${key++}`}>{match[1]}</strong>);
+      last = match.index + match[0].length;
+    }
+    if (last < line.length) parts.push(line.slice(last));
+    return (
+      <span key={`l-${lineIdx}`}>
+        {lineIdx > 0 ? "\n" : null}
+        {parts.length ? parts : line}
+      </span>
+    );
+  });
+}
+
 function ReasoningCard({ lastTurn }: { lastTurn: MessageListLastTurn }) {
   const steps = lastTurn.reasoning?.steps?.filter(Boolean) ?? [];
   const [open, setOpen] = useState(steps.length > 0);
   const summary =
-    lastTurn.reasoning?.intent ||
-    lastTurn.reasoning?.complexity ||
     lastTurn.cognitionPhase ||
+    (lastTurn.reasoning?.complexity === "deep"
+      ? "Stap-voor-stap analyse"
+      : lastTurn.reasoning?.complexity) ||
     null;
-  const elapsed = formatElapsed(lastTurn.telemetry?.latency_ms ?? null);
+  const elapsed = formatElapsed(lastTurn.reasoningElapsedMs ?? null);
   const streaming = lastTurn.streaming === "streaming";
 
   const metaParts: string[] = [];
@@ -54,7 +81,6 @@ function ReasoningCard({ lastTurn }: { lastTurn: MessageListLastTurn }) {
     metaParts.push(`${steps.length} stap${steps.length === 1 ? "" : "pen"}`);
   }
   if (elapsed) metaParts.push(elapsed);
-  if (lastTurn.cognitionPhase) metaParts.push(lastTurn.cognitionPhase);
 
   const hasBody = Boolean(summary || steps.length > 0);
   if (!hasBody && !streaming) return null;
@@ -86,7 +112,7 @@ function ReasoningCard({ lastTurn }: { lastTurn: MessageListLastTurn }) {
               ))}
             </ul>
           ) : (
-            <p className="lv-v2-muted" style={{ margin: "6px 0 0", fontSize: 12 }}>
+            <p style={{ margin: "6px 0 0", fontSize: 12, opacity: 0.7 }}>
               Geen redeneerstappen geleverd door de backend.
             </p>
           )}
@@ -104,6 +130,8 @@ export function MessageList({
 }: MessageListProps) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [nearBottom, setNearBottom] = useState(true);
+  const hydratedRef = useRef(false);
+  const prevLenRef = useRef(0);
 
   function measureNearBottom(el: HTMLDivElement): boolean {
     return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -118,8 +146,24 @@ export function MessageList({
 
   useEffect(() => {
     const el = scrollerRef.current;
-    if (!el || !nearBottom) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
+    if (!el) return;
+
+    // First paint of a loaded conversation: keep top so user+assistant share the viewport.
+    if (!hydratedRef.current && messages.length > 0) {
+      hydratedRef.current = true;
+      prevLenRef.current = messages.length;
+      if (lastTurn?.streaming !== "streaming") {
+        el.scrollTo({ top: 0, behavior: "auto" });
+        setNearBottom(measureNearBottom(el));
+        return;
+      }
+    }
+
+    const grew = messages.length > prevLenRef.current;
+    prevLenRef.current = messages.length;
+    if ((grew || lastTurn?.streaming === "streaming") && nearBottom) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
+    }
   }, [messages, lastTurn?.streaming, nearBottom]);
 
   return (
@@ -131,9 +175,9 @@ export function MessageList({
       }}
     >
       {messages.length === 0 ? (
-        <div className="lv-v2-empty" role="status">
+        <div className="lv-v2-chat-empty" role="status">
           <strong>{emptyTitle}</strong>
-          <p>{emptyDetail}</p>
+          <span>{emptyDetail}</span>
         </div>
       ) : (
         messages.map((message, index) => {
@@ -163,7 +207,7 @@ export function MessageList({
                   HA
                 </span>
               )}
-              <div>
+              <div className="lv-v2-msg__stack">
                 {message.role === "assistant" ? (
                   <div className="lv-v2-msg__identity">Hades AI</div>
                 ) : null}
@@ -173,7 +217,7 @@ export function MessageList({
                     message.error ? " is-error" : ""
                   }`}
                 >
-                  {message.content}
+                  {renderPlainContent(message.content)}
                 </div>
                 {showTools ? (
                   <CapabilityResultCards toolCalls={lastTurn?.telemetry?.tool_calls} />
