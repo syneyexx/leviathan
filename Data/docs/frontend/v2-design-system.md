@@ -74,7 +74,7 @@ Media Control, Plugin & Runtime, Coding Agent, and other deep links remain regis
 ## Brain migration
 
 - `/brain` uses `AppShell variant="v2"` with the shared `AppSidebarV2` / `AppTopbarV2`.
-- DNA double-helix network (`BrainDnaNetwork` + `brain-dna-layout`) is the default Graph visualization; Celestial / Technical / Tree / Timeline / Clusters / Analytics remain under the advanced graph surface.
+- DNA double-helix network (`BrainDnaNetwork` + `BrainLivingNetworkCanvas` + `brain-helix-engine` / legacy `brain-dna-layout`) is the default Graph visualization inside **Kennis Netwerk**, with Relaties mode and Research Workbench tabs; Celestial / Technical / Tree / Timeline / Clusters / Analytics remain under the advanced graph surface.
 - Research group children are adapted from `MAIN_MENU` via `v2ChildrenFromMainMenu` — one canonical route source, V2 presentation only.
 - No page-local Brain V2 CSS file; styles live in `leviathan-v2.css` under knowledge-network sections.
 - Visual fixture: `src/mocks/brainV2VisualFixture.ts` + `e2e/brain-v2.visual.spec.ts` (reference: `docs/ui_reference/brain-v2-reference.png`).

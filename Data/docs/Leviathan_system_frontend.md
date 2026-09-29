@@ -360,6 +360,11 @@ These are intentionally distinct backend concepts.
 
 `src/pages/BrainPage.tsx` composes:
 
+- `components/brain/BrainNetworkSection.tsx` — **Kennis Netwerk** Panel (`BrainDnaNetwork` + workbench) beside **Geselecteerde Node**; shared `overview.setSelectedId`;
+- `pages/brain/BrainLivingNetworkCanvas.tsx` — Canvas 2D double-helix / Relaties mode (refs + rAF; keyboard index for a11y);
+- `pages/brain/BrainNetworkWorkbench.tsx` — Bewijs / Kennishiaten / Vergelijken / Agents / Wijzigingen / Bewaren inside `.lv-v2-brain-network-panel`;
+- `pages/brain/brain-helix-engine.ts` / `brain-activation.ts` / `brain-knowledge-model.ts` — pure layout, Chat→Brain activation projection, gap/evidence helpers (no mock demo data);
+- `hooks/useKnowledgeActivation.ts` — projects `brain.knowledge_activation` runtime events (SSE `/api/events/stream`);
 - `pages/brain/BrainGraphCanvas.tsx` — technical graph with hover labels for node identity/type/cluster (no detached promo badges);
 - Celestial Nexus / `BrainSpaceCanvas.tsx` — live celestial visualization with intentionally slower orbital/ambient motion for readability;
 - `BrainTreeView.tsx` — hierarchy;
@@ -371,7 +376,13 @@ These are intentionally distinct backend concepts.
 - `brain-shared.tsx` — shared contracts/components;
 - explicitly named mock support for tests/reference only.
 
-Current graph views are backed by `/api/brain/graph`; selection/filter state remains under BrainPage ownership. Hover labels are graph-native (title/type/cluster), not floating marketing chips.
+Current graph views are backed by `/api/brain/graph`; selection/filter state remains under BrainPage / `useBrainOverview` ownership. Hover labels are graph-native (title/type/cluster), not floating marketing chips.
+
+### Chat → Brain knowledge activation
+
+When chat retrieval completes with document/memory ids, the backend emits observability event `brain.knowledge_activation` (`Data/modules/brain/activation_events.py`) with `node_ids` mapped to Brain facade ids (`knowledge:document:…`, `memory:…`), plus `request_id` / `conversation_id` / `run_id` / `hit_count` / `identifiers_available`. Hit counts alone never light nodes — Brain shows “Geen node-identificatie beschikbaar”. Open `/chat` and `/brain` in separate tabs; Brain follows live events without manual refresh. Multiple concurrent requests are selectable in the Kennis Netwerk status strip.
+
+Historical graph snapshots are **not** reconstructed from `created_at`. Workbench history tab states unavailability honestly until a real snapshot contract exists.
 
 ## Memory — `/memory`
 

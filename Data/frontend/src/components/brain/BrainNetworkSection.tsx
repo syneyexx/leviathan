@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import type { BrainOverview } from "../../hooks/useBrainOverview";
+import { useKnowledgeActivation } from "../../hooks/useKnowledgeActivation";
 import { formatDateTime, prettyTypeLabel } from "../../hooks/useBrainOverview";
 import { categoryLabel, categoryForNode } from "../../pages/brain/brain-categories";
 import { BrainDnaNetwork } from "../../pages/brain/BrainDnaNetwork";
@@ -47,7 +48,10 @@ export function BrainNetworkSection({ overview }: Props) {
     graphError,
     graphLoading,
     refresh,
+    graphTruth,
   } = overview;
+
+  const { activation, followRequest } = useKnowledgeActivation({ enabled: true });
 
   const confidenceValue = selectedConfidence ?? (selected ? relevancePct : null);
   const confidenceLabel = selectedConfidenceLabel ?? "Relevantie";
@@ -64,6 +68,9 @@ export function BrainNetworkSection({ overview }: Props) {
       : selected?.created_at
         ? formatDateTime(selected.created_at)
         : "—";
+
+  const truncated = Boolean(graphTruth?.bounded_projection);
+  const maxNodes = 250;
 
   return (
     <section className="lv-v2-brain-core" aria-label="Kennisnetwerk">
@@ -94,6 +101,11 @@ export function BrainNetworkSection({ overview }: Props) {
           loading={graphLoading}
           error={graphError}
           onRetry={() => void refresh()}
+          activation={activation}
+          onFollowRequest={followRequest}
+          graphTruncated={truncated}
+          graphMaxNodes={maxNodes}
+          searchQuery={overview.q}
         />
       </Panel>
 
