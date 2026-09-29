@@ -5,8 +5,8 @@
   "baseline_sha": "35174d88edcccd87e7f40d34651ae2cc9bcc7abb",
   "program_authored_main_sha": "e0a5999ac6e12e617ed4392042d51a5cfec372b8",
   "main_moved_since_program_authorship": true,
-  "final_sha": "2007043745aeae121ab40802b783af7157fdccb8",
-  "final_tree": "ec9a1463e7eeb38c54f04406a2fd961dbc845449",
+  "final_sha": "c73d95ea1ea03dd9765cfefc273877d6b169c5eb",
+  "final_tree": "bf26d90d50773a75745fd2fd888ad8d1b0938748",
   "branch": "cursor/institutional-hardening-e3ae",
   "pr": "https://github.com/syneyexx/leviathan/pull/227",
   "dirty_at_strict_run": false,
@@ -102,5 +102,5 @@
   "verdict_explanation": "Backend CI green; frontend/launcher green; strict trading required gates PASS on clean tree. Live trading BLOCKED. Frontier R01-R30 and live-external credentials remain honest gaps.",
   "strict_trading_report": "Data/backend/tests/trading_completion_report.json",
   "strict_trading_verified_tree": "5e1b51f3f5d74c4c1065c0bc1549a40fad0393e4",
-  "evidence_commit_sha": "2007043745aeae121ab40802b783af7157fdccb8"
+  "evidence_commit_sha": "c73d95ea1ea03dd9765cfefc273877d6b169c5eb"
 }

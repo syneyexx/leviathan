@@ -16,7 +16,7 @@ Backend full suite green. Frontend and launcher gates pass. **Strict trading ver
 
 Strict trading verified on clean tree: `3104cfb4815f7d5404393dcbe8621f4d89928bae`
 
-Evidence commit tip: `2007043745aeae121ab40802b783af7157fdccb8`
+Evidence commit tip: `c73d95ea1ea03dd9765cfefc273877d6b169c5eb`
 
 ## FILES CHANGED
 
