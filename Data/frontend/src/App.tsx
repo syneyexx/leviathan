@@ -14,9 +14,11 @@ import {
 } from "./pages/pixel";
 import { DatasetsPage } from "./pages/DatasetsPage";
 import { ModelsPage } from "./pages/ModelsPage";
+import { EvaluationsPage } from "./pages/EvaluationsPage";
 import { EvidenceVaultPage } from "./pages/EvidenceVaultPage";
 import { GeheugenPage } from "./pages/GeheugenPage";
 import { KnowledgeLibraryPage } from "./pages/KnowledgeLibraryPage";
+import { PromptsPage } from "./pages/PromptsPage";
 import { FacebookPage } from "./pages/media/FacebookPage";
 import { InstagramPage } from "./pages/media/InstagramPage";
 import { MediaCalendarPage } from "./pages/media/MediaCalendarPage";
@@ -87,6 +89,8 @@ export default function App() {
       <Route path="/status" element={<Navigate to="/tasks" replace />} />
       <Route path="/tasks" element={<TasksPage />} />
       <Route path="/chat" element={<ChatPage />} />
+      <Route path="/prompts" element={<PromptsPage />} />
+      <Route path="/evaluations" element={<EvaluationsPage />} />
       <Route path="/coding" element={<CodingPage />} />
 
       <Route path="/models" element={<ModelsPage />} />

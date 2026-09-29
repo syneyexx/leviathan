@@ -78,16 +78,6 @@ export function formatMessageTime(value: string | null | undefined): string {
   return date.toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" });
 }
 
-export function formatParamCount(n: number | null | undefined): string | null {
-  if (n == null || !Number.isFinite(n) || n <= 0) return null;
-  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(n % 1_000_000_000 === 0 ? 0 : 1)}B`;
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}B`.replace("B", "B");
-  // Prefer 14B style for billions already handled; millions → e.g. 14B if stored as params
-  if (n >= 1_000_000) return `${Math.round(n / 1_000_000)}B`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(n % 1_000 === 0 ? 0 : 1)}K`;
-  return String(n);
-}
-
 /** Format parameter counts for model cards (e.g. 14B). */
 export function formatModelParams(n: number | null | undefined): string | null {
   if (n == null || !Number.isFinite(n) || n <= 0) return null;
@@ -104,6 +94,11 @@ export function formatModelParams(n: number | null | undefined): string | null {
     return `${Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1)}K`;
   }
   return String(n);
+}
+
+/** @deprecated Prefer formatModelParams — kept as a thin alias. */
+export function formatParamCount(n: number | null | undefined): string | null {
+  return formatModelParams(n);
 }
 
 export function formatTokenCount(n: number | null | undefined): string {

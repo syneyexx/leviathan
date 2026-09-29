@@ -21,6 +21,8 @@ export type ChatInspectorProps = {
   verification?: string | null;
   systemTelemetry?: SystemTelemetryResponse | null;
   lastTurnTelemetry?: AssistantTurnTelemetry | null;
+  /** Mobile drawer open — adds is-drawer-open for CSS. */
+  drawerOpen?: boolean;
 };
 
 function trustTone(verification: string | null | undefined): {
@@ -115,6 +117,7 @@ export function ChatInspector({
   verification = null,
   systemTelemetry = null,
   lastTurnTelemetry = null,
+  drawerOpen = false,
 }: ChatInspectorProps) {
   const [showSources, setShowSources] = useState(true);
 
@@ -131,6 +134,9 @@ export function ChatInspector({
       ? "UNMEASURED"
       : `${Math.round(memoryCount)} item${Math.round(memoryCount) === 1 ? "" : "s"}`;
 
+  const preferencesDisplay = preferencesLabel?.trim() || "Niet beschikbaar";
+  const projectDisplay = projectContext?.trim() || "Geen projectcontext";
+
   const trust = trustTone(verification);
   const dash = systemTelemetry?.dashboard;
   const latency = lastTurnTelemetry?.latency_ms ?? null;
@@ -144,7 +150,12 @@ export function ChatInspector({
     })) ?? [];
 
   return (
-    <aside className="lv-v2-chat-col lv-v2-inspector" aria-label="Context inspector">
+    <aside
+      className={`lv-v2-chat-col lv-v2-chat-col--inspector lv-v2-inspector${
+        drawerOpen ? " is-drawer-open" : ""
+      }`}
+      aria-label="Context inspector"
+    >
       <section className="lv-v2-inspector-card" aria-labelledby="inspector-context-title">
         <div className="lv-v2-inspector-card__head">
           <h3 className="lv-v2-inspector-card__title" id="inspector-context-title">
@@ -164,11 +175,11 @@ export function ChatInspector({
         </div>
         <div className="lv-v2-inspector-row">
           <span className="lv-v2-inspector-row__label">Gebruikersvoorkeuren</span>
-          <span className="lv-v2-inspector-row__value">{preferencesLabel?.trim() || "UNMEASURED"}</span>
+          <span className="lv-v2-inspector-row__value">{preferencesDisplay}</span>
         </div>
         <div className="lv-v2-inspector-row">
           <span className="lv-v2-inspector-row__label">Project context</span>
-          <span className="lv-v2-inspector-row__value">{projectContext?.trim() || "UNMEASURED"}</span>
+          <span className="lv-v2-inspector-row__value">{projectDisplay}</span>
         </div>
       </section>
 

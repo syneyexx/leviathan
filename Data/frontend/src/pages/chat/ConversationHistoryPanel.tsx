@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type RefObject } from "react";
 import { EmptyState, LoadingState } from "../../components/ui";
 import type { Conversation } from "../../types/api";
 import {
@@ -15,6 +15,9 @@ export type ConversationHistoryPanelProps = {
   creating?: boolean;
   searchQuery?: string;
   onSearchChange?: (query: string) => void;
+  /** Mobile drawer open — adds is-drawer-open for CSS. */
+  drawerOpen?: boolean;
+  searchInputRef?: RefObject<HTMLInputElement | null>;
 };
 
 export function ConversationHistoryPanel({
@@ -26,6 +29,8 @@ export function ConversationHistoryPanel({
   creating = false,
   searchQuery,
   onSearchChange,
+  drawerOpen = false,
+  searchInputRef,
 }: ConversationHistoryPanelProps) {
   const [localQuery, setLocalQuery] = useState("");
   const query = searchQuery ?? localQuery;
@@ -40,7 +45,10 @@ export function ConversationHistoryPanel({
   const groups = useMemo(() => groupConversationsByDate(filtered), [filtered]);
 
   return (
-    <aside className="lv-v2-chat-col" aria-label="Gesprekshistorie">
+    <aside
+      className={`lv-v2-chat-col lv-v2-chat-col--history${drawerOpen ? " is-drawer-open" : ""}`}
+      aria-label="Gesprekshistorie"
+    >
       <div className="lv-v2-chat-col__head">
         <h2 className="lv-v2-chat-col__title">Gesprekshistorie</h2>
       </div>
@@ -53,6 +61,7 @@ export function ConversationHistoryPanel({
           </svg>
           <span className="lv-v2-sr-only">Zoek gesprekken</span>
           <input
+            ref={searchInputRef}
             type="search"
             placeholder="Zoek gesprekken..."
             value={query}
