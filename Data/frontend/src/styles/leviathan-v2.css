@@ -1399,6 +1399,7 @@
   stroke-linecap: round;
   stroke-linejoin: round;
   opacity: 0.95;
+  pointer-events: none;
 }
 
 .lv-v2-dna__helix--glow {
@@ -1406,6 +1407,7 @@
   stroke-width: 6.5;
   opacity: 0.18;
   filter: none;
+  pointer-events: none;
 }
 
 .lv-v2-dna__helix--a {
@@ -1437,6 +1439,7 @@
   fill: none;
   stroke: #22d3ee;
   stroke-width: 1.15;
+  pointer-events: none;
 }
 
 .lv-v2-dna__edge--rung {

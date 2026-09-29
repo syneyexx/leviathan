@@ -377,7 +377,7 @@ export function BrainDnaNetwork({
                   );
                 });
                 return (
-                  <g key={edge.id}>
+                  <g key={edge.id} pointerEvents="none">
                     <line
                       className="lv-v2-dna__edge lv-v2-dna__edge--rung"
                       x1={a.x}
@@ -425,6 +425,8 @@ export function BrainDnaNetwork({
                   onMouseEnter={() => setHoverId(node.id)}
                   onMouseLeave={() => setHoverId((id) => (id === node.id ? null : id))}
                 >
+                  {/* Invisible hit target so rungs/beads never steal clicks */}
+                  <circle className="lv-v2-dna-node__hit" r={Math.max(node.r + 8, 14)} fill="transparent" />
                   {node.focal || selected ? (
                     <circle
                       className="lv-v2-dna-node__halo"
