@@ -104,6 +104,45 @@ function visualFixtureNow(): Date | undefined {
   return Number.isNaN(d.getTime()) ? undefined : d;
 }
 
+type ChatVisualFixtureUi = {
+  activeConversationId?: string;
+  selectedModelId?: string | null;
+  reasoningMode?: "auto" | "fast" | "deep";
+  collaborationStrategy?: "direct" | "team";
+  lastTurn?: LastTurnMeta;
+};
+
+function readChatVisualFixtureUi(): ChatVisualFixtureUi | null {
+  if (typeof window === "undefined") return null;
+  const w = window as Window & {
+    __LV_V2_VISUAL_FIXTURE__?: boolean;
+    __LV_CHAT_V2_FIXTURE_UI__?: ChatVisualFixtureUi;
+  };
+  if (!w.__LV_V2_VISUAL_FIXTURE__ || !w.__LV_CHAT_V2_FIXTURE_UI__) return null;
+  return w.__LV_CHAT_V2_FIXTURE_UI__;
+}
+
+function applyChatVisualFixtureUi(
+  fixtureUi: ChatVisualFixtureUi,
+  setters: {
+    setSelectedModelId: (id: string | null) => void;
+    setReasoningMode: (mode: "auto" | "fast" | "deep") => void;
+    setCollaborationStrategy: (strategy: "direct" | "team") => void;
+    setLastTurn: (turn: LastTurnMeta) => void;
+  },
+): void {
+  if (fixtureUi.selectedModelId !== undefined) {
+    setters.setSelectedModelId(fixtureUi.selectedModelId);
+  }
+  if (fixtureUi.reasoningMode) setters.setReasoningMode(fixtureUi.reasoningMode);
+  if (fixtureUi.collaborationStrategy) {
+    setters.setCollaborationStrategy(fixtureUi.collaborationStrategy);
+  }
+  if (fixtureUi.lastTurn) {
+    setters.setLastTurn({ ...EMPTY_TURN, ...fixtureUi.lastTurn });
+  }
+}
+
 function buildChatSidebarStatus(
   health: HealthResponse | null,
   telemetry: ReturnType<typeof useSystemTelemetry>["sample"],
@@ -455,7 +494,11 @@ export function ChatPage() {
         if (cancelled) return;
         setConversations(listed.conversations);
 
-        const deepLinkId = searchParams.get("conversation");
+        const fixtureUi = readChatVisualFixtureUi();
+        const deepLinkId =
+          searchParams.get("conversation") ||
+          (fixtureUi?.activeConversationId ? String(fixtureUi.activeConversationId) : null);
+
         if (deepLinkId) {
           try {
             await loadConversation(deepLinkId, listed.conversations);
@@ -478,6 +521,16 @@ export function ChatPage() {
           await loadConversation(listed.conversations[0].id, listed.conversations);
         } else {
           await createConversation();
+        }
+
+        // TEST-ONLY: hydrate Screen 1 visual fixture controls + last-turn inspector.
+        if (!cancelled && fixtureUi) {
+          applyChatVisualFixtureUi(fixtureUi, {
+            setSelectedModelId,
+            setReasoningMode,
+            setCollaborationStrategy,
+            setLastTurn,
+          });
         }
       } catch (error) {
         if (cancelled) return;

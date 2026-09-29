@@ -27,8 +27,9 @@ test.describe("Dashboard V2 visual", () => {
     await expect(page.locator(".lv-v2")).toBeVisible({ timeout: 20_000 });
     await expect(page.locator(".lv-v2-nav-group.is-open")).toBeVisible();
     await expect(page.locator(".lv-v2-nav-child.is-active")).toContainText("Dashboard");
-    await expect(page.getByRole("link", { name: "Chat", exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: "Taken", exact: true })).toBeVisible();
+    // Chat moved under Hades AI (Chat V2 Screen 1); still reachable from that group.
+    await expect(page.getByRole("navigation", { name: "Hoofdmenu" }).getByRole("button", { name: /Hades AI/i })).toBeVisible();
 
     await expect(page.getByRole("heading", { name: "Welkom bij Leviathan" })).toBeVisible();
     await expect(page.getByText("Systeem Status")).toBeVisible();
@@ -56,11 +57,13 @@ test.describe("Dashboard V2 visual", () => {
     expect(errors, `console/page errors: ${errors.join(" | ")}`).toEqual([]);
   });
 
-  test("/chat keeps Dashboard group open with Chat active", async ({ page }) => {
+  test("/chat keeps Hades AI group open with Chat active", async ({ page }) => {
     await installDashboardV2VisualFixture(page);
     await page.goto("/chat");
     await expect(page.locator(".lv-v2")).toBeVisible({ timeout: 20_000 });
-    await expect(page.locator(".lv-v2-nav-group.is-open")).toBeVisible();
+    await expect(page.locator(".lv-v2-nav-group.is-open .lv-v2-nav-item__label")).toContainText(
+      "Hades AI",
+    );
     await expect(page.locator(".lv-v2-nav-child.is-active")).toContainText("Chat");
   });
 

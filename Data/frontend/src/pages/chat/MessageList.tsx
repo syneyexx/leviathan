@@ -39,8 +39,8 @@ function formatElapsed(ms: number | null | undefined): string | null {
 }
 
 function ReasoningCard({ lastTurn }: { lastTurn: MessageListLastTurn }) {
-  const [open, setOpen] = useState(false);
   const steps = lastTurn.reasoning?.steps?.filter(Boolean) ?? [];
+  const [open, setOpen] = useState(steps.length > 0);
   const summary =
     lastTurn.reasoning?.intent ||
     lastTurn.reasoning?.complexity ||

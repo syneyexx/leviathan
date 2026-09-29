@@ -10,33 +10,70 @@ import {
 
 const dashboard = V2_PRIMARY_NAV.find((item) => item.id === "dashboard");
 const research = V2_PRIMARY_NAV.find((item) => item.id === "research");
+const hades = V2_PRIMARY_NAV.find((item) => item.id === "hades");
 
 describe("v2Nav dashboard group", () => {
-  it("marks dashboard group active on /, /chat, and /tasks", () => {
+  it("marks dashboard group active on / and /tasks, not /chat", () => {
     expect(dashboard).toBeDefined();
     if (!dashboard) return;
     expect(isV2NavItemActive(dashboard, "/")).toBe(true);
-    expect(isV2NavItemActive(dashboard, "/chat")).toBe(true);
     expect(isV2NavItemActive(dashboard, "/tasks")).toBe(true);
+    expect(isV2NavItemActive(dashboard, "/chat")).toBe(false);
     expect(isV2NavItemActive(dashboard, "/agents")).toBe(false);
   });
 
-  it("findActiveV2Child resolves home, chat, and tasks", () => {
+  it("findActiveV2Child resolves home and tasks", () => {
     expect(dashboard).toBeDefined();
     if (!dashboard) return;
     expect(findActiveV2Child(dashboard, "/")?.id).toBe("dashboard-home");
-    expect(findActiveV2Child(dashboard, "/chat")?.id).toBe("chat");
     expect(findActiveV2Child(dashboard, "/tasks")?.id).toBe("taken");
     expect(findActiveV2Child(dashboard, "/tasks/123")?.id).toBe("taken");
+    expect(findActiveV2Child(dashboard, "/chat")).toBeNull();
   });
 
   it("shouldAutoExpandV2Group expands dashboard on its match prefixes", () => {
     expect(dashboard).toBeDefined();
     if (!dashboard) return;
     expect(shouldAutoExpandV2Group(dashboard, "/")).toBe(true);
-    expect(shouldAutoExpandV2Group(dashboard, "/chat")).toBe(true);
     expect(shouldAutoExpandV2Group(dashboard, "/tasks")).toBe(true);
+    expect(shouldAutoExpandV2Group(dashboard, "/chat")).toBe(false);
     expect(shouldAutoExpandV2Group(dashboard, "/research")).toBe(false);
+  });
+});
+
+describe("v2Nav Hades AI group", () => {
+  it("is expandable with Screen 1 children", () => {
+    expect(hades).toBeDefined();
+    if (!hades) return;
+    expect(hades.expandable).toBe(true);
+    expect(hades.children?.map((c) => c.label)).toEqual([
+      "Chat",
+      "Reasoning",
+      "Agents",
+      "Bibliotheek",
+      "Prompts",
+      "Evaluations",
+    ]);
+  });
+
+  it("marks Hades active on chat/cognition/prompts/evaluations", () => {
+    expect(hades).toBeDefined();
+    if (!hades) return;
+    expect(isV2NavItemActive(hades, "/chat")).toBe(true);
+    expect(isV2NavItemActive(hades, "/cognition")).toBe(true);
+    expect(isV2NavItemActive(hades, "/prompts")).toBe(true);
+    expect(isV2NavItemActive(hades, "/evaluations")).toBe(true);
+    expect(isV2NavItemActive(hades, "/")).toBe(false);
+    expect(isV2NavItemActive(hades, "/agents")).toBe(false);
+  });
+
+  it("auto-expands on /chat and marks Chat child active", () => {
+    expect(hades).toBeDefined();
+    if (!hades) return;
+    expect(shouldAutoExpandV2Group(hades, "/chat")).toBe(true);
+    expect(findActiveV2Child(hades, "/chat")?.id).toBe("chat");
+    expect(findActiveV2Child(hades, "/cognition")?.label).toBe("Reasoning");
+    expect(findActiveV2Child(hades, "/prompts")?.label).toBe("Prompts");
   });
 });
 

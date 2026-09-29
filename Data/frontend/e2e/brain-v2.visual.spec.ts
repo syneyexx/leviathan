@@ -82,8 +82,10 @@ test.describe("Brain V2 visual", () => {
     await expect(page.locator(".lv-v2")).toBeVisible({ timeout: 20_000 });
     await expect(page.locator(".lv-v2-nav-group.is-open")).toBeVisible();
     await expect(page.locator(".lv-v2-nav-child.is-active")).toContainText("Dashboard");
-    await expect(page.getByRole("link", { name: "Chat", exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: "Taken", exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("navigation", { name: "Hoofdmenu" }).getByRole("button", { name: /Hades AI/i }),
+    ).toBeVisible();
   });
 });
 
