@@ -107,6 +107,86 @@ class MarketSimControlPlane:
         from .portefeuille.service import PortfolioService
 
         self.portfolios = PortfolioService(store, providers=self.providers, plane=self)
+        self.trading_context_fabric: Any | None = None
+        self.fincept_bridge: Any | None = None
+        self.module_manager: Any | None = None
+
+    def ensure_trading_context_fabric(self) -> Any:
+        """Lazy ONE TradingContextFabric over existing MarketSim owners."""
+        if self.trading_context_fabric is not None:
+            return self.trading_context_fabric
+        from .trading_context import TradingContextFabric
+
+        role_knowledge = None
+        trading_brain = getattr(self.brain, "trading_brain_adapter", None)
+        if trading_brain is not None:
+            try:
+                from .role_knowledge import RoleAwareTradingKnowledge
+
+                role_knowledge = RoleAwareTradingKnowledge(trading_brain)
+            except Exception:  # noqa: BLE001
+                role_knowledge = None
+
+        def _mem(*, as_of_ts: str | None = None, limit: int = 12, **_k: Any) -> list:
+            try:
+                return list(self.store.list_strategy_memories(as_of_ts=as_of_ts, limit=limit) or [])
+            except Exception:  # noqa: BLE001
+                return []
+
+        self.trading_context_fabric = TradingContextFabric(
+            role_knowledge=role_knowledge,
+            trading_brain=trading_brain,
+            brain_facade=getattr(self.brain, "brain_access", None) or getattr(self.brain, "access", None),
+            strategy_memory_lister=_mem,
+        )
+        return self.trading_context_fabric
+
+    def bind_module_manager(self, module_manager: Any | None) -> dict[str, Any] | None:
+        """Bind ModuleManager for Fincept evidence-only capability discovery."""
+        self.module_manager = module_manager
+        return self.bind_fincept_bridge(module_manager=module_manager)
+
+    def bind_fincept_bridge(
+        self,
+        fincept_bridge: Any | None = None,
+        *,
+        module_manager: Any | None = None,
+    ) -> dict[str, Any] | None:
+        if module_manager is not None:
+            self.module_manager = module_manager
+        if fincept_bridge is not None:
+            self.fincept_bridge = fincept_bridge
+        if self.fincept_bridge is None:
+            from .fincept_bridge import FinceptEvidenceBridge
+
+            self.fincept_bridge = FinceptEvidenceBridge()
+        discovery = None
+        if self.module_manager is not None and hasattr(self.fincept_bridge, "bind_from_module_manager"):
+            discovery = self.fincept_bridge.bind_from_module_manager(self.module_manager)
+        # Keep fabric fincept_lister wired when fabric already exists.
+        fabric = self.ensure_trading_context_fabric()
+        if fabric is not None and getattr(fabric, "fincept_lister", None) is None and self.fincept_bridge is not None:
+            bridge = self.fincept_bridge
+
+            def _fincept_lister(*, limit: int = 6, **_k: Any) -> list:
+                try:
+                    info = bridge.availability() if hasattr(bridge, "availability") else {}
+                except Exception:  # noqa: BLE001
+                    info = {}
+                state = str((info or {}).get("state") or "UNKNOWN")
+                return [
+                    {
+                        "artifact_id": f"fincept-availability-{state.lower()}",
+                        "module": "fincept-terminal",
+                        "summary": f"Fincept availability={state}",
+                        "result_state": state,
+                        "available_at": None,
+                        "command": "discover",
+                    }
+                ][:limit]
+
+            fabric.fincept_lister = _fincept_lister
+        return discovery if isinstance(discovery, dict) else None
 
     @classmethod
     def from_settings(

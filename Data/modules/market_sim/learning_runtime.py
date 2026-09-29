@@ -204,6 +204,59 @@ def _run_research_cycle_for_generation(
             as_of=str(perception.get("as_of") or utc_now()),
         )
 
+        # Extend prior-lesson context via TradingContextFabric (ONE fabric — not parallel retrieval).
+        trading_context_public = None
+        try:
+            fabric = getattr(plane, "trading_context_fabric", None)
+            if fabric is None and hasattr(plane, "ensure_trading_context_fabric"):
+                fabric = plane.ensure_trading_context_fabric()
+            if fabric is not None and hasattr(fabric, "assemble"):
+                from .trading_context import TradingContextRequest
+
+                symbols: list[str] = []
+                if isinstance(perception, dict) and perception.get("symbol"):
+                    symbols = [str(perception.get("symbol"))]
+                bundle = fabric.assemble(
+                    TradingContextRequest(
+                        role="strategy_researcher",
+                        objective=objective_text or "research_cycle",
+                        symbols=symbols,
+                        regime=str((perception or {}).get("regime") or "") or None,
+                        decision_as_of=str(perception.get("as_of") or utc_now()),
+                        lab_id=run.lab_id,
+                        experiment_id=run.learning_run_id,
+                        max_refs_per_source=6,
+                    )
+                )
+                trading_context_public = bundle.public_dict() if hasattr(bundle, "public_dict") else None
+                # Merge fabric negatives/postmortems into prior_lessons (advisory only).
+                for ref in list(getattr(bundle, "rejected_strategies", None) or [])[:4]:
+                    prior_lessons.append(
+                        {
+                            "lesson_id": getattr(ref, "ref_id", "") or "",
+                            "claim": getattr(ref, "excerpt", "") or getattr(ref, "title", ""),
+                            "rejected": True,
+                            "trust": getattr(ref, "trust", None) or "REJECTED",
+                            "available_at": getattr(ref, "available_at", None),
+                            "evidence_refs": list(getattr(ref, "evidence_refs", None) or []),
+                            "origin": "trading_context_fabric",
+                        }
+                    )
+                for ref in list(getattr(bundle, "postmortems", None) or [])[:4]:
+                    prior_lessons.append(
+                        {
+                            "lesson_id": getattr(ref, "ref_id", "") or "",
+                            "claim": getattr(ref, "excerpt", "") or getattr(ref, "title", ""),
+                            "rejected": bool(getattr(ref, "rejected", False)),
+                            "trust": getattr(ref, "trust", None) or "AGENT_PROPOSED",
+                            "available_at": getattr(ref, "available_at", None),
+                            "evidence_refs": list(getattr(ref, "evidence_refs", None) or []),
+                            "origin": "trading_context_fabric",
+                        }
+                    )
+        except Exception:  # noqa: BLE001
+            trading_context_public = None
+
         cycle = run_research_generation_cycle(
             perception_snapshot=perception,
             prior_lessons=prior_lessons,
@@ -217,6 +270,17 @@ def _run_research_cycle_for_generation(
             as_of=str(perception.get("as_of") or utc_now()),
             now=utc_now(),
         )
+        if trading_context_public is not None and hasattr(cycle, "public_events"):
+            try:
+                cycle.public_events.append(
+                    {
+                        "type": "research_cycle.trading_context",
+                        "refs": len(trading_context_public.get("citations") or []),
+                        "truth": (trading_context_public.get("truth") or {}),
+                    }
+                )
+            except Exception:  # noqa: BLE001
+                pass
     except Exception as exc:  # noqa: BLE001
         _emit(
             plane,

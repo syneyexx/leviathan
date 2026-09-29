@@ -1413,7 +1413,25 @@ trading_orchestra_service = TradingOrchestraService(
     memory=memory_store,
     trading_brain_adapter=_trading_brain_adapter,
     enabled=bool(settings.features.market_sim_enabled),
+    module_manager=module_manager if getattr(module_manager, "enabled", False) else None,
 )
+# Fincept is evidence-only via ModuleManager; MarketSim keeps trading authority.
+try:
+    if hasattr(market_sim_service, "bind_module_manager"):
+        market_sim_service.bind_module_manager(
+            module_manager if getattr(module_manager, "enabled", False) else None
+        )
+    if hasattr(trading_orchestra_service, "bind_fincept_bridge"):
+        trading_orchestra_service.bind_fincept_bridge(
+            getattr(market_sim_service, "fincept_bridge", None),
+            module_manager=module_manager if getattr(module_manager, "enabled", False) else None,
+        )
+    if hasattr(trading_orchestra_service, "bind_trading_context_fabric"):
+        fabric = getattr(market_sim_service, "ensure_trading_context_fabric", lambda: None)()
+        if fabric is not None:
+            trading_orchestra_service.bind_trading_context_fabric(fabric)
+except Exception:  # noqa: BLE001 — optional externals must not block boot
+    pass
 
 
 def _wire_system_inventory_status() -> None:
