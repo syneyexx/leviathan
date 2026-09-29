@@ -51,8 +51,16 @@ describe("brain-dna-layout", () => {
   ];
 
   it("is deterministic for the same input", () => {
-    const a = layoutDnaNetwork(nodes, edges, { width: 800, height: 360 });
-    const b = layoutDnaNetwork(nodes, edges, { width: 800, height: 360 });
+    const a = layoutDnaNetwork(nodes, edges, {
+      width: 800,
+      height: 360,
+      preferredFocalId: "focal",
+    });
+    const b = layoutDnaNetwork(nodes, edges, {
+      width: 800,
+      height: 360,
+      preferredFocalId: "focal",
+    });
     expect(a.nodes).toEqual(b.nodes);
     expect(a.edges).toEqual(b.edges);
     expect(a.focalId).toBe("focal");

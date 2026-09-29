@@ -452,7 +452,12 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
     () => (selected ? edges.filter((e) => e.source === selected.id || e.target === selected.id) : []),
     [edges, selected],
   );
-  const relatedCount = selectedEdges.length;
+  const relatedCount = (() => {
+    if (!selected) return 0;
+    const meta = selected.meta?.related_count;
+    if (typeof meta === "number" && Number.isFinite(meta)) return meta;
+    return selectedEdges.length;
+  })();
 
   const degrees = useMemo(() => {
     const map = new Map<string, number>();
@@ -492,18 +497,20 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
       });
   }, [selected, selectedEdges, nodeMap]);
 
-  const linkedMemoriesAvailable = memory != null || linkedMemoryIds.length > 0;
+  const linkedMemoriesAvailable = memory != null || linkedMemoryIds.length > 0 || typeof selected?.meta?.linked_memories === "number";
   const linkedMemories =
-    linkedMemoryIds.length > 0
-      ? linkedMemoryIds.length
-      : memory != null && selected
-        ? memory.filter((m) => {
-            const tags = m.tags ?? [];
-            return tags.some((t) => t.includes(selected.id) || t.toLowerCase().includes(selected.label.toLowerCase()));
-          }).length
-        : memory == null
-          ? null
-          : 0;
+    typeof selected?.meta?.linked_memories === "number"
+      ? selected.meta.linked_memories
+      : linkedMemoryIds.length > 0
+        ? linkedMemoryIds.length
+        : memory != null && selected
+          ? memory.filter((m) => {
+              const tags = m.tags ?? [];
+              return tags.some((t) => t.includes(selected.id) || t.toLowerCase().includes(selected.label.toLowerCase()));
+            }).length
+          : memory == null
+            ? null
+            : 0;
 
   const evidenceNodeIds = useMemo(() => {
     if (!selected) return [];
@@ -515,18 +522,20 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
       });
   }, [selected, selectedEdges, nodeMap]);
 
-  const evidenceForNodeAvailable = evidence != null || evidenceNodeIds.length > 0;
+  const evidenceForNodeAvailable = evidence != null || evidenceNodeIds.length > 0 || typeof selected?.meta?.evidence_items === "number";
   const evidenceForNode =
-    evidenceNodeIds.length > 0
-      ? evidenceNodeIds.length
-      : evidence != null && selected
-        ? evidence.filter((ev) => {
-            const claim = (ev.claim || "").toLowerCase();
-            return claim.includes(selected.label.toLowerCase()) || ev.evidence_id === selected.id.replace(/^evidence:/, "");
-          }).length
-        : evidence == null
-          ? null
-          : 0;
+    typeof selected?.meta?.evidence_items === "number"
+      ? selected.meta.evidence_items
+      : evidenceNodeIds.length > 0
+        ? evidenceNodeIds.length
+        : evidence != null && selected
+          ? evidence.filter((ev) => {
+              const claim = (ev.claim || "").toLowerCase();
+              return claim.includes(selected.label.toLowerCase()) || ev.evidence_id === selected.id.replace(/^evidence:/, "");
+            }).length
+          : evidence == null
+            ? null
+            : 0;
 
   const clusters = useMemo(() => buildClusters(nodes, edges), [nodes, edges]);
 

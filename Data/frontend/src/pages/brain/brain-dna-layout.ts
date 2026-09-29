@@ -162,9 +162,8 @@ export function layoutDnaNetwork(
   const maxDegree = Math.max(1, ...[...degrees.values()]);
   const cx = width / 2;
   const cy = height / 2;
-  const ampY = height * 0.32;
-  const ampX = width * 0.12;
-  const helixLen = width * 0.78;
+  const ampY = height * 0.36;
+  const helixLen = width * 0.82;
   const startX = cx - helixLen / 2;
 
   const laid: DnaLaidOutNode[] = [
@@ -183,32 +182,26 @@ export function layoutDnaNetwork(
   ];
 
   const n = Math.max(1, primary.length);
+  const turns = 2.4;
   primary.forEach((node, index) => {
     const t = n === 1 ? 0.5 : index / (n - 1);
     const strand: 0 | 1 = (index % 2) as 0 | 1;
-    const phase = strand === 0 ? 0 : Math.PI;
-    const turns = 2.15;
-    const angle = t * Math.PI * 2 * turns + phase;
-    // Slight vertical stagger so strands don't perfectly overlap
-    const x = startX + t * helixLen + Math.sin(angle) * ampX * 0.15;
-    const y = cy + Math.sin(angle) * ampY * (strand === 0 ? 1 : -1) * 0.55
-      + Math.cos(angle * 0.5) * ampY * 0.35 * (strand === 0 ? 1 : -1);
-    // Keep inside bounds
-    const pad = 24;
-    const clampedX = Math.min(width - pad, Math.max(pad, x));
-    const clampedY = Math.min(height - pad, Math.max(pad, y));
-    // Deterministic micro-offset from id so equal-t nodes don't stack
+    const angle = t * Math.PI * 2 * turns + (strand === 0 ? 0 : Math.PI);
+    const x = startX + t * helixLen;
+    const y = cy + Math.sin(angle) * ampY;
+    const pad = 28;
+    // Deterministic micro-offset so equal-t nodes don't stack
     const jitter = (stableHash(node.id) % 1000) / 1000;
-    const jx = (jitter - 0.5) * 10;
-    const jy = ((stableHash(`${node.id}:y`) % 1000) / 1000 - 0.5) * 8;
+    const jx = (jitter - 0.5) * 8;
+    const jy = ((stableHash(`${node.id}:y`) % 1000) / 1000 - 0.5) * 6;
 
     laid.push({
       id: node.id,
       label: node.label,
       type: node.type,
       category: categoryForNode(node),
-      x: Math.min(width - pad, Math.max(pad, clampedX + jx)),
-      y: Math.min(height - pad, Math.max(pad, clampedY + jy)),
+      x: Math.min(width - pad, Math.max(pad, x + jx)),
+      y: Math.min(height - pad, Math.max(pad, y + jy)),
       r: radiusForDegree(degrees.get(node.id) ?? 0, maxDegree, false),
       strand,
       degree: degrees.get(node.id) ?? 0,

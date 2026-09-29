@@ -12,6 +12,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
+  BRAIN_CATEGORY_HEX,
   BRAIN_CATEGORY_META,
   BRAIN_FILTER_TABS,
   filterNodesByCategory,
@@ -51,7 +52,9 @@ function labelWorthy(
 ): boolean {
   if (node.focal) return true;
   if (node.id === selectedId || node.id === hoverId) return true;
-  if (zoom < 0.85) return false;
+  if (zoom < 0.75) return false;
+  // Named Screen-1-class labels (non-generic) always show at default zoom.
+  if (!/^Node \d+$/i.test(node.label) && node.label.length <= 22) return true;
   return node.degree >= 3 || node.r >= 9;
 }
 
@@ -81,18 +84,20 @@ export function BrainDnaNetwork({
 
   useEffect(() => {
     const el = shellRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (!entry) return;
-      const { width, height } = entry.contentRect;
-      if (width < 40 || height < 40) return;
+    if (!el) return;
+    const apply = () => {
+      const rect = el.getBoundingClientRect();
+      const width = Math.max(320, rect.width || 720);
+      const height = Math.max(280, rect.height || 340);
       setSize((prev) =>
         Math.abs(prev.width - width) < 1 && Math.abs(prev.height - height) < 1
           ? prev
           : { width, height },
       );
-    });
+    };
+    apply();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => apply());
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
@@ -252,9 +257,9 @@ export function BrainDnaNetwork({
         >
           <defs>
             <radialGradient id="lv2-dna-focal-glow" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="var(--lv2-cyan)" stopOpacity="0.55" />
-              <stop offset="70%" stopColor="var(--lv2-cyan)" stopOpacity="0.12" />
-              <stop offset="100%" stopColor="var(--lv2-cyan)" stopOpacity="0" />
+              <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.55" />
+              <stop offset="70%" stopColor="#22d3ee" stopOpacity="0.12" />
+              <stop offset="100%" stopColor="#22d3ee" stopOpacity="0" />
             </radialGradient>
             <filter id="lv2-dna-soft-glow" x="-40%" y="-40%" width="180%" height="180%">
               <feGaussianBlur stdDeviation="2.2" result="blur" />
@@ -301,7 +306,7 @@ export function BrainDnaNetwork({
             {layout.nodes.map((node) => {
               const selected = node.id === selectedId;
               const showLabel = labelWorthy(node, selectedId, hoverId, zoom);
-              const color = `var(--lv2-viz-${node.category})`;
+              const color = BRAIN_CATEGORY_HEX[node.category];
               return (
                 <g
                   key={node.id}
@@ -342,7 +347,7 @@ export function BrainDnaNetwork({
         <div className="lv-v2-dna__legend" aria-hidden="true">
           {BRAIN_CATEGORY_META.map((row) => (
             <span key={row.id} className="lv-v2-dna__legend-item">
-              <i style={{ background: row.token }} />
+              <i style={{ background: BRAIN_CATEGORY_HEX[row.id] }} />
               {row.label}
             </span>
           ))}

@@ -1263,30 +1263,26 @@
 .lv-v2-hero--brain {
   min-height: 126px;
   max-height: 138px;
-  grid-template-columns: minmax(0, 1.2fr) minmax(200px, 0.55fr) minmax(180px, 0.55fr);
+  grid-template-columns: minmax(0, 1.35fr) minmax(220px, 0.75fr);
+}
+
+.lv-v2-hero--brain .lv-v2-hero__quote {
+  position: relative;
+  z-index: 3;
 }
 
 .lv-v2-hero__media--brain {
-  display: flex;
-  align-items: center;
-  justify-content: center;
   pointer-events: none;
-}
-
-.lv-v2-hero__shade--brain {
-  background:
-    linear-gradient(90deg, rgba(2, 6, 23, 0.92) 0%, rgba(2, 6, 23, 0.55) 42%, rgba(2, 6, 23, 0.35) 68%, rgba(2, 6, 23, 0.7) 100%),
-    linear-gradient(0deg, rgba(2, 6, 23, 0.4), transparent 50%);
 }
 
 .lv-v2-brain-art {
   position: absolute;
-  right: 18%;
+  right: 4%;
   top: 50%;
   transform: translateY(-50%);
-  width: min(420px, 46%);
+  width: min(400px, 48%);
   height: auto;
-  opacity: 0.95;
+  opacity: 0.92;
   z-index: 1;
 }
 
@@ -1302,14 +1298,15 @@
 }
 
 .lv-v2-brain-network-panel {
-  min-height: 360px;
+  min-height: 380px;
 }
 
 .lv-v2-brain-network-panel__body {
   padding: 0 !important;
   display: flex;
   flex-direction: column;
-  min-height: 320px;
+  min-height: 340px;
+  height: 340px;
 }
 
 .lv-v2-brain-search input {
@@ -1334,8 +1331,13 @@
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-height: 320px;
+  min-height: 340px;
+  height: 100%;
   position: relative;
+  background:
+    radial-gradient(ellipse 70% 55% at 50% 48%, rgba(34, 211, 238, 0.08), transparent 70%),
+    radial-gradient(ellipse 40% 40% at 30% 40%, rgba(59, 130, 246, 0.06), transparent 65%),
+    #020617;
 }
 
 .lv-v2-dna__tabs {
@@ -1374,6 +1376,7 @@
   position: relative;
   flex: 1;
   min-height: 300px;
+  height: 300px;
   overflow: hidden;
   cursor: grab;
   touch-action: none;
@@ -1391,28 +1394,28 @@
 }
 
 .lv-v2-dna__helix {
-  stroke: rgba(34, 211, 238, 0.18);
-  stroke-width: 1.4;
+  stroke: rgba(34, 211, 238, 0.35);
+  stroke-width: 1.6;
 }
 
 .lv-v2-dna__helix--alt {
-  stroke: rgba(59, 130, 246, 0.16);
+  stroke: rgba(59, 130, 246, 0.3);
 }
 
 .lv-v2-dna__edge {
   fill: none;
-  stroke: rgba(34, 211, 238, 0.55);
-  stroke-width: 1.1;
+  stroke: #22d3ee;
+  stroke-width: 1.25;
 }
 
 .lv-v2-dna__edge--rung {
-  stroke: rgba(96, 165, 250, 0.7);
-  stroke-width: 1.35;
+  stroke: #60a5fa;
+  stroke-width: 1.5;
 }
 
 .lv-v2-dna__edge--secondary {
-  stroke: rgba(100, 116, 139, 0.45);
-  stroke-width: 0.9;
+  stroke: #64748b;
+  stroke-width: 1;
 }
 
 .lv-v2-dna-node {
@@ -1839,7 +1842,14 @@
   border: 1px solid var(--lv2-border);
   border-radius: var(--lv2-panel-radius);
   background: var(--lv2-panel-bg);
-  padding: 12px 14px;
+  padding: 8px 12px;
+}
+
+.lv-v2-brain-advanced__head h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--lv2-text-secondary);
 }
 
 .lv-v2-brain-advanced__head {
@@ -1848,12 +1858,6 @@
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
-}
-
-.lv-v2-brain-advanced__head h3 {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
 }
 
 .lv-v2-brain-advanced__actions {

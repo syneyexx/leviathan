@@ -38,6 +38,9 @@ const FIXTURE_NODES: FixtureNode[] = [
       description: "Primaire cryptocurrency en digitaal asset",
       confidence: 0.92,
       updated_at: "2025-05-25T10:24:17",
+      related_count: 148,
+      linked_memories: 42,
+      evidence_items: 87,
       summary:
         "Gedecentraliseerd digitaal asset met netwerkconsensus. Kernentiteit in trading- en research-kennis.",
     },

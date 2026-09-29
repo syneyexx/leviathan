@@ -23,6 +23,14 @@ export const BRAIN_CATEGORY_META: readonly BrainCategoryMeta[] = [
   { id: "agent", label: "Agent", token: "var(--lv2-viz-agent)" },
 ] as const;
 
+/** Resolved hex for SVG paint (CSS vars are unreliable in SVG presentation attrs). */
+export const BRAIN_CATEGORY_HEX: Record<BrainSemanticCategory, string> = {
+  entity: "#3b82f6",
+  concept: "#a855f7",
+  document: "#22d3ee",
+  agent: "#f59e0b",
+};
+
 export const BRAIN_FILTER_TABS: readonly { id: BrainCategoryFilter; label: string }[] = [
   { id: "all", label: "Alles" },
   { id: "entity", label: "Entiteiten" },

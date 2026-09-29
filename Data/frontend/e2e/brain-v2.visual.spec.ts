@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { installBrainV2VisualFixture } from "./helpers/brainV2Visual";
+import { installDashboardV2VisualFixture } from "./helpers/dashboardV2Visual";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,29 +26,30 @@ test.describe("Brain V2 visual", () => {
 
     await page.goto("/brain");
     await expect(page.locator(".lv-v2")).toBeVisible({ timeout: 20_000 });
+    const nav = page.getByRole("navigation", { name: "Hoofdmenu" });
     await expect(page.locator(".lv-v2-nav-group.is-open")).toBeVisible();
     await expect(page.locator(".lv-v2-nav-child.is-active")).toContainText("Brain");
-    await expect(page.getByRole("link", { name: "Research", exact: true })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Geheugen", exact: true })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Knowledge Library", exact: true })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Evidence Vault", exact: true })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Datasets", exact: true })).toBeVisible();
+    await expect(nav.getByRole("link", { name: "Research", exact: true })).toBeVisible();
+    await expect(nav.getByRole("link", { name: "Geheugen", exact: true })).toBeVisible();
+    await expect(nav.getByRole("link", { name: "Knowledge Library", exact: true })).toBeVisible();
+    await expect(nav.getByRole("link", { name: "Evidence Vault", exact: true })).toBeVisible();
+    await expect(nav.getByRole("link", { name: "Datasets", exact: true })).toBeVisible();
 
     await expect(page.getByRole("heading", { name: "Leviathan Brain" })).toBeVisible();
-    await expect(page.getByText("Actieve Nodes")).toBeVisible();
-    await expect(page.getByText("Kennis Links")).toBeVisible();
-    await expect(page.getByText("Geheugen Clusters").first()).toBeVisible();
-    await expect(page.getByText("Redenering Jobs")).toBeVisible();
-    await expect(page.getByText("Bewijs Items")).toBeVisible();
-    await expect(page.getByText("Kennis Netwerk")).toBeVisible();
-    await expect(page.getByText("Geselecteerde Node")).toBeVisible();
-    await expect(page.getByText("Recente Kennis Activiteit")).toBeVisible();
-    await expect(page.getByText("Entity Types")).toBeVisible();
-    await expect(page.getByText("Redenering Queue")).toBeVisible();
-    await expect(page.getByText("Systeem Gezondheid")).toBeVisible();
-    await expect(page.getByText("System Status")).toBeVisible();
+    await expect(page.getByText("Actieve Nodes", { exact: true })).toBeVisible();
+    await expect(page.getByText("Kennis Links", { exact: true })).toBeVisible();
+    await expect(page.getByText("Geheugen Clusters", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("Redenering Jobs", { exact: true })).toBeVisible();
+    await expect(page.getByText("Bewijs Items", { exact: true })).toBeVisible();
+    await expect(page.getByText("Kennis Netwerk", { exact: true })).toBeVisible();
+    await expect(page.getByText("Geselecteerde Node", { exact: true })).toBeVisible();
+    await expect(page.getByText("Recente Kennis Activiteit", { exact: true })).toBeVisible();
+    await expect(page.getByText("Entity Types", { exact: true })).toBeVisible();
+    await expect(page.getByText("Redenering Queue", { exact: true })).toBeVisible();
+    await expect(page.getByText("Systeem Gezondheid", { exact: true })).toBeVisible();
+    await expect(page.getByText("System Status", { exact: true })).toBeVisible();
 
-    // Fixture KPIs settle
+    // Fixture KPIs settle (nl-NL grouping)
     await expect(page.getByText("12.842").or(page.getByText("12,842"))).toBeVisible({
       timeout: 15_000,
     });
@@ -75,7 +77,7 @@ test.describe("Brain V2 visual", () => {
   });
 
   test("Dashboard submenu remains intact on /", async ({ page }) => {
-    await installBrainV2VisualFixture(page);
+    await installDashboardV2VisualFixture(page);
     await page.goto("/");
     await expect(page.locator(".lv-v2")).toBeVisible({ timeout: 20_000 });
     await expect(page.locator(".lv-v2-nav-group.is-open")).toBeVisible();
