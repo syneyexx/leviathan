@@ -30,3 +30,6 @@ export type { ErrorStateProps } from "./ErrorState";
 
 export { LoadingState } from "./LoadingState";
 export type { LoadingStateProps } from "./LoadingState";
+
+export { Dialog } from "./Dialog";
+export type { DialogProps } from "./Dialog";

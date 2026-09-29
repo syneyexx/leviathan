@@ -1,24 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation, useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { displayMessageContent, normalizeMessage } from "../api/chatContract";
-import { media } from "../assets/media";
-import { BrandMark, BotAvatar } from "../components/BrandMark";
+import { Dialog } from "../components/ui";
+import type { SidebarStatusRow } from "../components/layout/AppSidebarV2";
+import { useSystemTelemetry } from "../hooks/useSystemTelemetry";
 import { AppShell } from "../layouts/AppShell";
-import { chatIneligibilityReason, partitionChatModels } from "../lib/chatModels";
+import { formatBytes, normalizeLmStudioStatus } from "../lib/dashboardNormalize";
+import { partitionChatModels } from "../lib/chatModels";
 import { formatJobStateLabel, normalizeJobStatus } from "../lib/jobStatus";
 import { useAppToast } from "../state/useAppToast";
 import type {
-  AssistantToolCallTelemetry,
-  AssistantTurnTelemetry,
   CapabilityListItem,
   Conversation,
+  HealthResponse,
   KnowledgeSource,
   ModelDescriptor,
   ReasoningSummary,
 } from "../types/api";
 import { buildDiagnosticStrip, deriveAssistantTelemetry } from "./chatTelemetry";
-import { CapabilityResultCards } from "./chat/CapabilityResultCards";
+import { ChatComposer } from "./chat/ChatComposer";
+import { ChatInspector } from "./chat/ChatInspector";
+import { ConversationHistoryPanel } from "./chat/ConversationHistoryPanel";
+import { HadesConfigStrip } from "./chat/HadesConfigStrip";
+import { MessageList } from "./chat/MessageList";
 
 type LocationState = {
   draft?: string;
@@ -65,7 +70,7 @@ type LastTurnMeta = {
   reasoningMode: string | null;
   memoryCount: number;
   verification: string | null;
-  telemetry: AssistantTurnTelemetry | null;
+  telemetry: ReturnType<typeof deriveAssistantTelemetry> | null;
 };
 
 const EMPTY_TURN: LastTurnMeta = {
@@ -87,29 +92,151 @@ const EMPTY_TURN: LastTurnMeta = {
   telemetry: null,
 };
 
-function formatTime(value: string | null | undefined): string {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
 function conversationDeepLink(id: string): string {
   return `${window.location.origin}/chat?conversation=${encodeURIComponent(id)}`;
 }
 
-const QUICK_PROMPTS: Record<string, string> = {
-  "Deep Research": "Research this topic deeply and structure the important questions first: ",
-  "Analyze Data": "Analyze the following data and explain the important patterns: ",
-  "Generate Code": "Help me design and implement the following code: ",
-  "Create Plan": "Create a concrete step-by-step plan for: ",
+function visualFixtureNow(): Date | undefined {
+  if (typeof window === "undefined") return undefined;
+  const frozen = (window as Window & { __LV_V2_FROZEN_NOW__?: string }).__LV_V2_FROZEN_NOW__;
+  if (!frozen) return undefined;
+  const d = new Date(frozen);
+  return Number.isNaN(d.getTime()) ? undefined : d;
+}
+
+type ChatVisualFixtureUi = {
+  activeConversationId?: string;
+  selectedModelId?: string | null;
+  reasoningMode?: "auto" | "fast" | "deep";
+  collaborationStrategy?: "direct" | "team";
+  lastTurn?: LastTurnMeta;
 };
+
+function readChatVisualFixtureUi(): ChatVisualFixtureUi | null {
+  if (typeof window === "undefined") return null;
+  const w = window as Window & {
+    __LV_V2_VISUAL_FIXTURE__?: boolean;
+    __LV_CHAT_V2_FIXTURE_UI__?: ChatVisualFixtureUi;
+  };
+  if (!w.__LV_V2_VISUAL_FIXTURE__ || !w.__LV_CHAT_V2_FIXTURE_UI__) return null;
+  return w.__LV_CHAT_V2_FIXTURE_UI__;
+}
+
+function applyChatVisualFixtureUi(
+  fixtureUi: ChatVisualFixtureUi,
+  setters: {
+    setSelectedModelId: (id: string | null) => void;
+    setReasoningMode: (mode: "auto" | "fast" | "deep") => void;
+    setCollaborationStrategy: (strategy: "direct" | "team") => void;
+    setLastTurn: (turn: LastTurnMeta) => void;
+  },
+): void {
+  if (fixtureUi.selectedModelId !== undefined) {
+    setters.setSelectedModelId(fixtureUi.selectedModelId);
+  }
+  if (fixtureUi.reasoningMode) setters.setReasoningMode(fixtureUi.reasoningMode);
+  if (fixtureUi.collaborationStrategy) {
+    setters.setCollaborationStrategy(fixtureUi.collaborationStrategy);
+  }
+  if (fixtureUi.lastTurn) {
+    setters.setLastTurn({ ...EMPTY_TURN, ...fixtureUi.lastTurn });
+  }
+}
+
+function buildChatSidebarStatus(
+  health: HealthResponse | null,
+  telemetry: ReturnType<typeof useSystemTelemetry>["sample"],
+): SidebarStatusRow[] {
+  const lm = normalizeLmStudioStatus(health);
+  const rows: SidebarStatusRow[] = [
+    {
+      id: "lm-studio",
+      label: lm.label,
+      value: lm.value,
+      tone: lm.tone,
+    },
+  ];
+
+  const devices = telemetry?.gpu?.devices?.slice(0, 2) ?? [];
+  if (devices.length === 0) {
+    rows.push({
+      id: "gpu-none",
+      label: "GPU",
+      value: telemetry?.gpu?.available === false ? "Unavailable" : "UNMEASURED",
+      tone: "muted",
+    });
+  } else {
+    for (const d of devices) {
+      const shortName = (d.name || "GPU").replace(/^NVIDIA\s+/i, "");
+      rows.push({
+        id: `gpu-${d.index}`,
+        label: `GPU ${d.index} - ${shortName}`,
+        value: d.utilizationPct != null ? "Ready" : "UNMEASURED",
+        tone: d.utilizationPct == null ? "muted" : "success",
+      });
+    }
+  }
+
+  const mem = telemetry?.memory;
+  rows.push({
+    id: "ram",
+    label: "RAM",
+    value:
+      mem?.available && mem.usedBytes != null && mem.totalBytes != null
+        ? `${formatBytes(mem.usedBytes)} / ${formatBytes(mem.totalBytes)}`
+        : "UNMEASURED",
+    tone: mem?.available ? "info" : "muted",
+  });
+
+  const gpus = telemetry?.gpu?.devices ?? [];
+  if (gpus.length && telemetry?.gpu?.available) {
+    let used = 0;
+    let total = 0;
+    let ok = false;
+    for (const g of gpus) {
+      if (g.vramUsedBytes != null && g.vramTotalBytes != null) {
+        used += g.vramUsedBytes;
+        total += g.vramTotalBytes;
+        ok = true;
+      }
+    }
+    rows.push({
+      id: "vram",
+      label: "VRAM Total",
+      value: ok ? `${formatBytes(used)} / ${formatBytes(total)}` : "UNMEASURED",
+      tone: ok ? "info" : "muted",
+    });
+  }
+
+  return rows;
+}
+
+const QUICK_PROMPTS: Array<{ label: string; text: string }> = [
+  {
+    label: "Deep Research",
+    text: "Research this topic deeply and structure the important questions first: ",
+  },
+  {
+    label: "Analyze Data",
+    text: "Analyze the following data and explain the important patterns: ",
+  },
+  {
+    label: "Generate Code",
+    text: "Help me design and implement the following code: ",
+  },
+  {
+    label: "Create Plan",
+    text: "Create a concrete step-by-step plan for: ",
+  },
+];
 
 export function ChatPage() {
   const toast = useAppToast();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const draft = (location.state as LocationState | null)?.draft;
+  const frozen = visualFixtureNow();
+  const { sample: systemTelemetry } = useSystemTelemetry({ intervalMs: 2000 });
 
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -119,25 +246,34 @@ export function ChatPage() {
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [activeChip, setActiveChip] = useState<"All" | "Pinned">("All");
-  const [rightTab, setRightTab] = useState<"Context" | "Tools" | "Agents">("Context");
   const [models, setModels] = useState<ModelDescriptor[]>([]);
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
-  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [reasoningMode, setReasoningMode] = useState<"auto" | "fast" | "deep">("auto");
   const [collaborationStrategy, setCollaborationStrategy] = useState<"direct" | "team">("direct");
   const [teamPanel, setTeamPanel] = useState<Record<string, unknown> | null>(null);
   const [capabilities, setCapabilities] = useState<CapabilityListItem[]>([]);
   const [agentsEnabled, setAgentsEnabled] = useState<boolean | null>(null);
   const [codingEnabled, setCodingEnabled] = useState<boolean | null>(null);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
   const [lastTurn, setLastTurn] = useState<LastTurnMeta>(EMPTY_TURN);
   const [bootstrapped, setBootstrapped] = useState(false);
+  const [memoryCount, setMemoryCount] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const messagesRef = useRef<HTMLDivElement | null>(null);
+  const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
+  const [inspectorDrawerOpen, setInspectorDrawerOpen] = useState(false);
+  const [newChatMenuOpen, setNewChatMenuOpen] = useState(false);
+  const [manageMenuOpen, setManageMenuOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
-  const modelMenuRef = useRef<HTMLDivElement | null>(null);
-  const moreMenuRef = useRef<HTMLDivElement | null>(null);
+  const historySearchRef = useRef<HTMLInputElement | null>(null);
+  const newChatMenuRef = useRef<HTMLDivElement | null>(null);
+  const manageMenuRef = useRef<HTMLDivElement | null>(null);
   const busyRef = useRef(false);
   const creatingRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -146,15 +282,6 @@ export function ChatPage() {
     () => conversations.find((item) => item.id === conversationId) ?? null,
     [conversations, conversationId],
   );
-
-  const filteredConversations = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    return conversations.filter((item) => {
-      if (activeChip === "Pinned" && !item.pinned) return false;
-      if (!q) return true;
-      return item.title.toLowerCase().includes(q);
-    });
-  }, [conversations, searchQuery, activeChip]);
 
   const { eligible: chatModels, ineligible: nonChatModels } = useMemo(
     () => partitionChatModels(models),
@@ -167,6 +294,33 @@ export function ChatPage() {
     return match?.displayName || match?.id || selectedModelId;
   }, [chatModels, selectedModelId]);
 
+  const contextWindow = useMemo(() => {
+    if (!selectedModelId) return null;
+    const match = chatModels.find((item) => item.id === selectedModelId);
+    return match?.contextWindow ?? null;
+  }, [chatModels, selectedModelId]);
+
+  const sidebarStatus = useMemo(
+    () => buildChatSidebarStatus(health, systemTelemetry),
+    [health, systemTelemetry],
+  );
+
+  const v2Online = useMemo(() => {
+    if (health?.ok === true) return true;
+    if (health?.llm?.available === false) return false;
+    if (health?.ok === false) return false;
+    return null;
+  }, [health]);
+
+  const diagnosticStrip = useMemo(
+    () => buildDiagnosticStrip(lastTurn.telemetry),
+    [lastTurn.telemetry],
+  );
+
+  const tokenUsage =
+    lastTurn.telemetry?.context_used ?? lastTurn.telemetry?.context_tokens ?? null;
+  const contextBudget = lastTurn.telemetry?.context_budget ?? contextWindow;
+
   useEffect(() => {
     if (!selectedModelId) return;
     const stillEligible = chatModels.some((item) => item.id === selectedModelId);
@@ -175,28 +329,6 @@ export function ChatPage() {
       toast("Selected model is not chat-capable — switched to Auto");
     }
   }, [chatModels, selectedModelId, toast]);
-
-  const turnTags = useMemo(() => {
-    const tags: string[] = [];
-    if (lastTurn.model) tags.push(lastTurn.model);
-    else if (selectedModelId) tags.push(modelLabel);
-    else tags.push("Auto");
-    if (lastTurn.intent) tags.push(lastTurn.intent);
-    if (lastTurn.complexity) tags.push(lastTurn.complexity);
-    if (lastTurn.cognitionMode) tags.push(`Reasoning ${lastTurn.cognitionMode}`);
-    if (lastTurn.cognitionPhase) tags.push(lastTurn.cognitionPhase);
-    tags.push(
-      lastTurn.knowledgeCount === 1
-        ? "1 knowledge source"
-        : `${lastTurn.knowledgeCount} knowledge sources`,
-    );
-    if (lastTurn.streaming === "streaming") tags.push("Streaming");
-    else if (lastTurn.streaming === "degraded") tags.push("Stream degraded");
-    else if (lastTurn.streaming === "complete") tags.push("Complete");
-    else if (lastTurn.streaming === "failed") tags.push("Failed");
-    else tags.push("Idle");
-    return tags;
-  }, [lastTurn, modelLabel, selectedModelId]);
 
   useEffect(() => {
     busyRef.current = busy;
@@ -207,18 +339,13 @@ export function ChatPage() {
   }, [creating]);
 
   useEffect(() => {
-    if (!messagesRef.current) return;
-    messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
-  }, [messages]);
-
-  useEffect(() => {
     function onPointerDown(event: MouseEvent) {
       const target = event.target as Node;
-      if (modelMenuRef.current && !modelMenuRef.current.contains(target)) {
-        setModelMenuOpen(false);
+      if (newChatMenuRef.current && !newChatMenuRef.current.contains(target)) {
+        setNewChatMenuOpen(false);
       }
-      if (moreMenuRef.current && !moreMenuRef.current.contains(target)) {
-        setMoreMenuOpen(false);
+      if (manageMenuRef.current && !manageMenuRef.current.contains(target)) {
+        setManageMenuOpen(false);
       }
     }
     document.addEventListener("mousedown", onPointerDown);
@@ -235,6 +362,43 @@ export function ChatPage() {
       },
       { replace: true },
     );
+  }
+
+  async function loadMemoryCount() {
+    try {
+      const data = await api.listMemory({ status: "ACTIVE", limit: 100 });
+      setMemoryCount(Array.isArray(data.memory) ? data.memory.length : null);
+    } catch {
+      setMemoryCount(null);
+    }
+  }
+
+  async function refreshBootstrapData() {
+    const [healthData, coding, modelData, caps] = await Promise.all([
+      api.health().catch(() => null),
+      api.codingStatus().catch(() => null),
+      api.listModels().catch(() => null),
+      api.listCapabilities({ limit: 50 }).catch(() => null),
+    ]);
+    if (healthData) {
+      setHealth(healthData);
+      setAgentsEnabled(Boolean(healthData.agents?.enabled));
+    } else {
+      setHealth(null);
+      setAgentsEnabled(null);
+    }
+    if (coding) {
+      setCodingEnabled(Boolean(coding.enabled));
+    } else {
+      setCodingEnabled(null);
+    }
+    if (modelData) {
+      setModels(modelData.models ?? []);
+    }
+    if (caps) {
+      setCapabilities(caps.capabilities ?? []);
+    }
+    await loadMemoryCount();
   }
 
   async function refreshConversations(selectId?: string | null) {
@@ -258,6 +422,7 @@ export function ChatPage() {
     setTeamPanel(null);
     const list = known ?? (await refreshConversations(id));
     setConversations(list);
+    setHistoryDrawerOpen(false);
   }
 
   async function reconcileConversation(id: string) {
@@ -279,6 +444,7 @@ export function ChatPage() {
     if (busyRef.current || creatingRef.current) return;
     setCreating(true);
     creatingRef.current = true;
+    setNewChatMenuOpen(false);
     try {
       const data = await api.createConversation();
       setConversationId(data.conversation.id);
@@ -297,20 +463,33 @@ export function ChatPage() {
     }
   }
 
+  async function onV2Refresh() {
+    setRefreshing(true);
+    try {
+      await refreshBootstrapData();
+      await refreshConversations(conversationId);
+    } catch (error) {
+      toast(`Refresh failed: ${error instanceof Error ? error.message : "unknown error"}`);
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
 
     void (async () => {
       try {
-        const [health, coding, modelData, caps] = await Promise.all([
+        const [healthData, coding, modelData, caps] = await Promise.all([
           api.health().catch(() => null),
           api.codingStatus().catch(() => null),
           api.listModels().catch(() => null),
           api.listCapabilities({ limit: 50 }).catch(() => null),
         ]);
         if (cancelled) return;
-        if (health) {
-          setAgentsEnabled(Boolean(health.agents?.enabled));
+        if (healthData) {
+          setHealth(healthData);
+          setAgentsEnabled(Boolean(healthData.agents?.enabled));
         } else {
           setAgentsEnabled(null);
         }
@@ -325,6 +504,7 @@ export function ChatPage() {
         if (caps) {
           setCapabilities(caps.capabilities ?? []);
         }
+        await loadMemoryCount();
       } catch {
         /* parallel load already guarded */
       }
@@ -334,7 +514,11 @@ export function ChatPage() {
         if (cancelled) return;
         setConversations(listed.conversations);
 
-        const deepLinkId = searchParams.get("conversation");
+        const fixtureUi = readChatVisualFixtureUi();
+        const deepLinkId =
+          searchParams.get("conversation") ||
+          (fixtureUi?.activeConversationId ? String(fixtureUi.activeConversationId) : null);
+
         if (deepLinkId) {
           try {
             await loadConversation(deepLinkId, listed.conversations);
@@ -357,6 +541,16 @@ export function ChatPage() {
           await loadConversation(listed.conversations[0].id, listed.conversations);
         } else {
           await createConversation();
+        }
+
+        // TEST-ONLY: hydrate Screen 1 visual fixture controls + last-turn inspector.
+        if (!cancelled && fixtureUi) {
+          applyChatVisualFixtureUi(fixtureUi, {
+            setSelectedModelId,
+            setReasoningMode,
+            setCollaborationStrategy,
+            setLastTurn,
+          });
         }
       } catch (error) {
         if (cancelled) return;
@@ -391,6 +585,7 @@ export function ChatPage() {
 
   async function togglePinned() {
     if (!conversationId || busy) return;
+    setManageMenuOpen(false);
     const nextPinned = !activeConversation?.pinned;
     try {
       await api.updateConversation(conversationId, { pinned: nextPinned });
@@ -401,35 +596,51 @@ export function ChatPage() {
     }
   }
 
-  async function renameConversation() {
+  function openRenameDialog() {
     if (!conversationId) return;
-    setMoreMenuOpen(false);
+    setManageMenuOpen(false);
+    setRenameValue(activeConversation?.title ?? title);
+    setRenameOpen(true);
+  }
+
+  async function confirmRename() {
+    if (!conversationId) return;
     const current = activeConversation?.title ?? title;
-    const next = window.prompt("Rename conversation", current);
-    if (next == null) return;
-    const trimmed = next.trim();
-    if (!trimmed || trimmed === current) return;
+    const trimmed = renameValue.trim();
+    if (!trimmed || trimmed === current) {
+      setRenameOpen(false);
+      return;
+    }
+    setRenameBusy(true);
     try {
       const data = await api.updateConversation(conversationId, { title: trimmed });
       setTitle(data.conversation.title);
       await refreshConversations(conversationId);
       toast("Renamed");
+      setRenameOpen(false);
     } catch (error) {
       toast(`Rename failed: ${error instanceof Error ? error.message : "unknown error"}`);
+    } finally {
+      setRenameBusy(false);
     }
   }
 
-  async function deleteCurrentConversation() {
+  function openDeleteDialog() {
     if (!conversationId) return;
-    setMoreMenuOpen(false);
-    const ok = window.confirm("Delete this conversation? This cannot be undone.");
-    if (!ok) return;
+    setManageMenuOpen(false);
+    setDeleteOpen(true);
+  }
+
+  async function confirmDelete() {
+    if (!conversationId) return;
     const deletingId = conversationId;
+    setDeleteBusy(true);
     try {
       await api.deleteConversation(deletingId);
       const list = await api.listConversations();
       setConversations(list.conversations);
       toast("Deleted");
+      setDeleteOpen(false);
       if (list.conversations.length > 0) {
         await loadConversation(list.conversations[0].id, list.conversations);
       } else {
@@ -442,6 +653,8 @@ export function ChatPage() {
       }
     } catch (error) {
       toast(`Delete failed: ${error instanceof Error ? error.message : "unknown error"}`);
+    } finally {
+      setDeleteBusy(false);
     }
   }
 
@@ -714,837 +927,295 @@ export function ChatPage() {
     }
   }
 
+  function openHistoryDrawer() {
+    setInspectorDrawerOpen(false);
+    setHistoryDrawerOpen(true);
+    requestAnimationFrame(() => historySearchRef.current?.focus());
+  }
+
   const pinned = Boolean(activeConversation?.pinned);
-  const diagnosticStrip = useMemo(
-    () => buildDiagnosticStrip(lastTurn.telemetry),
-    [lastTurn.telemetry],
+
+  // Reference runtime flags so bootstrap stays typed-used (noUnusedLocals).
+  const runtimeMeta =
+    agentsEnabled != null || codingEnabled != null
+      ? `agents=${agentsEnabled === null ? "?" : agentsEnabled ? "on" : "off"} · coding=${
+          codingEnabled === null ? "?" : codingEnabled ? "on" : "off"
+        }`
+      : null;
+
+  const v2Actions = (
+    <>
+      <div style={{ position: "relative" }} ref={newChatMenuRef}>
+        <div className="lv-v2-topbar__action-split">
+          <button
+            type="button"
+            className="lv-v2-topbar__action-btn lv-v2-topbar__action-btn--primary"
+            disabled={busy || creating || !bootstrapped}
+            onClick={() => void createConversation()}
+          >
+            + Nieuwe chat
+          </button>
+          <button
+            type="button"
+            className="lv-v2-topbar__action-split__chevron"
+            aria-label="Nieuwe chat opties"
+            aria-expanded={newChatMenuOpen}
+            disabled={busy || creating || !bootstrapped}
+            onClick={() => {
+              setManageMenuOpen(false);
+              setNewChatMenuOpen((open) => !open);
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="currentColor" d="M7 10l5 5 5-5" />
+            </svg>
+          </button>
+        </div>
+        {newChatMenuOpen ? (
+          <div className="lv-v2-topbar__action-menu" role="menu">
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => void createConversation()}
+            >
+              Nieuwe lege chat
+            </button>
+            {selectedModelId ? (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => void createConversation()}
+                title={`Model blijft: ${modelLabel}`}
+              >
+                met huidig model ({modelLabel})
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ position: "relative" }} ref={manageMenuRef}>
+        <button
+          type="button"
+          className="lv-v2-topbar__action-btn"
+          aria-expanded={manageMenuOpen}
+          disabled={!conversationId}
+          onClick={() => {
+            setNewChatMenuOpen(false);
+            setManageMenuOpen((open) => !open);
+          }}
+        >
+          Manage
+        </button>
+        {manageMenuOpen ? (
+          <div className="lv-v2-topbar__action-menu" role="menu">
+            <button type="button" role="menuitem" onClick={openRenameDialog}>
+              Rename
+            </button>
+            <button type="button" role="menuitem" onClick={() => void togglePinned()}>
+              {pinned ? "Unpin" : "Pin"}
+            </button>
+            <button type="button" role="menuitem" onClick={openDeleteDialog}>
+              Delete
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setManageMenuOpen(false);
+                void copyLocalLink(conversationId);
+              }}
+            >
+              Copy local link
+            </button>
+          </div>
+        ) : null}
+      </div>
+
+      <button
+        type="button"
+        className="lv-v2-topbar__action-btn"
+        onClick={openHistoryDrawer}
+      >
+        Gesprekken
+      </button>
+    </>
   );
 
   return (
     <AppShell
       variant="v2"
-      chatApp
-      v2Title="Chat"
-      v2Subtitle="Gesprekken met Leviathan agents en control plane."
+      v2Title="Hades AI / Chat"
+      v2Subtitle="Geavanceerde AI-assistentie met redeneren, tools en betrouwbare bronnen"
+      v2Online={v2Online}
+      v2StatusRows={sidebarStatus}
+      v2Now={frozen ? () => frozen : undefined}
+      v2Actions={v2Actions}
+      v2HideRefresh={true}
+      v2Refreshing={refreshing}
+      onV2Refresh={() => {
+        void onV2Refresh();
+      }}
     >
-      <aside className="lv-chat-rail" id="chatRail">
-        <div className="lv-chat-rail-head">
-          <h2>Chat</h2>
-          <button
-            className="lv-new-chat"
-            type="button"
-            disabled={busy || creating}
-            onClick={() => void createConversation()}
-          >
-            <svg className="lv-icon" viewBox="0 0 24 24">
-              <path d="M12 5v14M5 12h14" />
-            </svg>{" "}
-            New Chat
-          </button>
-        </div>
+      <main className="lv-v2-page lv-v2-page--chat">
+        <HadesConfigStrip
+          models={chatModels}
+          nonChatModels={nonChatModels}
+          selectedModelId={selectedModelId}
+          onSelectModel={setSelectedModelId}
+          collaborationStrategy={collaborationStrategy}
+          onCollaborationChange={setCollaborationStrategy}
+          reasoningMode={reasoningMode}
+          onReasoningChange={setReasoningMode}
+          capabilities={capabilities}
+          busy={busy}
+        />
 
-        <label className="lv-chat-search">
-          <svg className="lv-icon" viewBox="0 0 24 24">
-            <circle cx="11" cy="11" r="7" />
-            <path d="M20 20l-3-3" />
-          </svg>
-          <input
-            type="search"
-            placeholder="Search chats..."
-            aria-label="Search chats"
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
+        <button
+          type="button"
+          className={`lv-v2-chat-drawer-backdrop${
+            historyDrawerOpen || inspectorDrawerOpen ? " is-open" : ""
+          }`}
+          aria-label="Sluit paneel"
+          onClick={() => {
+            setHistoryDrawerOpen(false);
+            setInspectorDrawerOpen(false);
+          }}
+        />
+
+        <div className="lv-v2-chat-workspace">
+          <ConversationHistoryPanel
+            conversations={conversations}
+            activeId={conversationId}
+            onSelect={(id) => void loadConversation(id)}
+            onCreate={() => void createConversation()}
+            bootstrapped={bootstrapped}
+            creating={creating}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            drawerOpen={historyDrawerOpen}
+            searchInputRef={historySearchRef}
+            now={frozen ?? undefined}
           />
-        </label>
 
-        <div className="lv-chat-filters">
-          {(["All", "Pinned"] as const).map((chip) => (
-            <button
-              key={chip}
-              className={`lv-chip${activeChip === chip ? " is-active" : ""}`}
-              type="button"
-              onClick={() => setActiveChip(chip)}
-            >
-              {chip}
-            </button>
-          ))}
-        </div>
-
-        <div className="lv-thread-list" id="threadList">
-          {!bootstrapped ? (
-            <div className="lv-chat-empty" style={{ padding: "1rem" }}>
-              <span>Loading conversations…</span>
-            </div>
-          ) : filteredConversations.length === 0 ? (
-            <div className="lv-chat-empty" style={{ padding: "1rem" }}>
-              <span>
-                {activeChip === "Pinned" ? "No pinned conversations." : "No matching conversations."}
-              </span>
-            </div>
-          ) : (
-            filteredConversations.map((conversation) => (
-              <button
-                key={conversation.id}
-                className={`lv-thread${conversation.id === conversationId ? " is-active" : ""}`}
-                type="button"
-                disabled={busy}
-                onClick={() => void loadConversation(conversation.id)}
-              >
-                <strong>
-                  {conversation.pinned ? "★ " : ""}
-                  {conversation.title}
-                </strong>
-                <time>{formatTime(conversation.updated_at)}</time>
-                <small>
-                  {conversation.id === conversationId
-                    ? "Active conversation"
-                    : conversation.pinned
-                      ? "Pinned"
-                      : "Persistent chat"}
-                </small>
-              </button>
-            ))
-          )}
-        </div>
-      </aside>
-
-      <main className="lv-chat-main">
-        <div className="lv-chat-top">
-          <div className="lv-chat-title-wrap">
-            <div className="lv-chat-title-row">
-              <div className="lv-brand-mark" aria-hidden="true">
-                <BrandMark id="chatBrand" />
-              </div>
-              <h1 className="lv-chat-title">{activeConversation?.title ?? title}</h1>
-            </div>
-            <div className="lv-tag-row">
-              {turnTags.map((tag) => (
-                <span className="lv-tag" key={tag}>
-                  {tag}
-                </span>
-              ))}
-            </div>
-          </div>
-          <div className="lv-chat-actions">
-            <button
-              className="lv-ghost-btn"
-              type="button"
-              onClick={() => void copyLocalLink(conversationId)}
-            >
-              <svg className="lv-icon" viewBox="0 0 24 24">
-                <path d="M12 5v10M8 9l4-4 4 4M5 19h14" />
-              </svg>
-              Share
-            </button>
-            <button
-              className="lv-ghost-btn icon-only"
-              type="button"
-              aria-label={pinned ? "Unpin conversation" : "Pin conversation"}
-              aria-pressed={pinned}
-              onClick={() => void togglePinned()}
-            >
-              <svg
-                className="lv-icon"
-                viewBox="0 0 24 24"
-                style={pinned ? { fill: "currentColor" } : undefined}
-              >
-                <path d="M12 4l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 16.8 7.2 19l.9-5.4L4.2 9.7l5.4-.8L12 4z" />
-              </svg>
-            </button>
-            <div ref={moreMenuRef} style={{ position: "relative" }}>
-              <button
-                className="lv-ghost-btn icon-only"
-                type="button"
-                aria-label="More"
-                aria-expanded={moreMenuOpen}
-                onClick={() => setMoreMenuOpen((open) => !open)}
-              >
-                <svg className="lv-icon" viewBox="0 0 24 24">
-                  <circle cx="6" cy="12" r="1.3" fill="currentColor" stroke="none" />
-                  <circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" />
-                  <circle cx="18" cy="12" r="1.3" fill="currentColor" stroke="none" />
-                </svg>
-              </button>
-              {moreMenuOpen ? (
-                <div
-                  role="menu"
-                  style={{
-                    position: "absolute",
-                    right: 0,
-                    top: "calc(100% + 0.35rem)",
-                    minWidth: "10rem",
-                    zIndex: 20,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "0.15rem",
-                    padding: "0.35rem",
-                    borderRadius: "0.5rem",
-                    background: "var(--lv-panel, #12141a)",
-                    border: "1px solid var(--lv-border, rgba(255,255,255,0.12))",
-                    boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
-                  }}
-                >
-                  <button
-                    type="button"
-                    className="lv-ghost-btn"
-                    role="menuitem"
-                    onClick={() => void renameConversation()}
-                  >
-                    Rename
-                  </button>
-                  <button
-                    type="button"
-                    className="lv-ghost-btn"
-                    role="menuitem"
-                    onClick={() => void copyLocalLink(conversationId)}
-                  >
-                    Copy local link
-                  </button>
-                  <button
-                    type="button"
-                    className="lv-ghost-btn"
-                    role="menuitem"
-                    onClick={() => void deleteCurrentConversation()}
-                  >
-                    Delete
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </div>
-
-        <div className="lv-messages" id="messages" ref={messagesRef}>
-          {messages.length === 0 ? (
-            <div className="lv-chat-empty">
-              <strong>Leviathan is ready.</strong>
-              <span>
-                Start a conversation. Persistent chat, lightweight reasoning and local knowledge
-                retrieval are connected to the Python backend.
-              </span>
-            </div>
-          ) : (
-            messages.map((message, index) => (
-              <article
-                key={`${message.role}-${index}-${message.created_at ?? "pending"}`}
-                className={`lv-msg ${message.role}`}
-                data-pending={message.pending ? "true" : undefined}
-                data-error={message.error ? "true" : undefined}
-              >
-                {message.role === "user" ? (
-                  <img className="lv-msg-avatar" src={media.avatar} alt="" />
-                ) : (
-                  <BotAvatar />
-                )}
-                <div>
-                  <div
-                    className={`lv-bubble${message.pending ? " lv-bubble-pending" : ""}${
-                      message.error ? " lv-bubble-error" : ""
-                    }`}
-                    style={{ whiteSpace: "pre-wrap" }}
-                  >
-                    {message.content}
-                  </div>
-                  {message.role === "assistant" &&
-                  !message.pending &&
-                  index === messages.length - 1 &&
-                  (lastTurn.telemetry?.tool_calls?.length ?? 0) > 0 ? (
-                    <CapabilityResultCards toolCalls={lastTurn.telemetry?.tool_calls} />
-                  ) : null}
-                  <div className="lv-msg-meta">
-                    {formatTime(message.created_at) || (message.pending ? "thinking" : "")}
-                  </div>
-                </div>
-              </article>
-            ))
-          )}
-        </div>
-
-        <div className="lv-composer-wrap">
-          {diagnosticStrip.length > 0 ? (
-            <div
-              className="lv-chat-diagnostic-strip"
-              aria-label="Turn diagnostics"
-              style={{
-                display: "flex",
-                flexWrap: "wrap",
-                gap: "0.5rem 0.85rem",
-                padding: "0.4rem 0.75rem",
-                marginBottom: "0.35rem",
-                fontSize: "0.75rem",
-                opacity: 0.85,
-                borderTop: "1px solid color-mix(in srgb, currentColor 12%, transparent)",
-              }}
-            >
-              {diagnosticStrip.map((item) => (
-                <span key={item.label}>
-                  <strong style={{ fontWeight: 600 }}>{item.label}</strong> {item.value}
-                </span>
-              ))}
-            </div>
-          ) : null}
-          <div className="lv-composer">
-            <textarea
-              ref={composerRef}
-              rows={1}
-              placeholder="Message Leviathan..."
-              aria-label="Message Leviathan"
-              value={composer}
-              disabled={busy}
-              onChange={(event) => setComposer(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void sendMessage();
-                }
+          <div className="lv-v2-chat-col lv-v2-chat-center">
+            <MessageList
+              messages={messages}
+              lastTurn={{
+                reasoning: lastTurn.reasoning,
+                cognitionPhase: lastTurn.cognitionPhase,
+                streaming: lastTurn.streaming,
+                telemetry: lastTurn.telemetry,
+                reasoningElapsedMs:
+                  typeof (lastTurn.telemetry as { reasoning_elapsed_ms?: number } | null)
+                    ?.reasoning_elapsed_ms === "number"
+                    ? (lastTurn.telemetry as { reasoning_elapsed_ms?: number }).reasoning_elapsed_ms
+                    : null,
               }}
             />
-            <div ref={modelMenuRef} style={{ position: "relative", display: "flex", gap: "0.35rem", alignItems: "center" }}>
-              <label className="lv-muted" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.25rem" }}>
-                <span className="sr-only">Reasoning</span>
-                <select
-                  className="lv-input"
-                  aria-label="Reasoning mode"
-                  disabled={busy}
-                  value={reasoningMode}
-                  onChange={(e) => setReasoningMode(e.target.value as "auto" | "fast" | "deep")}
-                  style={{ minWidth: "5.5rem", padding: "0.25rem 0.4rem", fontSize: "0.78rem" }}
-                  title="Session reasoning override (depth within model work)"
-                >
-                  <option value="auto">Auto</option>
-                  <option value="fast">Fast</option>
-                  <option value="deep">Deep</option>
-                </select>
-              </label>
-              <label className="lv-muted" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.25rem" }}>
-                <span className="sr-only">Collaboration</span>
-                <select
-                  className="lv-input"
-                  aria-label="Collaboration strategy"
-                  disabled={busy}
-                  value={collaborationStrategy}
-                  onChange={(e) => setCollaborationStrategy(e.target.value as "direct" | "team")}
-                  style={{ minWidth: "5.5rem", padding: "0.25rem 0.4rem", fontSize: "0.78rem" }}
-                  title="Continues until the quality criteria are met, or shows exactly what prevents completion."
-                >
-                  <option value="direct">Direct</option>
-                  <option value="team">TEAM</option>
-                </select>
-              </label>
-              <button
-                className="lv-model"
-                type="button"
-                title="Session model (not saved)"
-                aria-expanded={modelMenuOpen}
-                disabled={busy}
-                onClick={() => setModelMenuOpen((open) => !open)}
-              >
-                {modelLabel}{" "}
-                <svg className="lv-icon" viewBox="0 0 24 24">
-                  <path d="M7 10l5 5 5-5" />
-                </svg>
-              </button>
-              {modelMenuOpen ? (
-                <div
-                  role="listbox"
-                  aria-label="Session model"
-                  style={{
-                    position: "absolute",
-                    right: 0,
-                    bottom: "calc(100% + 0.35rem)",
-                    minWidth: "12rem",
-                    maxHeight: "16rem",
-                    overflowY: "auto",
-                    zIndex: 20,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "0.15rem",
-                    padding: "0.35rem",
-                    borderRadius: "0.5rem",
-                    background: "var(--lv-panel, #12141a)",
-                    border: "1px solid var(--lv-border, rgba(255,255,255,0.12))",
-                    boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
-                  }}
-                >
-                  <button
-                    type="button"
-                    className="lv-ghost-btn"
-                    role="option"
-                    aria-selected={selectedModelId === null}
-                    onClick={() => {
-                      setSelectedModelId(null);
-                      setModelMenuOpen(false);
-                    }}
-                  >
-                    Auto
-                  </button>
-                  {chatModels.length === 0 ? (
-                    <div className="lv-muted" style={{ padding: "0.4rem 0.55rem", fontSize: "0.8rem" }}>
-                      No chat-capable models. Configure one under Models.
-                    </div>
-                  ) : null}
-                  {chatModels.map((model) => (
-                    <button
-                      key={model.id}
-                      type="button"
-                      className="lv-ghost-btn"
-                      role="option"
-                      aria-selected={selectedModelId === model.id}
-                      onClick={() => {
-                        setSelectedModelId(model.id);
-                        setModelMenuOpen(false);
-                      }}
-                      title={`${model.providerId} · chat=${model.capabilities?.chat ?? "?"} · ctx=${model.contextWindow ?? "?"}`}
-                    >
-                      {model.displayName || model.id}
-                      <small style={{ display: "block", opacity: 0.65 }}>
-                        {model.providerId}
-                        {model.capabilities?.reasoning === "supported" ? " · reasoning" : ""}
-                        {model.loaded ? " · loaded" : ""}
-                      </small>
-                    </button>
-                  ))}
-                  {nonChatModels.length ? (
-                    <div
-                      className="lv-muted"
-                      style={{
-                        marginTop: "0.35rem",
-                        paddingTop: "0.35rem",
-                        borderTop: "1px solid var(--lv-border, rgba(255,255,255,0.1))",
-                        fontSize: "0.72rem",
-                      }}
-                    >
-                      Unavailable for chat
-                      {nonChatModels.slice(0, 6).map((model) => (
-                        <div key={model.id} style={{ opacity: 0.55, padding: "0.2rem 0" }} title={chatIneligibilityReason(model)}>
-                          {model.displayName || model.id} — {chatIneligibilityReason(model)}
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-            {busy ? (
-              <button
-                className="lv-prompt-send lv-button-secondary"
-                type="button"
-                id="stopBtn"
-                aria-label="Stop generation"
-                title="Stop generation"
-                onClick={() => {
-                  abortRef.current?.abort();
-                  abortRef.current = null;
+            <ChatComposer
+              value={composer}
+              onChange={setComposer}
+              onSend={() => void sendMessage()}
+              onStop={() => {
+                abortRef.current?.abort();
+                abortRef.current = null;
+              }}
+              busy={busy}
+              disabled={!bootstrapped}
+              reasoningMode={reasoningMode}
+              onReasoningChange={setReasoningMode}
+              capabilities={capabilities}
+              contextWindow={contextWindow}
+              selectedModelId={selectedModelId}
+              quickPrompts={messages.length === 0 ? QUICK_PROMPTS : []}
+              textareaRef={composerRef}
+            />
+            {diagnosticStrip.length > 0 || teamPanel || runtimeMeta ? (
+              <div
+                className="lv-v2-muted"
+                style={{
+                  fontSize: 10,
+                  padding: "2px 10px 8px",
+                  opacity: 0.7,
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: "0.35rem 0.75rem",
                 }}
+                aria-label="Turn diagnostics"
               >
-                Stop
-              </button>
-            ) : (
-              <button
-                className="lv-prompt-send lv-button-primary"
-                type="button"
-                id="sendBtn"
-                aria-label="Send"
-                disabled={busy}
-                onClick={() => void sendMessage()}
-              >
-                <svg className="lv-icon" viewBox="0 0 24 24">
-                  <path d="M5 12h12M13 6l6 6-6 6" />
-                </svg>
-              </button>
-            )}
+                {diagnosticStrip.map((item) => (
+                  <span key={item.label}>
+                    {item.label}={item.value}
+                  </span>
+                ))}
+                {teamPanel ? (
+                  <span>
+                    TEAM {String(teamPanel.quality_label ?? teamPanel.status ?? "—")}
+                  </span>
+                ) : null}
+                {runtimeMeta ? <span>{runtimeMeta}</span> : null}
+              </div>
+            ) : null}
           </div>
-          <div className="lv-quick-actions">
-            {Object.keys(QUICK_PROMPTS).map((label) => (
-              <button
-                key={label}
-                className="lv-quick"
-                type="button"
-                onClick={() => {
-                  setComposer(QUICK_PROMPTS[label]);
-                  composerRef.current?.focus();
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+
+          <ChatInspector
+            tokenUsage={tokenUsage}
+            contextBudget={contextBudget}
+            memoryCount={memoryCount}
+            preferencesLabel={null}
+            projectContext={null}
+            knowledgeSources={lastTurn.knowledgeSources}
+            verification={lastTurn.verification}
+            systemTelemetry={systemTelemetry}
+            lastTurnTelemetry={lastTurn.telemetry}
+            drawerOpen={inspectorDrawerOpen}
+          />
         </div>
       </main>
 
-      <aside className="lv-chat-right">
-        <div className="lv-right-tabs">
-          {(["Context", "Tools", "Agents"] as const).map((tab) => (
-            <button
-              key={tab}
-              className={`lv-right-tab${rightTab === tab ? " is-active" : ""}`}
-              type="button"
-              onClick={() => setRightTab(tab)}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
+      <Dialog
+        open={renameOpen}
+        title="Hernoem gesprek"
+        description="Geef dit gesprek een nieuwe titel."
+        confirmLabel="Opslaan"
+        cancelLabel="Annuleren"
+        busy={renameBusy}
+        onClose={() => {
+          if (!renameBusy) setRenameOpen(false);
+        }}
+        onConfirm={() => void confirmRename()}
+      >
+        <label className="lv-v2-sr-only" htmlFor="chat-rename-input">
+          Titel
+        </label>
+        <input
+          id="chat-rename-input"
+          value={renameValue}
+          onChange={(e) => setRenameValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void confirmRename();
+            }
+          }}
+          disabled={renameBusy}
+        />
+      </Dialog>
 
-        {rightTab === "Context" ? (
-          <section className="lv-panel lv-side-card">
-            <div className="lv-side-card-head">
-              <h3>Current Context</h3>
-            </div>
-            <div className="lv-context-active">
-              <strong>{activeConversation?.title ?? title}</strong>
-              <small>
-                {lastTurn.model ? `Model ${lastTurn.model}` : selectedModelId ? modelLabel : "Auto model"}
-                {lastTurn.telemetry?.behavior_version
-                  ? ` · Behavior v${lastTurn.telemetry.behavior_version}`
-                  : lastTurn.telemetry?.behavior_hash
-                    ? ` · Behavior ${String(lastTurn.telemetry.behavior_hash).slice(0, 10)}`
-                    : ""}
-                {lastTurn.language
-                  ? ` · Language ${lastTurn.language}${lastTurn.languageSource ? ` · ${lastTurn.languageSource}` : ""}`
-                  : ""}
-                {lastTurn.reasoningMode ? ` · Reasoning ${lastTurn.reasoningMode}` : ""}
-                {collaborationStrategy === "team" || teamPanel ? " · TEAM" : ""}
-              </small>
-              {teamPanel ? (
-                <div style={{ marginTop: "0.55rem", fontSize: "0.75rem" }}>
-                  <strong>TEAM quality</strong>
-                  <div className="lv-muted" style={{ marginTop: 2 }}>
-                    {String(teamPanel.quality_label ?? teamPanel.status) === "accepted"
-                      ? "TEAM quality: accepted"
-                      : String(teamPanel.quality_label ?? teamPanel.status) === "blocked"
-                        ? "TEAM quality: blocked — see criteria and blockers"
-                        : "Continues until the quality criteria are met, or shows exactly what prevents completion."}
-                  </div>
-                  <div style={{ marginTop: 4 }}>
-                    Status {String(teamPanel.quality_label ?? teamPanel.status ?? "—")}
-                    {typeof teamPanel.iteration === "number" ? ` · iteration ${teamPanel.iteration}` : ""}
-                    {(teamPanel.progress as { criteria_ratio_label?: string } | undefined)
-                      ?.criteria_ratio_label
-                      ? ` · ${String((teamPanel.progress as { criteria_ratio_label?: string }).criteria_ratio_label)}`
-                      : typeof (teamPanel.progress as { mandatory_satisfied?: number } | undefined)
-                            ?.mandatory_satisfied === "number" &&
-                          typeof (teamPanel.progress as { mandatory_total?: number } | undefined)
-                            ?.mandatory_total === "number"
-                        ? ` · ${(teamPanel.progress as { mandatory_satisfied: number }).mandatory_satisfied}/${(teamPanel.progress as { mandatory_total: number }).mandatory_total} mandatory criteria satisfied`
-                        : ""}
-                  </div>
-                  <ul style={{ margin: "0.35rem 0 0", paddingLeft: "1rem" }}>
-                    {Array.isArray((teamPanel.contract as { criteria?: unknown[] } | undefined)?.criteria)
-                      ? (
-                          (
-                            teamPanel.contract as {
-                              criteria: Array<{ criterion_id: string; severity: string }>;
-                            }
-                          ).criteria || []
-                        ).map((c) => {
-                          const verdicts = Array.isArray(teamPanel.verdicts)
-                            ? (teamPanel.verdicts as Array<{ criterion_id: string; status: string }>)
-                            : [];
-                          const v = [...verdicts].reverse().find((x) => x.criterion_id === c.criterion_id);
-                          return (
-                            <li key={c.criterion_id}>
-                              [{c.severity}] {c.criterion_id}: {v?.status ?? "pending"}
-                            </li>
-                          );
-                        })
-                      : null}
-                  </ul>
-                </div>
-              ) : null}
-              <small>
-                {`Brain/Knowledge ${lastTurn.telemetry?.knowledge_hits ?? lastTurn.knowledgeCount}`}
-                {` · Memory ${lastTurn.telemetry?.memory_hits ?? lastTurn.memoryCount}`}
-                {` · Evidence ${lastTurn.telemetry?.evidence_hits ?? 0}`}
-                {` · Web ${
-                  lastTurn.telemetry?.web_sources?.length
-                    ? `${lastTurn.telemetry.web_sources.length} sources`
-                    : lastTurn.telemetry?.web_used
-                      ? "used"
-                      : "idle"
-                }`}
-                {` · Verification ${lastTurn.verification ?? "UNMEASURED"}`}
-              </small>
-              <small>
-                {lastTurn.telemetry?.context_used != null ||
-                lastTurn.telemetry?.context_tokens != null ||
-                lastTurn.telemetry?.context_budget != null
-                  ? `Context ${lastTurn.telemetry?.context_used ?? lastTurn.telemetry?.context_tokens ?? "—"} / ${lastTurn.telemetry?.context_budget ?? "—"}`
-                  : "Context budget unmeasured"}
-                {lastTurn.telemetry?.execution_class
-                  ? ` · Mode ${lastTurn.telemetry.execution_class}`
-                  : ""}
-                {lastTurn.telemetry?.latency_ms != null
-                  ? ` · ${Math.round(lastTurn.telemetry.latency_ms)} ms`
-                  : ""}
-                {lastTurn.cognitionMode ? ` · ${lastTurn.cognitionMode}` : ""}
-                {lastTurn.cognitionPhase ? ` · ${lastTurn.cognitionPhase}` : ""}
-              </small>
-              {buildDiagnosticStrip(lastTurn.telemetry).length ? (
-                <small className="lv-context-diag">
-                  {buildDiagnosticStrip(lastTurn.telemetry)
-                    .map((item) => `${item.label}=${item.value}`)
-                    .join(" · ")}
-                </small>
-              ) : (
-                <small className="lv-context-diag">
-                  Diagnostics are backend-backed telemetry — never an invented “brain %”.
-                </small>
-              )}
-            </div>
-            {lastTurn.reasoning?.steps?.length ? (
-              <div className="lv-context-list">
-                {lastTurn.reasoning.steps.map((step, index) => (
-                  <div className="lv-context-item" key={`step-${index}`}>
-                    <span className="lv-mini-icon blue">
-                      <svg className="lv-icon" viewBox="0 0 24 24">
-                        <path d="M5 19V9M12 19V5M19 19v-7" />
-                      </svg>
-                    </span>
-                    <span>
-                      <strong>Step {index + 1}</strong>
-                      <small>{step}</small>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            <div className="lv-context-list">
-              {lastTurn.knowledgeSources.length === 0 ? (
-                <div className="lv-context-item">
-                  <span>
-                    <strong>No knowledge sources</strong>
-                    <small>Last turn did not retrieve knowledge.</small>
-                  </span>
-                </div>
-              ) : (
-                lastTurn.knowledgeSources.map((source) => (
-                  <div className="lv-context-item" key={source.id}>
-                    <span className="lv-mini-icon blue">
-                      <svg className="lv-icon" viewBox="0 0 24 24">
-                        <path d="M5 19V9M12 19V5M19 19v-7" />
-                      </svg>
-                    </span>
-                    <span>
-                      <strong>{source.title || source.id}</strong>
-                      <small>{source.source || source.id}</small>
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-          </section>
-        ) : null}
-
-        {rightTab === "Tools" ? (
-          <section className="lv-panel lv-side-card">
-            <div className="lv-side-card-head">
-              <h3>Tool calls</h3>
-            </div>
-            <div className="lv-tool-list">
-              {(lastTurn.telemetry?.tool_calls?.length ??
-                lastTurn.telemetry?.tools_invoked?.length ??
-                0) === 0 ? (
-                <div className="lv-tool-item">
-                  <span>
-                    <strong>No tool calls this turn</strong>
-                    <small>Receipts appear only after ExecutionGateway invocations.</small>
-                  </span>
-                </div>
-              ) : (
-                (lastTurn.telemetry?.tool_calls?.length
-                  ? lastTurn.telemetry.tool_calls
-                  : (lastTurn.telemetry?.tools_invoked ?? []).map(
-                      (id): AssistantToolCallTelemetry => ({
-                        capability_id: id,
-                        status: "INVOKED",
-                        duration_ms: null,
-                        receipt_id: null,
-                        summary: null,
-                        success: null,
-                        module_id: null,
-                        provider: null,
-                        result_count: null,
-                        source_count: null,
-                        artifact_refs: [],
-                      }),
-                    )
-                ).map((call) => (
-                  <div
-                    className="lv-tool-item"
-                    key={`${call.capability_id}:${call.receipt_id || call.status}`}
-                  >
-                    <span className="lv-mini-icon cyan">
-                      <svg className="lv-icon" viewBox="0 0 24 24">
-                        <path d="M14 7l3 3-8 8H6v-3l8-8z" />
-                      </svg>
-                    </span>
-                    <span>
-                      <strong>{call.capability_id}</strong>
-                      <small>
-                        {call.status}
-                        {call.module_id ? ` · ${call.module_id}` : ""}
-                        {call.provider ? ` · ${call.provider}` : ""}
-                        {call.duration_ms != null ? ` · ${Math.round(call.duration_ms)} ms` : ""}
-                        {call.receipt_id ? ` · receipt ${String(call.receipt_id).slice(0, 10)}` : ""}
-                        {call.result_count != null ? ` · ${call.result_count} results` : ""}
-                        {call.source_count != null ? ` · ${call.source_count} sources` : ""}
-                        {call.artifact_refs?.length
-                          ? ` · ${call.artifact_refs.length} artifacts`
-                          : ""}
-                        {call.success === false ? " · failed" : ""}
-                        {call.summary ? ` · ${call.summary}` : ""}
-                      </small>
-                    </span>
-                    <span className="lv-online-label">
-                      {call.success === false ? "Failed" : call.receipt_id ? "Receipt" : call.status}
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-            {(lastTurn.telemetry?.tool_calls?.length ?? 0) > 0 ? (
-              <div style={{ marginTop: "0.85rem" }}>
-                <CapabilityResultCards toolCalls={lastTurn.telemetry?.tool_calls} />
-              </div>
-            ) : null}
-            <div className="lv-side-card-head" style={{ marginTop: "1rem" }}>
-              <h3>Catalog (read-only)</h3>
-            </div>
-            <p style={{ margin: "0 0 0.75rem", fontSize: "0.85rem", opacity: 0.8 }}>
-              Invocation goes through ExecutionGateway — not from this panel.
-            </p>
-            <div className="lv-tool-list">
-              {capabilities.length === 0 ? (
-                <div className="lv-tool-item">
-                  <span>
-                    <strong>No capabilities listed</strong>
-                    <small>Backend returned an empty catalog.</small>
-                  </span>
-                </div>
-              ) : (
-                capabilities.slice(0, 24).map((cap) => (
-                  <div className="lv-tool-item" key={cap.id}>
-                    <span>
-                      <strong>{cap.name || cap.id}</strong>
-                      <small>
-                        {cap.available === false
-                          ? "unavailable"
-                          : cap.enabled === false
-                            ? "disabled"
-                            : "registered"}
-                        {cap.side_effects?.length ? ` · ${cap.side_effects.join(", ")}` : ""}
-                      </small>
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-          </section>
-        ) : null}
-
-        {rightTab === "Agents" ? (
-          <section className="lv-panel lv-side-card">
-            <div className="lv-side-card-head">
-              <h3>Runtime status</h3>
-              <Link className="lv-link" to="/agents">
-                Agents
-              </Link>
-            </div>
-            <div className="lv-agent-side-list">
-              {(lastTurn.telemetry?.agent_delegations?.length ||
-                lastTurn.telemetry?.gi_specialists?.length ||
-                lastTurn.telemetry?.agents?.length) ? (
-                (lastTurn.telemetry?.agent_delegations?.length
-                  ? lastTurn.telemetry.agent_delegations
-                  : [
-                      ...(lastTurn.telemetry?.gi_specialists ?? []).map((id) => ({
-                        agent_kind: id,
-                        status: "SELECTED",
-                        summary: "GI specialist selected",
-                        success: null as boolean | null,
-                      })),
-                      ...(lastTurn.telemetry?.agents ?? []).map((id) => ({
-                        agent_kind: id,
-                        status: "DELEGATED",
-                        summary: "Agent result observed",
-                        success: null as boolean | null,
-                      })),
-                    ]
-                ).map((agent) => (
-                  <div className="lv-agent-side" key={`${agent.agent_kind}:${agent.status}`}>
-                    <span>
-                      <strong>{agent.agent_kind}</strong>
-                      <small>
-                        {agent.status}
-                        {agent.summary ? ` · ${agent.summary}` : ""}
-                        {agent.success === false ? " · failed" : ""}
-                      </small>
-                    </span>
-                    <span className="lv-online-label">{agent.status}</span>
-                  </div>
-                ))
-              ) : (
-                <div className="lv-agent-side">
-                  <span>
-                    <strong>No specialist delegation this turn</strong>
-                    <small>Orchestra stays quiet on DIRECT / simple paths.</small>
-                  </span>
-                </div>
-              )}
-              <div className="lv-agent-side">
-                <span className="lv-mini-icon blue">
-                  <svg className="lv-icon" viewBox="0 0 24 24">
-                    <circle cx="11" cy="11" r="7" />
-                    <path d="M20 20l-3-3" />
-                  </svg>
-                </span>
-                <span>
-                  <strong>Agents runtime</strong>
-                  <small>
-                    {agentsEnabled === null
-                      ? "Status unavailable"
-                      : agentsEnabled
-                        ? "Enabled (health.agents.enabled)"
-                        : "Disabled (health.agents.enabled)"}
-                  </small>
-                </span>
-                <span className="lv-online-label">
-                  {agentsEnabled ? "Enabled" : agentsEnabled === false ? "Disabled" : "Unknown"}
-                </span>
-              </div>
-              <div className="lv-agent-side">
-                <span className="lv-mini-icon blue">
-                  <svg className="lv-icon" viewBox="0 0 24 24">
-                    <path d="M8 7h8M8 12h8M8 17h5" />
-                  </svg>
-                </span>
-                <span>
-                  <strong>Coding agent</strong>
-                  <small>
-                    {codingEnabled === null
-                      ? "Status unavailable"
-                      : codingEnabled
-                        ? "Enabled (codingStatus.enabled)"
-                        : "Disabled (codingStatus.enabled)"}
-                  </small>
-                </span>
-                <span className="lv-online-label">
-                  {codingEnabled ? "Enabled" : codingEnabled === false ? "Disabled" : "Unknown"}
-                </span>
-              </div>
-            </div>
-            <div style={{ display: "flex", gap: "0.75rem", marginTop: "0.75rem", flexWrap: "wrap" }}>
-              <Link className="lv-link" to="/agents">
-                Open /agents
-              </Link>
-              <Link className="lv-link" to="/coding">
-                Open /coding
-              </Link>
-            </div>
-          </section>
-        ) : null}
-      </aside>
+      <Dialog
+        open={deleteOpen}
+        title="Gesprek verwijderen"
+        description="Delete this conversation? This cannot be undone."
+        confirmLabel="Verwijderen"
+        cancelLabel="Annuleren"
+        danger
+        busy={deleteBusy}
+        onClose={() => {
+          if (!deleteBusy) setDeleteOpen(false);
+        }}
+        onConfirm={() => void confirmDelete()}
+      />
     </AppShell>
   );
 }

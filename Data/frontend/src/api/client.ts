@@ -1195,6 +1195,36 @@ export const api = {
     return request<{ report: unknown }>("/api/evaluation/neuro", { method: "POST" });
   },
 
+  /** GET /api/evaluation/reports — persisted evaluation evidence only. */
+  listEvaluationReports(
+    limit = 50,
+  ): Promise<{ reports: unknown[]; truth?: Record<string, boolean> }> {
+    const q = new URLSearchParams({ limit: String(limit) });
+    return request<{ reports: unknown[]; truth?: Record<string, boolean> }>(
+      `/api/evaluation/reports?${q.toString()}`,
+    );
+  },
+
+  /**
+   * POST /api/evaluation/{suite} — enqueue suite on evaluation worker.
+   * Pass path segments such as "neuro", "foundation", or "release/validate".
+   */
+  runEvaluationSuite(
+    path: string,
+    body?: Record<string, unknown>,
+  ): Promise<{ job?: unknown; queued?: boolean; suite_id?: string; report?: unknown }> {
+    const suite = String(path || "")
+      .replace(/^\/+/, "")
+      .replace(/^api\/evaluation\//, "");
+    if (!suite) {
+      return Promise.reject(new Error("evaluation suite path is required"));
+    }
+    return request(`/api/evaluation/${suite}`, {
+      method: "POST",
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+  },
+
   listTrainingRecipes(): Promise<{ recipes: TrainingRecipe[] }> {
     return request<{ recipes: TrainingRecipe[] }>("/api/training/recipes");
   },

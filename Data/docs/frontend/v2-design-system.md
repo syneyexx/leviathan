@@ -79,3 +79,14 @@ Media Control, Plugin & Runtime, Coding Agent, and other deep links remain regis
 - No page-local Brain V2 CSS file; styles live in `leviathan-v2.css` under knowledge-network sections.
 - Visual fixture: `src/mocks/brainV2VisualFixture.ts` + `e2e/brain-v2.visual.spec.ts` (reference: `docs/ui_reference/brain-v2-reference.png`).
 - Next pages (Research, Memory, Evidence, …) must reuse the same shell, tokens, and primitives.
+
+## Chat migration
+
+- `/chat` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (generic `actions` slot for Nieuwe chat / Manage / Gesprekken).
+- Hades AI expandable group owns Chat / Reasoning (`/cognition`) / Agents link / Bibliotheek (`/knowledge`) / Prompts / Evaluations — Dashboard keeps home + Taken.
+- Three-column workspace primitives live in `leviathan-v2.css` (`.lv-v2-page--chat`, select cards, history, composer, inspector, meters, source rows). No `chat-v2.css`.
+- Reusable UI additions: `Dialog`, topbar `actions` / `hideRefresh`.
+- Visual fixture: `src/mocks/chatV2VisualFixture.ts` + `e2e/chat-v2.visual.spec.ts` (reference: `docs/ui_reference/chat-v2-reference.png`).
+- Production never hardcodes Screen 1 model/metrics/sources; fixture-only via `__LV_CHAT_V2_FIXTURE_UI__`.
+- Thin V2 surfaces: `/prompts`, `/evaluations` (real evaluation APIs). Coding and other deep links remain registered.
+- Next pages must reuse the same shell, tokens, dropdown/submenu model, and workspace primitives.

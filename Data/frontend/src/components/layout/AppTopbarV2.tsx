@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Button } from "../ui";
 import { StatusDot } from "../ui";
 import { useDutchClock } from "../../hooks/useDutchClock";
@@ -13,6 +14,13 @@ export type AppTopbarV2Props = {
   now?: () => Date;
   onThemeToggle?: () => void;
   themeToggleTitle?: string;
+  /**
+   * Optional page actions (e.g. Chat: Nieuwe chat / Manage / Gesprekken).
+   * Generic slot — never hardcode page-specific controls here.
+   */
+  actions?: ReactNode;
+  /** Hide the default Refresh control when the page supplies its own actions. */
+  hideRefresh?: boolean;
 };
 
 export function AppTopbarV2({
@@ -25,6 +33,8 @@ export function AppTopbarV2({
   now,
   onThemeToggle,
   themeToggleTitle = "Appearance (display only — no theme contract connected)",
+  actions,
+  hideRefresh = false,
 }: AppTopbarV2Props) {
   const clock = useDutchClock({ now, intervalMs: now ? 60_000 : 1_000 });
   const statusTone = online === true ? "success" : online === false ? "danger" : "muted";
@@ -57,6 +67,8 @@ export function AppTopbarV2({
       </div>
 
       <div className="lv-v2-topbar__right">
+        {actions ? <div className="lv-v2-topbar__actions">{actions}</div> : null}
+
         <button
           type="button"
           className="lv-v2-topbar__icon-btn"
@@ -70,20 +82,22 @@ export function AppTopbarV2({
           </svg>
         </button>
 
-        <Button
-          variant="secondary"
-          size="sm"
-          loading={refreshing}
-          disabled={!onRefresh || refreshing}
-          onClick={() => onRefresh?.()}
-          aria-label="Refresh dashboard"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-            <path d="M20 12a8 8 0 1 1-2.2-5.5" />
-            <path d="M20 4v5h-5" />
-          </svg>
-          Refresh
-        </Button>
+        {!hideRefresh ? (
+          <Button
+            variant="secondary"
+            size="sm"
+            loading={refreshing}
+            disabled={!onRefresh || refreshing}
+            onClick={() => onRefresh?.()}
+            aria-label="Refresh dashboard"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+              <path d="M20 12a8 8 0 1 1-2.2-5.5" />
+              <path d="M20 4v5h-5" />
+            </svg>
+            Refresh
+          </Button>
+        ) : null}
 
         <div className="lv-v2-topbar__clock" aria-live="polite">
           <StatusDot tone={statusTone} pulse={online === true} />

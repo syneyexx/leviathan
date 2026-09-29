@@ -70,7 +70,22 @@ export async function installDashboardV2VisualFixture(page: Page): Promise<void>
 
     // Chat / Tasks pages share V2 chrome — return honest empty shapes so they mount.
     if (path === "/api/conversations" || path.startsWith("/api/conversations/")) {
+      if (route.request().method() === "POST") {
+        return json(route, {
+          conversation: {
+            id: "dash-fixture-conv",
+            title: "New conversation",
+            created_at: V2_VISUAL_FROZEN_ISO,
+            updated_at: V2_VISUAL_FROZEN_ISO,
+            pinned: false,
+          },
+          truth: { visual_fixture: true },
+        });
+      }
       return json(route, { conversations: [], conversation: null, messages: [], truth: { visual_fixture: true } });
+    }
+    if (path === "/api/memory" || path.startsWith("/api/memory/")) {
+      return json(route, { memory: [], truth: { visual_fixture: true } });
     }
     if (path === "/api/models" || path === "/api/models/") {
       return json(route, { models: [], truth: { visual_fixture: true } });
