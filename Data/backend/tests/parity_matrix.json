@@ -1,18 +1,49 @@
 {
   "fixtureRows": 24,
-  "generatedAt": "2026-09-26T22:07:45Z",
-  "intentionalDifferences": [],
-  "nativeBinary": "/workspace/Data/native/bin/leviathan-data-plane",
-  "operations": [
+  "generatedAt": "2026-09-29T00:35:53Z",
+  "intentionalDifferences": [
     {
-      "notes": "",
+      "detail": "native binary unavailable",
       "operation": "dataset.hash",
-      "pythonHash": "385f7f8923ee0729541edbecd8b18e159f78793a8fa55727aa673fb339456f7f",
-      "rustHash": "385f7f8923ee0729541edbecd8b18e159f78793a8fa55727aa673fb339456f7f",
-      "status": "PASS"
+      "reason": "RUST_BINARY_MISSING"
     },
     {
-      "notes": "",
+      "detail": "native binary unavailable",
+      "operation": "dataset.validate",
+      "reason": "RUST_BINARY_MISSING"
+    },
+    {
+      "detail": "native binary unavailable",
+      "operation": "dataset.transform",
+      "reason": "RUST_BINARY_MISSING"
+    },
+    {
+      "detail": "native binary unavailable",
+      "operation": "dataset.split",
+      "reason": "RUST_BINARY_MISSING"
+    },
+    {
+      "detail": "native binary unavailable",
+      "operation": "dataset.export",
+      "reason": "RUST_BINARY_MISSING"
+    },
+    {
+      "detail": "native binary unavailable",
+      "operation": "dataset.dedupe",
+      "reason": "RUST_BINARY_MISSING"
+    }
+  ],
+  "nativeBinary": null,
+  "operations": [
+    {
+      "notes": "native binary unavailable",
+      "operation": "dataset.hash",
+      "pythonHash": "385f7f8923ee0729541edbecd8b18e159f78793a8fa55727aa673fb339456f7f",
+      "rustHash": null,
+      "status": "SKIP"
+    },
+    {
+      "notes": "native binary unavailable",
       "operation": "dataset.validate",
       "parityMetric": "rowCount_and_success",
       "python": {
@@ -20,55 +51,55 @@
         "valid": true
       },
       "rust": {
-        "ok": true,
-        "recordsIn": 25
+        "ok": false,
+        "recordsIn": null
       },
-      "status": "PASS"
+      "status": "SKIP"
     },
     {
-      "notes": "",
+      "notes": "native binary unavailable",
       "operation": "dataset.transform",
       "pythonHash": "bf842c001d5987ebaf08ad6959d2be0072c0003246e455c799a7ae69b1a16004",
-      "pythonMs": 4.92,
-      "rustHash": "bf842c001d5987ebaf08ad6959d2be0072c0003246e455c799a7ae69b1a16004",
-      "status": "PASS"
+      "pythonMs": 4.4,
+      "rustHash": null,
+      "status": "SKIP"
     },
     {
-      "notes": "",
+      "notes": "native binary unavailable",
       "operation": "dataset.split",
       "pythonHash": "6027812fc5513ece368d43cc0f7a7fe827101ec0233391803a4181450ec78373",
-      "pythonMs": 4.94,
-      "rustHash": "6027812fc5513ece368d43cc0f7a7fe827101ec0233391803a4181450ec78373",
-      "status": "PASS"
+      "pythonMs": 4.45,
+      "rustHash": null,
+      "status": "SKIP"
     },
     {
-      "notes": "",
+      "notes": "native binary unavailable",
       "operation": "dataset.export",
       "pythonHash": "385f7f8923ee0729541edbecd8b18e159f78793a8fa55727aa673fb339456f7f",
-      "pythonMs": 4.31,
-      "rustHash": "385f7f8923ee0729541edbecd8b18e159f78793a8fa55727aa673fb339456f7f",
-      "status": "PASS"
+      "pythonMs": 3.64,
+      "rustHash": null,
+      "status": "SKIP"
     },
     {
-      "notes": "",
+      "notes": "native binary unavailable",
       "operation": "dataset.dedupe",
       "pythonHash": "4bc2457c7ce9127f4e5a8c7b24f1bd3adf749c20b48da9925c76b028d0119b54",
-      "pythonMs": 11.91,
-      "rustHash": "4bc2457c7ce9127f4e5a8c7b24f1bd3adf749c20b48da9925c76b028d0119b54",
-      "status": "PASS"
+      "pythonMs": 11.83,
+      "rustHash": null,
+      "status": "SKIP"
     }
   ],
   "schemaVersion": 1,
   "summary": {
-    "allComparablePass": true,
+    "allComparablePass": false,
     "fail": 0,
-    "pass": 6,
-    "skip": 0,
+    "pass": 0,
+    "skip": 6,
     "total": 6
   },
   "truth": {
     "comparableOpsMustPassOrBeDocumented": true,
-    "rustMissingIsDocumentedSkip": false
+    "rustMissingIsDocumentedSkip": true
   },
   "wave": "W183"
 }

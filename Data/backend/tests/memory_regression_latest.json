@@ -1,19 +1,19 @@
 {
-  "generatedAt": "2026-09-26T22:07:44Z",
+  "generatedAt": "2026-09-29T00:35:23Z",
   "host": {
-    "pid": 43549,
+    "pid": 17839,
     "rssProbe": "proc_self_status_VmRSS_or_resource"
   },
   "nonLinearWorkingSet": {
     "asserted": true,
     "first": {
-      "peakRssBytes": 38342656,
+      "peakRssBytes": 39784448,
       "rows": 50
     },
-    "growthBytesPerRow": 737.28,
+    "growthBytesPerRow": 491.52,
     "growthOk": true,
     "last": {
-      "peakRssBytes": 38416384,
+      "peakRssBytes": 39833600,
       "rows": 150
     },
     "maxBytesPerRowBound": 65536.0,
@@ -25,53 +25,53 @@
     "ratioEnforced": false,
     "ratioOk": true,
     "rowDelta": 100,
-    "rssDeltaBytes": 73728,
-    "rssToInputGrowthRatio": 6.7025
+    "rssDeltaBytes": 49152,
+    "rssToInputGrowthRatio": 4.4684
   },
   "results": [
     {
-      "datasetId": "46c7d82f-e961-4908-9aef-f0bc53db31a2",
+      "datasetId": "824ccd79-913d-4b26-948e-16022c52fea0",
       "dedupe": {
         "backend": "PYTHON_STREAMING",
-        "jobId": "4e5a7705-8422-4a59-834f-a8c359282874",
+        "jobId": "814b5553-2434-4bef-b910-2a79cf0c83ef",
         "status": "completed"
       },
-      "elapsedSeconds": 0.5028,
+      "elapsedSeconds": 0.3147,
       "export": {
         "backend": "PYTHON_STREAMING",
-        "jobId": "5964495d-2a65-46f4-ba92-ad3366f2633f",
+        "jobId": "34f49032-e473-41b3-b4c2-ae5b29cd76d9",
         "status": "completed"
       },
       "inputBytes": 5430,
-      "peakRssBytes": 38342656,
-      "peakRssMiB": 36.566,
+      "peakRssBytes": 39784448,
+      "peakRssMiB": 37.941,
       "rows": 50,
       "validate": {
         "backend": "PYTHON_STREAMING",
-        "jobId": "21f1a694-4b78-4516-a5ed-832cb0d28e33",
+        "jobId": "a5d6d731-bd47-4b4f-b6cf-2bbee5e3bd63",
         "status": "completed"
       }
     },
     {
-      "datasetId": "f7a13a6a-6c80-4d1c-8422-02a9517b9c50",
+      "datasetId": "50300b70-9bdd-4707-bde5-0d1410af5205",
       "dedupe": {
         "backend": "PYTHON_STREAMING",
-        "jobId": "f5dfc543-863e-441e-a8a5-a91ecc63c8a2",
+        "jobId": "4617650a-b5c3-4985-97d2-931680a93197",
         "status": "completed"
       },
-      "elapsedSeconds": 0.5513,
+      "elapsedSeconds": 0.3666,
       "export": {
         "backend": "PYTHON_STREAMING",
-        "jobId": "dc04f2ea-589b-4660-a07d-f0a6a690a3bf",
+        "jobId": "9cd14452-9fc3-4de4-b644-70efba564db4",
         "status": "completed"
       },
       "inputBytes": 16430,
-      "peakRssBytes": 38416384,
-      "peakRssMiB": 36.637,
+      "peakRssBytes": 39833600,
+      "peakRssMiB": 37.988,
       "rows": 150,
       "validate": {
         "backend": "PYTHON_STREAMING",
-        "jobId": "35b25662-6689-42e9-b473-c2ce0a398a40",
+        "jobId": "b6b7e387-b0d1-480f-9dc8-c32adc9619de",
         "status": "completed"
       }
     }
