@@ -67,6 +67,30 @@ export async function installDashboardV2VisualFixture(page: Page): Promise<void>
     if (path === "/api/tasks/activity") return json(route, f.taskActivity);
     if (path === "/api/tasks/summary") return json(route, f.taskSummary);
     if (path === "/api/jobs") return json(route, { jobs: f.workersDashboard.queued_jobs });
+
+    // Chat / Tasks pages share V2 chrome — return honest empty shapes so they mount.
+    if (path === "/api/conversations" || path.startsWith("/api/conversations/")) {
+      return json(route, { conversations: [], conversation: null, messages: [], truth: { visual_fixture: true } });
+    }
+    if (path === "/api/models" || path === "/api/models/") {
+      return json(route, { models: [], truth: { visual_fixture: true } });
+    }
+    if (path === "/api/coding/status") {
+      return json(route, { enabled: false, agents_enabled: false, truth: { visual_fixture: true } });
+    }
+    if (path === "/api/capabilities") {
+      return json(route, { capabilities: [], truth: { visual_fixture: true } });
+    }
+    if (path === "/api/tasks" || path.startsWith("/api/tasks/")) {
+      if (path === "/api/tasks/activity") return json(route, f.taskActivity);
+      if (path === "/api/tasks/summary") return json(route, f.taskSummary);
+      return json(route, {
+        tasks: [],
+        summary: f.taskSummary.summary,
+        truth: { visual_fixture: true },
+      });
+    }
+
     if (path.startsWith("/api/events/stream")) {
       return route.fulfill({
         status: 200,

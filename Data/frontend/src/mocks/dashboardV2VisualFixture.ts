@@ -85,7 +85,7 @@ export const V2_VISUAL_FIXTURE = {
       pools_enabled: 4,
       desired_workers: 8,
       running_workers: 5,
-      busy_workers: 5,
+      busy_workers: 8,
       idle_workers: 0,
       failed_workers: 0,
       queue_depth: 24,

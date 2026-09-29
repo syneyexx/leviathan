@@ -487,8 +487,13 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 12px 14px 8px;
-  min-height: 40px;
+  padding: 10px 12px 6px;
+  min-height: 34px;
+}
+
+.lv-v2-panel__body {
+  padding: 0 12px 10px;
+  min-height: 0;
 }
 
 .lv-v2-panel__title {
@@ -514,10 +519,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-.lv-v2-panel__body {
-  padding: 0 14px 14px;
-  min-height: 0;
-}
 
 .lv-v2-section-header {
   display: flex;
@@ -533,8 +534,8 @@
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
-  padding: 12px 14px;
-  min-height: 88px;
+  padding: 10px 12px;
+  min-height: 72px;
   background: linear-gradient(165deg, rgba(17, 24, 39, 0.96), rgba(11, 18, 32, 0.98));
   border: 1px solid var(--lv2-border);
   border-radius: var(--lv2-panel-radius);
@@ -580,6 +581,17 @@
   width: 56px;
   height: 36px;
   color: var(--lv2-cyan);
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 3px;
+}
+
+.lv-v2-metric-card__bar {
+  width: 4px;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: 0.85;
 }
 
 .lv-v2-metric-card--system .lv-v2-metric-card__chart { color: var(--lv2-success); }
@@ -745,20 +757,21 @@
   background: linear-gradient(90deg, #b45309, var(--lv2-trading));
 }
 
+
 .lv-v2-gauge {
   --lv2-gauge: 0;
   --lv2-gauge-color: var(--lv2-cyan);
-  width: 78px;
+  width: 70px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .lv-v2-gauge__ring {
   position: relative;
-  width: 72px;
-  height: 72px;
+  width: 64px;
+  height: 64px;
 }
 
 .lv-v2-gauge__ring svg {
@@ -890,16 +903,17 @@
 /* ---------- Dashboard page layout ---------- */
 
 .lv-v2-page {
-  padding: var(--lv2-content-pad);
+  padding: 12px 14px 14px;
   display: flex;
   flex-direction: column;
-  gap: var(--lv2-card-gap);
+  gap: 10px;
   min-height: 100%;
 }
 
 .lv-v2-hero {
   position: relative;
-  min-height: 148px;
+  min-height: 118px;
+  max-height: 128px;
   border-radius: var(--lv2-panel-radius);
   border: 1px solid var(--lv2-border);
   overflow: hidden;
@@ -934,17 +948,17 @@
 .lv-v2-hero__content {
   position: relative;
   z-index: 2;
-  padding: 22px 24px;
+  padding: 16px 20px;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 10px;
+  gap: 6px;
   max-width: 620px;
 }
 
 .lv-v2-hero__title {
   margin: 0;
-  font-size: 26px;
+  font-size: 22px;
   font-weight: 700;
   color: var(--lv2-text);
   letter-spacing: -0.01em;
@@ -952,10 +966,10 @@
 
 .lv-v2-hero__copy {
   margin: 0;
-  font-size: 12.5px;
-  line-height: 1.45;
+  font-size: 11.5px;
+  line-height: 1.4;
   color: var(--lv2-text-secondary);
-  max-width: 46ch;
+  max-width: 52ch;
 }
 
 .lv-v2-hero__actions {
@@ -999,22 +1013,22 @@
 .lv-v2-ops-grid {
   display: grid;
   grid-template-columns: 1.05fr 1.15fr 1.15fr;
-  gap: var(--lv2-card-gap);
-  min-height: 220px;
+  gap: 10px;
+  min-height: 170px;
 }
 
 .lv-v2-activity-grid {
   display: grid;
   grid-template-columns: 1.15fr 1fr 1fr;
-  gap: var(--lv2-card-gap);
-  min-height: 210px;
+  gap: 10px;
+  min-height: 168px;
 }
 
 .lv-v2-bottom-grid {
   display: grid;
   grid-template-columns: 0.9fr 1.2fr 1.1fr;
-  gap: var(--lv2-card-gap);
-  min-height: 150px;
+  gap: 10px;
+  min-height: 128px;
 }
 
 .lv-v2-gauges {

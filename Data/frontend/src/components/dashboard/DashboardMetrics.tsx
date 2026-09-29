@@ -5,6 +5,17 @@ type Props = {
   overview: DashboardOverview;
 };
 
+/** Decorative KPI bars (visual density only — not historical series). */
+function MetricBars({ heights }: { heights: number[] }) {
+  return (
+    <div className="lv-v2-metric-card__chart" aria-hidden="true">
+      {heights.map((h, i) => (
+        <span key={i} className="lv-v2-metric-card__bar" style={{ height: `${h}%` }} />
+      ))}
+    </div>
+  );
+}
+
 export function DashboardMetrics({ overview }: Props) {
   const { systemStatus, agents, jobs, research, trading, loading } = overview;
 
@@ -16,6 +27,7 @@ export function DashboardMetrics({ overview }: Props) {
         loading={loading}
         valueTone={systemStatus.operational ? "success" : "default"}
         value={systemStatus.label}
+        chart={<MetricBars heights={systemStatus.operational ? [40, 70, 45, 85, 55, 90, 60, 75] : [20, 20, 22, 20, 20, 22, 20, 20]} />}
       />
       <MetricCard
         variant="agents"
@@ -34,6 +46,11 @@ export function DashboardMetrics({ overview }: Props) {
             ? `${agents.delta > 0 ? "+" : ""}${agents.delta}`
             : undefined
         }
+        chart={
+          agents.available && agents.active != null ? (
+            <MetricBars heights={[35, 55, 45, 70, 50, 80, 60, 75]} />
+          ) : undefined
+        }
       />
       <MetricCard
         variant="jobs"
@@ -47,6 +64,11 @@ export function DashboardMetrics({ overview }: Props) {
               ? "gemeten"
               : "UNAVAILABLE"
         }
+        chart={
+          jobs.available && jobs.active != null ? (
+            <MetricBars heights={[30, 50, 40, 65, 45, 70, 55, 60]} />
+          ) : undefined
+        }
       />
       <MetricCard
         variant="research"
@@ -56,6 +78,11 @@ export function DashboardMetrics({ overview }: Props) {
           research.available && research.activeCount != null ? String(research.activeCount) : "—"
         }
         sublabel={research.available ? "actieve experimenten" : "UNAVAILABLE"}
+        chart={
+          research.available && research.activeCount != null ? (
+            <MetricBars heights={[25, 45, 35, 60, 40, 70, 50, 55]} />
+          ) : undefined
+        }
       />
       <MetricCard
         variant="trading"
@@ -72,6 +99,11 @@ export function DashboardMetrics({ overview }: Props) {
               ? "actieve strategieën (paper)"
               : "actieve strategieën"
             : "UNAVAILABLE"
+        }
+        chart={
+          trading.available && trading.activeStrategies != null ? (
+            <MetricBars heights={[28, 48, 38, 58, 42, 68, 52, 62]} />
+          ) : undefined
         }
       />
     </section>
