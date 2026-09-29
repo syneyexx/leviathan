@@ -18,6 +18,9 @@ class IngestionPhase(str, Enum):
     NORMALIZING = "normalizing"
     BRAIN_PENDING = "brain_pending"
     BRAIN_SYNCING = "brain_syncing"
+    OCR_PENDING = "ocr_pending"
+    OCR_RUNNING = "ocr_running"
+    DATASET_ROUTING = "dataset_routing"
     COMPLETED = "completed"
     PARTIAL = "partial"
     FAILED = "failed"
@@ -62,11 +65,30 @@ CAPABILITY_PROCESS = "source_ingestion.process"
 CAPABILITY_BRAIN_RETRY = "source_ingestion.brain_retry"
 CAPABILITY_OCR_EXTRACT = "ocr.extract"
 CAPABILITY_DOCUMENT_AI_OCR = "document_ai.ocr"
+CAPABILITY_OCR_CONTINUE = "source_ingestion.ocr_continue"
 
 # Additive typed reason codes (backwards-compatible with PDF_NO_EXTRACTABLE_TEXT).
 ERROR_OCR_REQUIRED = "OCR_REQUIRED"
 ERROR_OCR_UNAVAILABLE = "OCR_UNAVAILABLE"
 ERROR_DOCUMENT_AI_UNAVAILABLE = "DOCUMENT_AI_UNAVAILABLE"
+ERROR_DATASET_ROUTE_FAILED = "DATASET_ROUTE_FAILED"
+ERROR_DATASET_ROUTE_UNAVAILABLE = "DATASET_ROUTE_UNAVAILABLE"
+ERROR_BRAIN_SYNC_FAILED = "BRAIN_SYNC_FAILED"
+
+
+class DatasetRouteState(str, Enum):
+    ROUTE_PENDING = "ROUTE_PENDING"
+    ROUTE_QUEUED = "ROUTE_QUEUED"
+    ROUTED = "ROUTED"
+    ROUTE_FAILED = "ROUTE_FAILED"
+    ROUTE_UNAVAILABLE = "ROUTE_UNAVAILABLE"
+
+
+class RetryClass(str, Enum):
+    RETRYABLE = "RETRYABLE"
+    TERMINAL = "TERMINAL"
+    STRUCTURAL_UNAVAILABLE = "STRUCTURAL_UNAVAILABLE"
+    USER_ACTION_REQUIRED = "USER_ACTION_REQUIRED"
 
 
 @dataclass(frozen=True)

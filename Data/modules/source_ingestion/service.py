@@ -30,6 +30,7 @@ from .types import (
     CAPABILITY_BRAIN_RETRY,
     CAPABILITY_DOCUMENT_AI_OCR,
     CAPABILITY_OCR_EXTRACT,
+    CAPABILITY_OCR_CONTINUE,
     CAPABILITY_PROCESS,
     ERROR_DOCUMENT_AI_UNAVAILABLE,
     ERROR_OCR_UNAVAILABLE,
@@ -346,6 +347,8 @@ class SourceIngestionService:
         root_job_id: str | None = None,
         mime_type: str | None = None,
         reason: str = "ocr_required",
+        container_source_id: str | None = None,
+        native_pages: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Enqueue durable OCR/document-AI child job (never runs OCR inline).
 
@@ -368,6 +371,8 @@ class SourceIngestionService:
             "relative_path": relative_path or path,
             "mime_type": mime_type,
             "reason": reason,
+            "container_source_id": container_source_id,
+            "native_pages": list(native_pages or []),
         }
         idem = f"document_ai:ocr:{source_id}:{relative_path or path}"
         try:
@@ -586,7 +591,7 @@ class SourceIngestionService:
         job = store.claim_next_queued(
             worker_id=worker_id,
             lease_ttl_seconds=float(getattr(self.settings, "lease_ttl_seconds", 30.0) or 30.0),
-            capability_ids={CAPABILITY_PROCESS, CAPABILITY_BRAIN_RETRY},
+            capability_ids={CAPABILITY_PROCESS, CAPABILITY_BRAIN_RETRY, CAPABILITY_OCR_CONTINUE},
             worker_pool="source_ingestion",
         )
         if job is None:
@@ -594,7 +599,7 @@ class SourceIngestionService:
             job = store.claim_next_queued(
                 worker_id=worker_id,
                 lease_ttl_seconds=float(getattr(self.settings, "lease_ttl_seconds", 30.0) or 30.0),
-                capability_ids={CAPABILITY_PROCESS, CAPABILITY_BRAIN_RETRY},
+                capability_ids={CAPABILITY_PROCESS, CAPABILITY_BRAIN_RETRY, CAPABILITY_OCR_CONTINUE},
             )
         if job is None:
             return None
@@ -640,7 +645,11 @@ class SourceIngestionService:
                     lease_ttl_seconds=float(
                         getattr(self.settings, "lease_ttl_seconds", 30.0) or 30.0
                     ),
-                    capability_ids={CAPABILITY_PROCESS, CAPABILITY_BRAIN_RETRY},
+                    capability_ids={
+                        CAPABILITY_PROCESS,
+                        CAPABILITY_BRAIN_RETRY,
+                        CAPABILITY_OCR_CONTINUE,
+                    },
                     worker_pool="source_ingestion",
                 )
                 if claimed is None or claimed.job_id != job_id:
@@ -663,6 +672,14 @@ class SourceIngestionService:
             )
             if current.capability_id == CAPABILITY_BRAIN_RETRY:
                 pipe.retry_brain_only(source_id)
+            elif current.capability_id == CAPABILITY_OCR_CONTINUE:
+                pipe.apply_ocr_continue(
+                    source_id,
+                    project_id=str(current.arguments.get("project_id") or ""),
+                    container_source_id=current.arguments.get("container_source_id"),
+                    relative_path=current.arguments.get("relative_path"),
+                    ocr_job_id=current.arguments.get("ocr_job_id"),
+                )
             else:
                 pipe.process_source(source_id)
             fenced_transition(

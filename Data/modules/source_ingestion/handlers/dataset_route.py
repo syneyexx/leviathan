@@ -141,8 +141,8 @@ class ImageHandler:
                 "ocr_status": "required",
                 "text_extraction": "not_applicable",
             },
-            outcome=MemberOutcome.SKIPPED,
-            skip_reason="ocr_unavailable",
+            outcome=MemberOutcome.FAILED,
+            skip_reason="ocr_required",
             error_code=ERROR_OCR_REQUIRED,
             unsupported_features=["ocr", "vision"],
         )

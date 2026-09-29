@@ -1,11 +1,11 @@
-"""External source-ingestion worker — claims JobStore source_ingestion.* jobs.
+"""External source-ingestion worker helpers + legacy standalone loop.
 
-Uses the same jobs table and KnowledgeStore as the API process.
-Set ``LEVIATHAN_SOURCE_INGESTION_RUNNER=external`` before starting the API so the
-in-process runner does not compete with this worker.
+Production ownership: Worker Fabric ``source_ingestion`` pool
+(``Data.modules.workers.entrypoints.source_ingestion``).
 
-  python scripts/source_ingestion_worker.py
-  python scripts/source_ingestion_worker.py --once
+The standalone loop in this module is diagnostics-only and requires
+``LEVIATHAN_SOURCE_INGESTION_RUNNER=standalone_legacy`` plus
+``LEVIATHAN_ALLOW_STANDALONE_SOURCE_INGESTION=1``.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ def resolve_runner_mode(settings: Any | None = None) -> str:
 
     Canonical values:
       fabric            — Worker Fabric source_ingestion pool (production)
-      standalone_legacy — scripts/source_ingestion_worker.py (dev/diagnostics)
+      standalone_legacy — scripts/source_ingestion_worker.py (dev/diagnostics + unsafe gate)
       inprocess_test    — API-thread runner (tests / explicit allow gate ONLY)
       disabled          — no executor
 

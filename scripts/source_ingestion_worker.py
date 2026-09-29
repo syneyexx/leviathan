@@ -37,12 +37,24 @@ from Data.modules.source_ingestion.worker import (  # noqa: E402
 
 
 def _guarded_main(argv: list[str] | None = None) -> int:
+    import os
+
     mode = resolve_runner_mode()
+    unsafe = (os.environ.get("LEVIATHAN_ALLOW_STANDALONE_SOURCE_INGESTION") or "").strip().lower()
+    if mode == "standalone_legacy" and unsafe not in {"1", "true", "yes", "on"}:
+        print(
+            "[source-ingestion-worker] REFUSING: standalone_legacy requires "
+            "LEVIATHAN_ALLOW_STANDALONE_SOURCE_INGESTION=1 (dev/diagnostics only). "
+            "Production owner is Worker Fabric.",
+            flush=True,
+        )
+        return 2
     if fabric_owns_source_ingestion() and mode != "standalone_legacy":
         print(
             "[source-ingestion-worker] REFUSING to start: Worker Fabric owns "
             "source_ingestion. Set LEVIATHAN_SOURCE_INGESTION_RUNNER=standalone_legacy "
-            "only for explicit diagnostics, and disable fabric workers first.",
+            "and LEVIATHAN_ALLOW_STANDALONE_SOURCE_INGESTION=1 only for explicit "
+            "diagnostics, and disable fabric workers first.",
             flush=True,
         )
         return 2

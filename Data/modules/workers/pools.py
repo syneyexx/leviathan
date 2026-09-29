@@ -87,7 +87,7 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
         pool_id="source_ingestion",
         entrypoint="Data.modules.workers.entrypoints.source_ingestion",
         default_count=1,
-        job_kinds=("source_ingestion.process", "source_ingestion.brain_retry"),
+        job_kinds=("source_ingestion.process", "source_ingestion.brain_retry", "source_ingestion.ocr_continue"),
         resource_classes=("IO_HEAVY", "CPU_HEAVY"),
         description="Archive/file parse and brain retry",
     ),

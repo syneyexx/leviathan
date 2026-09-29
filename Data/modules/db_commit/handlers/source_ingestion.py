@@ -110,15 +110,14 @@ def _commit_brain_sync(
         auxiliary_ok = False
         auxiliary_error = "container_missing"
     elif hasattr(store, "upsert_container"):
-        meta = dict(container.get("metadata") or {})
-        meta.update(sync)
-        meta["last_brain_sync_commit"] = intent.commit_id
+        progress = dict(container.get("progress") or {})
+        progress["brain_sync_aux"] = {**sync, "last_brain_sync_commit": intent.commit_id}
         try:
-            store.upsert_container(source_id, metadata=meta)
-        except TypeError as exc:
-            # Signature mismatch still means auxiliary persistence did not apply.
-            auxiliary_ok = False
-            auxiliary_error = f"upsert_signature_mismatch:{exc}"[:400]
+            store.upsert_container(
+                container_source_id=source_id,
+                project_id=str(container.get("project_id") or payload.get("project_id") or ""),
+                progress=progress,
+            )
         except Exception as exc:  # noqa: BLE001
             auxiliary_ok = False
             auxiliary_error = str(exc)[:400]

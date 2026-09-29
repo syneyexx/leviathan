@@ -22,7 +22,7 @@ from .planner import apply_plan_edits, build_plan
 from .quality_scorecard import build_quality_scorecard
 from .reports import ReportBuilder
 from .source_quality import assess_source, cluster_dependent_sources
-from .sources import SourceIngestor
+from .sources import ResearchSourceCollector
 from .store import ResearchStore, utc_now
 from .types import (
     ACTIVE_STATUSES,
@@ -119,7 +119,7 @@ class ResearchCoordinator:
         local: LocalResearchRetriever,
         web: WebResearchProvider,
         allow_outbound: bool,
-        sources: SourceIngestor,
+        sources: ResearchSourceCollector,
         evidence: EvidenceLedger,
         claims: ClaimAnalyzer,
         conflicts: ConflictDetector,

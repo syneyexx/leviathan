@@ -1718,6 +1718,37 @@ def build_default_catalog() -> CapabilityCatalog:
     )
     catalog.register(
         CapabilityDefinition(
+            id="source_ingestion.ocr_continue",
+            name="Continue Source Ingestion After OCR",
+            description=(
+                "Resume source ingestion after document_ai OCR completes — snapshot, Brain sync, member finalize."
+            ),
+            side_effects=(SideEffect.WRITE,),
+            provider_kind=CapabilityProviderKind.EXTERNAL,
+            provider_ref="source_ingestion.worker",
+            input_schema={
+                "type": "object",
+                "required": ["source_id", "project_id"],
+                "properties": {
+                    "source_id": {"type": "string"},
+                    "project_id": {"type": "string"},
+                    "container_source_id": {"type": "string"},
+                    "relative_path": {"type": "string"},
+                    "ocr_job_id": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("knowledge.write", "filesystem.write"),
+            metadata={
+                "tags": ["ingestion", "ocr", "research"],
+                "domains": ["source_ingestion"],
+                "worker_kind": "source_ingestion",
+                "execution_class": "EXTERNAL_REQUIRED",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
             id="source_ingestion.brain_retry",
             name="Retry Source Brain Sync",
             description="Retry Brain sync for already-parsed source ingestion children.",

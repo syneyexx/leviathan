@@ -1691,10 +1691,33 @@ class ResearchService:
         if self.source_ingestion is None:
             return {"source": source.public_dict()}
         progress = self.source_ingestion.get_status(source_id)
-        return {
+        out: dict[str, Any] = {
             "source": source.public_dict(),
             "progress": progress.public_dict(),
         }
+        prov = source.provenance or {}
+        if prov.get("ocr") or prov.get("ocr_job"):
+            out["ocr"] = prov.get("ocr") or prov.get("ocr_job")
+        if prov.get("dataset_route"):
+            out["dataset_route"] = prov.get("dataset_route")
+        container = self.source_ingestion.ingestion.get_container(source_id)
+        if container:
+            out["container"] = {
+                "phase": container.get("phase"),
+                "job_id": container.get("job_id"),
+                "cancel_requested": container.get("cancel_requested"),
+                "error": container.get("error"),
+            }
+            out["progress_meta"] = container.get("progress") or {}
+        try:
+            from Data.modules.source_ingestion.capabilities import build_format_capabilities
+            from Data.modules.source_ingestion.metrics import ingestion_metrics
+
+            out["format_capabilities"] = build_format_capabilities(self.source_ingestion.settings)
+            out["metrics"] = ingestion_metrics().public_dict()
+        except Exception:  # noqa: BLE001 — diagnostics must not break status
+            pass
+        return out
 
     def list_ingestion_children(
         self,
@@ -1896,9 +1919,9 @@ class ResearchService:
                 http_status=502,
                 details={"url": cleaned},
             ) from exc
-        from .sources import SourceIngestor
+        from .sources import ResearchSourceCollector
 
-        ingestor = SourceIngestor(self.store, self.snapshots_root)
+        ingestor = ResearchSourceCollector(self.store, self.snapshots_root)
         source, text = ingestor.from_web_page(project_id, page)
         synced = self.brain.sync_web_page(source, text)
         self.store.add_event(

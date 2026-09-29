@@ -20,7 +20,9 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-class SourceIngestor:
+class ResearchSourceCollector:
+    """Collects research/web/local evidence into durable ResearchSource records."""
+
     def __init__(self, store: ResearchStore, snapshots_root: Path) -> None:
         self.store = store
         self.snapshots_root = ensure_dir(Path(snapshots_root))
@@ -255,3 +257,7 @@ class SourceIngestor:
             except OSError:
                 content = page.text
         return stored, content
+
+
+# Deprecated alias — research evidence collector, not Data/modules/source_ingestion/.
+SourceIngestor = ResearchSourceCollector
