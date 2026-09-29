@@ -274,7 +274,7 @@ Domain route modules live in `Data/backend/routes/`. `main.py` binds shared depe
 
 ### Central mutation authentication
 
-Current main has a central mutation boundary in `Data/backend/main.py` backed by `Data/modules/common/http_auth.py`. Loopback mutation is allowed by local policy; non-loopback `/api` mutations require the configured operator token. The middleware protects newly mounted mutating routers so authorization is not dependent on every handler remembering a check. Token comparison is constant-time (`hmac.compare_digest`), and unsafe non-loopback startup is rejected rather than silently exposed.
+Current main has a central mutation boundary in `Data/backend/main.py` backed by `Data/modules/common/http_auth.py`. Loopback mutation is allowed by local policy; non-loopback `/api` mutations require the configured operator token. The middleware protects newly mounted mutating routers so authorization is not dependent on every handler remembering a check. Token comparison is constant-time (`hmac.compare_digest`), and unsafe non-loopback startup is rejected rather than silently exposed. Non-loopback also requires `LEVIATHAN_TRUSTED_HOSTS` (exact Host-header allowlist, no `*`); Starlette `TrustedHostMiddleware` is wired from the same `http_auth.resolve_trusted_hosts` owner. Launcher CORS remains a narrow Origin allowlist and is not authorization.
 
 Tests: `Data/backend/tests/test_central_mutation_auth.py`.
 

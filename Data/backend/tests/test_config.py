@@ -171,14 +171,28 @@ class SettingsTests(unittest.TestCase):
         }
         with mock.patch.dict(os.environ, env, clear=False):
             os.environ.pop("LEVIATHAN_OPERATOR_TOKEN", None)
+            os.environ.pop("LEVIATHAN_TRUSTED_HOSTS", None)
             with self.assertRaises(ConfigurationError):
                 Settings.from_env()
+
+    def test_non_loopback_requires_trusted_hosts(self) -> None:
+        env = {
+            "LEVIATHAN_LOOPBACK_ONLY": "false",
+            "LEVIATHAN_HOST": "0.0.0.0",
+            "LEVIATHAN_OPERATOR_TOKEN": "test-operator-token",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            os.environ.pop("LEVIATHAN_TRUSTED_HOSTS", None)
+            with self.assertRaises(ConfigurationError) as ctx:
+                Settings.from_env()
+        self.assertIn("LEVIATHAN_TRUSTED_HOSTS", str(ctx.exception))
 
     def test_non_loopback_with_operator_token_loads(self) -> None:
         env = {
             "LEVIATHAN_LOOPBACK_ONLY": "false",
             "LEVIATHAN_HOST": "0.0.0.0",
             "LEVIATHAN_OPERATOR_TOKEN": "test-operator-token",
+            "LEVIATHAN_TRUSTED_HOSTS": "api.internal,0.0.0.0",
         }
         with mock.patch.dict(os.environ, env, clear=False):
             cfg = Settings.from_env()

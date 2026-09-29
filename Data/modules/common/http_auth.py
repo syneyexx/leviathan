@@ -1,8 +1,12 @@
-"""Central HTTP mutation authentication for LEVIATHAN control-plane routes.
+"""Central HTTP mutation authentication + Host-header allowlist for LEVIATHAN.
 
 Default local posture remains loopback-only (no token required).
 When LOOPBACK_ONLY is false, every state-changing HTTP request must present
 a matching operator token. Approval is not a substitute for caller auth.
+
+Host-header validation (TrustedHost) is fail-closed when non-loopback:
+operators must set LEVIATHAN_TRUSTED_HOSTS. Wildcards are refused.
+Loopback deployments keep localhost / 127.0.0.1 / ::1 (local launcher OK).
 """
 
 from __future__ import annotations
@@ -15,11 +19,17 @@ from starlette.requests import Request
 
 OPERATOR_TOKEN_ENV = "LEVIATHAN_OPERATOR_TOKEN"
 OPERATOR_TOKEN_HEADER = "x-leviathan-operator-token"
+TRUSTED_HOSTS_ENV = "LEVIATHAN_TRUSTED_HOSTS"
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
 
 # Paths that remain reachable without operator auth even for non-safe methods
 # when non-loopback (intentionally empty — default-deny mutations).
 PUBLIC_MUTATION_PATH_PREFIXES: tuple[str, ...] = ()
+
+# Local launcher / bind defaults. Never includes "*".
+LOOPBACK_TRUSTED_HOSTS: tuple[str, ...] = ("127.0.0.1", "localhost", "::1")
+# Starlette/FastAPI TestClient default Host — loopback-only only.
+TESTCLIENT_HOST = "testserver"
 
 
 class MutationAuthError(PermissionError):
@@ -97,15 +107,105 @@ def assert_operator_mutation_allowed(
         )
 
 
-def validate_non_loopback_security_posture(*, loopback_only: bool) -> None:
-    """Hard-fail startup when non-loopback is enabled without operator credentials."""
+def parse_trusted_hosts(raw: str | None) -> list[str]:
+    """Parse comma-separated Host allowlist. Rejects empty entries and '*'."""
+    if not raw or not str(raw).strip():
+        return []
+    hosts: list[str] = []
+    for part in str(raw).split(","):
+        host = part.strip().lower()
+        if not host:
+            continue
+        # Strip optional port for storage; TrustedHostMiddleware also strips port.
+        if host.startswith("[") and "]" in host:
+            # IPv6 literal e.g. [::1]:8765
+            host = host[1 : host.index("]")]
+        elif host.count(":") == 1 and not host.startswith("["):
+            host = host.split(":", 1)[0]
+        if host == "*":
+            raise RuntimeError(
+                f"{TRUSTED_HOSTS_ENV} must not contain '*' — Host allowlist is fail-closed"
+            )
+        if "*" in host:
+            raise RuntimeError(
+                f"{TRUSTED_HOSTS_ENV} refuses wildcard patterns ({host!r}); "
+                "list exact hostnames only"
+            )
+        if host not in hosts:
+            hosts.append(host)
+    return hosts
+
+
+def read_configured_trusted_hosts() -> list[str]:
+    return parse_trusted_hosts(os.environ.get(TRUSTED_HOSTS_ENV))
+
+
+def resolve_trusted_hosts(
+    *,
+    loopback_only: bool,
+    bind_host: str = "127.0.0.1",
+) -> list[str]:
+    """Return the Host-header allowlist for TrustedHostMiddleware.
+
+    Loopback: local launcher hosts + bind host + TestClient host.
+    Non-loopback: fail-closed — requires explicit LEVIATHAN_TRUSTED_HOSTS (no '*').
+    """
+    configured = read_configured_trusted_hosts()
+    bind = (bind_host or "").strip().lower()
+    if bind.startswith("[") and "]" in bind:
+        bind = bind[1 : bind.index("]")]
+    elif bind.count(":") == 1:
+        bind = bind.split(":", 1)[0]
+
     if loopback_only:
+        hosts: list[str] = list(LOOPBACK_TRUSTED_HOSTS)
+        if bind and bind not in hosts:
+            hosts.append(bind)
+        if TESTCLIENT_HOST not in hosts:
+            hosts.append(TESTCLIENT_HOST)
+        for host in configured:
+            if host not in hosts:
+                hosts.append(host)
+        return hosts
+
+    if not configured:
+        raise RuntimeError(
+            f"LEVIATHAN_LOOPBACK_ONLY=false requires a non-empty {TRUSTED_HOSTS_ENV} "
+            "Host-header allowlist (comma-separated exact hosts). Refusing unsafe startup."
+        )
+    hosts = list(configured)
+    if bind and bind not in hosts:
+        hosts.append(bind)
+    return hosts
+
+
+def host_header_allowed(host_header: str | None, *, allowed_hosts: Iterable[str]) -> bool:
+    """Match Starlette TrustedHostMiddleware host extraction (port stripped)."""
+    if not host_header:
+        return False
+    host = host_header.strip().lower().split(":", 1)[0]
+    if host.startswith("[") and "]" in host:
+        host = host[1 : host.index("]")]
+    allowed = {h.strip().lower() for h in allowed_hosts}
+    return host in allowed
+
+
+def validate_non_loopback_security_posture(
+    *,
+    loopback_only: bool,
+    bind_host: str = "127.0.0.1",
+) -> None:
+    """Hard-fail startup when non-loopback lacks operator token or Host allowlist."""
+    if loopback_only:
+        # Still resolve so misconfigured wildcards in env fail early on loopback too.
+        resolve_trusted_hosts(loopback_only=True, bind_host=bind_host)
         return
     if not operator_token_configured():
         raise RuntimeError(
             f"LEVIATHAN_LOOPBACK_ONLY=false requires a non-empty {OPERATOR_TOKEN_ENV} "
             "so mutation routes can be authenticated. Refusing unsafe startup."
         )
+    resolve_trusted_hosts(loopback_only=False, bind_host=bind_host)
 
 
 def classify_http_methods(methods: Iterable[str] | None) -> dict[str, Any]:
