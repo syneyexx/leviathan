@@ -173,11 +173,16 @@ def shadow_evidence_receipt(
     observations: Sequence[dict[str, Any]],
     min_observations: int = DEFAULT_MIN_SHADOW_OBSERVATIONS,
 ) -> dict[str, Any]:
-    """Build A3 evidence from actual shadow observations — not a lone boolean."""
+    """Build A3 evidence from actual shadow observations — not a lone boolean.
+
+    MEASURED and PASS are distinct. Count threshold alone can yield MEASURED;
+    paper_shadow_pass requires feed reliability and no invalid observations.
+    """
     obs = list(observations or [])
     if len(obs) < int(min_observations):
         return {
             "status": "INSUFFICIENT_EVIDENCE",
+            "measurement": "INSUFFICIENT_EVIDENCE",
             "shadow_run_id": shadow_run_id,
             "observation_count": len(obs),
             "min_observations": int(min_observations),
@@ -185,28 +190,44 @@ def shadow_evidence_receipt(
             "truth": {
                 "caller_boolean_rejected": True,
                 "requires_resolved_shadow_run": True,
+                "measured_is_not_pass": True,
             },
         }
     signal_count = sum(1 for o in obs if str(o.get("signal_side") or "HOLD").upper() != "HOLD")
-    feed_ok = all(str(o.get("feed_status") or "").lower() in {"live", "healthy", "ok"} for o in obs)
+    feed_ok = all(
+        str(o.get("feed_status") or "").lower() in {"live", "healthy", "ok"} for o in obs
+    )
+    invalid = any(
+        bool(o.get("invalid"))
+        or str(o.get("status") or "").upper() in {"INVALID", "INVALID_OBSERVATION"}
+        for o in obs
+    )
     receipt_hash = hashlib.sha256(
         json.dumps(
             {"shadow_run_id": shadow_run_id, "obs": [o.get("observation_id") for o in obs]},
             sort_keys=True,
         ).encode("utf-8")
     ).hexdigest()[:32]
+    # Enough observations → MEASURED. Pass requires quality, not mere count.
+    passed = bool(feed_ok and not invalid and signal_count >= 0)
+    if not feed_ok or invalid:
+        passed = False
     return {
         "status": "MEASURED",
+        "measurement": "MEASURED",
         "shadow_run_id": shadow_run_id,
         "observation_count": len(obs),
         "signal_count": signal_count,
         "feed_reliable": feed_ok,
-        "paper_shadow_pass": True,
+        "invalid_observations": invalid,
+        "paper_shadow_pass": passed,
+        "result": "PASS" if passed else "FAIL",
         "receipt_hash": receipt_hash,
-        "measurement": "MEASURED",
         "truth": {
             "shadow_does_not_place_orders": True,
             "live_money": "BLOCKED",
+            "measured_is_not_pass": True,
+            "feed_unreliable_blocks_pass": True,
         },
     }
 
@@ -218,32 +239,62 @@ def autonomous_paper_evidence_receipt(
     step_receipts: Sequence[dict[str, Any]],
     min_steps: int = DEFAULT_MIN_PAPER_STEPS,
 ) -> dict[str, Any]:
-    """Build A4 evidence from durable deployment + paper step receipts."""
+    """Build A4 evidence from durable deployment + paper step receipts.
+
+    MEASURED ≠ PASS. Deployment/session existence + step count alone cannot
+    self-pass; quality criteria must resolve affirmatively.
+    """
     steps = list(step_receipts or [])
     if not paper_deployment_id:
         return {
             "status": "INSUFFICIENT_EVIDENCE",
+            "measurement": "INSUFFICIENT_EVIDENCE",
             "reason": "missing_paper_deployment_id",
             "autonomous_paper_pass": False,
         }
     if not paper_session_id:
         return {
             "status": "INSUFFICIENT_EVIDENCE",
+            "measurement": "INSUFFICIENT_EVIDENCE",
             "reason": "missing_paper_session_id",
             "autonomous_paper_pass": False,
         }
     if len(steps) < int(min_steps):
         return {
             "status": "INSUFFICIENT_EVIDENCE",
+            "measurement": "INSUFFICIENT_EVIDENCE",
             "paper_deployment_id": paper_deployment_id,
             "paper_session_id": paper_session_id,
             "step_count": len(steps),
             "min_steps": int(min_steps),
             "autonomous_paper_pass": False,
-            "truth": {"caller_boolean_rejected": True},
+            "truth": {"caller_boolean_rejected": True, "measured_is_not_pass": True},
         }
     filled = sum(1 for s in steps if s.get("order") or s.get("filled"))
-    blocked = sum(1 for s in steps if s.get("blocked") or not s.get("allowed", True))
+    blocked = sum(1 for s in steps if s.get("blocked") or s.get("allowed") is False)
+    unresolved_errors = sum(
+        1
+        for s in steps
+        if s.get("error")
+        or str(s.get("status") or "").upper() in {"ERROR", "FAILED", "UNRESOLVED"}
+    )
+    invalid_causal = any(
+        bool(s.get("invalid_causal"))
+        or str(s.get("status") or "").upper() in {"INVALID", "INVALID_CAUSAL"}
+        for s in steps
+    )
+    feed_statuses = [
+        str(s.get("feed_status") or "").lower()
+        for s in steps
+        if s.get("feed_status") is not None
+    ]
+    feed_ok = (not feed_statuses) or all(fs in {"live", "healthy", "ok"} for fs in feed_statuses)
+    risk_path_valid = all(
+        (s.get("risk") is not None) or str(s.get("action") or s.get("side") or "HOLD").upper()
+        in {"HOLD", "FLAT", "NONE", ""}
+        or s.get("allowed") is not None
+        for s in steps
+    )
     receipt_hash = hashlib.sha256(
         json.dumps(
             {
@@ -255,20 +306,33 @@ def autonomous_paper_evidence_receipt(
             default=str,
         ).encode("utf-8")
     ).hexdigest()[:32]
+    passed = (
+        not invalid_causal
+        and unresolved_errors == 0
+        and feed_ok
+        and risk_path_valid
+    )
     return {
         "status": "MEASURED",
+        "measurement": "MEASURED",
         "paper_deployment_id": paper_deployment_id,
         "paper_session_id": paper_session_id,
         "step_count": len(steps),
         "filled_orders": filled,
         "blocked_steps": blocked,
-        "autonomous_paper_pass": True,
+        "unresolved_errors": unresolved_errors,
+        "invalid_causal": invalid_causal,
+        "feed_reliable": feed_ok,
+        "risk_path_valid": risk_path_valid,
+        "autonomous_paper_pass": passed,
+        "result": "PASS" if passed else "FAIL",
         "receipt_hash": receipt_hash,
-        "measurement": "MEASURED",
         "truth": {
             "simulated_capital_only": True,
             "live_money": "BLOCKED",
             "a5": "IMPOSSIBLE",
+            "measured_is_not_pass": True,
+            "count_alone_is_not_pass": True,
         },
     }
 
@@ -286,14 +350,53 @@ def build_a3_promotion_evidence(
             "A3 requires measured shadow_run_id receipts",
             http_status=409,
         )
+    if not shadow_receipt.get("paper_shadow_pass"):
+        raise MarketSimError(
+            "SHADOW_EVIDENCE_FAILED",
+            "A3 requires paper_shadow_pass from measured quality criteria "
+            f"(result={shadow_receipt.get('result')})",
+            http_status=409,
+        )
+    # Never invent sealed_pass / acceptance when caller omitted evidence.
+    if acceptance is None:
+        acceptance_payload = {
+            "passed": False,
+            "measurement": "UNMEASURED",
+            "reason": "MISSING_ACCEPTANCE",
+            "run_id": shadow_receipt["shadow_run_id"],
+        }
+    else:
+        acceptance_payload = dict(acceptance)
+    sealed_pass = bool(sealed_attempt_id) and bool(
+        acceptance_payload.get("passed")
+        if acceptance is not None
+        else True  # sealed attempt id alone is proof of sealed lineage for operational A3
+    )
+    if sealed_attempt_id and acceptance is None:
+        # Sealed attempt id is resolved lineage; do not invent acceptance.passed=True
+        # beyond acknowledging the sealed attempt exists.
+        sealed_pass = True
+        acceptance_payload = {
+            "passed": True,
+            "measurement": "MEASURED",
+            "criteria_id": "sealed_attempt_lineage",
+            "sealed_attempt_id": sealed_attempt_id,
+            "run_id": shadow_receipt["shadow_run_id"],
+        }
+    elif acceptance is None and not sealed_attempt_id:
+        sealed_pass = False
     return {
         "shadow_run_id": shadow_receipt["shadow_run_id"],
-        "paper_shadow_pass": True,
+        "paper_shadow_pass": bool(shadow_receipt.get("paper_shadow_pass")),
         "shadow_receipt": shadow_receipt,
-        "sealed_pass": bool(sealed_attempt_id) or bool((acceptance or {}).get("passed")),
+        "sealed_pass": sealed_pass,
         "sealed_attempt_id": sealed_attempt_id,
-        "acceptance": acceptance or {"passed": True, "measurement": "MEASURED", "run_id": shadow_receipt["shadow_run_id"]},
+        "acceptance": acceptance_payload,
         "evaluation_refs": list(evaluation_refs or []) + [shadow_receipt["shadow_run_id"]],
+        "truth": {
+            "no_synthetic_acceptance_default": True,
+            "measured_is_not_pass": True,
+        },
     }
 
 
@@ -310,27 +413,53 @@ def build_a4_promotion_evidence(
             "A4 requires measured paper_deployment_id receipts",
             http_status=409,
         )
+    if not paper_receipt.get("autonomous_paper_pass"):
+        raise MarketSimError(
+            "PAPER_EVIDENCE_FAILED",
+            "A4 requires autonomous_paper_pass from measured quality criteria "
+            f"(result={paper_receipt.get('result')})",
+            http_status=409,
+        )
+    if acceptance is None:
+        if sealed_attempt_id:
+            acceptance_payload = {
+                "passed": True,
+                "measurement": "MEASURED",
+                "criteria_id": "sealed_attempt_lineage",
+                "sealed_attempt_id": sealed_attempt_id,
+                "run_id": paper_receipt.get("paper_session_id"),
+            }
+            sealed_pass = True
+        else:
+            acceptance_payload = {
+                "passed": False,
+                "measurement": "UNMEASURED",
+                "reason": "MISSING_ACCEPTANCE",
+                "run_id": paper_receipt.get("paper_session_id"),
+            }
+            sealed_pass = False
+    else:
+        acceptance_payload = dict(acceptance)
+        sealed_pass = bool(sealed_attempt_id) or bool(acceptance_payload.get("passed"))
     ev: dict[str, Any] = {
         "paper_deployment_id": paper_receipt["paper_deployment_id"],
-        "autonomous_paper_pass": True,
+        "autonomous_paper_pass": bool(paper_receipt.get("autonomous_paper_pass")),
         "paper_receipt": paper_receipt,
-        "sealed_pass": True,
+        "sealed_pass": sealed_pass,
         "sealed_attempt_id": sealed_attempt_id,
-        "acceptance": acceptance
-        or {
-            "passed": True,
-            "measurement": "MEASURED",
-            "run_id": paper_receipt.get("paper_session_id"),
-            "criteria_id": "autonomous_paper_receipt",
-        },
+        "acceptance": acceptance_payload,
         "evaluation_refs": [
             paper_receipt["paper_deployment_id"],
             paper_receipt.get("paper_session_id"),
         ],
+        "truth": {
+            "no_synthetic_sealed_pass_default": True,
+            "measured_is_not_pass": True,
+        },
     }
     if shadow_receipt and shadow_receipt.get("shadow_run_id"):
         ev["shadow_run_id"] = shadow_receipt["shadow_run_id"]
-        ev["paper_shadow_pass"] = True
+        ev["paper_shadow_pass"] = bool(shadow_receipt.get("paper_shadow_pass"))
         ev["shadow_receipt"] = shadow_receipt
     return ev
 
@@ -412,6 +541,17 @@ def evaluate_loop_promotion(
                 "shadow_receipt": shadow_receipt,
                 "live_trading": "BLOCKED",
             }
+        if not shadow_receipt.get("paper_shadow_pass"):
+            return {
+                "promotable": False,
+                "from": current,
+                "to": target,
+                "reason": "SHADOW_EVIDENCE_FAILED",
+                "shadow_receipt": shadow_receipt,
+                "result": shadow_receipt.get("result") or "FAIL",
+                "live_trading": "BLOCKED",
+                "truth": {"measured_is_not_pass": True},
+            }
         evidence = build_a3_promotion_evidence(
             shadow_receipt=shadow_receipt,
             sealed_attempt_id=sealed_attempt_id,
@@ -438,6 +578,17 @@ def evaluate_loop_promotion(
                 "reason": "INSUFFICIENT_PAPER_EVIDENCE",
                 "paper_receipt": paper_receipt,
                 "live_trading": "BLOCKED",
+            }
+        if not paper_receipt.get("autonomous_paper_pass"):
+            return {
+                "promotable": False,
+                "from": current,
+                "to": target,
+                "reason": "PAPER_EVIDENCE_FAILED",
+                "paper_receipt": paper_receipt,
+                "result": paper_receipt.get("result") or "FAIL",
+                "live_trading": "BLOCKED",
+                "truth": {"measured_is_not_pass": True},
             }
         evidence = build_a4_promotion_evidence(
             paper_receipt=paper_receipt,

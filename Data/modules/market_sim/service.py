@@ -2160,16 +2160,30 @@ class MarketSimControlPlane:
             wallet = getattr(broker, "wallet", None)
         if wallet is None:
             raise MarketSimError("PAPER_WALLET_MISSING", session_id, http_status=500)
-        runner = PaperForwardRunner(
-            risk=RiskGuard(
-                RiskLimits(
-                    max_position_pct=25.0,
-                    max_drawdown_pct=20.0,
-                    per_trade_risk_pct=1.0,
-                    kill_switch_armed=bool(session.get("kill_switch")),
-                )
-            )
+        guard = RiskGuard(
+            RiskLimits(
+                max_position_pct=25.0,
+                max_drawdown_pct=20.0,
+                per_trade_risk_pct=1.0,
+                kill_switch_armed=bool(session.get("kill_switch")),
+            ),
+            receipt_sink=self._risk_receipt_sink(session),
         )
+        # Bind measured runtime health — never leave UNKNOWN as silent HEALTHY.
+        self._bind_paper_risk_health(
+            guard,
+            session=session,
+            feed_allowed=allowed,
+            feed_code=feed_code,
+            has_quote=True,
+        )
+        guard.set_receipt_context(
+            portfolio_id=session_id,
+            strategy_id=session.get("strategy_id"),
+            symbol=session.get("symbol"),
+            source_decision="paper_place_order",
+        )
+        runner = PaperForwardRunner(risk=guard)
         decision = runner.step(
             wallet=wallet,
             symbol=session["symbol"],
@@ -2177,7 +2191,7 @@ class MarketSimControlPlane:
             side=side,
             qty=qty,
             rationale="paper_place_order",
-            metadata={"session_id": session_id},
+            metadata={"session_id": session_id, "symbol": session.get("symbol")},
         )
         if not decision.get("allowed"):
             raise MarketSimError(
@@ -2242,13 +2256,31 @@ class MarketSimControlPlane:
         if price is None:
             raise MarketSimError("FEED_UNCERTAIN", "no quote for paper forward", http_status=409)
         wallet = broker.wallet_for_session(session_id, create=True) if hasattr(broker, "wallet_for_session") else broker.wallet
-        runner = PaperForwardRunner(risk=RiskGuard(RiskLimits()))
+        guard = RiskGuard(
+            RiskLimits(kill_switch_armed=bool(session.get("kill_switch"))),
+            receipt_sink=self._risk_receipt_sink(session),
+        )
+        self._bind_paper_risk_health(
+            guard,
+            session=session,
+            feed_allowed=allowed,
+            feed_code=feed_code,
+            has_quote=True,
+        )
+        guard.set_receipt_context(
+            portfolio_id=session_id,
+            strategy_id=session.get("strategy_id"),
+            symbol=session.get("symbol"),
+            source_decision="paper_forward_step",
+        )
+        runner = PaperForwardRunner(risk=guard)
         result = runner.step(
             wallet=wallet,
             symbol=session["symbol"],
             price=float(price),
             side=side,
             qty=qty,
+            metadata={"session_id": session_id, "symbol": session.get("symbol")},
         )
         meta = dict(session.get("metadata") or {})
         fwd = meta.get("paper_forward") or new_paper_forward_state(
@@ -2489,6 +2521,10 @@ class MarketSimControlPlane:
         session = self.paper_session_state(session_id)
         quote = (session.get("metadata") or {}).get("last_quote") or {}
         price = quote.get("price")
+        # Prefer explicit session feed_status; live quote ⇒ measured healthy feed.
+        feed_status = str(session.get("feed_status") or "").strip().lower()
+        if not feed_status or feed_status in {"unknown", "unmeasured"}:
+            feed_status = "live" if price is not None else "unknown"
         obs = record_shadow_observation(
             loop,
             symbol=session["symbol"],
@@ -2496,7 +2532,7 @@ class MarketSimControlPlane:
             proposed_qty=proposed_qty,
             risk_decision=risk_decision,
             hypothetical_price=float(price) if price is not None else None,
-            feed_status=str(session.get("feed_status") or "unknown"),
+            feed_status=feed_status,
             market_snapshot_ref=f"quote:{session.get('updated_at')}",
             metadata={"deployment_id": deployment_id, "no_order": True},
         )
@@ -3511,11 +3547,87 @@ class MarketSimControlPlane:
             "executed_via": "market_sim.scan_batch",
         }
 
+    def _bind_paper_risk_health(
+        self,
+        guard: Any,
+        *,
+        session: dict[str, Any],
+        feed_allowed: bool,
+        feed_code: str,
+        has_quote: bool,
+    ) -> None:
+        """Bind measured paper-session health into RiskGuard (fail-closed UNKNOWN)."""
+        from .risk_guard import HealthState
+
+        meta = dict(session.get("metadata") or {})
+        quote = meta.get("last_quote") or {}
+        age = quote.get("age_seconds")
+        if age is None and quote.get("ts"):
+            age = 0.0
+        if age is None and has_quote:
+            age = 0.0
+        if feed_allowed and has_quote:
+            provider = HealthState.HEALTHY
+            freshness = HealthState.HEALTHY
+        elif not feed_allowed:
+            provider = HealthState.UNHEALTHY
+            freshness = HealthState.UNHEALTHY
+            if "UNKNOWN" in str(feed_code).upper() or "UNMEASURED" in str(feed_code).upper():
+                provider = HealthState.UNKNOWN
+                freshness = HealthState.UNKNOWN
+        else:
+            provider = HealthState.UNKNOWN
+            freshness = HealthState.UNKNOWN
+        recon = session.get("broker_reconciled")
+        if recon is None:
+            broker = HealthState.HEALTHY  # local paper broker is the reconciliation authority
+        else:
+            broker = HealthState.HEALTHY if recon else HealthState.UNHEALTHY
+        guard.bind_measured_runtime_health(
+            provider_health=provider,
+            broker_recon_health=broker,
+            data_age_seconds=float(age) if age is not None else None,
+            data_freshness_health=freshness,
+            model_health=session.get("model_health") or meta.get("model_health"),
+            model_ok=session.get("model_healthy") if "model_healthy" in session else None,
+        )
+
+    def _risk_receipt_sink(self, session: dict[str, Any] | None = None):
+        """Return a durable MARKET risk-receipt writer bound to this control plane."""
+
+        def _sink(entry: dict[str, Any]) -> None:
+            payload = dict(entry)
+            ctx = dict(payload.get("context") or {})
+            if session:
+                ctx.setdefault("portfolio_id", session.get("session_id"))
+                ctx.setdefault("strategy_id", session.get("strategy_id"))
+                ctx.setdefault("symbol", session.get("symbol"))
+            payload["context"] = ctx
+            payload["portfolio_id"] = ctx.get("portfolio_id")
+            payload["strategy_id"] = ctx.get("strategy_id")
+            payload["symbol"] = ctx.get("symbol")
+            payload["action"] = ctx.get("action")
+            payload["requested_qty"] = ctx.get("requested_qty")
+            payload["decision_id"] = ctx.get("decision_id")
+            payload["order_intent_id"] = ctx.get("order_intent_id")
+            payload["agent_id"] = ctx.get("agent_id")
+            payload["orchestra_id"] = ctx.get("orchestra_id")
+            payload["parent_trace_id"] = ctx.get("parent_trace_id")
+            payload["root_trace_id"] = ctx.get("root_trace_id")
+            payload["source_decision"] = ctx.get("source_decision")
+            self.store.save_risk_receipt(payload)
+
+        return _sink
+
     def _feed_allows_new_risk(self, *, session: dict[str, Any] | None = None) -> tuple[bool, str]:
         meta = dict((session or {}).get("metadata") or {})
         feed_id = meta.get("feed_id") or (session or {}).get("feed_id")
         if not feed_id:
-            return True, ""
+            # No feed fabric binding — allow only when a measured quote exists on the session.
+            quote = meta.get("last_quote") or {}
+            if quote.get("price") is not None:
+                return True, ""
+            return False, "FEED_UNKNOWN"
         try:
             feed_session = self.feed_runtime.get(str(feed_id))
         except MarketSimError:

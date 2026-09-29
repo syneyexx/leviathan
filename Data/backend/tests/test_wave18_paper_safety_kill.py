@@ -36,9 +36,20 @@ def _intent(side: str = "BUY", qty: float | None = 1.0, **meta: object) -> Order
     )
 
 
+def _guard(limits: RiskLimits | None = None) -> RiskGuard:
+    """RiskGuard with measured healthy runtime — required after fail-closed defaults."""
+    guard = RiskGuard(limits or RiskLimits())
+    guard.bind_measured_runtime_health(
+        provider_ok=True,
+        broker_ok=True,
+        data_age_seconds=0.0,
+    )
+    return guard
+
+
 class PaperSafetyKillControlTests(unittest.TestCase):
     def test_llm_cannot_bypass(self) -> None:
-        guard = RiskGuard(RiskLimits())
+        guard = _guard()
         decision = guard.evaluate_intent(
             _intent(bypass_risk=True, approved_by_model=True),
             wallet=_wallet(),
@@ -50,7 +61,7 @@ class PaperSafetyKillControlTests(unittest.TestCase):
         self.assertTrue(guard.rejection_log)
 
     def test_kill_switch_and_global_paper_suspension(self) -> None:
-        guard = RiskGuard(RiskLimits())
+        guard = _guard()
         guard.suspend_global_paper("ops halt")
         decision = guard.evaluate_intent(_intent(), wallet=_wallet(), price=100.0)
         self.assertFalse(decision.allowed)
@@ -61,7 +72,7 @@ class PaperSafetyKillControlTests(unittest.TestCase):
         self.assertTrue(sell.allowed)
 
     def test_per_strategy_suspension(self) -> None:
-        guard = RiskGuard(RiskLimits())
+        guard = _guard()
         guard.suspend_strategy("strat-x")
         denied = guard.evaluate_intent(
             _intent(strategy_id="strat-x"),
@@ -78,7 +89,7 @@ class PaperSafetyKillControlTests(unittest.TestCase):
         self.assertTrue(allowed.allowed)
 
     def test_stale_provider_model_broker_stops(self) -> None:
-        guard = RiskGuard(
+        guard = _guard(
             RiskLimits(
                 stale_data_max_age_seconds=30.0,
                 require_provider_healthy=True,
@@ -86,7 +97,7 @@ class PaperSafetyKillControlTests(unittest.TestCase):
                 require_broker_reconciled=True,
             )
         )
-        guard.update_health(data_age_seconds=90.0)
+        guard.update_health(data_age_seconds=90.0, model_healthy=True)
         self.assertEqual(
             guard.evaluate_intent(_intent(), wallet=_wallet(), price=100.0).rejection_code,
             "STALE_DATA_STOP",
@@ -108,7 +119,7 @@ class PaperSafetyKillControlTests(unittest.TestCase):
         )
 
     def test_exposure_leverage_notional_turnover_caps(self) -> None:
-        guard = RiskGuard(
+        guard = _guard(
             RiskLimits(
                 max_order_notional=50.0,
                 max_gross_exposure_pct=50.0,
@@ -138,13 +149,13 @@ class PaperSafetyKillControlTests(unittest.TestCase):
         self.assertEqual(denied_t.rejection_code, "MAX_DAILY_TURNOVER")
 
     def test_drawdown_and_daily_loss_arm_kill(self) -> None:
-        guard = RiskGuard(RiskLimits(max_drawdown_pct=10.0, max_daily_loss_pct=5.0))
+        guard = _guard(RiskLimits(max_drawdown_pct=10.0, max_daily_loss_pct=5.0))
         wal = _wallet(cash=8_000.0)
         wal.peak_equity = money(10_000.0)
         self.assertFalse(guard.check_drawdown(wal, 100.0))
         self.assertTrue(guard.kill_switch_state()["armed"])
 
-        guard2 = RiskGuard(RiskLimits(max_daily_loss_pct=5.0))
+        guard2 = _guard(RiskLimits(max_daily_loss_pct=5.0))
         wal2 = _wallet(cash=10_000.0)
         guard2.day_start_equity = 10_000.0
         wal2.cash = money(9_000.0)  # -10% mark
@@ -153,7 +164,7 @@ class PaperSafetyKillControlTests(unittest.TestCase):
         self.assertEqual(denied.rejection_code, "DAILY_LOSS_STOP")
 
     def test_rejection_reasons_persisted(self) -> None:
-        guard = RiskGuard(RiskLimits(require_provider_healthy=True))
+        guard = _guard(RiskLimits(require_provider_healthy=True))
         guard.update_health(provider_healthy=False)
         d = guard.evaluate_intent(_intent(), wallet=_wallet(), price=100.0)
         self.assertTrue(d.persisted)

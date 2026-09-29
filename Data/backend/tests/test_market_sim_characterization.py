@@ -30,6 +30,12 @@ from Data.modules.market_sim.ohlcv import _normalize_ts, load_ohlcv, validate_oh
 from Data.modules.market_sim.paper_broker import LocalPaperBroker
 from Data.modules.market_sim.portfolio import Portfolio
 from Data.modules.market_sim.risk_guard import RiskGuard, RiskLimits
+
+
+def _bind_healthy(g: RiskGuard) -> RiskGuard:
+    g.bind_measured_runtime_health(provider_ok=True, broker_ok=True, data_age_seconds=0.0)
+    return g
+
 from Data.modules.market_sim.store import MarketSimStore, utc_now
 from Data.modules.market_sim.types import (
     Bar,
@@ -164,6 +170,7 @@ class D2WinRateCharacterization(unittest.TestCase):
 class D3OrdersPerDayCharacterization(unittest.TestCase):
     def test_d3_on_bar_timestamp_resets_orders_today(self) -> None:
         guard = RiskGuard(RiskLimits(max_orders_per_day=2))
+        _bind_healthy(guard)
         book = WalletBook()
         w = book.ensure_agent("a1", initial_cash=10_000)
         guard.on_bar_timestamp("2024-01-01T10:00:00+00:00")
@@ -206,6 +213,7 @@ class D3OrdersPerDayCharacterization(unittest.TestCase):
 class D4SizingCharacterization(unittest.TestCase):
     def test_d4_default_risk_pct_sizes_one_percent(self) -> None:
         guard = RiskGuard(RiskLimits(per_trade_risk_pct=1.0, max_position_pct=25.0))
+        _bind_healthy(guard)
         book = WalletBook()
         w = book.ensure_agent("a1", initial_cash=100_000)
         intent = make_intent(

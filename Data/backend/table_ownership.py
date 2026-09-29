@@ -206,6 +206,7 @@ MARKET_TABLES: frozenset[str] = frozenset(
         "market_qualification_policies",
         "market_qualification_runs",
         "market_research_command_sessions",
+        "market_risk_receipts",
         "market_dataset_certifications",
         "market_execution_calibrations",
         "market_strategy_behavior_fingerprints",

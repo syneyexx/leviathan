@@ -1,14 +1,17 @@
 """Deterministic risk guard — model output cannot override limits.
 
 Wave 18 extends paper-trading safety kill controls. LLMs cannot bypass.
-Rejection reasons are persisted on the decision object.
+Rejection reasons are persisted on the decision object and, when a receipt
+sink is bound, durably into the MARKET domain.
 """
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from enum import Enum
+from typing import Any, Callable
 
 from .accounting import D, WalletLedger, money
 from .execution import OrderIntent
@@ -30,6 +33,53 @@ OVERRIDE_KEYS = (
     "model_override",
     "ai_approved",
 )
+
+
+class HealthState(str, Enum):
+    """Fail-closed runtime health. UNKNOWN must never silently become HEALTHY."""
+
+    HEALTHY = "HEALTHY"
+    DEGRADED = "DEGRADED"
+    UNHEALTHY = "UNHEALTHY"
+    UNKNOWN = "UNKNOWN"
+
+    @classmethod
+    def parse(cls, raw: Any, *, default: "HealthState | None" = None) -> "HealthState":
+        if isinstance(raw, HealthState):
+            return raw
+        if raw is None:
+            return default if default is not None else cls.UNKNOWN
+        if isinstance(raw, bool):
+            # Explicit booleans only — never treat missing as True.
+            return cls.HEALTHY if raw else cls.UNHEALTHY
+        text = str(raw).strip().upper()
+        if not text:
+            return default if default is not None else cls.UNKNOWN
+        aliases = {
+            "OK": cls.HEALTHY,
+            "LIVE": cls.HEALTHY,
+            "TRUE": cls.HEALTHY,
+            "FALSE": cls.UNHEALTHY,
+            "STALE": cls.UNHEALTHY,
+            "GAP": cls.UNHEALTHY,
+            "DISCONNECTED": cls.UNHEALTHY,
+            "DOWN": cls.UNHEALTHY,
+            "FAILED": cls.UNHEALTHY,
+            "UNMEASURED": cls.UNKNOWN,
+            "NONE": cls.UNKNOWN,
+        }
+        if text in aliases:
+            return aliases[text]
+        try:
+            return cls(text)
+        except ValueError:
+            return default if default is not None else cls.UNKNOWN
+
+    def allows_new_risk(self) -> bool:
+        return self is HealthState.HEALTHY
+
+    def is_known(self) -> bool:
+        return self is not HealthState.UNKNOWN
 
 
 @dataclass(frozen=True)
@@ -68,6 +118,8 @@ class RiskDecision:
     blocked_keys: list[str] | None = None
     rejection_code: str | None = None
     persisted: bool = False
+    receipt_id: str | None = None
+    durable_persisted: bool = False
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -77,10 +129,14 @@ class RiskDecision:
             "blocked_keys": self.blocked_keys or [],
             "rejection_code": self.rejection_code,
             "persisted": self.persisted,
+            "receipt_id": self.receipt_id,
+            "durable_persisted": self.durable_persisted,
             "truth": {
                 "deterministic": True,
                 "llm_cannot_bypass": True,
                 "rejection_reason_persisted": self.persisted or (not self.allowed),
+                "durable_receipt": self.durable_persisted,
+                "in_memory_log_is_not_durable": not self.durable_persisted,
             },
         }
 
@@ -148,6 +204,7 @@ class RiskGuard:
         instrument_spec: InstrumentSpec | None = None,
         short_margin_policy: ShortMarginPolicy | None = None,
         portfolio_shorting_enabled: bool | None = None,
+        receipt_sink: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.limits = limits
         self.killed = bool(limits.kill_switch_armed)
@@ -160,11 +217,12 @@ class RiskGuard:
         self.suspended_strategies: set[str] = set()
         self.global_paper_suspended = bool(limits.global_paper_suspended)
         self.rejection_log: list[dict[str, Any]] = []
-        # Health / data freshness — set by callers; default healthy when unset.
+        # Health — fail-closed: UNKNOWN until callers bind measured runtime state.
         self.data_age_seconds: float | None = None
-        self.provider_healthy: bool = True
-        self.model_healthy: bool = True
-        self.broker_reconciled: bool = True
+        self.provider_health: HealthState = HealthState.UNKNOWN
+        self.model_health: HealthState = HealthState.UNKNOWN
+        self.broker_recon_health: HealthState = HealthState.UNKNOWN
+        self.data_freshness_health: HealthState = HealthState.UNKNOWN
         self.model_degraded: bool = False
         self.gross_exposure_pct: float | None = None
         self.net_exposure_pct: float | None = None
@@ -177,7 +235,33 @@ class RiskGuard:
         self.instrument_spec = instrument_spec
         self.short_margin_policy = short_margin_policy
         self.portfolio_shorting_enabled = portfolio_shorting_enabled
-        self.rejection_log: list[dict[str, Any]] = []
+        self._receipt_sink = receipt_sink
+        self._last_receipt_context: dict[str, Any] = {}
+
+    # Backward-compatible boolean views — True only when explicitly HEALTHY.
+    @property
+    def provider_healthy(self) -> bool:
+        return self.provider_health is HealthState.HEALTHY
+
+    @provider_healthy.setter
+    def provider_healthy(self, value: bool) -> None:
+        self.provider_health = HealthState.HEALTHY if value else HealthState.UNHEALTHY
+
+    @property
+    def model_healthy(self) -> bool:
+        return self.model_health is HealthState.HEALTHY
+
+    @model_healthy.setter
+    def model_healthy(self, value: bool) -> None:
+        self.model_health = HealthState.HEALTHY if value else HealthState.UNHEALTHY
+
+    @property
+    def broker_reconciled(self) -> bool:
+        return self.broker_recon_health is HealthState.HEALTHY
+
+    @broker_reconciled.setter
+    def broker_reconciled(self, value: bool) -> None:
+        self.broker_recon_health = HealthState.HEALTHY if value else HealthState.UNHEALTHY
 
     def on_bar_timestamp(self, ts: str | datetime | None) -> None:
         """Reset orders_today when the UTC calendar day changes."""
@@ -197,21 +281,65 @@ class RiskGuard:
     # Alias used by some call sites / characterization
     roll_day = on_bar_timestamp
 
+    def health_snapshot(self) -> dict[str, Any]:
+        return {
+            "provider_health": self.provider_health.value,
+            "model_health": self.model_health.value,
+            "broker_recon_health": self.broker_recon_health.value,
+            "data_freshness_health": self.data_freshness_health.value,
+            "data_age_seconds": self.data_age_seconds,
+            "model_degraded": self.model_degraded,
+            "truth": {
+                "unknown_is_not_healthy": True,
+                "defaults_are_unknown": True,
+            },
+        }
+
     def _persist_rejection(self, decision: RiskDecision, *, context: dict[str, Any] | None = None) -> RiskDecision:
         if decision.allowed:
             return decision
+        receipt_id = str(uuid.uuid4())
+        merged_ctx = {**self._last_receipt_context, **(context or {})}
         entry = {
+            "receipt_id": receipt_id,
             "reason": decision.reason,
             "rejection_code": decision.rejection_code or decision.reason,
             "blocked_keys": list(decision.blocked_keys or []),
             "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "context": dict(context or {}),
+            "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "context": dict(merged_ctx),
+            "health": self.health_snapshot(),
+            "limits": {
+                "max_drawdown_pct": self.limits.max_drawdown_pct,
+                "max_daily_loss_pct": self.limits.max_daily_loss_pct,
+                "max_orders_per_day": self.limits.max_orders_per_day,
+                "max_gross_exposure_pct": self.limits.max_gross_exposure_pct,
+                "max_net_exposure_pct": self.limits.max_net_exposure_pct,
+                "max_leverage": self.limits.max_leverage,
+                "stale_data_max_age_seconds": self.limits.stale_data_max_age_seconds,
+                "require_provider_healthy": self.limits.require_provider_healthy,
+                "require_model_healthy": self.limits.require_model_healthy,
+                "require_broker_reconciled": self.limits.require_broker_reconciled,
+            },
+            "decision": "REJECT",
+            "persistence_status": "IN_MEMORY",
         }
         self.rejection_log.append(entry)
         # Bound log size
         if len(self.rejection_log) > 500:
             self.rejection_log = self.rejection_log[-250:]
         decision.persisted = True
+        decision.receipt_id = receipt_id
+        if self._receipt_sink is not None:
+            try:
+                durable = dict(entry)
+                durable["persistence_status"] = "DURABLE"
+                self._receipt_sink(durable)
+                entry["persistence_status"] = "DURABLE"
+                decision.durable_persisted = True
+            except Exception:  # noqa: BLE001 — never let receipt IO unblock risk veto
+                entry["persistence_status"] = "DURABLE_WRITE_FAILED"
+                decision.durable_persisted = False
         return decision
 
     def arm_kill_switch(self, reason: str) -> None:
@@ -250,10 +378,13 @@ class RiskGuard:
             self.suspended_strategies.add(sid)
             self.rejection_log.append(
                 {
+                    "receipt_id": str(uuid.uuid4()),
                     "reason": f"strategy_suspended:{sid}:{reason}",
                     "rejection_code": "STRATEGY_SUSPENDED",
                     "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                     "context": {"strategy_id": sid},
+                    "health": self.health_snapshot(),
+                    "persistence_status": "IN_MEMORY",
                 }
             )
 
@@ -270,35 +401,100 @@ class RiskGuard:
         self.limits = _copy_limits(self.limits, global_paper_suspended=False)
         self.clear_kill_switch(reason)
 
+    def set_receipt_context(self, **context: Any) -> None:
+        """Attach lineage fields used when writing durable risk receipts."""
+        cleaned = {k: v for k, v in context.items() if v is not None}
+        self._last_receipt_context.update(cleaned)
+
     def update_health(
         self,
         *,
         data_age_seconds: float | None = None,
         provider_healthy: bool | None = None,
+        provider_health: HealthState | str | None = None,
         model_healthy: bool | None = None,
+        model_health: HealthState | str | None = None,
         model_degraded: bool | None = None,
         broker_reconciled: bool | None = None,
+        broker_recon_health: HealthState | str | None = None,
+        data_freshness_health: HealthState | str | None = None,
         gross_exposure_pct: float | None = None,
         net_exposure_pct: float | None = None,
         current_leverage: float | None = None,
     ) -> None:
-        """Update external health inputs used by evaluate_intent kill controls."""
+        """Update external health inputs used by evaluate_intent kill controls.
+
+        Explicit False/UNHEALTHY/UNKNOWN never become HEALTHY. Omitting a field
+        leaves prior state unchanged (initial state is UNKNOWN).
+        """
         if data_age_seconds is not None:
             self.data_age_seconds = float(data_age_seconds)
-        if provider_healthy is not None:
-            self.provider_healthy = bool(provider_healthy)
-        if model_healthy is not None:
-            self.model_healthy = bool(model_healthy)
+            max_age = self.limits.stale_data_max_age_seconds
+            if max_age is None:
+                self.data_freshness_health = HealthState.HEALTHY
+            elif float(data_age_seconds) > float(max_age):
+                self.data_freshness_health = HealthState.UNHEALTHY
+            else:
+                self.data_freshness_health = HealthState.HEALTHY
+        if data_freshness_health is not None:
+            self.data_freshness_health = HealthState.parse(data_freshness_health)
+        if provider_health is not None:
+            self.provider_health = HealthState.parse(provider_health)
+        elif provider_healthy is not None:
+            self.provider_health = HealthState.HEALTHY if provider_healthy else HealthState.UNHEALTHY
+        if model_health is not None:
+            self.model_health = HealthState.parse(model_health)
+        elif model_healthy is not None:
+            self.model_health = HealthState.HEALTHY if model_healthy else HealthState.UNHEALTHY
         if model_degraded is not None:
             self.model_degraded = bool(model_degraded)
-        if broker_reconciled is not None:
-            self.broker_reconciled = bool(broker_reconciled)
+            if self.model_degraded and self.model_health is HealthState.HEALTHY:
+                self.model_health = HealthState.DEGRADED
+        if broker_recon_health is not None:
+            self.broker_recon_health = HealthState.parse(broker_recon_health)
+        elif broker_reconciled is not None:
+            self.broker_recon_health = (
+                HealthState.HEALTHY if broker_reconciled else HealthState.UNHEALTHY
+            )
         if gross_exposure_pct is not None:
             self.gross_exposure_pct = float(gross_exposure_pct)
         if net_exposure_pct is not None:
             self.net_exposure_pct = float(net_exposure_pct)
         if current_leverage is not None:
             self.current_leverage = float(current_leverage)
+
+    def bind_measured_runtime_health(
+        self,
+        *,
+        provider_ok: bool | None = None,
+        provider_health: HealthState | str | None = None,
+        broker_ok: bool | None = None,
+        broker_recon_health: HealthState | str | None = None,
+        model_ok: bool | None = None,
+        model_health: HealthState | str | None = None,
+        data_age_seconds: float | None = None,
+        data_freshness_health: HealthState | str | None = None,
+        gross_exposure_pct: float | None = None,
+        net_exposure_pct: float | None = None,
+        current_leverage: float | None = None,
+    ) -> None:
+        """Production binder — call from paper order paths with measured values.
+
+        Passing no provider/broker/model value leaves that channel UNKNOWN (fail-closed).
+        """
+        self.update_health(
+            provider_health=provider_health,
+            provider_healthy=provider_ok,
+            broker_recon_health=broker_recon_health,
+            broker_reconciled=broker_ok,
+            model_health=model_health,
+            model_healthy=model_ok,
+            data_age_seconds=data_age_seconds,
+            data_freshness_health=data_freshness_health,
+            gross_exposure_pct=gross_exposure_pct,
+            net_exposure_pct=net_exposure_pct,
+            current_leverage=current_leverage,
+        )
 
     def record_fill_turnover(self, notional: float, *, realized_pnl: float = 0.0) -> None:
         self.daily_turnover += abs(float(notional))
@@ -344,21 +540,50 @@ class RiskGuard:
                 code="STRATEGY_SUSPENDED",
             )
 
-        if self.limits.require_provider_healthy and not self.provider_healthy:
-            return self._reject("provider health stop", code="PROVIDER_HEALTH_STOP")
+        # Fail-closed health: UNKNOWN / DEGRADED / UNHEALTHY block new risk when required.
+        if self.limits.require_provider_healthy and not reduces:
+            if self.provider_health is HealthState.UNKNOWN:
+                return self._reject(
+                    "provider health UNKNOWN — new risk blocked",
+                    code="PROVIDER_HEALTH_UNKNOWN",
+                )
+            if not self.provider_health.allows_new_risk():
+                return self._reject("provider health stop", code="PROVIDER_HEALTH_STOP")
 
-        if self.limits.require_model_healthy and (not self.model_healthy or self.model_degraded):
-            return self._reject("model health degradation stop", code="MODEL_HEALTH_STOP")
+        if self.limits.require_model_healthy and not reduces:
+            if self.model_health is HealthState.UNKNOWN:
+                return self._reject(
+                    "model health UNKNOWN — new risk blocked",
+                    code="MODEL_HEALTH_UNKNOWN",
+                )
+            if not self.model_health.allows_new_risk() or self.model_degraded:
+                return self._reject("model health degradation stop", code="MODEL_HEALTH_STOP")
 
-        if self.limits.require_broker_reconciled and not self.broker_reconciled:
-            return self._reject(
-                "broker reconciliation failure stop",
-                code="BROKER_RECONCILIATION_STOP",
-            )
+        if self.limits.require_broker_reconciled and not reduces:
+            if self.broker_recon_health is HealthState.UNKNOWN:
+                return self._reject(
+                    "broker reconciliation UNKNOWN — new risk blocked",
+                    code="BROKER_RECONCILIATION_UNKNOWN",
+                )
+            if not self.broker_recon_health.allows_new_risk():
+                return self._reject(
+                    "broker reconciliation failure stop",
+                    code="BROKER_RECONCILIATION_STOP",
+                )
 
         max_age = self.limits.stale_data_max_age_seconds
-        if max_age is not None and self.data_age_seconds is not None:
-            if float(self.data_age_seconds) > float(max_age):
+        if max_age is not None and not reduces:
+            if self.data_freshness_health is HealthState.UNKNOWN and self.data_age_seconds is None:
+                return self._reject(
+                    "market-data freshness UNKNOWN — new risk blocked",
+                    code="DATA_FRESHNESS_UNKNOWN",
+                )
+            if self.data_freshness_health is HealthState.UNHEALTHY:
+                return self._reject(
+                    f"stale data stop: age={self.data_age_seconds}s > {max_age}s",
+                    code="STALE_DATA_STOP",
+                )
+            if self.data_age_seconds is not None and float(self.data_age_seconds) > float(max_age):
                 return self._reject(
                     f"stale data stop: age={self.data_age_seconds:.1f}s > {max_age}s",
                     code="STALE_DATA_STOP",
@@ -444,6 +669,20 @@ class RiskGuard:
         price: float,
     ) -> RiskDecision:
         meta = intent.metadata or {}
+        self.set_receipt_context(
+            portfolio_id=meta.get("portfolio_id") or getattr(wallet, "owner_id", None),
+            strategy_id=meta.get("strategy_id") or getattr(intent, "strategy_id", None),
+            agent_id=meta.get("agent_id") or getattr(intent, "agent_id", None),
+            orchestra_id=meta.get("orchestra_id"),
+            decision_id=meta.get("decision_id"),
+            order_intent_id=getattr(intent, "intent_id", None),
+            symbol=meta.get("symbol") or meta.get("instrument"),
+            action=getattr(intent, "side", None),
+            requested_qty=float(intent.qty) if intent.qty is not None else None,
+            parent_trace_id=meta.get("parent_trace_id") or meta.get("trace_id"),
+            root_trace_id=meta.get("root_trace_id"),
+            source_decision=meta.get("source_decision") or meta.get("rationale"),
+        )
         blocked = [k for k in OVERRIDE_KEYS if k in meta]
         if blocked:
             return self._reject(

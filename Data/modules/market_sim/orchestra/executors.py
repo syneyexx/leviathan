@@ -558,6 +558,24 @@ def run_risk_officer(
         side = "HOLD"  # long-only mandate kernel today; shorts are refused, not simulated
     guard = RiskGuard(mandate_to_limits(ctx.mandate))
     guard.orders_today = orders_today
+    # Orchestra paper path: bind measured mandate/runtime health when provided; else research-lab healthy.
+    health = getattr(ctx, "runtime_health", None) or {}
+    if isinstance(health, dict) and health:
+        guard.bind_measured_runtime_health(
+            provider_health=health.get("provider_health"),
+            provider_ok=health.get("provider_ok"),
+            broker_recon_health=health.get("broker_recon_health"),
+            broker_ok=health.get("broker_ok", True),
+            data_age_seconds=health.get("data_age_seconds", 0.0),
+            model_health=health.get("model_health"),
+            model_ok=health.get("model_ok"),
+        )
+    else:
+        guard.bind_measured_runtime_health(
+            provider_ok=True,
+            broker_ok=True,
+            data_age_seconds=0.0,
+        )
     intent = OrderIntent(
         intent_id=new_id("intent"),
         run_id=ctx.orchestra_id,
