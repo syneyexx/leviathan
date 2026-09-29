@@ -83,6 +83,18 @@ const ICONS: Record<V2NavIconId, ReactNode> = {
       <path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6.1 6.1l1.6 1.6M16.3 16.3l1.6 1.6M17.9 6.1l-1.6 1.6M7.7 16.3l-1.6 1.6" />
     </>
   ),
+  media: (
+    <>
+      <rect x="4" y="6" width="16" height="12" rx="2" />
+      <path d="M8 14l3-3 2.5 2.5L16 11l4 4" />
+      <circle cx="9" cy="10" r="1.2" />
+    </>
+  ),
+  coding: (
+    <>
+      <path d="M8 8l-4 4 4 4M16 8l4 4-4 4" />
+    </>
+  ),
 };
 
 export type SidebarStatusRow = {
@@ -105,10 +117,10 @@ function NavIcon({ id }: { id: V2NavIconId }) {
   );
 }
 
-function NavGroup({ item, pathname }: { item: V2NavItem; pathname: string }) {
+function NavGroup({ item, pathname, search }: { item: V2NavItem; pathname: string; search: string }) {
   const autoExpand = shouldAutoExpandV2Group(item, pathname);
   const [open, setOpen] = useState(autoExpand);
-  const activeChild = findActiveV2Child(item, pathname);
+  const activeChild = findActiveV2Child(item, pathname, search);
   const groupActive = isV2NavItemActive(item, pathname);
 
   useEffect(() => {
@@ -170,7 +182,12 @@ export function AppSidebarV2({ open, statusRows = [] }: AppSidebarV2Props) {
       <BrandV2 />
       <nav className="lv-v2-sidebar__nav" aria-label="Hoofdmenu">
         {V2_PRIMARY_NAV.map((item) => (
-          <NavGroup key={item.id} item={item} pathname={location.pathname} />
+          <NavGroup
+            key={item.id}
+            item={item}
+            pathname={location.pathname}
+            search={location.search}
+          />
         ))}
       </nav>
       <div className="lv-v2-system-status" aria-label="System Status">
