@@ -188,8 +188,11 @@ class ResearchClaimGraphBundleTests(unittest.TestCase):
         self.assertGreaterEqual(len(graph["claims"]), 1)
         self.assertTrue(graph["truth"]["graph_links_claims_to_evidence"])
         # High-confidence claims must have entailment edges when support exists.
-        support_edges = [e for e in graph["edges"] if e["relation"] == "supports"]
+        support_edges = [
+            e for e in graph["edges"] if e["relation"] in {"SUPPORTS", "supports"}
+        ]
         self.assertTrue(support_edges)
+        self.assertEqual(support_edges[0]["relation"], "SUPPORTS")
         bundle = self.service.export_reproducibility_bundle(project.project_id, model_revision="wave6-test")
         self.assertTrue(Path(bundle["path"]).exists())
         self.assertTrue(bundle["content_hash"])

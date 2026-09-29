@@ -41,6 +41,22 @@ _FAILED_STATES = frozenset(
 _OPTIONAL_POOLS = frozenset({"knowledge_commit", "rerank", "document_ai", "telemetry"})
 
 
+def _resource_governor_summary(db_path: Any) -> dict[str, Any]:
+    """Best-effort Wave-12 resource governor view for the fabric dashboard."""
+    try:
+        from .admission import ResourceAdmission
+
+        admission = ResourceAdmission(db_path)
+        admission.initialize()
+        return admission.observability_snapshot()
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "pressure": "UNMEASURED",
+            "error": str(exc)[:200],
+            "truth": {"unavailable_is_not_normal": True},
+        }
+
+
 def _iso_age_seconds(iso: str | None) -> float | None:
     if not iso:
         return None
@@ -448,6 +464,7 @@ def build_worker_fabric_dashboard(
         "queued_jobs": queued_jobs[:100],
         "failures": failures[:recent_failures_limit],
         "settings": wsettings.public_dict(),
+        "resourceGovernor": _resource_governor_summary(db_path),
         "truth": {
             "no_mock_workers": True,
             "derived_from_registry_and_jobs": True,
@@ -455,6 +472,7 @@ def build_worker_fabric_dashboard(
             "optional_disabled_pools_visible": True,
             "active_workers_not_agent_count": True,
             "native_compute_probed": True,
+            "resource_governor_exposed": True,
         },
     }
 

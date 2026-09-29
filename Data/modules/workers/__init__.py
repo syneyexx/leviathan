@@ -7,7 +7,7 @@ research, dataset, ingestion, coding, evaluation, provider_io, mcp_execution,
 module_runtime, and other background execution pools.
 """
 
-from .admission import ResourceAdmission, ResourceClass
+from .admission import ResourceAdmission, ResourceClass, PressureState
 from .events import (
     WorkerEvent,
     WorkerEventEmitter,
@@ -33,6 +33,7 @@ from .settings import WorkerSettings, load_worker_settings
 __all__ = [
     "POOL_CATALOG",
     "PoolDefinition",
+    "PressureState",
     "ResourceAdmission",
     "ResourceClass",
     "SupervisorHealth",

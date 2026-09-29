@@ -200,14 +200,23 @@ class DatasetManagementActionsTests(unittest.TestCase):
             self.service.resolve_export_download(ds_id, ver_id)
 
     def test_offline_preflight_block_and_enqueue(self) -> None:
-        ds_id, ver_id = self._import_sample("offline")
+        ds_id, ver_id = self._import_sample("offline_pf")
+        # Deterministic knowledge route for the success branch (classification may
+        # fail closed for trading-shaped imports; force keeps this action test honest).
+        ds = self.service.get_dataset(ds_id)
+        meta = dict(ds.metadata or {})
+        meta["forceKnowledgeIndex"] = True
+        self.store.update_dataset(ds_id, metadata=meta)
         # Force remote-only embedding status to block offline-only preflight when applicable.
         pf = self.service.offline_brain_preflight(ds_id, ver_id, offline_only=True)
         self.assertIn("ok", pf)
         if not pf["ok"]:
             with self.assertRaises(Exception) as ctx:
                 self.service.enqueue_offline_brain_index(ds_id, ver_id)
-            self.assertIn("OFFLINE_PREFLIGHT_BLOCKED", str(ctx.exception.code) if hasattr(ctx.exception, "code") else str(ctx.exception))
+            self.assertIn(
+                "OFFLINE_PREFLIGHT_BLOCKED",
+                str(ctx.exception.code) if hasattr(ctx.exception, "code") else str(ctx.exception),
+            )
             res = self.client.post(
                 "/api/datasets/offline/index",
                 json={"datasetId": ds_id, "versionId": ver_id},

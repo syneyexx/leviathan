@@ -419,6 +419,18 @@ def _family_proposal(family: str, *, hypothesis_id: str | None = None) -> dict[s
     if hypothesis_id:
         normalized["hypothesis_id"] = hypothesis_id
     normalized["origin"] = "heuristic_family_template"
+    # Wave 5 — attach search grammar contract (hypothesis phase; no HPO yet).
+    from .strategy_search_grammar import enrich_proposal_with_contract
+
+    normalized = enrich_proposal_with_contract(
+        normalized,
+        perception={},
+    )
+    if hypothesis_id:
+        normalized["hypothesis_id"] = hypothesis_id
+        meta = dict(normalized.get("metadata") or {})
+        meta["hypothesis_id"] = hypothesis_id
+        normalized["metadata"] = meta
     return normalized
 
 

@@ -359,7 +359,8 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
         description=(
             "Singleton browser automation / Playwright / Chromium / QA crawl owner. "
             "max_count=1 until session affinity/sharding exists — session state "
-            "(cookies, pages, JS) must not split across workers."
+            "(cookies, pages, JS) must not split across workers. "
+            "Wave 12: do NOT scale-to-zero while sticky browser affinity is required."
         ),
         max_count=1,
     ),

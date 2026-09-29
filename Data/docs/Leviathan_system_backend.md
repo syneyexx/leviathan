@@ -2,7 +2,7 @@
 
 > **Canonical backend reference.** This file is the single human-readable source of truth for LEVIATHAN backend architecture, runtime ownership, persistence, execution, intelligence, research/trading systems, security boundaries, verification and exact code locations.
 >
-> **Snapshot:** `main` at `1c30a3d062b03f8b77eb14b9ae8dee16979fcb61` (2026-09-28), after the autonomous trading research closed-loop merge. Runtime code, schemas and executable tests remain authoritative when prose and behavior disagree.
+> **Snapshot:** institutional hardening branch tip (Waves 0–25 program). Baseline main was `35174d88edcccd87e7f40d34651ae2cc9bcc7abb` (2026-09-28). Runtime code, schemas and executable tests remain authoritative when prose and behavior disagree.
 >
 > Frontend companion: [`Leviathan_system_frontend.md`](./Leviathan_system_frontend.md).
 
@@ -1696,7 +1696,149 @@ no private chain-of-thought persistence/exposure
 
 ---
 
-# 30. Documentation maintenance rule
+# 30. Institutional hardening contracts (CURRENT)
+
+## 30.1 Worker context contract
+
+Canonical owner: `Data/modules/workers/context.py`.
+
+Handlers declare `WorkerContextRequirements` (`required` / `optional`). Runtime validates via `WorkerExecutionContext` / `validate_worker_context` before invocation. Base keys always include `settings`, `job_store`, `job_runtime`, `gateway`, `function_runtime`, `artifact_store`, `registry`, `admission`, `worker_settings`. Per-job keys add lease/cancel fences (`worker_id`, `lease_ttl_seconds`, `lease_lost`, `job_cancel_fence`, `job_cancel_check`). Do not sprinkle ad-hoc `ctx.get("settings")` as a substitute for the contract.
+
+## 30.2 Prior lessons closed loop
+
+Owners: `Data/modules/market_sim/lesson_retrieval.py`, `learning_memory.py`, `trading_context.py`, orchestra postmortem executors.
+
+Lessons are point-in-time (`available_at` / `as_of`). Critic / risk / postmortem retrieve negative memory first-class. Paper-observed lessons stay epistemically distinct from SEALED qualification evidence. Caller booleans are never promotion proof.
+
+## 30.3 TradingContextFabric
+
+Owner: `Data/modules/market_sim/trading_context.py`.
+
+Assembles causal refs (market state, hypotheses, lessons, postmortems, Fincept artifacts) bound to decision `as_of`. Poison / future refs with `available_at > as_of` are invisible. Not a second Brain — a trading-decision context fabric over MarketSim + Evidence.
+
+## 30.4 Fincept bridge
+
+Owner: `Data/modules/market_sim/fincept_bridge.py`.
+
+Lifecycle: justified need → discover → admit → call → normalize → immutable artifact → Evidence → provenance → optional Brain assimilation. Fincept is **never** execution authority. Missing install/executor → `UNAVAILABLE` / `DISABLED` (honest), never invented analytics. Live money remains BLOCKED.
+
+## 30.5 Weighted ingestion progress
+
+Owner: `Data/modules/source_ingestion/progress.py`.
+
+`compute_weighted_progress` reports phase-weighted `progress_pct` with unit kind and monotonic clamp. When measurement is impossible → `measured=false` / `progress_pct=null` (UNMEASURED), never a fake 100%.
+
+## 30.6 Resource governor pressure states
+
+Owner: `Data/modules/workers/admission.py` (`PressureState`, `classify_pressure`, `ResourceAdmission`).
+
+Pressure states gate admission for memory/VRAM-heavy classes. Protected / DB_SERIAL classes are not casually shed. Dashboard surfaces admission observability — does not invent a second governor.
+
+## 30.7 RiskGuard paper envelope
+
+Owner: `Data/modules/market_sim/risk_guard.py` (+ portefeuille risk helpers).
+
+Deterministic authority for paper size/margin/kill-switch envelopes. Models propose; RiskGuard allows/vetoes. Autonomous paper loop and paper-forward runner both route through RiskGuard. Live money BLOCKED independently.
+
+## 30.8 Strategy search grammar
+
+Owner: `Data/modules/market_sim/strategy_search_grammar.py`.
+
+Closed grammar for searchable strategy structures (kinds/parameters/leakage risk tags). Invalid/ungrounded structures fail closed before expensive trials. Complements DSL validation — does not replace QualificationAuthority.
+
+## 30.9 Learning memory contract
+
+Owner: `Data/modules/market_sim/learning_memory.py` (+ `learning_types.py` / fitness).
+
+Epistemic states (`PROPOSED` / `VERIFIED` / `REJECTED` / …) map from legacy StrategyMemory trust labels. Dedup retains negative evidence. Expectancy economics in `learning_fitness.py` — win rate alone is not profitability.
+
+## 30.10 Academic research engine extensions
+
+Owners: `Data/modules/research/claim_relations.py`, `graph.py`, `independent_verifier.py`, `concurrency.py`, `service.py`.
+
+Claim–evidence edge vocabulary is closed: `SUPPORTS` | `CONTRADICTS` | `QUALIFIES` | `BACKGROUND` | `INSUFFICIENT`. `ResearchService.verify_claims_independently` is a separate verifier path (deterministic entailment + source independence); cross-model verification remains `UNAVAILABLE` unless separately wired — self-critique is not independent. `bounded_web_search` / `bounded_web_fetch` enforce concurrency ceilings (default 4, max 8).
+
+## 30.11 Observability action receipts
+
+Owner: `Data/modules/observability/action_receipts.py` (extends ObservabilityHub; worker loop emits on terminal jobs).
+
+Durable autonomous actions emit receipts with: `trace_id`, `job_id`, `root_job_id`, domain entity, `worker_pool`, `resource_class`, `queue_latency_ms`, `runtime_ms`, `retries`, `result_state`, `error_code`, `artifact_refs`. Not a parallel telemetry bus.
+
+## 30.12 Autonomous operating scheduler
+
+Owner: `Data/modules/schedules/operating_pipeline.py` (+ `ScheduleRunner` backpressure).
+
+Pipeline stages (durable `next_run_at` schedules): market open/data refresh → research → qualification → paper candidate → monitoring → postmortem → lesson consolidation. Idempotent `ensure_operating_pipeline`. Queue saturation → backpressure skip (no duplicate research waves). Occurrence idempotency keys suppress scheduler-race duplicates.
+
+## 30.13 Paper causality / LIVE_EXTERNAL honesty
+
+Owner: `Data/modules/market_sim/paper_causality.py`.
+
+`refuse_future_quote` / `filter_quotes_as_of` fence poison/future quotes relative to decision `as_of`. Missing quote timestamps are UNMEASURED (not silently causal). When Alpaca paper credentials are absent, `LIVE_EXTERNAL_TEST` is **UNMEASURED** — never PASS/FAIL fiction.
+
+## 30.14 Governance artifacts
+
+- `.github/CODEOWNERS`
+- `.github/PULL_REQUEST_TEMPLATE.md`
+- `Data/docs/github_branch_protection.md` (required settings; **does not claim applied**)
+- CI: `.github/workflows/leviathan-ci.yml`
+
+---
+
+# 31. Operator runbook — put LEVIATHAN to work autonomously with paper money
+
+End-to-end autonomous **paper** operation. Live money remains **BLOCKED**.
+
+### 1. Settings
+- Enable MarketSim / paper features in Settings (control-plane flags).
+- Confirm Safe Mode is off only when workers should run.
+- Set resource governor headrooms (`LEVIATHAN_RESOURCE_*`) appropriate to the host.
+
+### 2. Providers
+- Configure market data providers (public feeds where possible).
+- Alpaca paper: set `LEVIATHAN_ALPACA_PAPER_KEY_ID` / `LEVIATHAN_ALPACA_PAPER_SECRET` via SecretsBroker when remote paper broker is desired; otherwise LocalPaperBroker is fine.
+- Without live Alpaca credentials, treat LIVE_EXTERNAL_TEST as **UNMEASURED**.
+
+### 3. Paper broker
+- Prefer LocalPaperBroker for offline autonomy; Alpaca paper only through `provider_io` workers.
+- Verify kill switch is disarmed only intentionally; arming remains durable.
+
+### 4. Workers
+- Start worker fabric pools: at minimum `market_sim`, `scheduler`, `provider_io`, `research` (as needed).
+- Confirm ResourceAdmission is not permanently shedding under NORMAL pressure.
+
+### 5. Models
+- Bind Model Control Plane profiles used by research/orchestra roles.
+- Missing models → UNAVAILABLE for those roles; numeric/paper paths may continue where deterministic.
+
+### 6. Dataset / Brain / research readiness
+- Certify datasets + split manifests before qualification.
+- Brain graph/ingestion healthy enough for lesson assimilation (weighted progress measured).
+- Research web readiness: READY / FETCH ONLY / UNAVAILABLE from `/api/research/web/readiness`.
+
+### 7. Paper deployment
+- Qualify strategy via QualificationAuthority (no TRAIN-only promotion).
+- Create PaperDeployment → shadow (A3) → autonomous paper (A4) via autonomous paper loop.
+- Ensure operating pipeline: `ensure_operating_pipeline(...)` for durable cadence.
+
+### 8. Kill switch
+- Know how to arm paper kill switch from Research Command / paper operator surface.
+- Confirm RiskGuard envelope limits before unattended runs.
+
+### 9. Observability
+- Watch ObservabilityHub / worker terminal events.
+- Confirm autonomous action receipts include job/trace/pool/latencies/result_state.
+- Drift reviews create continual-research tickets — they do not auto-enable live.
+
+### 10. Failure recovery
+- Worker crash mid-job: lease expiry → reclaim; stale writers fenced; idempotency prevents duplicate orders/jobs.
+- Provider timeout / model unavailable / Fincept unavailable: typed UNAVAILABLE/FAILED — not silent PASS.
+- API restart: paper sessions restore wallet/orders; feed event fill keys remain idempotent.
+- Saturated queues: scheduler backpressure skips fires until drained.
+
+---
+
+# 32. Documentation maintenance rule
 
 For every backend PR that changes a canonical owner, route, database/table ownership, model/cognition contract, worker flow, external module lifecycle, trading/research flow or major file location:
 

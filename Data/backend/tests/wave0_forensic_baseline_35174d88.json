@@ -1,0 +1,186 @@
+{
+  "report_kind": "wave0_forensic_baseline",
+  "source_commit": "35174d88edcccd87e7f40d34651ae2cc9bcc7abb",
+  "source_tree": "3b5ceb50245cea7bc7ea680d7deaf52867e1dc78",
+  "branch": "cursor/institutional-hardening-e3ae",
+  "dirty": true,
+  "dirty_paths": [
+    "M Data/backend/tests/dataset_memory_benchmark_report.json",
+    " M Data/backend/tests/frontier_reasoning_completion_report.json",
+    " M Data/backend/tests/large_payload_db_audit.summary.json",
+    " M Data/backend/tests/leviathan_verification_report.json",
+    " M Data/backend/tests/memory_regression_latest.json",
+    " M Data/backend/tests/parity_matrix.json",
+    " M Data/backend/tests/trading_completion_report.json",
+    "?? Data/backend/data/",
+    "?? venv/"
+  ],
+  "generated_at": "2026-09-28T23:43:01.732808+00:00",
+  "strict": true,
+  "environment": {
+    "os": "Linux-6.12.94+-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "node": "v22.14.0",
+    "machine": "x86_64"
+  },
+  "program_authored_main_sha": "e0a5999ac6e12e617ed4392042d51a5cfec372b8",
+  "main_moved_since_program_authorship": true,
+  "commits_since_program_authorship": [
+    "35174d88 Harden external runtimes, MCP execution and module process ownership (#221)"
+  ],
+  "database_schema": {
+    "control_migration_latest": 59,
+    "migration_count": 59
+  },
+  "worker_fabric": {
+    "pools": [
+      "agent_signals",
+      "agents",
+      "backup",
+      "brain_compute",
+      "browser",
+      "coding",
+      "dataset",
+      "db_commit",
+      "document_ai",
+      "embedding",
+      "evaluation",
+      "file_io",
+      "general",
+      "knowledge_commit",
+      "knowledge_prepare",
+      "maintenance",
+      "market_feed",
+      "market_sim",
+      "mcp_execution",
+      "media",
+      "memory",
+      "model_download",
+      "model_runtime",
+      "module_runtime",
+      "provider_io",
+      "rerank",
+      "research",
+      "scheduler",
+      "security",
+      "source_ingestion",
+      "sqlite_ops",
+      "telemetry",
+      "training_control",
+      "voice",
+      "workflow"
+    ],
+    "default_counts": {
+      "general": 1,
+      "file_io": 1,
+      "scheduler": 1,
+      "workflow": 1,
+      "source_ingestion": 1,
+      "dataset": 1,
+      "provider_io": 2,
+      "market_feed": 1,
+      "model_download": 1,
+      "model_runtime": 1,
+      "mcp_execution": 1,
+      "research": 1,
+      "memory": 1,
+      "brain_compute": 1,
+      "coding": 1,
+      "module_runtime": 1,
+      "agents": 1,
+      "agent_signals": 1,
+      "knowledge_prepare": 1,
+      "knowledge_commit": 0,
+      "db_commit": 1,
+      "embedding": 1,
+      "rerank": 0,
+      "browser": 1,
+      "media": 1,
+      "document_ai": 0,
+      "evaluation": 1,
+      "training_control": 1,
+      "market_sim": 1,
+      "voice": 1,
+      "backup": 1,
+      "maintenance": 1,
+      "sqlite_ops": 1,
+      "security": 1,
+      "telemetry": 0
+    }
+  },
+  "enabled_features": {
+    "agents_enabled": true,
+    "market_sim_enabled": true,
+    "mcp_enabled": false,
+    "capability_world": true,
+    "durable_kernel": false
+  },
+  "executed_tests": {
+    "backend_pytest_full": {
+      "status": "PASS",
+      "passed": 2958,
+      "skipped": 19,
+      "xfailed": 4,
+      "failed": 0,
+      "duration_seconds": 584.18,
+      "command": "python3 -m pytest Data/backend/tests -q --tb=line"
+    },
+    "known_regression_modules": {
+      "status": "PASS",
+      "modules": [
+        "test_adversarial_lease_fencing_wave22.py",
+        "test_learning_loop_w119_w135.py",
+        "test_trading_orchestra.py",
+        "test_wave5_capability_world.py",
+        "test_control_plane_network_hardening.py (model download)"
+      ],
+      "note": "Previously observed CI failures (16 failed) are resolved on current main after #221; re-run confirmed green."
+    }
+  },
+  "skipped_tests": {
+    "backend": 19,
+    "note": "pytest skipped markers; not treated as PASS"
+  },
+  "unmeasured_gates": [
+    "frontend_typecheck",
+    "frontend_lint",
+    "frontend_tests",
+    "frontend_production_build",
+    "launcher_typecheck",
+    "launcher_tests",
+    "launcher_production_build",
+    "scripts/verify_leviathan.py",
+    "scripts/verify_frontier_reasoning.py",
+    "scripts/verify_trading_100.py",
+    "release_gate_tests"
+  ],
+  "external_dependencies": [
+    {
+      "name": "live_market_providers",
+      "status": "UNMEASURED"
+    },
+    {
+      "name": "fincept",
+      "status": "FEATURE_GATED"
+    },
+    {
+      "name": "gpu_nvidia_smi",
+      "status": "UNMEASURED"
+    },
+    {
+      "name": "huggingface_model_download",
+      "status": "network_dependent"
+    }
+  ],
+  "known_structural_gaps_for_program": [
+    "learning_runtime.prior_lessons hardcoded empty list",
+    "no typed WorkerExecutionContext contract",
+    "no unified TradingContextRequest",
+    "worker ResourceAdmission lacks hardware_reader in loop.py"
+  ],
+  "truth": {
+    "baseline_is_not_institutional_complete": true,
+    "backend_ci_green_on_baseline": true,
+    "do_not_overwrite_historical_reports": true
+  }
+}

@@ -44,7 +44,7 @@ describe("bounded celestial density", () => {
 });
 
 describe("calm animation clock", () => {
-  it("uses real-time scale by default and caps resume/background frame deltas", () => {
+  it("uses real-time scale by default and never bursts on pause/resume or long gaps", () => {
     const callbacks = new Map<number, FrameRequestCallback>();
     let next = 1;
     const loop = createBrainSpaceAnimationLoop({
@@ -71,10 +71,14 @@ describe("calm animation clock", () => {
     loop.setPaused(true);
     step(50_000);
     expect(loop.getSimTime()).toBe(16);
+    // Resume re-baselines: first frame after unpause advances by 0 even across a huge wall gap.
     loop.setPaused(false);
     step(80_000);
-    expect(loop.getSimTime()).toBe(48);
+    expect(loop.getSimTime()).toBe(16);
     step(80_016);
+    expect(loop.getSimTime()).toBe(32);
+    // Tab-hidden style gap while running is still hard-capped.
+    step(120_000);
     expect(loop.getSimTime()).toBe(64);
     loop.stop();
   });

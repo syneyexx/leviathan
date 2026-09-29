@@ -80,8 +80,9 @@ export const BRAIN_SPACE_PALETTE: Record<BrainSpaceDomain, BrainSpacePalette> = 
 
 /** Hard visual bounds: data volume must not make the universe grow without limit. */
 export const BRAIN_SPACE_MAX_NODE_ORBIT = 248;
-export const BRAIN_SPACE_MAX_NODE_SPEED = 0.00005;
-export const BRAIN_SPACE_MAX_SYSTEM_SPEED = 0.0000085;
+/** Slow ambient drift — noticeable across seconds, never frantic. */
+export const BRAIN_SPACE_MAX_NODE_SPEED = 0.000012;
+export const BRAIN_SPACE_MAX_SYSTEM_SPEED = 0.000002;
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 
 function hashString(value: string): number {
@@ -232,7 +233,7 @@ export function buildBrainSpaceProjection(
       palette,
       galRadius: 218 + (systemIndex % 3) * 34 + seeded01(domain, "gal-r") * 14,
       angle: (systemIndex / Math.max(1, nonEmptyDomains.length)) * Math.PI * 2 - 0.3,
-      orbitSpeed: direction * (0.000004 + seeded01(domain, "orbit") * 0.000004),
+      orbitSpeed: direction * (0.0000008 + seeded01(domain, "orbit") * 0.0000012),
       nodes: [],
     };
 
@@ -258,7 +259,7 @@ export function buildBrainSpaceProjection(
           radius: 3.8 + seeded01(node.id, "radius") * 4.2,
           orbit: packedOrbit(nodeIndex, node.id),
           phase: (nodeIndex * GOLDEN_ANGLE + seeded01(node.id, "phase") * 0.24) % (Math.PI * 2),
-          speed: speedDirection * (0.000018 + seeded01(node.id, "speed") * 0.000032),
+          speed: speedDirection * (0.000004 + seeded01(node.id, "speed") * 0.000008),
           tilt: (seeded01(node.id, "tilt") - 0.5) * 0.48,
           style: styleSeed > 0.77 ? "ring" : styleSeed > 0.45 ? "banded" : "solid",
           timestamp,
@@ -342,7 +343,11 @@ export type BrainSpaceAnimationLoopOptions = {
   cancelAnimationFrame?: typeof globalThis.cancelAnimationFrame;
 };
 
-/** One bounded RAF chain. Large background/resume wall-clock gaps are capped. */
+/**
+ * One bounded RAF chain.
+ * - Frame deltas are hard-capped so tab-hidden gaps never simulate lost wall time.
+ * - Resume resets the frame baseline so Pause→Resume never bursts sim time.
+ */
 export function createBrainSpaceAnimationLoop(
   options: BrainSpaceAnimationLoopOptions,
 ): BrainSpaceAnimationLoop {
@@ -357,6 +362,7 @@ export function createBrainSpaceAnimationLoop(
 
   const tick = (wallNow: number) => {
     if (!running) return;
+    // Cap at one calm frame. Background tabs must not catch up on lost seconds.
     const delta = Math.min(32, Math.max(0, lastFrame ? wallNow - lastFrame : 0));
     lastFrame = wallNow;
     if (!paused) simTime += delta * orbitScale;
@@ -381,6 +387,8 @@ export function createBrainSpaceAnimationLoop(
     getSimTime: () => simTime,
     setPaused(next) {
       paused = next;
+      // Always drop the stale baseline (including same-state calls after tab focus).
+      lastFrame = 0;
     },
     getPaused: () => paused,
   };

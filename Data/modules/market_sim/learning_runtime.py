@@ -194,11 +194,19 @@ def _run_research_cycle_for_generation(
     objective_text = str(meta.get("research_objective") or meta.get("hypothesis") or "")
 
     try:
+        from .lesson_retrieval import retrieve_prior_lessons_for_generation
         from .research_cycle import run_research_generation_cycle
+
+        prior_lessons = retrieve_prior_lessons_for_generation(
+            plane,
+            run,
+            perception=perception if isinstance(perception, dict) else {},
+            as_of=str(perception.get("as_of") or utc_now()),
+        )
 
         cycle = run_research_generation_cycle(
             perception_snapshot=perception,
-            prior_lessons=[],
+            prior_lessons=prior_lessons,
             prior_hypotheses=prior_hyps,
             objective_text=objective_text,
             model_complete=model_complete,

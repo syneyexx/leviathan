@@ -23,6 +23,23 @@ def default_portfolio_limits(settings: dict[str, Any] | None = None) -> RiskLimi
         max_symbol_exposure_pct=float(s.get("max_symbol_exposure_pct", s.get("asset_concentration_pct", 40.0))),
         leverage_allowed=bool(s.get("leverage_allowed", float(s.get("max_leverage", 1.0)) > 1.0)),
         kill_switch_armed=bool(s.get("kill_switch_armed", False)),
+        max_capital=float(s["max_capital"]) if s.get("max_capital") is not None else None,
+        max_position_qty=float(s["max_position_qty"]) if s.get("max_position_qty") is not None else None,
+        max_gross_exposure_pct=float(s.get("max_gross_exposure_pct", 200.0)),
+        max_net_exposure_pct=float(s.get("max_net_exposure_pct", 100.0)),
+        max_leverage=float(s.get("max_leverage", 1.0)),
+        max_order_notional=float(s["max_order_notional"]) if s.get("max_order_notional") is not None else None,
+        max_daily_turnover=float(s["max_daily_turnover"]) if s.get("max_daily_turnover") is not None else None,
+        max_daily_loss_pct=float(s.get("daily_loss_limit_pct", s.get("max_daily_loss_pct", 10.0))),
+        stale_data_max_age_seconds=(
+            float(s["stale_data_max_age_seconds"])
+            if s.get("stale_data_max_age_seconds") is not None
+            else 120.0
+        ),
+        require_provider_healthy=bool(s.get("require_provider_healthy", True)),
+        require_model_healthy=bool(s.get("require_model_healthy", False)),
+        require_broker_reconciled=bool(s.get("require_broker_reconciled", True)),
+        global_paper_suspended=bool(s.get("global_paper_suspended", False)),
     )
 
 

@@ -1439,6 +1439,8 @@ class SourceIngestionPipeline:
         return self._finalize_container(container_source_id)
 
     def get_progress(self, source_id: str) -> IngestionProgress:
+        from .progress import compute_weighted_progress
+
         container = self.ingestion.get_container(source_id)
         counts = self.ingestion.count_members(source_id)
         total = int(counts.get("total") or 0)
@@ -1448,23 +1450,41 @@ class SourceIngestionPipeline:
             phase = IngestionPhase(str(phase_raw))
         except ValueError:
             phase = IngestionPhase.STORED
-        progress_pct: float | None
-        if total <= 0:
-            progress_pct = None if phase not in {
-                IngestionPhase.COMPLETED,
-                IngestionPhase.PARTIAL,
-                IngestionPhase.FAILED,
-                IngestionPhase.CANCELLED,
-                IngestionPhase.QUARANTINED,
-            } else 100.0
-        else:
-            progress_pct = round(100.0 * done / total, 2)
+        meta = (container or {}).get("metadata") if isinstance((container or {}).get("metadata"), dict) else {}
+        prev = meta.get("last_progress_pct")
+        if prev is not None:
+            try:
+                prev = float(prev)
+            except (TypeError, ValueError):
+                prev = None
+        weighted = compute_weighted_progress(
+            phase=phase,
+            files_discovered=total,
+            files_done=done,
+            brain_synced=int(counts.get("brain_synced") or 0),
+            brain_target=int(counts.get("success") or 0) + int(counts.get("routed") or 0),
+            bytes_processed=int((container or {}).get("uncompressed_bytes") or 0) or None,
+            bytes_total=int((container or {}).get("uncompressed_bytes") or 0) or None,
+            pages_parsed=meta.get("pages_parsed"),
+            pages_total=meta.get("pages_total"),
+            chunks_done=meta.get("chunks_done"),
+            chunks_total=meta.get("chunks_total"),
+            embedding_batches_done=meta.get("embedding_batches_done"),
+            embedding_batches_total=meta.get("embedding_batches_total"),
+            elapsed_seconds=meta.get("elapsed_seconds"),
+            previous_progress_pct=prev,
+            allow_regression=bool(meta.get("retry_reset")),
+        )
         return IngestionProgress(
             source_id=source_id,
             job_id=(container or {}).get("job_id"),
             status=phase,
             phase=phase,
-            progress_pct=progress_pct,
+            progress_pct=weighted.progress_pct,
+            phase_progress_pct=weighted.phase_progress_pct,
+            processed_units=weighted.processed_units,
+            total_units=weighted.total_units,
+            unit_kind=weighted.unit_kind,
             files_discovered=total,
             files_ingested=int(counts.get("success") or 0),
             files_skipped=int(counts.get("skipped") or 0),
@@ -1476,8 +1496,14 @@ class SourceIngestionPipeline:
             brain_synced=int(counts.get("brain_synced") or 0),
             brain_failed=int(counts.get("brain_failed") or 0),
             bytes_processed=int((container or {}).get("uncompressed_bytes") or 0),
+            bytes_total=weighted.bytes_total,
             compressed_bytes=(container or {}).get("compressed_bytes"),
             uncompressed_bytes=(container or {}).get("uncompressed_bytes"),
+            throughput=weighted.throughput,
+            eta_seconds=weighted.eta_seconds,
+            measured=weighted.measured,
+            started_at=(container or {}).get("started_at") or meta.get("started_at"),
+            updated_at=(container or {}).get("updated_at") or meta.get("updated_at"),
             archive_type=(container or {}).get("archive_type"),
             filename=(container or {}).get("filename"),
             error=(container or {}).get("error"),

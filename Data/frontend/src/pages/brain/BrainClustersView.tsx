@@ -13,6 +13,17 @@ import {
   clientPointToMeetViewBox,
   zoomCenteredViewBoxAt,
 } from "./brain-geometry";
+import {
+  CLUSTER_MAP_HEIGHT,
+  CLUSTER_MAP_WIDTH,
+  canonicalMapClusters,
+  clusterIds,
+  layoutClusterPositions,
+  pruneDraggedPositions,
+  resolveClusterPosition,
+  visibleMapClusters,
+  type ClusterPoint,
+} from "./brain-cluster-layout";
 
 function formatCount(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
@@ -54,17 +65,15 @@ type DragState = {
   moved: boolean;
 };
 
-const MAP_WIDTH = 900;
-const MAP_HEIGHT = 410;
-
 export function BrainClustersView({ nodes, edges, onToast }: { nodes: LiveBrainNode[]; edges: LiveBrainEdge[]; onToast?: (msg: string) => void }) {
+  // Canonical cluster data — never mixed with view/layout state.
   const clusters = useMemo(() => buildClusters(nodes, edges), [nodes, edges]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"size" | "name">("size");
   const [mapScale, setMapScale] = useState(1);
-  const [mapOffset, setMapOffset] = useState({ x: 0, y: 0 });
-  const [draggedPositions, setDraggedPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
+  const [mapOffset, setMapOffset] = useState<ClusterPoint>({ x: 0, y: 0 });
+  const [draggedPositions, setDraggedPositions] = useState<Map<string, ClusterPoint>>(() => new Map());
   const mapRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<DragState | null>(null);
   const frameRef = useRef<number | null>(null);
@@ -78,10 +87,15 @@ export function BrainClustersView({ nodes, edges, onToast }: { nodes: LiveBrainN
 
   useEffect(() => {
     if (selectedId && !clusters.some((cluster) => cluster.id === selectedId)) {
-      setSelectedId(clusters[0]?.id ?? null);
+      setSelectedId(null);
       setShowAllConcepts(false);
     }
   }, [clusters, selectedId]);
+
+  useEffect(() => {
+    const valid = clusterIds(clusters);
+    setDraggedPositions((previous) => pruneDraggedPositions(previous, valid));
+  }, [clusters]);
 
   const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const degreeById = useMemo(() => {
@@ -99,7 +113,7 @@ export function BrainClustersView({ nodes, edges, onToast }: { nodes: LiveBrainN
     return [...rows].sort((a, b) => sort === "size" ? b.nodes - a.nodes || a.label.localeCompare(b.label) : a.label.localeCompare(b.label));
   }, [clusters, query, sort]);
 
-  const selected = clusters.find((cluster) => cluster.id === selectedId) ?? clusters[0] ?? null;
+  const selected = selectedId ? clusters.find((cluster) => cluster.id === selectedId) ?? null : null;
   const totalNodes = nodes.length;
   const donut = clusters.slice(0, 5).map((cluster) => ({ value: cluster.nodes, color: cluster.color, label: pretty(cluster.label) }));
   const remaining = clusters.slice(5).reduce((sum, cluster) => sum + cluster.nodes, 0);
@@ -139,37 +153,14 @@ export function BrainClustersView({ nodes, edges, onToast }: { nodes: LiveBrainN
   }, [degreeById, nodes, selected]);
   const visibleConcepts = showAllConcepts ? selectedMembers : selectedMembers.slice(0, 5);
 
-  // Keep the map bounded to ten cluster bodies, but never hide the cluster the operator selected.
-  const visualClusters = useMemo(() => {
-    const top = clusters.slice(0, 10);
-    if (!selected || top.some((cluster) => cluster.id === selected.id)) return top;
-    return [...top.slice(0, 9), selected];
-  }, [clusters, selected]);
+  // Layout is derived only from canonical top-N — selection never reshuffles positions.
+  const mapCanonical = useMemo(() => canonicalMapClusters(clusters), [clusters]);
+  const positions = useMemo(() => layoutClusterPositions(mapCanonical), [mapCanonical]);
+  const visualClusters = useMemo(() => visibleMapClusters(mapCanonical, selected), [mapCanonical, selected]);
 
-  // Layout is independent of selection: clicking a cluster must not reshuffle the universe.
-  const positions = useMemo(() => {
-    const map = new Map<string, { x: number; y: number }>();
-    if (!visualClusters.length) return map;
-    const anchor = visualClusters[0];
-    map.set(anchor.id, { x: 450, y: 205 });
-    const others = visualClusters.slice(1);
-    others.forEach((cluster, index) => {
-      const angle = (index / Math.max(1, others.length)) * Math.PI * 2 - Math.PI / 2;
-      const ring = others.length > 7 && index >= 5 ? 1 : 0;
-      const xRadius = ring ? 230 : 315;
-      const yRadius = ring ? 112 : 150;
-      const phase = ring ? Math.PI / Math.max(1, others.length) : 0;
-      map.set(cluster.id, {
-        x: 450 + Math.cos(angle + phase) * xRadius,
-        y: 205 + Math.sin(angle + phase) * yRadius,
-      });
-    });
-    return map;
-  }, [visualClusters]);
-
-  const viewBox = useMemo(() => centeredViewBox(MAP_WIDTH, MAP_HEIGHT, mapScale, mapOffset), [mapScale, mapOffset]);
+  const viewBox = useMemo(() => centeredViewBox(CLUSTER_MAP_WIDTH, CLUSTER_MAP_HEIGHT, mapScale, mapOffset), [mapScale, mapOffset]);
   const mapViewBox = `${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`;
-  const positionFor = (id: string) => draggedPositions.get(id) ?? positions.get(id);
+  const positionFor = (id: string) => resolveClusterPosition(id, draggedPositions, positions);
 
   const mapPoint = (clientX: number, clientY: number) => {
     const rect = mapRef.current?.getBoundingClientRect();
@@ -246,10 +237,10 @@ export function BrainClustersView({ nodes, edges, onToast }: { nodes: LiveBrainN
     dragRef.current = null;
   };
 
-  const setZoom = (nextScale: number, anchor?: { x: number; y: number }) => {
+  const setZoom = (nextScale: number, anchor?: ClusterPoint) => {
     const safe = Math.max(0.6, Math.min(2.8, Number(nextScale.toFixed(2))));
     if (safe === mapScale) return;
-    if (anchor) setMapOffset(zoomCenteredViewBoxAt(MAP_WIDTH, MAP_HEIGHT, mapScale, safe, mapOffset, anchor));
+    if (anchor) setMapOffset(zoomCenteredViewBoxAt(CLUSTER_MAP_WIDTH, CLUSTER_MAP_HEIGHT, mapScale, safe, mapOffset, anchor));
     setMapScale(safe);
   };
 
@@ -260,8 +251,8 @@ export function BrainClustersView({ nodes, edges, onToast }: { nodes: LiveBrainN
   };
 
   const stars = useMemo(() => Array.from({ length: 140 }, (_, index) => ({
-    x: hash(`star-x-${index}`) % 900,
-    y: hash(`star-y-${index}`) % 410,
+    x: hash(`star-x-${index}`) % CLUSTER_MAP_WIDTH,
+    y: hash(`star-y-${index}`) % CLUSTER_MAP_HEIGHT,
     r: index % 12 === 0 ? 1.5 : 0.6,
   })), []);
 
@@ -286,14 +277,19 @@ export function BrainClustersView({ nodes, edges, onToast }: { nodes: LiveBrainN
     setMapOffset({ x: 0, y: 0 });
     setDraggedPositions(new Map());
   };
+
+  const selectCluster = (id: string | null) => {
+    setSelectedId(id);
+    setShowAllConcepts(false);
+  };
+
   const exploreStrongestRelationship = () => {
     const strongest = related[0];
     if (!strongest) {
       onToast?.("No inter-cluster relationships are available in this bounded projection.");
       return;
     }
-    setSelectedId(strongest.id);
-    setShowAllConcepts(false);
+    selectCluster(strongest.id);
     onToast?.(`Focused related cluster: ${strongest.label}.`);
   };
 
@@ -311,7 +307,7 @@ export function BrainClustersView({ nodes, edges, onToast }: { nodes: LiveBrainN
             <select className="lv-br-select" value={sort} onChange={(event) => setSort(event.target.value as "size" | "name")}><option value="size">Sort by Size</option><option value="name">Sort by Name</option></select>
           </div>
           {list.length === 0 ? <p className="lv-br-muted">No clusters in the current projection.</p> : <ul className="lv-bc-list">
-            {list.map((cluster) => <li key={cluster.id}><button type="button" className={`lv-bc-item${selected?.id === cluster.id ? " is-active" : ""}`} onClick={() => { setSelectedId(cluster.id); setShowAllConcepts(false); }}><svg className="lv-bc-type-icon" viewBox="-18 -18 36 36" style={{ color: cluster.color }} aria-hidden="true"><ClusterGlyph kind={cluster.id} /></svg><span>{pretty(cluster.label)}</span><em>{formatCount(cluster.nodes)} nodes</em></button></li>)}
+            {list.map((cluster) => <li key={cluster.id}><button type="button" className={`lv-bc-item${selected?.id === cluster.id ? " is-active" : ""}`} onClick={() => selectCluster(cluster.id)}><svg className="lv-bc-type-icon" viewBox="-18 -18 36 36" style={{ color: cluster.color }} aria-hidden="true"><ClusterGlyph kind={cluster.id} /></svg><span>{pretty(cluster.label)}</span><em>{formatCount(cluster.nodes)} nodes</em></button></li>)}
           </ul>}
         </Panel>
 
@@ -330,12 +326,20 @@ export function BrainClustersView({ nodes, edges, onToast }: { nodes: LiveBrainN
                 onPointerUp={finishDrag}
                 onPointerCancel={finishDrag}
                 onWheel={wheelZoom}
+                onClick={() => {
+                  if (suppressClickRef.current) {
+                    suppressClickRef.current = false;
+                    return;
+                  }
+                  // Background click deselects; cluster clicks stopPropagation below.
+                  selectCluster(null);
+                }}
               >
                 <defs>
                   {visualClusters.map((cluster) => <filter key={cluster.id} id={`cluster-glow-${hash(cluster.id)}`} x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="7" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>)}
                   <radialGradient id="lv-bc-stellar-haze"><stop stopColor="#ac7e49" stopOpacity=".17" /><stop offset=".5" stopColor="#316387" stopOpacity=".07" /><stop offset="1" stopColor="#020608" stopOpacity="0" /></radialGradient>
                 </defs>
-                <ellipse cx="450" cy="205" rx="480" ry="270" fill="url(#lv-bc-stellar-haze)" pointerEvents="none" />
+                <ellipse cx={CLUSTER_MAP_WIDTH / 2} cy={CLUSTER_MAP_HEIGHT / 2} rx="480" ry="270" fill="url(#lv-bc-stellar-haze)" pointerEvents="none" />
                 <g pointerEvents="none">{stars.map((star, index) => <circle key={index} cx={star.x} cy={star.y} r={star.r} fill={index % 3 === 0 ? "#e7ba72" : "#99d2ed"} opacity={index % 11 === 0 ? ".55" : ".22"} />)}</g>
                 {visualClusters.flatMap((source, sourceIndex) => visualClusters.slice(sourceIndex + 1).map((target) => {
                   const count = relationshipCounts.get([source.id, target.id].sort().join("\u0000")) ?? 0;
@@ -365,11 +369,11 @@ export function BrainClustersView({ nodes, edges, onToast }: { nodes: LiveBrainN
                     tabIndex={0}
                     role="button"
                     aria-label={`${pretty(cluster.label)}, ${cluster.nodes} nodes`}
-                    onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedId(cluster.id); setShowAllConcepts(false); } }}
-                    onClick={() => {
+                    onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectCluster(cluster.id); } }}
+                    onClick={(event) => {
+                      event.stopPropagation();
                       if (suppressClickRef.current) { suppressClickRef.current = false; return; }
-                      setSelectedId(cluster.id);
-                      setShowAllConcepts(false);
+                      selectCluster(selected?.id === cluster.id ? null : cluster.id);
                     }}
                     style={{ cursor: "grab" }}
                   >
@@ -405,7 +409,7 @@ export function BrainClustersView({ nodes, edges, onToast }: { nodes: LiveBrainN
             <p className="lv-br-desc">{clusterDescription}</p>
             <div className="lv-bc-metrics"><div><strong>{formatCount(selected.nodes)}</strong><span>Nodes</span></div><div><strong>{formatCount(selected.internalEdges ?? 0)}</strong><span>Internal</span></div><div><strong>{related.length}</strong><span>Related</span></div></div>
             <section className="lv-bc-section"><strong>Top Concepts</strong><ul>{visibleConcepts.map((node, index) => <li key={node.id}><span className="lv-bc-rank" style={{ color: selected.color }}>{index + 1}</span><span title={node.id}>{node.label}</span><em>{degreeById.get(node.id) ?? 0}</em></li>)}</ul>{selectedMembers.length > 5 ? <button type="button" className="lv-bc-wide-action" onClick={() => setShowAllConcepts((value) => !value)}>{showAllConcepts ? "Show Top Concepts ↑" : `View All Concepts (${selectedMembers.length}) →`}</button> : null}</section>
-            <section className="lv-bc-section lv-bc-related"><strong>Related Clusters</strong><ul>{related.length ? related.map((row) => <li key={row.id}><button type="button" className="lv-bc-related-row" onClick={() => { setSelectedId(row.id); setShowAllConcepts(false); }}><div><span><i className="lv-bc-dot" style={{ background: row.color }} />{row.label}</span><em>{row.count}</em></div><div className="lv-br-bar"><span style={{ width: `${Math.max(8, row.strength * 100)}%`, background: row.color }} /></div></button></li>) : <li className="lv-br-muted">No inter-cluster edges in this bounded projection.</li>}</ul><button type="button" className="lv-bc-wide-action" onClick={exploreStrongestRelationship} disabled={!related.length}>Explore Strongest Relationship →</button></section>
+            <section className="lv-bc-section lv-bc-related"><strong>Related Clusters</strong><ul>{related.length ? related.map((row) => <li key={row.id}><button type="button" className="lv-bc-related-row" onClick={() => selectCluster(row.id)}><div><span><i className="lv-bc-dot" style={{ background: row.color }} />{row.label}</span><em>{row.count}</em></div><div className="lv-br-bar"><span style={{ width: `${Math.max(8, row.strength * 100)}%`, background: row.color }} /></div></button></li>) : <li className="lv-br-muted">No inter-cluster edges in this bounded projection.</li>}</ul><button type="button" className="lv-bc-wide-action" onClick={exploreStrongestRelationship} disabled={!related.length}>Explore Strongest Relationship →</button></section>
           </>}
         </Panel>
       </div>

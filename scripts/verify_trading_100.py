@@ -192,7 +192,7 @@ def _evaluate_gate(
             "operating_envelope": operating_envelope,
         }
     if status == "PASS":
-        if not evidence and not checks:
+        if not evidence and not checks and not spec.get("test_node_ids"):
             return {
                 "id": gate_id,
                 "status": "FAIL",
@@ -204,6 +204,33 @@ def _evaluate_gate(
         executable = 0
         documentary = 0
         deferred_pytest = False
+
+        # Declared test_node_ids are first-class executable evidence (Wave 22).
+        node_ids = [str(x) for x in (spec.get("test_node_ids") or []) if str(x).strip()]
+        # Frontend vitest paths are not pytest — treat as documentary unless a
+        # companion pytest/meta check is declared in checks.
+        pytest_nodes = [n for n in node_ids if n.endswith(".py") or "::" in n]
+        if pytest_nodes:
+            executable += 1
+            if run_tests:
+                code, out = _run(
+                    [sys.executable, "-m", "pytest", *pytest_nodes, "-q", "--tb=line"],
+                    timeout=int(spec.get("timeout_sec", 300)),
+                )
+                evidence.append(f"pytest test_node_ids exit={code}")
+                if code != 0:
+                    return {
+                        "id": gate_id,
+                        "status": "FAIL",
+                        "evidence": evidence,
+                        "notes": out[-2000:] if out else notes,
+                        "strict_pass": False,
+                        "operating_envelope": operating_envelope,
+                    }
+            else:
+                deferred_pytest = True
+                evidence.append("pytest:deferred(--run-tests not set)")
+
         for check in checks:
             # Documentary string checks are notes only — never sufficient alone for PASS.
             if isinstance(check, str):
