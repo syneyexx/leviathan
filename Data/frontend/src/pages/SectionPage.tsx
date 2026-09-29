@@ -55,5 +55,9 @@ export function SectionPage({
   );
 }
 
-/** @deprecated use SectionPage */
+/**
+ * @deprecated WAVE 42 legacy alias — use {@link SectionPage}.
+ * Still exported for existing imports; do not delete while PlaceholderPage.tsx re-exports it.
+ * New code must import SectionPage.
+ */
 export const PlaceholderPage = SectionPage;

@@ -453,7 +453,8 @@ Evaluation/analytics data used by Training or model pages should come through ce
 - `src/pages/AnalyticsPage.tsx` — LLM/system analytics;
 - `src/pages/PerformancePage.tsx` — performance/native/DB contention read model;
 - `src/pages/ConsolePage.tsx` — console/operator projection;
-- `src/pages/SectionPage.tsx`, `PlaceholderPage.tsx` — reusable generic section/fallback surfaces.
+- `src/pages/SectionPage.tsx` — generic section/fallback surface for unfinished submenu destinations.
+- `src/pages/PlaceholderPage.tsx` — **deprecated** re-export of `SectionPage` (WAVE 42 inventory). Do not delete while imports remain; new code must use `SectionPage`.
 
 Operational numbers use backend telemetry. Zero is a measurement only when the backend measured zero.
 

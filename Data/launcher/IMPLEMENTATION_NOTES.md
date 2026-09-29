@@ -66,6 +66,12 @@ Production Tauri Origins (`http://tauri.localhost`, `https://tauri.localhost`, `
 
 `GET /api/performance/snapshot` exposes `system` CPU/RAM/GPU plus disk capacity utilization and network bytes/sec when measured. Operator gauges may include `tasks_per_min` and `jobs_completed_24h` when instrumented; otherwise they stay null/UNMEASURED.
 
+## CI (WAVE 33)
+
+GitHub Actions job `windows-launcher` runs on `windows-latest` and executes launcher `typecheck` + unit tests only. It does **not** run `tauri build` or produce `run_leviathan.exe` (WebView2 + cargo + long free-CI build). A green `windows-launcher` job is **not** an exe PASS.
+
+`OPERATOR_ACTION`: build the canonical Windows artifact locally via `build_run_leviathan_exe.bat` or `python scripts/build_run_leviathan_exe.py`. Expected outputs: `run_leviathan.exe` at install root and `dist/run_leviathan.exe`.
+
 ## Build
 
 On Windows, double-click `build_run_leviathan_exe.bat` in the install root. It does not call Python. It runs the launcher tests, then the Tauri release build, and copies the result to:
