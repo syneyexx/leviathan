@@ -2037,6 +2037,14 @@ export type SystemTelemetryResponse = {
     availableBytes: number | null;
     utilizationPct: number | null;
   };
+  disk?: {
+    available: boolean;
+    utilizationPct: number | null;
+    totalBytes?: number | null;
+    usedBytes?: number | null;
+    freeBytes?: number | null;
+    metric?: string;
+  };
   gpu: {
     available: boolean;
     devices: Array<{
@@ -2048,6 +2056,7 @@ export type SystemTelemetryResponse = {
       vramFreeBytes: number | null;
       vramUtilizationPct: number | null;
       driverVersion?: string | null;
+      temperatureC?: number | null;
     }>;
   };
   notes?: string[];
@@ -2061,7 +2070,36 @@ export type SystemTelemetryResponse = {
     ramPct: number | null;
     gpuPct: number | null;
     vramPct: number | null;
+    diskPct?: number | null;
   };
+};
+
+/** GET /api/host/source-ingestion — bounded source-ingestion read model. */
+export type HostSourceIngestionResponse = {
+  counts: { queued: number; processing: number; completed: number; failed: number; unknown: number };
+  overallProgressPct: number | null;
+  jobs?: Array<{
+    id?: string | null;
+    source?: string | null;
+    phase?: string | null;
+    state?: string | null;
+    progressPct?: number | null;
+    elapsedSeconds?: number | null;
+    etaSeconds?: number | null;
+    updatedAt?: string | null;
+  }>;
+  truth?: Record<string, boolean>;
+};
+
+/** GET /api/host/overview — read-only host composition. */
+export type HostOverviewResponse = {
+  version?: string | null;
+  runtime?: Record<string, unknown>;
+  sourceIngestion?: {
+    counts: HostSourceIngestionResponse["counts"];
+    overallProgressPct: number | null;
+  };
+  truth?: Record<string, boolean>;
 };
 
 export type CapabilityListItem = {

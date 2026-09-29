@@ -57,6 +57,8 @@ import type {
   GatewaySnapshot,
   HardwareSnapshot,
   HealthResponse,
+  HostOverviewResponse,
+  HostSourceIngestionResponse,
   HfDatasetFile,
   MasterGateReport,
   Message,
@@ -2319,6 +2321,16 @@ export const api = {
 
   systemTelemetry(): Promise<SystemTelemetryResponse> {
     return request<SystemTelemetryResponse>("/api/system/telemetry");
+  },
+
+  hostOverview(): Promise<HostOverviewResponse> {
+    return request<HostOverviewResponse>("/api/host/overview");
+  },
+
+  hostSourceIngestion(limit = 50): Promise<HostSourceIngestionResponse> {
+    return request<HostSourceIngestionResponse>(
+      `/api/host/source-ingestion?limit=${encodeURIComponent(String(limit))}`,
+    );
   },
 
   listCapabilities(opts?: {
