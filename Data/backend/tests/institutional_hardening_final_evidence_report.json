@@ -1,16 +1,16 @@
 {
   "report_kind": "institutional_hardening_final_evidence",
   "program": "LEVIATHAN Waves 0-25 institutional hardening / autonomous paper completion",
-  "generated_at": "2026-09-29T00:45:00+00:00",
+  "generated_at": "2026-09-29T01:05:00+00:00",
   "baseline_sha": "35174d88edcccd87e7f40d34651ae2cc9bcc7abb",
   "program_authored_main_sha": "e0a5999ac6e12e617ed4392042d51a5cfec372b8",
   "main_moved_since_program_authorship": true,
-  "final_sha": "c971de87af64c8fd3c31f2362a7301a9596fcff6",
-  "final_tree": "5ed1a620b1114f71a779224e0e83823e12d397f2",
+  "final_sha": "3104cfb4815f7d5404393dcbe8621f4d89928bae",
+  "final_tree": "5e1b51f3f5d74c4c1065c0bc1549a40fad0393e4",
   "branch": "cursor/institutional-hardening-e3ae",
   "pr": "https://github.com/syneyexx/leviathan/pull/227",
-  "dirty_at_generation": true,
-  "dirty_note": "Report JSON regenerations in-flight; strict trading re-run requires subsequent clean commit.",
+  "dirty_at_strict_run": false,
+  "strict_trading_verified_sha": "3104cfb4815f7d5404393dcbe8621f4d89928bae",
   "strict": true,
   "environment": {
     "os": "Linux-6.12.94+-x86_64-with-glibc2.39",
@@ -19,8 +19,8 @@
     "machine": "x86_64"
   },
   "scope_exclusions": {
-    "editor/": "NOT_APPLICABLE — untouched",
-    "Data/HADES/": "NOT_APPLICABLE — untouched"
+    "editor/": "NOT_APPLICABLE \u2014 untouched",
+    "Data/HADES/": "NOT_APPLICABLE \u2014 untouched"
   },
   "executed_gates": {
     "backend_pytest": {
@@ -31,32 +31,56 @@
       "failed": 0,
       "duration_s": 621.17
     },
-    "frontend_typecheck": {"status": "PASS"},
-    "frontend_lint": {"status": "PASS"},
-    "frontend_tests": {"status": "PASS"},
-    "frontend_production_build": {"status": "PASS"},
-    "launcher_typecheck": {"status": "PASS"},
-    "launcher_tests": {"status": "PASS"},
-    "launcher_production_build": {"status": "PASS"},
-    "security_rounds_8_9_10": {"status": "PASS", "passed": 37},
-    "release_gates_pytest": {"status": "PASS", "passed": 22},
-    "trading_offline_verifier": {
-      "status": "INCOMPLETE_HONEST",
-      "counts": {"PASS": 83, "UNMEASURED": 10, "FEATURE_GATED": 1, "NOT_TESTED_IN_CI": 1},
-      "strict": false,
-      "note": "Strict re-run pending clean tree + --run-tests"
+    "frontend_typecheck": {
+      "status": "PASS"
     },
-    "frontier_f0": {"status": "PASS"},
+    "frontend_lint": {
+      "status": "PASS"
+    },
+    "frontend_tests": {
+      "status": "PASS"
+    },
+    "frontend_production_build": {
+      "status": "PASS"
+    },
+    "launcher_typecheck": {
+      "status": "PASS"
+    },
+    "launcher_tests": {
+      "status": "PASS"
+    },
+    "launcher_production_build": {
+      "status": "PASS"
+    },
+    "security_rounds_8_9_10": {
+      "status": "PASS",
+      "passed": 37
+    },
+    "release_gates_pytest": {
+      "status": "PASS",
+      "passed": 22
+    },
+    "trading_strict_verifier": {
+      "status": "PASS",
+      "strict_all_required_pass": true,
+      "counts": {
+        "PASS": 93,
+        "FEATURE_GATED": 1,
+        "NOT_TESTED_IN_CI": 1
+      },
+      "notes": "G16 FEATURE_GATED (DSL-only sandbox); G47 Windows NOT_TESTED_IN_CI"
+    },
+    "frontier_f0": {
+      "status": "PASS"
+    },
     "frontier_r01_r30": {
       "status": "NOT_STARTED",
       "note": "Separate Frontier Reasoning program; manual gates remain NOT_STARTED. Not fabricated to PASS."
     }
   },
-  "unmeasured_gates": [
-    "G07-G11 documentary/file_exists until --run-tests",
-    "G16 FEATURE_GATED (DSL-only envelope)",
-    "G43 G44 G49 G52 G66 UNMEASURED documentary",
-    "G47 NOT_TESTED_IN_CI external OS path",
+  "unmeasured_or_deferred": [
+    "G16 FEATURE_GATED \u2014 Python IsolationSandbox incomplete; DSL path supported",
+    "G47 NOT_TESTED_IN_CI \u2014 Windows worker paths",
     "LIVE_EXTERNAL market provider credentials",
     "Frontier R01-R30"
   ],
@@ -75,5 +99,7 @@
     "editor_hades_untouched": true
   },
   "truthful_verdict": "READY_FOR_AUTONOMOUS_PAPER_WITH_EXTERNAL_GAPS",
-  "verdict_explanation": "Backend CI green; frontend/launcher green; paper envelope + learning loop + worker contracts implemented and tested. Live trading remains BLOCKED. Frontier R01-R30 and some LIVE_EXTERNAL gates remain honestly unmeasured/not started."
+  "verdict_explanation": "Backend CI green; frontend/launcher green; strict trading required gates PASS on clean tree. Live trading BLOCKED. Frontier R01-R30 and live-external credentials remain honest gaps.",
+  "strict_trading_report": "Data/backend/tests/trading_completion_report.json",
+  "strict_trading_verified_tree": "5e1b51f3f5d74c4c1065c0bc1549a40fad0393e4"
 }

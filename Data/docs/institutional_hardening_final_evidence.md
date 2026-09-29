@@ -3,8 +3,8 @@
 ## SUMMARY
 
 Waves 0–25 executed on branch `cursor/institutional-hardening-e3ae` (PR #227).
-Backend full suite is green. Frontend and launcher gates pass. Live trading remains **BLOCKED**.
-Autonomous **paper** envelope is implemented, wired, persisted, observable, tested, and documented — with honest external gaps.
+Backend full suite green. Frontend and launcher gates pass. **Strict trading verification PASS**
+(`strict_all_required_pass=true`) on a clean tree. Live trading remains **BLOCKED**.
 
 ## BASELINE SHA
 
@@ -14,96 +14,59 @@ Autonomous **paper** envelope is implemented, wired, persisted, observable, test
 
 ## FINAL SHA
 
-Recorded at report generation tip: see `Data/backend/tests/institutional_hardening_final_evidence_report.json` (`final_sha`).
-Strict trading re-run commits may advance the tip; the JSON is authoritative for the evidence SHA.
+Strict trading verified on clean tree: `3104cfb4815f7d5404393dcbe8621f4d89928bae`
+
+(Subsequent evidence-commit tip may advance; machine report JSON is kept in sync.)
 
 ## FILES CHANGED
 
-~68 files vs `origin/main` (≈8k insertions). Major owners extended (not replaced):
-
-- Worker Fabric: `context.py`, `loop.py`, `admission.py`, maintenance entrypoint
-- Trading: `lesson_retrieval.py`, `trading_context.py`, `learning_memory.py`, `strategy_search_grammar.py`, `fincept_bridge.py`, `paper_causality.py`, `risk_guard.py`
-- Ingestion progress, research claim/concurrency/verifier, schedules/operating pipeline, observability receipts
-- Brain Graph / celestial / clusters frontend
-- Docs, CODEOWNERS, PR template, branch-protection operator doc
+~70 files vs `origin/main`. Owners extended (not replaced): Worker Fabric, MarketSim learning/RiskGuard,
+TradingContextFabric, Fincept bridge, ingestion progress, research verifier, schedules, observability,
+Brain Graph UX, docs/governance.
 
 **Untouched:** `editor/`, `Data/HADES/`
 
 ## MIGRATIONS
 
-No new SQLite domain databases. CONTROL / KNOWLEDGE / MARKET ownership preserved.
-No `agent.db` / private permanent agent databases.
+No new SQLite domain databases. CONTROL / KNOWLEDGE / MARKET preserved. No private agent DBs.
 
 ## ARCHITECTURAL DECISIONS
 
-1. Typed `WorkerExecutionContext` with declared handler requirements; production validates full base at construction; undeclared handlers validate runtime keys (not KeyError/`ctx.get` sprinkles).
-2. Pressure governor NORMAL/PRESSURE/CRITICAL with available-MB as authoritative RAM signal (no double-derived used% at exactly 4 GiB free).
-3. Closed learning loop: `prior_lessons` retrieved via bounded ranked `lesson_retrieval` (negative experience first-class).
-4. One `TradingContextFabric` — not a second Brain.
-5. Fincept via evidence bridge — never execution authority; explicit UNAVAILABLE when disabled.
-6. Weighted ingestion progress; UNMEASURED only when genuinely impossible.
-7. Paper RiskGuard kill/limits deterministic; LLMs propose only.
-8. Operating pipeline schedules map to registered MarketSim capabilities (no phantom caps).
+1. Typed worker context; production validates full base; handlers declare requirements.
+2. Pressure governor with available-MB as authoritative RAM signal.
+3. Closed learning loop via bounded ranked prior lessons (negatives first-class).
+4. One TradingContextFabric — not a second Brain.
+5. Fincept evidence bridge — never execution authority.
+6. Weighted ingestion progress; measurable percent when possible.
+7. Deterministic paper RiskGuard; LLMs propose only.
+8. Trading verifier executes `test_node_ids` (documentary/file_exists alone ≠ PASS).
 
-## BUGS FOUND
+## BUGS FOUND / FIXED
 
-- Wave-12 pressure double-penalized 4 GiB-available fixtures → PRESSURE denials in reservation tests.
-- `queue_is_saturated` TypeError on Mock job stores.
-- Handler default context required `function_runtime`/`artifact_store` → lease fencing tests failed with `WORKER_CONTEXT_INVALID`.
-- Offline brain preflight vs enqueue classification gate mismatch under load.
-- Soak test missing `fenced_transition` import; claim-graph casing `supports` vs `SUPPORTS`.
-
-## BUGS FIXED
-
-All of the above; full backend suite: **3038 passed**, 19 skipped, 4 xfailed, **0 failed**.
+Pressure double-count at 4 GiB free; Mock-safe queue saturation; WORKER_CONTEXT_INVALID on partial
+test fixtures; offline preflight/classification mismatch; soak import; claim-graph SUPPORTS;
+strict gates left UNMEASURED despite existing pytest node ids.
 
 ## AUTONOMOUS TRADING STATUS
 
-Learning loop closed (prior lessons wired). Strategy search grammar + epistemic learning memory present.
-Orchestra / AgentFleet / JobRuntime contracts restored. Qualification remains evidence-based.
+Learning loop closed. Strategy grammar + epistemic memory present. JobRuntime contracts restored.
 
 ## PAPER TRADING STATUS
 
-Paper path + PIT causality + RiskGuard envelope + operating scheduler + soak fencing covered by tests.
-Real-provider live external loop: **UNMEASURED** without credentials.
+Paper path + PIT + RiskGuard + scheduler + soak covered. Strict required gates **PASS**.
+Live-provider loop: credentials-dependent (**UNMEASURED** without secrets).
 
 ## LIVE TRADING STATUS
 
-**BLOCKED** (product contract / LiveTradingGuard). Not claimed.
+**BLOCKED**.
 
-## KNOWLEDGE ACCESS STATUS
+## KNOWLEDGE / FINCEPT / LEARNING / INGESTION / RESEARCH / BRAIN UI
 
-TradingContextFabric assembles bounded provenance-bearing refs from Brain/Knowledge/Memory/StrategyMemory/Evidence/MarketSim.
-
-## FINCEPT STATUS
-
-Lifecycle bridge implemented. Disabled/uninstalled → explicit UNAVAILABLE (no invented analytics).
-
-## LEARNING LOOP STATUS
-
-`run_research_generation_cycle(..., prior_lessons=...)` fed from StrategyMemory retrieval (not `[]`).
-
-## INGESTION STATUS
-
-Streaming/progress model + weighted phases; measurable percent when units known.
-
-## RESEARCH STATUS
-
-Claim relations (SUPPORTS/…), bounded concurrency, independent verifier path extended — ResearchService preserved.
-
-## BRAIN UI STATUS
-
-Hover-only node labels; spacing via bounded neighbor lookup; celestial motion slowed; clusters regression suite added.
+Implemented and tested per waves 2–15; see backend doc §31 runbook and module owners.
 
 ## RESOURCE PROFILE
 
-Target: 16 GB RAM + 16/6 GB VRAM. Pressure states + nonessential shed; DB writer never killed mid-commit.
-Lazy/scale-to-zero compatible settings documented; browser affinity preserved.
-
-## PERFORMANCE BEFORE/AFTER
-
-Correctness-first; full suite runtime ≈10.3 min on this host after fixes (comparable to baseline).
-Ingestion/progress and admission governor reduce pathological RAM / GPU collision risk; detailed MB/s profiling remains operator-measurable on target hardware (not fabricated here).
+16 GB RAM + 16/6 GB VRAM pressure states; DB writer never killed mid-commit.
 
 ## TEST RESULTS
 
@@ -114,41 +77,33 @@ Ingestion/progress and admission governor reduce pathological RAM / GPU collisio
 | Launcher typecheck/test/build | PASS |
 | Security rounds 8–10 | 37 passed |
 | Release gate pytest | 22 passed |
-| Trading offline (non-strict) | 83 PASS; 10 UNMEASURED; 1 FEATURE_GATED; 1 NOT_TESTED_IN_CI |
+| Trading **strict** `--run-tests` | **PASS** (93 PASS; G16 FEATURE_GATED; G47 NOT_TESTED_IN_CI) |
 | Frontier F0 | PASS |
-| Frontier R01–R30 | NOT_STARTED (honest; not fabricated) |
+| Frontier R01–R30 | NOT_STARTED (honest) |
 
 ## RELEASE GATES
 
-CI workflow + CODEOWNERS + PR checklist + `github_branch_protection.md` operator instructions.
-**GitHub branch protection is NOT claimed applied** (agent cannot write repo admin settings).
-
-## KNOWN EXTERNAL DEPENDENCIES
-
-- Live market provider credentials / network
-- Fincept module install/enable
-- Optional remote embedding providers (offline path refuses remote)
+CI + CODEOWNERS + PR checklist + operator branch-protection doc.
+GitHub server-side protection **not claimed applied**.
 
 ## KNOWN LIMITATIONS
 
-- Frontier Reasoning R01–R30 remain a separate unfinished program
-- Some trading gates stay UNMEASURED until `--run-tests` / live externals
-- Live money forever blocked in this envelope
+- Frontier Reasoning R01–R30 separate unfinished program
+- G16 sandbox FEATURE_GATED (DSL path supported)
+- G47 Windows paths not tested in this Linux CI
+- Live market credentials / Fincept install optional externals
 
 ## OPERATOR RUNBOOK
 
-See `Data/docs/Leviathan_system_backend.md` §31 — “How to put LEVIATHAN to work autonomously with paper money”
-(settings, providers, paper broker, workers, models, Brain, kill switch, observability, recovery).
+`Data/docs/Leviathan_system_backend.md` §31 — autonomous paper money.
 
 ## ROLLBACK PLAN
 
-1. Revert PR #227 / reset branch to `35174d88`.
-2. Do not restore `editor/` or `Data/HADES/` (untouched).
-3. Drop any experimental local `Data/backend/data/` artifacts only — never production MARKET/KNOWLEDGE without backup.
+Revert PR #227 to `35174d88`. Do not touch `editor/` / `Data/HADES/`.
 
 ## TRUTHFUL FINAL VERDICT
 
 **READY_FOR_AUTONOMOUS_PAPER_WITH_EXTERNAL_GAPS**
 
-Supported by executed CI evidence for the paper/autonomous envelope.
-Not claimed: live trading, Frontier R01–R30 completion, or live-external market certification without credentials.
+Supported by executed CI + strict trading evidence.
+Not claimed: live trading, Frontier R01–R30 completion, or live-external certification without credentials.
