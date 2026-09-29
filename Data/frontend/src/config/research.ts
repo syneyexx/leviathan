@@ -1,11 +1,12 @@
 /** Production Research UI configuration (labels/layout — not live fixture data). */
 
 export const RD_HERO = {
-  title: "RESEARCH",
-  tagline: "Deeper answers. Broader context. Higher conviction.",
+  title: "Leviathan Research",
+  tagline: "",
   description:
-    "Search, analyze, and synthesize information from across the web, your files, and trusted sources — powered by advanced AI research agents.",
-  quote: "ALL KNOWLEDGE CONVERGES IN DEEPER WATERS. — LEVIATHAN",
+    "Geavanceerde onderzoeksomgeving voor diepgaand onderzoek, web research en kennisverzameling. Combineer AI agents, live web data en je eigen kennisbasis voor betrouwbare, verifieerbare resultaten.",
+  quoteLines: ["“Kennis vergroot", "intelligentie.”"] as const,
+  cite: "— LEVIATHAN",
 } as const;
 
 export const RD_INPUT_TABS = ["Query", "Files", "URLs", "Datasets", "Code", "Images"] as const;
@@ -19,10 +20,14 @@ export const RD_CONTEXT_CHIPS = [
   { id: "images", label: "Images", icon: "image", unavailable: "Image research is not available yet" },
 ] as const;
 
+export type RdTemplateCategory = "populair" | "technisch" | "markt" | "wetenschap" | "zakelijk";
+
 export const RD_TEMPLATES = [
   {
     id: "deep",
     label: "Deep Research Report",
+    labelNl: "Deep Research Report",
+    category: "populair" as RdTemplateCategory,
     depth: "deep",
     executionMode: "normal" as const,
     allowWeb: true,
@@ -31,6 +36,8 @@ export const RD_TEMPLATES = [
   {
     id: "competitive",
     label: "Competitive Analysis",
+    labelNl: "Concurrentie analyse",
+    category: "zakelijk" as RdTemplateCategory,
     depth: "standard",
     executionMode: "normal" as const,
     allowWeb: true,
@@ -39,6 +46,8 @@ export const RD_TEMPLATES = [
   {
     id: "market",
     label: "Market Research",
+    labelNl: "Markt onderzoek",
+    category: "markt" as RdTemplateCategory,
     depth: "standard",
     executionMode: "normal" as const,
     allowWeb: true,
@@ -47,6 +56,8 @@ export const RD_TEMPLATES = [
   {
     id: "technical",
     label: "Technical Exploration",
+    labelNl: "Technologie trend analyse",
+    category: "technisch" as RdTemplateCategory,
     depth: "deep",
     executionMode: "custom" as const,
     workers: 3,
@@ -57,6 +68,8 @@ export const RD_TEMPLATES = [
   {
     id: "academic",
     label: "Academic Review",
+    labelNl: "Wetenschappelijke literatuur",
+    category: "wetenschap" as RdTemplateCategory,
     depth: "expert",
     executionMode: "normal" as const,
     allowWeb: true,
@@ -65,6 +78,8 @@ export const RD_TEMPLATES = [
   {
     id: "custom",
     label: "Custom Prompt",
+    labelNl: "Custom Prompt",
+    category: "populair" as RdTemplateCategory,
     depth: "standard",
     executionMode: "custom" as const,
     workers: 2,
@@ -72,6 +87,14 @@ export const RD_TEMPLATES = [
     allowWeb: true,
     prompt: "",
   },
+] as const;
+
+export const RD_TEMPLATE_FILTERS = [
+  { id: "populair", label: "Populair" },
+  { id: "technisch", label: "Technisch" },
+  { id: "markt", label: "Markt Analyse" },
+  { id: "wetenschap", label: "Wetenschap" },
+  { id: "zakelijk", label: "Zakelijk" },
 ] as const;
 
 export type RdTimelineStepStatus = "done" | "active" | "pending" | "queued" | "failed";
@@ -126,3 +149,33 @@ export type RdInsight = {
   supportLabel?: string;
   icon: "bot" | "brain" | "bulb";
 };
+
+export const RD_COMPOSER_MODES = [
+  { id: "standaard", label: "Standaard" },
+  { id: "deep", label: "Deep Research" },
+  { id: "web", label: "Web Search" },
+  { id: "document", label: "Document Analyse" },
+] as const;
+
+export const RD_TYPE_PRESETS = [
+  {
+    id: "deep",
+    label: "Deep Research",
+    description: "Diepe budget/depth preset met web",
+  },
+  {
+    id: "web",
+    label: "Web Research",
+    description: "Web-gerichte bronnenpreset",
+  },
+  {
+    id: "document",
+    label: "Document Analyse",
+    description: "Lokale/uploaded bronnen, web uit",
+  },
+  {
+    id: "comparative",
+    label: "Vergelijkend Onderzoek",
+    description: "Concurrentie / vergelijkende analyse",
+  },
+] as const;

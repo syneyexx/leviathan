@@ -89,4 +89,13 @@ Media Control, Plugin & Runtime, Coding Agent, and other deep links remain regis
 - Visual fixture: `src/mocks/chatV2VisualFixture.ts` + `e2e/chat-v2.visual.spec.ts` (reference: `docs/ui_reference/chat-v2-reference.png`).
 - Production never hardcodes Screen 1 model/metrics/sources; fixture-only via `__LV_CHAT_V2_FIXTURE_UI__`.
 - Thin V2 surfaces: `/prompts`, `/evaluations` (real evaluation APIs). Coding and other deep links remain registered.
-- Next pages must reuse the same shell, tokens, dropdown/submenu model, and workspace primitives.
+
+## Research migration
+
+- `/research` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2`.
+- Overview (Screen 1) + selected-run workspace; create/start/cancel, ingestion, evidence, claims, gaps, web readiness, and Brain sync remain on canonical Research APIs.
+- Research group children stay MAIN_MENU-derived via `v2ChildrenFromMainMenu` — no duplicate Research route tree.
+- No page-local Research V2 CSS file; layout lives in `leviathan-v2.css` under `.lv-v2-page--research` / workspace primitives (segmented filters, type cards, stepper, template rows).
+- Visual fixture: `src/mocks/researchV2VisualFixture.ts` + `e2e/research-v2.visual.spec.ts` (reference: `docs/ui_reference/research-v2-reference.png`).
+- Trading Research (`/trading/onderzoek`, `/trading/lab`) is untouched.
+
