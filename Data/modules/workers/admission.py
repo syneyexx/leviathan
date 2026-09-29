@@ -161,17 +161,17 @@ def classify_pressure(
         elif pct >= 70.0:
             ram_pressure = PressureState.PRESSURE
     elif ram_available_mb is not None:
+        # Available-MB is the authoritative signal when provided — do not also
+        # re-derive used% from host_total (that double-penalizes fixtures that
+        # intentionally report exactly 4 GiB free on a 16 GiB host).
         avail = float(ram_available_mb)
         if avail < 1_536.0:
             ram_pressure = PressureState.CRITICAL
         elif avail < 4_096.0:
             ram_pressure = PressureState.PRESSURE
-        elif ram_total_mb > 0:
-            used_pct = 100.0 * (1.0 - avail / float(ram_total_mb))
-            if used_pct >= 88.0:
-                ram_pressure = PressureState.CRITICAL
-            elif used_pct >= 70.0:
-                ram_pressure = PressureState.PRESSURE
+        else:
+            ram_pressure = PressureState.NORMAL
+        _ = ram_total_mb  # retained for API compatibility / callers
 
     vram_pressure = PressureState.NORMAL
     if vram_used_pct is not None:

@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from Data.modules.execution import ExecutionGateway, build_default_catalog
+from Data.modules.jobs.leases import fenced_transition
 from Data.modules.jobs.resources import ResourceManager
 from Data.modules.jobs.runtime import JobRuntime
 from Data.modules.jobs.states import JobState, StaleLeaseError

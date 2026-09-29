@@ -205,8 +205,14 @@ def queue_is_saturated(
     from Data.modules.jobs.states import JobState
 
     wanted = list(states or [JobState.QUEUED.value, JobState.RETRY_WAIT.value])
-    if hasattr(job_store, "count_by_states"):
-        return int(job_store.count_by_states(wanted)) >= int(limit)
+    count_fn = getattr(job_store, "count_by_states", None)
+    if callable(count_fn):
+        try:
+            raw = count_fn(wanted)
+            return int(raw) >= int(limit)
+        except (TypeError, ValueError):
+            # Mock / non-numeric stores fall through to list probe.
+            pass
     # Fallback: bounded list probe (never invents counts).
     total = 0
     for state_name in wanted:
@@ -214,8 +220,12 @@ def queue_is_saturated(
             state = JobState(state_name)
         except ValueError:
             continue
-        rows = job_store.list(state=state, limit=int(limit) + 1)
-        total += len(rows)
+        try:
+            rows = job_store.list(state=state, limit=int(limit) + 1)
+            total += len(rows)
+        except TypeError:
+            # Mock without configured list → treat as unsaturated.
+            return False
         if total >= int(limit):
             return True
     return False

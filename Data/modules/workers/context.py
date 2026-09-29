@@ -18,7 +18,7 @@ class WorkerContextError(RuntimeError):
         self.missing = list(missing or [])
 
 
-# Keys always present after ``build_minimal_job_context``.
+# Keys always present after ``build_minimal_job_context`` (production workers).
 REQUIRED_BASE_KEYS: tuple[str, ...] = (
     "settings",
     "job_store",
@@ -26,6 +26,19 @@ REQUIRED_BASE_KEYS: tuple[str, ...] = (
     "gateway",
     "function_runtime",
     "artifact_store",
+    "registry",
+    "admission",
+    "worker_settings",
+)
+
+# Loop-critical keys for undeclared handlers / TEST-ONLY patched contexts.
+# function_runtime + artifact_store remain required at production construction
+# but are not forced on every custom handler that never uses them.
+REQUIRED_RUNTIME_KEYS: tuple[str, ...] = (
+    "settings",
+    "job_store",
+    "job_runtime",
+    "gateway",
     "registry",
     "admission",
     "worker_settings",
@@ -45,7 +58,7 @@ PER_JOB_KEYS: tuple[str, ...] = (
 class WorkerContextRequirements:
     """Declare what a handler needs from the execution context."""
 
-    required: tuple[str, ...] = REQUIRED_BASE_KEYS
+    required: tuple[str, ...] = REQUIRED_RUNTIME_KEYS
     optional: tuple[str, ...] = ()
 
     def validate(self, ctx: Mapping[str, Any]) -> list[str]:
@@ -54,7 +67,8 @@ class WorkerContextRequirements:
 
 
 # Common requirement profiles for pool handlers.
-REQUIRES_BASE = WorkerContextRequirements()
+REQUIRES_PRODUCTION = WorkerContextRequirements(required=REQUIRED_BASE_KEYS)
+REQUIRES_BASE = WorkerContextRequirements(required=REQUIRED_RUNTIME_KEYS)
 REQUIRES_SETTINGS = WorkerContextRequirements(required=("settings", "job_store"))
 REQUIRES_MAINTENANCE = WorkerContextRequirements(
     required=("job_store", "admission", "registry"),

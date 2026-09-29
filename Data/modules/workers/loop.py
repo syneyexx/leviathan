@@ -16,6 +16,7 @@ from .admission import ResourceAdmission, ResourceClass
 from .context import (
     REQUIRED_BASE_KEYS,
     REQUIRES_BASE,
+    REQUIRES_PRODUCTION,
     WorkerContextError,
     WorkerContextRequirements,
     validate_worker_context,
@@ -158,7 +159,7 @@ def build_minimal_job_context() -> dict[str, Any]:
         "admission": admission,
         "worker_settings": worker_settings,
     }
-    validate_worker_context(ctx, requirements=REQUIRES_BASE)
+    validate_worker_context(ctx, requirements=REQUIRES_PRODUCTION)
     assert all(k in ctx for k in REQUIRED_BASE_KEYS)
     return ctx
 
