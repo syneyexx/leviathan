@@ -7,8 +7,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-from Data.modules.common.hashing import sha256_text
-
 from ..settings import SourceIngestionSettings
 from ..types import (
     ContentRef,
@@ -19,7 +17,7 @@ from ..types import (
     SourceKind,
 )
 from .base import HandlerCapabilities
-from .documents import _read_text_streaming
+from .documents import materialize_text_content
 
 _CODE_EXTS = frozenset(
     {
@@ -69,11 +67,24 @@ class SourceCodeHandler:
         settings: SourceIngestionSettings,
         staging_root: Path | None = None,
     ) -> NormalizedArtifact:
-        text = _read_text_streaming(path)
+        ref, digest = materialize_text_content(path, staging_root=staging_root)
+        # Symbol extraction needs text; for large files load only when python.
         lang = _LANG_BY_EXT.get(detection.extension.lower()) or _LANG_BY_EXT.get(Path(relative_path).suffix.lower())
-        meta: dict[str, Any] = {"language": lang, "line_count": text.count("\n") + (1 if text else 0)}
-        if lang == "python":
-            meta.update(_python_symbols(text))
+        text_for_meta = ref.text if ref.text is not None else ""
+        if lang == "python" and ref.path is not None:
+            text_for_meta = ref.read_text()
+        elif ref.text is not None:
+            text_for_meta = ref.text
+        meta: dict[str, Any] = {
+            "language": lang,
+            "line_count": (
+                text_for_meta.count("\n") + (1 if text_for_meta else 0)
+                if text_for_meta or ref.text is not None
+                else None
+            ),
+        }
+        if lang == "python" and text_for_meta:
+            meta.update(_python_symbols(text_for_meta))
         # Honest text ingestion for other languages — no fragile regex AST claims.
         return NormalizedArtifact(
             source_kind=SourceKind.SOURCE_CODE,
@@ -82,13 +93,14 @@ class SourceCodeHandler:
             mime_type=detection.mime_type or "text/plain",
             parser=f"source_code:{lang or 'text'}",
             parser_version=PARSER_VERSION,
-            content_hash=sha256_text(text),
-            content=ContentRef(text=text),
+            content_hash=digest,
+            content=ref,
             structured_metadata=meta,
             provenance={
                 "relative_path": relative_path,
                 "language": lang,
                 "module_path": relative_path.replace("\\", "/"),
+                "streaming": ref.path is not None,
                 **{k: meta[k] for k in ("classes", "functions", "imports") if k in meta},
             },
             outcome=MemberOutcome.SUCCESS,
@@ -122,7 +134,8 @@ class PlainTextHandler:
         settings: SourceIngestionSettings,
         staging_root: Path | None = None,
     ) -> NormalizedArtifact:
-        text = _read_text_streaming(path)
+        ref, digest = materialize_text_content(path, staging_root=staging_root)
+        empty = path.stat().st_size == 0
         return NormalizedArtifact(
             source_kind=SourceKind.PLAIN_TEXT,
             title=Path(relative_path).name,
@@ -130,16 +143,17 @@ class PlainTextHandler:
             mime_type=detection.mime_type or "text/plain",
             parser="plain_text",
             parser_version=PARSER_VERSION,
-            content_hash=sha256_text(text),
-            content=ContentRef(text=text),
+            content_hash=digest,
+            content=ref,
             provenance={
                 "relative_path": relative_path,
                 "detection_confidence": detection.confidence.value,
                 "unknown_text_fallback": bool(detection.signals.get("unknown_text_fallback")),
+                "streaming": ref.path is not None,
             },
-            outcome=MemberOutcome.SUCCESS if text or path.stat().st_size == 0 else MemberOutcome.SUCCESS,
-            warnings=["empty_file"] if path.stat().st_size == 0 else [],
-            skip_reason="empty" if path.stat().st_size == 0 else None,
+            outcome=MemberOutcome.SUCCESS,
+            warnings=["empty_file"] if empty else [],
+            skip_reason="empty" if empty else None,
             # Empty files: explicit empty semantics — success with empty content, not silent skip.
         )
 

@@ -52,6 +52,18 @@ from .types import (
 EmitFn = Callable[[str, str, dict[str, Any]], None]
 OcrEnqueueFn = Callable[..., dict[str, Any]]
 
+_UNMEASURED = "UNMEASURED"
+
+
+def _progress_unit(value: Any) -> int | None:
+    """Coerce progress metadata to int; UNMEASURED / missing → None (no fake totals)."""
+    if value is None or value == _UNMEASURED:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
 
 class SourceIngestionPipeline:
     """Process a stored source (file or archive) outside the upload request path."""
@@ -202,13 +214,41 @@ class SourceIngestionPipeline:
             project_id=source.project_id,
             phase=IngestionPhase.PARSING,
         )
+        # Early content_hash dedupe / parse-cache hit (same DB ownership — no new DB).
+        file_hash = source.content_hash
+        if not file_hash:
+            from Data.modules.common.hashing import sha256_file
+
+            try:
+                file_hash = sha256_file(raw_path)
+            except OSError:
+                file_hash = None
+        if file_hash:
+            cached = self.ingestion.get_parse_cache(file_hash, parser_version=PARSER_VERSION)
+            if cached and cached.get("parse_status") == "ok" and cached.get("snapshot_path"):
+                return self._finalize_from_parse_cache(
+                    source,
+                    detection,
+                    content_hash=file_hash,
+                    cached=cached,
+                    is_child=False,
+                )
+
         artifact = handler.ingest(
             raw_path,
             detection=detection,
             relative_path=source.title or raw_path.name,
             settings=self.settings,
+            staging_root=self.staging_root / source.project_id / source.source_id,
         )
-        return self._finalize_artifact(source, artifact, detection, is_child=False)
+        self._write_artifact_progress(source.source_id, source.project_id, artifact)
+        return self._finalize_artifact(
+            source,
+            artifact,
+            detection,
+            is_child=False,
+            cache_key_hash=file_hash,
+        )
 
     def _finalize_artifact(
         self,
@@ -220,6 +260,7 @@ class SourceIngestionPipeline:
         archive_filename: str | None = None,
         parent_source_id: str | None = None,
         container_source_id: str | None = None,
+        cache_key_hash: str | None = None,
     ) -> IngestionProgress:
         if artifact.outcome == MemberOutcome.ROUTED and artifact.route_target == "dataset":
             self._route_dataset(source, artifact)
@@ -315,6 +356,14 @@ class SourceIngestionPipeline:
             container_source_id=container_source_id,
         )
         synced = self._brain_sync(updated, text, artifact=artifact)
+        self._remember_parse_cache(
+            synced,
+            artifact=artifact,
+            snapshot_path=str(snap),
+            text=text,
+            cache_key_hash=cache_key_hash or artifact.content_hash,
+        )
+        self._write_brain_progress(container_source_id or source.source_id, source.project_id, synced)
         if not is_child:
             phase = IngestionPhase.COMPLETED if synced.brain_status == BrainStatus.SYNCED else IngestionPhase.PARTIAL
             if synced.brain_status == BrainStatus.FAILED:
@@ -667,6 +716,20 @@ class SourceIngestionPipeline:
             raw_path=dest,
         )
 
+        # Early dedupe: content_hash already parsed — reuse cache, skip re-parse.
+        if content_hash:
+            cached = self.ingestion.get_parse_cache(content_hash, parser_version=PARSER_VERSION)
+            if cached and cached.get("parse_status") == "ok":
+                self._apply_parse_cache_to_member(
+                    parent=source,
+                    child=child,
+                    member=member,
+                    detection=detection,
+                    content_hash=content_hash,
+                    cached=cached,
+                )
+                return
+
         handler = self.registry.resolve(detection, filename=member.relative_path)
         if handler is None:
             member.outcome = MemberOutcome.SKIPPED
@@ -683,6 +746,7 @@ class SourceIngestionPipeline:
             settings=self.settings,
             staging_root=staging,
         )
+        self._write_artifact_progress(source.source_id, source.project_id, artifact)
         member.parser = artifact.parser
 
         if artifact.outcome == MemberOutcome.ROUTED:
@@ -761,6 +825,14 @@ class SourceIngestionPipeline:
         )
         # Duplicate detection: same content_hash already brain-synced elsewhere
         synced = self._brain_sync(updated, text, artifact=artifact)
+        self._remember_parse_cache(
+            synced,
+            artifact=artifact,
+            snapshot_path=str(snap),
+            text=text,
+            cache_key_hash=content_hash or artifact.content_hash,
+        )
+        self._write_brain_progress(source.source_id, source.project_id, synced)
         member.outcome = MemberOutcome.SUCCESS
         member.parse_status = "ok"
         member.brain_status = synced.brain_status.value
@@ -768,6 +840,7 @@ class SourceIngestionPipeline:
         member.child_source_id = synced.source_id
         member.content_hash = artifact.content_hash
         self.ingestion.upsert_member(member)
+
     def _process_tar(
         self,
         source: ResearchSource,
@@ -867,6 +940,18 @@ class SourceIngestionPipeline:
                     allow_unknown_text=self.settings.allow_unknown_text,
                 )
                 child = self._ensure_child_source(parent=source, member=member, detection=detection_m, raw_path=dest)
+                if content_hash:
+                    cached = self.ingestion.get_parse_cache(content_hash, parser_version=PARSER_VERSION)
+                    if cached and cached.get("parse_status") == "ok":
+                        self._apply_parse_cache_to_member(
+                            parent=source,
+                            child=child,
+                            member=member,
+                            detection=detection_m,
+                            content_hash=content_hash,
+                            cached=cached,
+                        )
+                        continue
                 handler = self.registry.resolve(detection_m, filename=member.relative_path)
                 if handler is None:
                     member.outcome = MemberOutcome.SKIPPED
@@ -879,7 +964,9 @@ class SourceIngestionPipeline:
                     detection=detection_m,
                     relative_path=member.relative_path,
                     settings=self.settings,
+                    staging_root=staging,
                 )
+                self._write_artifact_progress(source.source_id, source.project_id, artifact)
                 self._apply_child_artifact(source, child, member, detection_m, artifact)
         return self._finalize_container(source.source_id)
 
@@ -998,11 +1085,220 @@ class SourceIngestionPipeline:
             content_hash_override=artifact.content_hash,
         )
         synced = self._brain_sync(updated, text, artifact=artifact)
+        self._remember_parse_cache(
+            synced,
+            artifact=artifact,
+            snapshot_path=str(snap),
+            text=text,
+            cache_key_hash=member.content_hash or artifact.content_hash,
+        )
+        self._write_brain_progress(parent.source_id, parent.project_id, synced)
         member.outcome = MemberOutcome.SUCCESS
         member.parse_status = "ok"
         member.brain_status = synced.brain_status.value
         member.brain_document_id = synced.brain_document_id
         member.child_source_id = synced.source_id
+        self.ingestion.upsert_member(member)
+
+    def _write_artifact_progress(
+        self,
+        container_source_id: str,
+        project_id: str,
+        artifact: NormalizedArtifact,
+    ) -> None:
+        """Persist pages/chunks progress keys during parse — never invent totals."""
+        prov = artifact.provenance or {}
+        structured = artifact.structured_metadata or {}
+        pages_parsed = prov.get("pages_parsed", structured.get("page_count", prov.get("page_count")))
+        pages_total = prov.get("pages_total", structured.get("page_count", prov.get("page_count")))
+        chunks_done = prov.get("chunks_done", structured.get("chunks_done"))
+        chunks_total = prov.get("chunks_total", structured.get("chunks_total"))
+        embedding_done = prov.get("embedding_batches_done")
+        embedding_total = prov.get("embedding_batches_total")
+
+        def _or_unmeasured(value: Any) -> Any:
+            if value is None:
+                return _UNMEASURED
+            return value
+
+        try:
+            self.ingestion.merge_progress(
+                container_source_id,
+                project_id=project_id,
+                phase=IngestionPhase.PARSING,
+                pages_parsed=_or_unmeasured(pages_parsed),
+                pages_total=_or_unmeasured(pages_total),
+                chunks_done=_or_unmeasured(chunks_done),
+                chunks_total=_or_unmeasured(chunks_total),
+                embedding_batches_done=_or_unmeasured(embedding_done),
+                embedding_batches_total=_or_unmeasured(embedding_total),
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _write_brain_progress(
+        self,
+        container_source_id: str,
+        project_id: str,
+        source: ResearchSource,
+    ) -> None:
+        """Record brain-phase unit keys; stay UNMEASURED when chunk/embed totals unknown."""
+        meta = source.metadata if isinstance(source.metadata, dict) else {}
+        chunks_done = meta.get("chunks_done")
+        chunks_total = meta.get("chunks_total")
+        embedding_done = meta.get("embedding_batches_done")
+        embedding_total = meta.get("embedding_batches_total")
+        try:
+            self.ingestion.merge_progress(
+                container_source_id,
+                project_id=project_id,
+                phase=IngestionPhase.BRAIN_SYNCING,
+                chunks_done=chunks_done if chunks_done is not None else _UNMEASURED,
+                chunks_total=chunks_total if chunks_total is not None else _UNMEASURED,
+                embedding_batches_done=embedding_done if embedding_done is not None else _UNMEASURED,
+                embedding_batches_total=embedding_total if embedding_total is not None else _UNMEASURED,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _remember_parse_cache(
+        self,
+        source: ResearchSource,
+        *,
+        artifact: NormalizedArtifact | None,
+        snapshot_path: str | None,
+        text: str,
+        cache_key_hash: str | None = None,
+    ) -> None:
+        content_hash = (
+            cache_key_hash
+            or source.content_hash
+            or (artifact.content_hash if artifact else None)
+        )
+        if not content_hash:
+            return
+        self.ingestion.put_parse_cache(
+            content_hash=content_hash,
+            parser_version=(artifact.parser_version if artifact else PARSER_VERSION) or PARSER_VERSION,
+            parser=source.parser or (artifact.parser if artifact else None),
+            snapshot_path=snapshot_path or source.snapshot_path,
+            brain_document_id=source.brain_document_id,
+            parse_status="ok" if source.parse_status == ParseStatus.OK else source.parse_status.value,
+            text_hash=sha256_text(text) if text else None,
+            metadata={
+                "source_id": source.source_id,
+                "project_id": source.project_id,
+                "artifact_content_hash": artifact.content_hash if artifact else None,
+            },
+        )
+
+    def _finalize_from_parse_cache(
+        self,
+        source: ResearchSource,
+        detection: Any,
+        *,
+        content_hash: str,
+        cached: dict[str, Any],
+        is_child: bool,
+        archive_filename: str | None = None,
+        parent_source_id: str | None = None,
+        container_source_id: str | None = None,
+    ) -> IngestionProgress:
+        snap = cached.get("snapshot_path")
+        text = ""
+        if snap and Path(str(snap)).is_file():
+            text = Path(str(snap)).read_text(encoding="utf-8", errors="replace")
+        updated = self._save_source_state(
+            source,
+            parse_status=ParseStatus.OK,
+            brain_status=BrainStatus.PENDING,
+            parser=str(cached.get("parser") or "parse_cache"),
+            text=text,
+            detection=detection,
+            snapshot_path=str(snap) if snap else None,
+            archive_filename=archive_filename,
+            parent_source_id=parent_source_id,
+            container_source_id=container_source_id,
+            content_hash_override=content_hash,
+            extra_meta={
+                "parse_cache_hit": True,
+                "dedupe": "content_hash",
+            },
+        )
+        if cached.get("brain_document_id") and text:
+            synced = self._mark_brain(
+                updated,
+                BrainStatus.SYNCED,
+                document_id=str(cached["brain_document_id"]),
+            )
+        elif text:
+            synced = self._brain_sync(updated, text)
+        else:
+            synced = self._mark_brain(updated, BrainStatus.SKIPPED, error="parse_cache_empty_snapshot")
+        if not is_child:
+            phase = (
+                IngestionPhase.COMPLETED
+                if synced.brain_status == BrainStatus.SYNCED
+                else IngestionPhase.PARTIAL
+            )
+            self.ingestion.upsert_container(
+                container_source_id=source.source_id,
+                project_id=source.project_id,
+                phase=phase,
+            )
+        return self.get_progress(container_source_id or source.source_id)
+
+    def _apply_parse_cache_to_member(
+        self,
+        *,
+        parent: ResearchSource,
+        child: ResearchSource,
+        member: ManifestMember,
+        detection: Any,
+        content_hash: str,
+        cached: dict[str, Any],
+    ) -> None:
+        snap = cached.get("snapshot_path")
+        text = ""
+        if snap and Path(str(snap)).is_file():
+            text = Path(str(snap)).read_text(encoding="utf-8", errors="replace")
+        updated = self._save_source_state(
+            child,
+            parse_status=ParseStatus.OK,
+            brain_status=BrainStatus.PENDING,
+            parser=str(cached.get("parser") or "parse_cache"),
+            text=text,
+            detection=detection,
+            snapshot_path=str(snap) if snap else child.snapshot_path,
+            archive_filename=parent.title,
+            parent_source_id=parent.source_id,
+            container_source_id=parent.source_id,
+            content_hash_override=content_hash,
+            extra_meta={"parse_cache_hit": True, "dedupe": "content_hash"},
+        )
+        if cached.get("brain_document_id"):
+            synced = self._mark_brain(
+                updated,
+                BrainStatus.SYNCED,
+                document_id=str(cached["brain_document_id"]),
+            )
+        elif text:
+            synced = self._brain_sync(updated, text)
+        else:
+            synced = self._mark_brain(updated, BrainStatus.SKIPPED, error="parse_cache_empty_snapshot")
+        member.outcome = MemberOutcome.DUPLICATE
+        member.parse_status = "ok"
+        member.brain_status = synced.brain_status.value
+        member.brain_document_id = synced.brain_document_id
+        member.child_source_id = synced.source_id
+        member.content_hash = content_hash
+        member.parser = str(cached.get("parser") or "parse_cache")
+        member.skip_reason = "content_hash_already_processed"
+        member.metadata = {
+            **member.metadata,
+            "parse_cache_hit": True,
+            "dedupe": "content_hash",
+        }
         self.ingestion.upsert_member(member)
 
     def _maybe_enqueue_ocr(
@@ -1450,7 +1746,15 @@ class SourceIngestionPipeline:
             phase = IngestionPhase(str(phase_raw))
         except ValueError:
             phase = IngestionPhase.STORED
-        meta = (container or {}).get("metadata") if isinstance((container or {}).get("metadata"), dict) else {}
+        # Progress keys are written into progress_json during pipeline phases.
+        meta: dict[str, Any] = {}
+        progress_blob = (container or {}).get("progress")
+        if isinstance(progress_blob, dict):
+            meta.update(progress_blob)
+        manifest_blob = (container or {}).get("manifest")
+        if isinstance(manifest_blob, dict):
+            for key, value in manifest_blob.items():
+                meta.setdefault(key, value)
         prev = meta.get("last_progress_pct")
         if prev is not None:
             try:
@@ -1465,16 +1769,32 @@ class SourceIngestionPipeline:
             brain_target=int(counts.get("success") or 0) + int(counts.get("routed") or 0),
             bytes_processed=int((container or {}).get("uncompressed_bytes") or 0) or None,
             bytes_total=int((container or {}).get("uncompressed_bytes") or 0) or None,
-            pages_parsed=meta.get("pages_parsed"),
-            pages_total=meta.get("pages_total"),
-            chunks_done=meta.get("chunks_done"),
-            chunks_total=meta.get("chunks_total"),
-            embedding_batches_done=meta.get("embedding_batches_done"),
-            embedding_batches_total=meta.get("embedding_batches_total"),
-            elapsed_seconds=meta.get("elapsed_seconds"),
+            pages_parsed=_progress_unit(meta.get("pages_parsed")),
+            pages_total=_progress_unit(meta.get("pages_total")),
+            chunks_done=_progress_unit(meta.get("chunks_done")),
+            chunks_total=_progress_unit(meta.get("chunks_total")),
+            embedding_batches_done=_progress_unit(meta.get("embedding_batches_done")),
+            embedding_batches_total=_progress_unit(meta.get("embedding_batches_total")),
+            elapsed_seconds=_progress_unit(meta.get("elapsed_seconds")),
             previous_progress_pct=prev,
             allow_regression=bool(meta.get("retry_reset")),
         )
+        # Persist last measured pct for monotonic clamp on subsequent reads.
+        if weighted.progress_pct is not None:
+            try:
+                self.ingestion.merge_progress(
+                    source_id,
+                    project_id=str((container or {}).get("project_id") or ""),
+                    last_progress_pct=weighted.progress_pct,
+                    pages_parsed=meta.get("pages_parsed", _UNMEASURED),
+                    pages_total=meta.get("pages_total", _UNMEASURED),
+                    chunks_done=meta.get("chunks_done", _UNMEASURED),
+                    chunks_total=meta.get("chunks_total", _UNMEASURED),
+                    embedding_batches_done=meta.get("embedding_batches_done", _UNMEASURED),
+                    embedding_batches_total=meta.get("embedding_batches_total", _UNMEASURED),
+                )
+            except Exception:  # noqa: BLE001
+                pass
         return IngestionProgress(
             source_id=source_id,
             job_id=(container or {}).get("job_id"),

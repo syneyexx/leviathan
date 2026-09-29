@@ -281,10 +281,11 @@ def test_duplicate_content_idempotent_brain(tmp_env):
         else:
             service.source_ingestion.pipeline().process_source(source_id)
     children = service.list_ingestion_children(project.project_id, source_id, limit=50)
-    success = [m for m in children["members"] if m["outcome"] == "success"]
-    assert len(success) == 2
+    # Early content_hash dedupe may mark the second path as duplicate while preserving Brain identity.
+    usable = [m for m in children["members"] if m["outcome"] in {"success", "duplicate"}]
+    assert len(usable) == 2
     # Same brain document id for identical content
-    brain_ids = {m["brain_document_id"] for m in success if m.get("brain_document_id")}
+    brain_ids = {m["brain_document_id"] for m in usable if m.get("brain_document_id")}
     assert len(brain_ids) == 1
 
 
