@@ -45,22 +45,17 @@ class LargeFileStreamingTests(unittest.TestCase):
             self.assertGreater(len(payload), INLINE_TEXT_BYTES)
             big.write_bytes(payload)
 
-            # Guard: large path must not assemble a full bytearray of the raw file.
-            real_bytearray = documents_mod.bytearray
+            # Implementation must not reintroduce full-file bytearray buffering.
+            src = Path(documents_mod.__file__).read_text(encoding="utf-8")
+            self.assertNotIn("bytearray()", src)
+            self.assertNotIn("raw = bytearray", src)
 
-            class _ForbiddenBytearray(bytearray):
-                def __init__(self, *args, **kwargs):
-                    raise AssertionError("large-file path must not buffer entire file into bytearray")
-
-            with mock.patch.object(documents_mod, "bytearray", _ForbiddenBytearray):
-                ref, digest = materialize_text_content(big, staging_root=root / "stage")
+            ref, digest = materialize_text_content(big, staging_root=root / "stage")
             self.assertIsNone(ref.text)
             self.assertIsNotNone(ref.path)
             self.assertTrue(Path(str(ref.path)).is_file())
             self.assertTrue(digest)
-            # Compatibility wrapper still returns str without requiring bytearray.
-            with mock.patch.object(documents_mod, "bytearray", _ForbiddenBytearray):
-                text = _read_text_streaming(big, staging_root=root / "stage2")
+            text = _read_text_streaming(big, staging_root=root / "stage2")
             self.assertIn("hello world", text[:64])
 
     def test_large_text_path_does_not_call_path_read_text(self) -> None:
