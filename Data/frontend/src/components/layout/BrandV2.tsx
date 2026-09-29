@@ -46,7 +46,7 @@ export function BrandV2({ className = "" }: BrandV2Props) {
       </div>
       <div className="lv-v2-brand__copy">
         <div className="lv-v2-brand__title">LEVIATHAN</div>
-        <div className="lv-v2-brand__tag">AI Control Center</div>
+        <div className="lv-v2-brand__tag">AI CONTROL CENTER</div>
       </div>
     </div>
   );

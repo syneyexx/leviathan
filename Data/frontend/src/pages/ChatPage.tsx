@@ -721,7 +721,12 @@ export function ChatPage() {
   );
 
   return (
-    <AppShell activeMode="chat" chatApp searchPlaceholder="Search conversations, files, prompts...">
+    <AppShell
+      variant="v2"
+      chatApp
+      v2Title="Chat"
+      v2Subtitle="Gesprekken met Leviathan agents en control plane."
+    >
       <aside className="lv-chat-rail" id="chatRail">
         <div className="lv-chat-rail-head">
           <h2>Chat</h2>

@@ -282,7 +282,11 @@ export function TasksPage() {
   );
 
   return (
-    <AppShell activeMode="explore" searchPlaceholder="Zoek taken, jobs, approvals...">
+    <AppShell
+      variant="v2"
+      v2Title="Taken"
+      v2Subtitle="Taken, jobs en approvals in de Leviathan control plane."
+    >
       <main className="lv-main lv-tasks-page">
         <header className="lv-tasks-hero">
           <div className="lv-tasks-hero-left">

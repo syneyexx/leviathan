@@ -206,3 +206,76 @@
   --lv-transition: 180ms ease;
   --lv-transition-slow: 300ms ease;
 }
+
+/* ============================================================
+   LEVIATHAN V2 — Design tokens (Screen 1 navy/cyan system)
+   Scoped under .lv-v2 so legacy gold pages are not destroyed.
+   ============================================================ */
+
+.lv-v2 {
+  /* Backgrounds */
+  --lv2-bg: #020617;
+  --lv2-bg-deep: #01040d;
+  --lv2-sidebar-bg: #0b1220;
+  --lv2-header-bg: rgba(2, 6, 23, 0.92);
+  --lv2-panel-bg: #0b1220;
+  --lv2-panel-raised: #111827;
+  --lv2-surface-hover: rgba(59, 130, 246, 0.08);
+  --lv2-surface-selected: rgba(59, 130, 246, 0.16);
+  --lv2-surface-selected-strong: rgba(34, 211, 238, 0.14);
+
+  /* Borders */
+  --lv2-border: #1e293b;
+  --lv2-border-strong: #334155;
+  --lv2-border-active: #22d3ee;
+  --lv2-divider: rgba(148, 163, 184, 0.12);
+
+  /* Brand */
+  --lv2-primary: #3b82f6;
+  --lv2-primary-bright: #60a5fa;
+  --lv2-cyan: #22d3ee;
+  --lv2-cyan-bright: #67e8f9;
+  --lv2-cyan-glow: rgba(34, 211, 238, 0.35);
+
+  /* Semantic */
+  --lv2-success: #22c55e;
+  --lv2-success-bright: #4ade80;
+  --lv2-warning: #f59e0b;
+  --lv2-danger: #ef4444;
+  --lv2-research: #a855f7;
+  --lv2-jobs: #3b82f6;
+  --lv2-trading: #f59e0b;
+  --lv2-muted-blue: #64748b;
+
+  /* Typography */
+  --lv2-text: #f1f5f9;
+  --lv2-text-secondary: #94a3b8;
+  --lv2-text-muted: #64748b;
+  --lv2-text-disabled: #475569;
+  --lv2-text-accent: #67e8f9;
+  --lv2-font-ui: "Inter", "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+  --lv2-font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+
+  /* Shadow / glow */
+  --lv2-shadow-panel: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --lv2-glow-active: 0 0 16px rgba(34, 211, 238, 0.22);
+  --lv2-glow-success: 0 0 10px rgba(34, 197, 94, 0.45);
+  --lv2-glow-warning: 0 0 10px rgba(245, 158, 11, 0.35);
+
+  /* Layout @ 1664×936 baseline */
+  --lv2-sidebar-width: 248px;
+  --lv2-topbar-height: 64px;
+  --lv2-gutter: 16px;
+  --lv2-card-gap: 14px;
+  --lv2-content-pad: 16px;
+  --lv2-panel-radius: 10px;
+  --lv2-button-radius: 8px;
+  --lv2-row-height: 36px;
+
+  --lv2-transition-fast: 120ms ease;
+  --lv2-transition: 180ms ease;
+
+  color: var(--lv2-text);
+  font-family: var(--lv2-font-ui);
+  background: var(--lv2-bg);
+}

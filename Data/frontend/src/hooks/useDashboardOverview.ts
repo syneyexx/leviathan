@@ -123,8 +123,8 @@ export type DashboardOverview = {
       index: number;
       name: string;
       util: number | null;
-      vramUsed: string;
-      vramTotal: string;
+      vramUsedBytes: number | null;
+      vramTotalBytes: number | null;
       tempC: number | null;
       role?: string;
     }>;
@@ -777,11 +777,16 @@ export function useDashboardOverview(opts?: { enabled?: boolean }): DashboardOve
     return pickActiveWorkers(workersDash.workers, 5).map((w) => {
       const { progress, progressLabel } = workerProgress(w);
       const domain = workerDomain(w);
+      const resources = (w.resource_class ?? []).map((r) => String(r).toLowerCase());
+      let target = "—";
+      if (resources.some((r) => r.includes("gpu"))) target = "GPU";
+      else if (resources.some((r) => r.includes("cpu"))) target = "CPU";
+      else if (w.current_work) target = w.current_work;
       return {
         id: w.worker_id,
         name: w.display_name || w.worker_id,
         domain,
-        target: w.current_work || w.current_job?.human_title || w.current_capability || "—",
+        target,
         progress,
         progressLabel,
         tone: workerStateTone(w.state),
@@ -816,9 +821,10 @@ export function useDashboardOverview(opts?: { enabled?: boolean }): DashboardOve
       };
     }
     const c = ingestion.counts;
+    const activeJob = (ingestion.jobs ?? []).find((j) => j.phase || j.progressPct != null);
     const detail = `${c.processing} processing · ${c.queued} queued · ${c.failed} failed`;
     return {
-      title: "Source ingestion",
+      title: activeJob?.source || "Source ingestion",
       progress: clampPct(ingestion.overallProgressPct),
       detail,
       available: true,
@@ -836,8 +842,8 @@ export function useDashboardOverview(opts?: { enabled?: boolean }): DashboardOve
         index: d.index,
         name: d.name || `GPU ${d.index}`,
         util: clampPct(d.utilizationPct),
-        vramUsed: formatBytes(d.vramUsedBytes),
-        vramTotal: formatBytes(d.vramTotalBytes),
+        vramUsedBytes: d.vramUsedBytes ?? null,
+        vramTotalBytes: d.vramTotalBytes ?? null,
         tempC: temp,
         role: hardwareRoleForDevice(hardware, d.index, d.name),
       };
@@ -849,8 +855,8 @@ export function useDashboardOverview(opts?: { enabled?: boolean }): DashboardOve
       if (selectedGpuIndex !== 0) setSelectedGpuIndex(0);
       return;
     }
-    if (!gpuDevices.some((d) => d.index === selectedGpuIndex)) {
-      setSelectedGpuIndex(gpuDevices[0].index);
+    if (selectedGpuIndex < 0 || selectedGpuIndex >= gpuDevices.length) {
+      setSelectedGpuIndex(0);
     }
   }, [gpuDevices, selectedGpuIndex]);
 
@@ -873,52 +879,74 @@ export function useDashboardOverview(opts?: { enabled?: boolean }): DashboardOve
     const lm = normalizeLmStudioStatus(health, modelsStatus, providers);
     const rows: DashboardOverview["sidebarStatus"] = [
       {
-        id: "system",
-        label: "System",
-        value: systemStatus.label,
-        tone: systemStatus.tone,
-      },
-      {
         id: "lm-studio",
-        label: lm.label,
+        label: "LM Studio",
         value: lm.value,
         tone: lm.tone,
       },
     ];
 
-    for (const d of gpuDevices.slice(0, 2)) {
+    const devices = gpuDevices.slice(0, 2);
+    if (devices.length === 0) {
       rows.push({
-        id: `gpu-${d.index}`,
-        label: d.name,
-        value:
-          d.util != null
-            ? `${formatPct(d.util, true)}${d.tempC != null ? ` · ${Math.round(d.tempC)}°C` : ""}`
-            : "UNMEASURED",
-        tone: d.util == null ? "muted" : d.util >= 90 ? "warning" : "info",
+        id: "gpu-none",
+        label: "GPU",
+        value: telemetry?.gpu.available === false ? "Unavailable" : "UNMEASURED",
+        tone: "muted",
       });
+    } else {
+      for (const d of devices) {
+        const shortName = d.name.replace(/^NVIDIA\s+/i, "");
+        rows.push({
+          id: `gpu-${d.index}`,
+          label: `GPU ${d.index} - ${shortName}`,
+          value: d.util != null ? "Ready" : "UNMEASURED",
+          tone: d.util == null ? "muted" : "success",
+        });
+      }
     }
 
-    if (ingestion) {
+    const mem = telemetry?.memory;
+    rows.push({
+      id: "ram",
+      label: "RAM",
+      value:
+        mem?.available && mem.usedBytes != null && mem.totalBytes != null
+          ? `${formatBytes(mem.usedBytes)} / ${formatBytes(mem.totalBytes)}`
+          : "UNMEASURED",
+      tone: mem?.available ? "info" : "muted",
+    });
+
+    const gpus = telemetry?.gpu.devices ?? [];
+    if (gpus.length && telemetry?.gpu.available) {
+      let used = 0;
+      let total = 0;
+      let measured = true;
+      for (const g of gpus) {
+        if (g.vramUsedBytes == null || g.vramTotalBytes == null) {
+          measured = false;
+          break;
+        }
+        used += g.vramUsedBytes;
+        total += g.vramTotalBytes;
+      }
       rows.push({
-        id: "ingestion",
-        label: "Ingestion",
-        value:
-          ingestion.overallProgressPct != null
-            ? formatPct(ingestion.overallProgressPct, true)
-            : ingestion.counts.processing > 0
-              ? `${ingestion.counts.processing} active`
-              : "Idle",
-        tone:
-          ingestion.counts.failed > 0
-            ? "warning"
-            : ingestion.counts.processing > 0
-              ? "info"
-              : "muted",
+        id: "vram-total",
+        label: "VRAM Totaal",
+        value: measured ? `${formatBytes(used)} / ${formatBytes(total)}` : "UNMEASURED",
+        tone: measured ? "info" : "muted",
+      });
+    } else {
+      rows.push({
+        id: "vram-total",
+        label: "VRAM Totaal",
+        value: "UNMEASURED",
+        tone: "muted",
       });
     }
 
     return rows;
-  }, [health, modelsStatus, providers, systemStatus, gpuDevices, ingestion]);
+  }, [health, modelsStatus, providers, gpuDevices, telemetry]);
 
   const telemetryStale = useMemo(() => {
     if (telemetryError) return true;
