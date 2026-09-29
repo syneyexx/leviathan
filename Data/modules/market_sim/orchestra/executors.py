@@ -157,6 +157,10 @@ class ExecutionContext:
     """Optional hook writing a lesson into Memory with trust=agent_proposed; returns memory id."""
     role_knowledge: Any | None = None
     """RoleAwareTradingKnowledge — advisory experience retrieval (not authority)."""
+    trading_context_fabric: Any | None = None
+    """TradingContextFabric — canonical decision-context assembly (not a second Brain)."""
+    fincept_bridge: Any | None = None
+    """FinceptEvidenceBridge — evidence-only external analytics when ModuleManager-bound."""
     paper_router: Callable[[dict[str, Any]], dict[str, Any]] | None = None
     """Optional paper PortfolioService.place_order router; never live."""
     strategy_memory_writer: Callable[[dict[str, Any]], dict[str, Any]] | None = None
@@ -212,14 +216,75 @@ class ExecutionContext:
         symbols: list[str] | None = None,
         regime: str | None = None,
     ) -> dict[str, Any]:
-        """Retrieve advisory experience for a role; returns evidence refs for DecisionRecord."""
+        """Retrieve advisory experience for a role; returns evidence refs for DecisionRecord.
+
+        Prefers TradingContextFabric.assemble when bound (extends existing assembly —
+        not a parallel retrieval system). Falls back to RoleAwareTradingKnowledge.
+        """
+        fabric = self.trading_context_fabric
+        if fabric is not None and hasattr(fabric, "assemble"):
+            try:
+                from Data.modules.market_sim.trading_context import TradingContextRequest
+
+                bundle = fabric.assemble(
+                    TradingContextRequest(
+                        role=str(role or "market_analyst"),
+                        objective=str(query or ""),
+                        symbols=list(symbols or [])[:8],
+                        regime=str(regime) if regime else None,
+                        decision_as_of=self.as_of,
+                        max_refs_per_source=5,
+                    )
+                )
+                public = bundle.public_dict() if hasattr(bundle, "public_dict") else {}
+                rejected = list(getattr(bundle, "rejected_strategies", None) or [])
+                postmortems = list(getattr(bundle, "postmortems", None) or [])
+                citations = list(getattr(bundle, "citations", None) or public.get("citations") or [])
+                evidence_refs: list[str] = []
+                for ref in list(getattr(bundle, "all_refs", lambda: [])())[:24]:
+                    rid = getattr(ref, "ref_id", None) or (ref.get("refId") if isinstance(ref, dict) else None)
+                    if rid:
+                        evidence_refs.append(str(rid))
+                for cite in citations:
+                    if isinstance(cite, dict) and cite.get("refId"):
+                        rid = str(cite["refId"])
+                        if rid not in evidence_refs:
+                            evidence_refs.append(rid)
+                return {
+                    "evidenceRefs": evidence_refs[:12],
+                    "negativeExperienceCount": len(rejected),
+                    "citations": citations[:8],
+                    "tradingContext": {
+                        "rejectedStrategies": [r.public_dict() if hasattr(r, "public_dict") else r for r in rejected[:5]],
+                        "postmortems": [r.public_dict() if hasattr(r, "public_dict") else r for r in postmortems[:5]],
+                        "notes": list(getattr(bundle, "notes", None) or [])[:8],
+                        "fincept": [
+                            r.public_dict() if hasattr(r, "public_dict") else r
+                            for r in list(getattr(bundle, "fincept", None) or [])[:3]
+                        ],
+                    },
+                    "truth": {
+                        "knowledge_is_not_execution_authority": True,
+                        "trading_context_fabric": True,
+                        "no_second_brain": True,
+                    },
+                }
+            except Exception as exc:  # noqa: BLE001
+                # Fall through to role_knowledge; surface fabric error honestly.
+                fabric_error = str(exc)[:200]
+        else:
+            fabric_error = None
+
         if self.role_knowledge is None:
-            return {
+            out = {
                 "evidenceRefs": [],
                 "negativeExperienceCount": 0,
                 "citations": [],
                 "truth": {"role_knowledge_unbound": True, "knowledge_is_not_execution_authority": True},
             }
+            if fabric_error:
+                out["error"] = fabric_error
+            return out
         try:
             payload = self.role_knowledge.retrieve_for_role(
                 role,
@@ -229,6 +294,8 @@ class ExecutionContext:
                 max_hits=5,
                 regime=regime,
             )
+            if isinstance(payload, dict) and fabric_error:
+                payload = {**payload, "fabricError": fabric_error}
             return payload
         except Exception as exc:  # noqa: BLE001
             return {
@@ -558,6 +625,24 @@ def run_risk_officer(
         side = "HOLD"  # long-only mandate kernel today; shorts are refused, not simulated
     guard = RiskGuard(mandate_to_limits(ctx.mandate))
     guard.orders_today = orders_today
+    # Orchestra paper path: bind measured mandate/runtime health when provided; else research-lab healthy.
+    health = getattr(ctx, "runtime_health", None) or {}
+    if isinstance(health, dict) and health:
+        guard.bind_measured_runtime_health(
+            provider_health=health.get("provider_health"),
+            provider_ok=health.get("provider_ok"),
+            broker_recon_health=health.get("broker_recon_health"),
+            broker_ok=health.get("broker_ok", True),
+            data_age_seconds=health.get("data_age_seconds", 0.0),
+            model_health=health.get("model_health"),
+            model_ok=health.get("model_ok"),
+        )
+    else:
+        guard.bind_measured_runtime_health(
+            provider_ok=True,
+            broker_ok=True,
+            data_age_seconds=0.0,
+        )
     intent = OrderIntent(
         intent_id=new_id("intent"),
         run_id=ctx.orchestra_id,

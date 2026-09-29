@@ -188,6 +188,11 @@ class MultiAgentEngine:
             instrument_spec=instrument,
             short_margin_policy=short_policy,
         )
+        risk.bind_measured_runtime_health(
+            provider_ok=True,
+            broker_ok=True,
+            data_age_seconds=0.0,
+        )
         run.bar_count = len(bars)
         first_price = bars[0].close if bars else 1.0
         bh_shares = run.initial_cash / first_price if first_price > 0 else 0.0

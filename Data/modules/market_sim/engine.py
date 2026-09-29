@@ -188,6 +188,13 @@ class SimulationEngine:
                 else bool(meta.get("portfolio_shorting_enabled", meta.get("portfolioShortingEnabled")))
             ),
         )
+        # Historical gym bars are the measured provider — bind explicitly (never silent UNKNOWN→HEALTHY).
+        risk.bind_measured_runtime_health(
+            provider_ok=True,
+            broker_ok=True,
+            data_age_seconds=0.0,
+            model_ok=True if meta.get("require_model_healthy") else None,
+        )
         policy = str(
             meta.get("intrabar_path_policy")
             or meta.get("intrabarPathPolicy")

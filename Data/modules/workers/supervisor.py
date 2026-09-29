@@ -9,6 +9,7 @@ import logging
 import os
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -25,7 +26,7 @@ from .protocol import (
     WorkerRegistration,
 )
 from .registry import WorkerRegistry, utc_now
-from .settings import WorkerSettings, load_worker_settings
+from .settings import ESSENTIAL_WARM_POOLS, WorkerSettings, load_worker_settings
 from .sqlite_support import is_transient_sqlite_error
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,10 @@ class PoolRuntimeState:
     restart_attempt: int = 0
     recovery_at: float | None = None
     recent_crashes: list[dict[str, Any]] = field(default_factory=list)
+    # Scale-to-zero demand tracking (monotonic time.time()).
+    last_demand_at: float | None = None
+    # Operator override from registry — scale-to-zero does not fight overrides.
+    override_desired: bool = False
 
 
 class WorkerSupervisor:
@@ -72,6 +77,7 @@ class WorkerSupervisor:
         log_dir: Path | None = None,
         restart_count: int = 0,
         database_paths: Any | None = None,
+        queue_depth_reader: Callable[[str], int] | None = None,
     ) -> None:
         self.db_path = Path(db_path)
         self.database_paths = database_paths
@@ -82,13 +88,20 @@ class WorkerSupervisor:
             self.db_path,
             ram_headroom_mb=self.settings.ram_headroom_mb,
             vram_headroom_mb=self.settings.vram_headroom_mb,
+            host_ram_mb=self.settings.host_ram_mb,
+            vram_primary_mb=self.settings.vram_primary_mb,
+            vram_secondary_mb=self.settings.vram_secondary_mb,
         )
         self.log_dir = log_dir or (self.db_path.parent / "worker_logs")
         self.holder_id = f"supervisor-{uuid.uuid4().hex[:12]}"
         self.generation = uuid.uuid4().hex
         self._owned: dict[str, OwnedProcess] = {}
+        # Demand-gated initial desired: do not blindly warm 20+ cold pools.
         self._pools: dict[str, PoolRuntimeState] = {
-            pid: PoolRuntimeState(pool_id=pid, desired=self.settings.desired_count(pid))
+            pid: PoolRuntimeState(
+                pool_id=pid,
+                desired=self._initial_desired(pid),
+            )
             for pid in POOL_CATALOG
         }
         self._running = False
@@ -103,6 +116,8 @@ class WorkerSupervisor:
         self._announced_pools: set[str] = set()
         self._restart_attempts: dict[str, int] = {}
         self._events = get_worker_event_emitter()
+        self._queue_depth_reader = queue_depth_reader
+        self._job_store: Any | None = None
 
     def _worker_database_env(self) -> dict[str, str]:
         """Pass three canonical DB paths into worker processes (not legacy-only)."""
@@ -127,6 +142,16 @@ class WorkerSupervisor:
         env["LEVIATHAN_DB_PATH"] = str(paths.control)
         return env
 
+    def _initial_desired(self, pool_id: str) -> int:
+        """Startup desired count — essential/exempt stay warm; eligible cold start at 0."""
+        cfg = self.settings.desired_count(pool_id)
+        if not self.settings.scale_to_zero_enabled:
+            return cfg
+        if not self.settings.is_scale_to_zero_eligible(pool_id):
+            return cfg
+        # Lazy: cold pools wait for queue demand (do not warm 20+ workers).
+        return 0
+
     def _apply_desired_overrides(self) -> None:
         """Hot-apply durable API/operator pool desired counts before reconcile."""
         try:
@@ -138,8 +163,73 @@ class WorkerSupervisor:
                 continue
             max_count = POOL_CATALOG[pool_id].max_count
             clamped = max(0, min(int(desired), max_count))
-            self._pools[pool_id].desired = clamped
+            state = self._pools[pool_id]
+            state.desired = clamped
+            state.override_desired = True
             self.settings.pool_counts[pool_id] = clamped
+
+    def _queued_for_pool(self, pool_id: str) -> int:
+        if self._queue_depth_reader is not None:
+            try:
+                return max(0, int(self._queue_depth_reader(pool_id)))
+            except Exception:  # noqa: BLE001
+                return 0
+        try:
+            if self._job_store is None:
+                from Data.modules.jobs.store import JobStore
+
+                self._job_store = JobStore(self.db_path)
+            return int(self._job_store.count_queued_for_pool(pool_id))
+        except Exception:  # noqa: BLE001
+            return 0
+
+    def _busy_owned_for_pool(self, pool_id: str) -> int:
+        count = 0
+        try:
+            for reg in self.registry.list(pool_id=pool_id):
+                if reg.worker_id not in self._owned:
+                    continue
+                if reg.state == WorkerInstanceState.BUSY or reg.current_job_id:
+                    count += 1
+        except Exception:  # noqa: BLE001
+            return 0
+        return count
+
+    def _apply_scale_to_zero_targets(self) -> None:
+        """Queue-aware lazy scaling / scale-to-zero for eligible cold pools."""
+        if not self.settings.scale_to_zero_enabled:
+            for pool_id, state in self._pools.items():
+                if not state.override_desired:
+                    state.desired = self.settings.desired_count(pool_id)
+            return
+
+        now = time.time()
+        for pool_id, state in self._pools.items():
+            if state.override_desired:
+                continue
+            cfg = self.settings.desired_count(pool_id)
+            if not self.settings.is_scale_to_zero_eligible(pool_id):
+                state.desired = cfg
+                continue
+
+            queued = self._queued_for_pool(pool_id)
+            busy = self._busy_owned_for_pool(pool_id)
+            if queued > 0 or busy > 0:
+                state.last_demand_at = now
+                idle_seconds = 0.0
+            elif state.last_demand_at is not None:
+                idle_seconds = max(0.0, now - float(state.last_demand_at))
+            else:
+                # Never seen demand — stay cold (idle >> timeout).
+                idle_seconds = float(self.settings.scale_to_zero_idle_seconds) + 1.0
+
+            state.desired = self.settings.scale_to_zero_desired(
+                pool_id,
+                queued=queued,
+                busy=busy,
+                idle_seconds=idle_seconds,
+                configured=cfg,
+            )
 
     def initialize(self) -> None:
         self.registry.initialize()
@@ -387,11 +477,23 @@ class WorkerSupervisor:
             raise KeyError(pool_id)
         defn = POOL_CATALOG[pool_id]
         self._pools[pool_id].desired = max(0, min(int(count), defn.max_count))
+        self._pools[pool_id].override_desired = True
         self.settings.pool_counts[pool_id] = self._pools[pool_id].desired
         self.reconcile_pools()
 
     def reconcile_pools(self, tick_errors: list[dict[str, Any]] | None = None) -> None:
         errors = tick_errors if tick_errors is not None else []
+        try:
+            self._apply_scale_to_zero_targets()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("scale_to_zero targets failed: %s", exc)
+            errors.append(
+                {
+                    "phase": "scale_to_zero",
+                    "error": str(exc),
+                    "transient": False,
+                }
+            )
         for pool_id, state in self._pools.items():
             try:
                 self._reconcile_one_pool(pool_id, state)
@@ -859,6 +961,9 @@ class WorkerSupervisor:
             "truth": {
                 "model_serving_not_owned_here": True,
                 "pid_alone_is_not_ownership": True,
+                "scale_to_zero_demand_driven": bool(self.settings.scale_to_zero_enabled),
+                "essential_warm_pools": sorted(ESSENTIAL_WARM_POOLS),
+                "unknown_pressure_is_not_normal": True,
             },
         }
 

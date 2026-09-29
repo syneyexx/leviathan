@@ -15,6 +15,11 @@ from Data.modules.market_sim.risk_guard import RiskGuard, RiskLimits
 from Data.modules.market_sim.short_margin import ShortMarginPolicy
 
 
+def _bind_healthy(guard: RiskGuard) -> RiskGuard:
+    guard.bind_measured_runtime_health(provider_ok=True, broker_ok=True, data_age_seconds=0.0)
+    return guard
+
+
 def _spec(*, supports_short: bool = True, borrow: BorrowConstraints | None = None) -> InstrumentSpec:
     return InstrumentSpec(
         instrument_id="equity:XYZ:X",
@@ -201,6 +206,7 @@ class ShortSellingW14Tests(unittest.TestCase):
             instrument_spec=spec,
             short_margin_policy=_policy(),
         )
+        _bind_healthy(guard)
         w = _wallet()
         intent = make_intent(
             run_id="r", agent_id="a", wallet_id=w.wallet_id, side="SELL", qty=1,
@@ -216,6 +222,7 @@ class ShortSellingW14Tests(unittest.TestCase):
             instrument_spec=_spec(supports_short=False),
             short_margin_policy=_policy(),
         )
+        _bind_healthy(guard)
         w = _wallet()
         intent = make_intent(
             run_id="r", agent_id="a", wallet_id=w.wallet_id, side="SELL", qty=1,
@@ -232,6 +239,7 @@ class ShortSellingW14Tests(unittest.TestCase):
             short_margin_policy=_policy(),
             portfolio_shorting_enabled=False,
         )
+        _bind_healthy(guard)
         w = _wallet()
         intent = make_intent(
             run_id="r", agent_id="a", wallet_id=w.wallet_id, side="SELL", qty=1,

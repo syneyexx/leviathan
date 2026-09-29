@@ -36,6 +36,20 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_csv_tuple(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    parts = tuple(p.strip() for p in raw.split(",") if p.strip())
+    return parts or default
+
+
+# Pools that must stay warm even when scale-to-zero is enabled.
+# db_commit: serialized COMMIT_WRITE owner. scheduler: control-plane ticks.
+# market_sim: paper risk / sticky paper-session owner when paper trading is active.
+ESSENTIAL_WARM_POOLS: frozenset[str] = frozenset({"db_commit", "scheduler", "market_sim"})
+
+
 @dataclass
 class WorkerSettings:
     enabled: bool = True
@@ -62,10 +76,11 @@ class WorkerSettings:
     host_ram_mb: float = 16_384.0
     vram_primary_mb: float = 16_384.0
     vram_secondary_mb: float = 6_144.0
-    # Lazy startup / scale-to-zero: pools with default_count=0 stay cold until
-    # demand. Do NOT scale browser/playwright pools to zero while sticky session
+    # Lazy startup / scale-to-zero: pools with no queue demand stay cold.
+    # Do NOT scale browser/playwright pools to zero while sticky session
     # affinity is required — keep at least one warm worker for affinity.
     scale_to_zero_enabled: bool = True
+    scale_to_zero_idle_seconds: float = 120.0
     scale_to_zero_exempt_pools: tuple[str, ...] = ("browser", "playwright")
 
     pool_counts: dict[str, int] = field(default_factory=default_pool_counts)
@@ -93,17 +108,60 @@ class WorkerSettings:
                 "vram_primary_mb": self.vram_primary_mb,
                 "vram_secondary_mb": self.vram_secondary_mb,
                 "scale_to_zero_enabled": self.scale_to_zero_enabled,
+                "scale_to_zero_idle_seconds": self.scale_to_zero_idle_seconds,
                 "scale_to_zero_exempt_pools": list(self.scale_to_zero_exempt_pools),
+                "essential_warm_pools": sorted(ESSENTIAL_WARM_POOLS),
                 "pressure_profile": "16GB_RAM_16_6_VRAM",
             },
             "pools": dict(self.pool_counts),
         }
 
     def desired_count(self, pool_id: str) -> int:
+        """Configured catalog/env desired count (before scale-to-zero demand gating)."""
         if pool_id not in POOL_CATALOG:
             return 0
         raw = int(self.pool_counts.get(pool_id, POOL_CATALOG[pool_id].default_count))
         return max(0, min(raw, POOL_CATALOG[pool_id].max_count))
+
+    def is_scale_to_zero_eligible(self, pool_id: str) -> bool:
+        """True when this pool may cold-start / scale to zero under demand gating."""
+        if not self.scale_to_zero_enabled:
+            return False
+        if pool_id in ESSENTIAL_WARM_POOLS:
+            return False
+        if pool_id in self.scale_to_zero_exempt_pools:
+            return False
+        return pool_id in POOL_CATALOG
+
+    def scale_to_zero_desired(
+        self,
+        pool_id: str,
+        *,
+        queued: int = 0,
+        busy: int = 0,
+        idle_seconds: float | None = None,
+        configured: int | None = None,
+    ) -> int:
+        """Compute queue-aware desired count for one pool.
+
+        Essential / exempt pools keep their configured warm count.
+        Eligible cold pools scale to configured demand when queued/busy > 0,
+        otherwise scale to zero after idle timeout (prevents thrashing).
+        """
+        cfg = self.desired_count(pool_id) if configured is None else max(0, int(configured))
+        if not self.is_scale_to_zero_eligible(pool_id):
+            return cfg
+        if cfg <= 0:
+            return 0
+        demand = max(0, int(queued)) + max(0, int(busy))
+        if demand > 0:
+            # Meet demand without overshooting configured / max_count.
+            return max(1, min(cfg, demand))
+        idle = float(idle_seconds) if idle_seconds is not None else float("inf")
+        if idle < float(self.scale_to_zero_idle_seconds):
+            # Grace window — keep one warm worker to avoid thrash on bursty queues.
+            return min(cfg, 1)
+        return 0
 
 
 def load_worker_settings() -> WorkerSettings:
@@ -131,6 +189,17 @@ def load_worker_settings() -> WorkerSettings:
         vram_headroom_mb=_env_float("LEVIATHAN_RESOURCE_BACKGROUND_VRAM_HEADROOM", 256.0),
         terminal_summary_seconds=_env_float(
             "LEVIATHAN_WORKERS_TERMINAL_SUMMARY_SECONDS", 30.0
+        ),
+        host_ram_mb=_env_float("LEVIATHAN_HOST_RAM_MB", 16_384.0),
+        vram_primary_mb=_env_float("LEVIATHAN_VRAM_PRIMARY_MB", 16_384.0),
+        vram_secondary_mb=_env_float("LEVIATHAN_VRAM_SECONDARY_MB", 6_144.0),
+        scale_to_zero_enabled=_env_bool("LEVIATHAN_WORKERS_SCALE_TO_ZERO_ENABLED", True),
+        scale_to_zero_idle_seconds=_env_float(
+            "LEVIATHAN_WORKERS_SCALE_TO_ZERO_IDLE_SECONDS", 120.0
+        ),
+        scale_to_zero_exempt_pools=_env_csv_tuple(
+            "LEVIATHAN_WORKERS_SCALE_TO_ZERO_EXEMPT_POOLS",
+            ("browser", "playwright"),
         ),
         pool_counts=counts,
     )

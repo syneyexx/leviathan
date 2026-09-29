@@ -51,6 +51,7 @@ class HttpAuthUnitTests(unittest.TestCase):
     def test_validate_startup_fails_without_token(self) -> None:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("LEVIATHAN_OPERATOR_TOKEN", None)
+            os.environ.pop("LEVIATHAN_TRUSTED_HOSTS", None)
             with self.assertRaises(RuntimeError):
                 validate_non_loopback_security_posture(loopback_only=False)
         validate_non_loopback_security_posture(loopback_only=True)

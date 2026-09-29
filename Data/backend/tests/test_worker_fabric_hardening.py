@@ -435,6 +435,9 @@ class SourceIngestionOwnershipTests(unittest.TestCase):
         )
         self.assertIn("standalone_legacy", text)
         self.assertIn("Worker Fabric", text)
+        # Dual-supervisor mitigation: AUTOSTART skipped when bootstrap owns supervisor.
+        self.assertIn("Skipping LEVIATHAN_WORKERS_AUTOSTART", text)
+        self.assertIn("leviathan.py bootstrap owns WorkerSupervisor", text)
 
 
 class FabricRecoverySemanticsTests(unittest.TestCase):

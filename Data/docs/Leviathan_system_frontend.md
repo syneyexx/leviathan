@@ -453,7 +453,8 @@ Evaluation/analytics data used by Training or model pages should come through ce
 - `src/pages/AnalyticsPage.tsx` — LLM/system analytics;
 - `src/pages/PerformancePage.tsx` — performance/native/DB contention read model;
 - `src/pages/ConsolePage.tsx` — console/operator projection;
-- `src/pages/SectionPage.tsx`, `PlaceholderPage.tsx` — reusable generic section/fallback surfaces.
+- `src/pages/SectionPage.tsx` — generic section/fallback surface for unfinished submenu destinations.
+- `src/pages/PlaceholderPage.tsx` — **deprecated** re-export of `SectionPage` (WAVE 42 inventory). Do not delete while imports remain; new code must use `SectionPage`.
 
 Operational numbers use backend telemetry. Zero is a measurement only when the backend measured zero.
 
@@ -793,7 +794,9 @@ npm run build
 
 Tests live beside relevant pages/helpers and include shell status, Chat/Coding, Agents, datasets, Settings, Research Lab view-models/contracts, Research Command contracts, module/skills/chat fabric contracts and truth-state helpers.
 
-Playwright/MSW support remains feature-gated unless the repository/CI actually contains and runs those dependencies. Never claim E2E coverage because a plan mentions it.
+Bounded Playwright E2E lives under `Data/frontend/e2e/` (`npm run test:e2e`) covering smoke startup, Brain Graph, Brain Clusters, and agent/worker fabric surfaces with stubbed `/api`. CI job `frontend-e2e` is optional (`continue-on-error`) and skips honestly when browsers are unavailable — never a fake PASS. Live-backend browser integration remains separate. Hover-first Brain Graph labels and celestial reduced-motion/delta-clamp are covered by unit tests under `src/pages/brain/`.
+
+Playwright/MSW full live-backend coverage remains feature-gated unless CI runs against a live control plane. Never claim E2E coverage because a plan mentions it.
 
 For a UI PR, minimum expectation is typecheck + relevant Vitest + build; lint when configured/available.
 

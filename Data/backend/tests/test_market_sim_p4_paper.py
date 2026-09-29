@@ -11,7 +11,7 @@ from Data.modules.market_sim.accounting import money
 from Data.modules.market_sim.data_store import MarketDataStore
 from Data.modules.market_sim.paper_broker import LocalPaperBroker
 from Data.modules.market_sim.paper_forward import PaperForwardRunner
-from Data.modules.market_sim.risk_guard import RiskGuard, RiskLimits
+from Data.modules.market_sim.risk_guard import HealthState,  RiskGuard, RiskLimits
 from Data.modules.market_sim.service import MarketSimControlPlane
 from Data.modules.market_sim.store import MarketSimStore
 
@@ -32,9 +32,9 @@ class P4APaperIsolationTests(unittest.TestCase):
         self.assertEqual(float(b.wallet.cash), 100_000)
 
     def test_risk_guard_blocks_paper_order(self) -> None:
-        runner = PaperForwardRunner(
-            risk=RiskGuard(RiskLimits(max_orders_per_day=0, kill_switch_armed=False))
-        )
+        guard = RiskGuard(RiskLimits(max_orders_per_day=0, kill_switch_armed=False))
+        guard.bind_measured_runtime_health(provider_ok=True, broker_ok=True, data_age_seconds=0.0)
+        runner = PaperForwardRunner(risk=guard)
         b = LocalPaperBroker()
         wallet = b.wallet_for_session("sx", initial_cash=100_000)
         out = runner.step(wallet=wallet, symbol="BTC", price=100.0, side="BUY", qty=1.0)

@@ -1413,7 +1413,25 @@ trading_orchestra_service = TradingOrchestraService(
     memory=memory_store,
     trading_brain_adapter=_trading_brain_adapter,
     enabled=bool(settings.features.market_sim_enabled),
+    module_manager=module_manager if getattr(module_manager, "enabled", False) else None,
 )
+# Fincept is evidence-only via ModuleManager; MarketSim keeps trading authority.
+try:
+    if hasattr(market_sim_service, "bind_module_manager"):
+        market_sim_service.bind_module_manager(
+            module_manager if getattr(module_manager, "enabled", False) else None
+        )
+    if hasattr(trading_orchestra_service, "bind_fincept_bridge"):
+        trading_orchestra_service.bind_fincept_bridge(
+            getattr(market_sim_service, "fincept_bridge", None),
+            module_manager=module_manager if getattr(module_manager, "enabled", False) else None,
+        )
+    if hasattr(trading_orchestra_service, "bind_trading_context_fabric"):
+        fabric = getattr(market_sim_service, "ensure_trading_context_fabric", lambda: None)()
+        if fabric is not None:
+            trading_orchestra_service.bind_trading_context_fabric(fabric)
+except Exception:  # noqa: BLE001 — optional externals must not block boot
+    pass
 
 
 def _wire_system_inventory_status() -> None:
@@ -1986,7 +2004,8 @@ async def lifespan(_: FastAPI):
 
     try:
         validate_non_loopback_security_posture(
-            loopback_only=bool(settings.runtime.loopback_only)
+            loopback_only=bool(settings.runtime.loopback_only),
+            bind_host=str(settings.runtime.host),
         )
     except RuntimeError as exc:
         observability.emit(
@@ -1994,7 +2013,7 @@ async def lifespan(_: FastAPI):
             "startup.auth_required",
             payload={"error": str(exc)},
             level="error",
-            message="Refusing non-loopback startup without operator token",
+            message="Refusing non-loopback startup without operator token / trusted hosts",
         )
         raise
 
@@ -2425,8 +2444,19 @@ app = FastAPI(title="Leviathan", version="0.73.0-wave9-flywheel", lifespan=lifes
 # Narrow local-launcher Origin contract for WebView read projections.
 # Not wildcard CORS. Not credentials. Mutations stay loopback/token gated.
 from Data.modules.host_console.launcher_cors import LauncherReadCorsMiddleware
+from Data.modules.common.http_auth import resolve_trusted_hosts
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 app.add_middleware(LauncherReadCorsMiddleware)
+# Host-header allowlist (fail-closed when non-loopback). Added last → runs first.
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=resolve_trusted_hosts(
+        loopback_only=bool(settings.runtime.loopback_only),
+        bind_host=str(settings.runtime.host),
+    ),
+    www_redirect=False,
+)
 
 
 @app.middleware("http")

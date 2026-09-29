@@ -121,6 +121,15 @@ class ResourceGovernorTests(unittest.TestCase):
         self.assertTrue(pub["resource"]["scale_to_zero_enabled"])
         self.assertIn("browser", pub["resource"]["scale_to_zero_exempt_pools"])
         self.assertEqual(pub["resource"]["pressure_profile"], "16GB_RAM_16_6_VRAM")
+        self.assertIn("db_commit", pub["resource"]["essential_warm_pools"])
+        self.assertIn("scale_to_zero_idle_seconds", pub["resource"])
+
+    def test_unknown_pressure_not_silently_normal(self) -> None:
+        self.assertEqual(classify_pressure(), PressureState.UNKNOWN)
+        with tempfile.TemporaryDirectory() as tmp:
+            adm = ResourceAdmission(Path(tmp) / "adm.db")
+            adm.initialize()
+            self.assertEqual(adm.current_pressure(), PressureState.UNKNOWN)
 
 
 if __name__ == "__main__":

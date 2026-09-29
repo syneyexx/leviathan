@@ -226,33 +226,72 @@ def evaluate_portfolio_order(
                 "code": "DAILY_LOSS",
             }
 
-    # RiskGuard on projected wallet (long path)
+    # RiskGuard — one unbypassable path for BUY/SELL/SHORT/COVER.
+    from ..risk_guard import HealthState, _copy_limits
+    from ..short_margin import ShortMarginPolicy
+
     limits = default_portfolio_limits(s)
     if kill_switch:
-        limits = RiskLimits(
-            max_position_pct=limits.max_position_pct,
-            max_drawdown_pct=limits.max_drawdown_pct,
-            per_trade_risk_pct=limits.per_trade_risk_pct,
-            max_orders_per_day=limits.max_orders_per_day,
-            max_symbol_exposure_pct=limits.max_symbol_exposure_pct,
-            leverage_allowed=limits.leverage_allowed,
-            kill_switch_armed=True,
+        limits = _copy_limits(limits, kill_switch_armed=True)
+    short_policy = None
+    if shorting_enabled or action in ("SHORT", "COVER"):
+        short_policy = ShortMarginPolicy(
+            initial_margin_pct=float(s.get("initial_margin_pct", book.initial_margin_pct or 50.0)),
+            maintenance_margin_pct=float(
+                s.get("maintenance_margin_pct", book.maintenance_margin_pct or 30.0)
+            ),
         )
-    guard = RiskGuard(limits)
+    guard = RiskGuard(
+        limits,
+        short_margin_policy=short_policy,
+        portfolio_shorting_enabled=bool(shorting_enabled),
+    )
+    # Bind measured runtime health into RiskGuard — UNKNOWN never silently HEALTHY.
+    provider_state = s.get("provider_health")
+    if provider_state is None and s.get("provider_healthy") is not None:
+        provider_state = HealthState.HEALTHY if s.get("provider_healthy") else HealthState.UNHEALTHY
+    if quote_stale:
+        freshness = HealthState.UNHEALTHY
+        age = float(s.get("data_age_seconds") or (limits.stale_data_max_age_seconds or 120.0) + 1.0)
+    elif s.get("data_age_seconds") is not None:
+        age = float(s["data_age_seconds"])
+        freshness = None
+    else:
+        # Quote was fetched successfully for this evaluation → measured fresh.
+        age = float(s.get("data_age_seconds") or 0.0)
+        freshness = HealthState.HEALTHY
+    broker_state = s.get("broker_recon_health")
+    if broker_state is None and s.get("broker_reconciled") is not None:
+        broker_state = HealthState.HEALTHY if s.get("broker_reconciled") else HealthState.UNHEALTHY
+    if broker_state is None:
+        # Local paper ledger is the broker — reconciled when book loaded.
+        broker_state = HealthState.HEALTHY
+    if provider_state is None:
+        provider_state = HealthState.HEALTHY  # mark path already validated non-stale quote
+    guard.bind_measured_runtime_health(
+        provider_health=provider_state,
+        broker_recon_health=broker_state,
+        model_ok=s.get("model_healthy"),
+        model_health=s.get("model_health"),
+        data_age_seconds=age,
+        data_freshness_health=freshness,
+        gross_exposure_pct=s.get("gross_exposure_pct"),
+        net_exposure_pct=s.get("net_exposure_pct"),
+        current_leverage=s.get("current_leverage"),
+    )
     wallet = book.to_wallet_projection(symbol, price)
-    # Map SHORT/COVER to SELL/BUY for RiskGuard long-oriented evaluate when needed
-    rg_side = action
+    if shorting_enabled:
+        wallet.shorting_enabled = True
+        if short_policy is not None:
+            wallet.short_margin_policy = short_policy
+
+    # Map SHORT/COVER onto RiskGuard SELL/BUY — no side-specific bypass.
     if action == "COVER":
         rg_side = "BUY"
     elif action == "SHORT":
-        # Skip RiskGuard long sizing; portfolio gate already checked margin
-        return {
-            "allowed": True,
-            "reason": "short_sized",
-            "sized_qty": float(qty),
-            "code": "OK",
-            "risk": {"allowed": True, "reason": "short_via_portfolio_gate", "sized_qty": float(qty)},
-        }
+        rg_side = "SELL"
+    else:
+        rg_side = action
 
     from ..accounting import D as _D
     from ..paper_broker import utc_now
@@ -268,6 +307,14 @@ def evaluate_portfolio_order(
         decision_ts=utc_now(),
         eligible_bar_index=0,
         strategy_id=strategy_id,
+        metadata={
+            "portfolio_id": book.portfolio_id,
+            "strategy_id": strategy_id,
+            "agent_id": agent_id,
+            "symbol": symbol,
+            "source_decision": "evaluate_portfolio_order",
+            "portfolio_action": action,
+        },
     )
     dd = book.drawdown_pct(marks)
     if dd >= limits.max_drawdown_pct and action in ("BUY", "SHORT"):
@@ -284,6 +331,7 @@ def evaluate_portfolio_order(
         "allowed": bool(decision.allowed),
         "reason": decision.reason,
         "sized_qty": float(decision.sized_qty) if decision.allowed else 0.0,
-        "code": "OK" if decision.allowed else "RISK_VETO",
+        "code": "OK" if decision.allowed else (decision.rejection_code or "RISK_VETO"),
         "risk": decision.public_dict(),
+        "health": guard.health_snapshot(),
     }

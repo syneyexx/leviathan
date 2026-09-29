@@ -137,6 +137,31 @@ class IngestionStore:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_sic_job ON source_ingestion_containers(job_id)"
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS source_ingestion_parse_cache (
+                content_hash TEXT NOT NULL,
+                parser_version TEXT NOT NULL,
+                parser TEXT,
+                snapshot_path TEXT,
+                brain_document_id TEXT,
+                parse_status TEXT NOT NULL DEFAULT 'ok',
+                text_hash TEXT,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (content_hash, parser_version)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sipc_hash "
+            "ON source_ingestion_parse_cache(content_hash)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sim_content_hash "
+            "ON source_ingestion_members(content_hash)"
+        )
 
     def upsert_container(
         self,
@@ -158,7 +183,8 @@ class IngestionStore:
         with self.connect() as conn:
             self._ensure_schema(conn)
             existing = conn.execute(
-                "SELECT container_source_id, cancel_requested FROM source_ingestion_containers "
+                "SELECT container_source_id, cancel_requested, progress_json, manifest_json "
+                "FROM source_ingestion_containers "
                 "WHERE container_source_id = ?",
                 (container_source_id,),
             ).fetchone()
@@ -168,6 +194,15 @@ class IngestionStore:
                     if cancel_requested is not None
                     else int(existing["cancel_requested"] or 0)
                 )
+                # Preserve prior progress/manifest unless explicitly provided.
+                if progress is None:
+                    progress_payload = _loads(existing["progress_json"], {})
+                else:
+                    progress_payload = progress
+                if manifest_meta is None:
+                    manifest_payload = _loads(existing["manifest_json"], {})
+                else:
+                    manifest_payload = manifest_meta
                 conn.execute(
                     """
                     UPDATE source_ingestion_containers SET
@@ -192,8 +227,8 @@ class IngestionStore:
                         cancel,
                         compressed_bytes,
                         uncompressed_bytes,
-                        _dumps(progress or {}),
-                        _dumps(manifest_meta or {}),
+                        _dumps(progress_payload or {}),
+                        _dumps(manifest_payload or {}),
                         error,
                         now,
                         container_source_id,
@@ -225,6 +260,209 @@ class IngestionStore:
                         now,
                     ),
                 )
+
+    def merge_progress(
+        self,
+        container_source_id: str,
+        *,
+        project_id: str | None = None,
+        phase: IngestionPhase | None = None,
+        **fields: Any,
+    ) -> dict[str, Any]:
+        """Merge measurable progress fields into container progress_json.
+
+        Unknown totals should be written as the sentinel ``\"UNMEASURED\"`` rather
+        than inventing percentages. Numeric fields overwrite; callers decide honesty.
+        """
+        now = utc_now()
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                "SELECT * FROM source_ingestion_containers WHERE container_source_id=?",
+                (container_source_id,),
+            ).fetchone()
+            if row is None:
+                if not project_id:
+                    raise ValueError("merge_progress requires project_id for new container")
+                progress = dict(fields)
+                progress["updated_at"] = now
+                conn.execute(
+                    """
+                    INSERT INTO source_ingestion_containers(
+                        container_source_id, project_id, job_id, filename, archive_type,
+                        phase, cancel_requested, compressed_bytes, uncompressed_bytes,
+                        progress_json, manifest_json, error, created_at, updated_at
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        container_source_id,
+                        project_id,
+                        None,
+                        None,
+                        None,
+                        (phase or IngestionPhase.STORED).value,
+                        0,
+                        0,
+                        0,
+                        _dumps(progress),
+                        "{}",
+                        None,
+                        now,
+                        now,
+                    ),
+                )
+                return progress
+            progress = _loads(row["progress_json"], {})
+            progress.update(fields)
+            progress["updated_at"] = now
+            conn.execute(
+                """
+                UPDATE source_ingestion_containers SET
+                    phase=COALESCE(?, phase),
+                    progress_json=?,
+                    updated_at=?
+                WHERE container_source_id=?
+                """,
+                (
+                    phase.value if phase is not None else None,
+                    _dumps(progress),
+                    now,
+                    container_source_id,
+                ),
+            )
+            return progress
+
+    def get_parse_cache(
+        self,
+        content_hash: str,
+        *,
+        parser_version: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Return prior parse/brain result for content_hash if present."""
+        if not content_hash:
+            return None
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            if parser_version:
+                row = conn.execute(
+                    """
+                    SELECT * FROM source_ingestion_parse_cache
+                    WHERE content_hash=? AND parser_version=?
+                    """,
+                    (content_hash, parser_version),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT * FROM source_ingestion_parse_cache
+                    WHERE content_hash=?
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                    """,
+                    (content_hash,),
+                ).fetchone()
+        if row is None:
+            return None
+        return {
+            "content_hash": row["content_hash"],
+            "parser_version": row["parser_version"],
+            "parser": row["parser"],
+            "snapshot_path": row["snapshot_path"],
+            "brain_document_id": row["brain_document_id"],
+            "parse_status": row["parse_status"],
+            "text_hash": row["text_hash"],
+            "metadata": _loads(row["metadata_json"], {}),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def put_parse_cache(
+        self,
+        *,
+        content_hash: str,
+        parser_version: str,
+        parser: str | None = None,
+        snapshot_path: str | None = None,
+        brain_document_id: str | None = None,
+        parse_status: str = "ok",
+        text_hash: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        if not content_hash:
+            return
+        now = utc_now()
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            conn.execute(
+                """
+                INSERT INTO source_ingestion_parse_cache(
+                    content_hash, parser_version, parser, snapshot_path,
+                    brain_document_id, parse_status, text_hash, metadata_json,
+                    created_at, updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(content_hash, parser_version) DO UPDATE SET
+                    parser=excluded.parser,
+                    snapshot_path=COALESCE(excluded.snapshot_path, source_ingestion_parse_cache.snapshot_path),
+                    brain_document_id=COALESCE(
+                        excluded.brain_document_id,
+                        source_ingestion_parse_cache.brain_document_id
+                    ),
+                    parse_status=excluded.parse_status,
+                    text_hash=COALESCE(excluded.text_hash, source_ingestion_parse_cache.text_hash),
+                    metadata_json=excluded.metadata_json,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    content_hash,
+                    parser_version,
+                    parser,
+                    snapshot_path,
+                    brain_document_id,
+                    parse_status,
+                    text_hash,
+                    _dumps(metadata or {}),
+                    now,
+                    now,
+                ),
+            )
+
+    def find_processed_member_by_hash(
+        self,
+        content_hash: str,
+        *,
+        exclude_container_id: str | None = None,
+    ) -> ManifestMember | None:
+        """Early-dedupe helper: locate a successfully parsed member with same hash."""
+        if not content_hash:
+            return None
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            if exclude_container_id:
+                row = conn.execute(
+                    """
+                    SELECT * FROM source_ingestion_members
+                    WHERE content_hash=? AND outcome IN ('success', 'duplicate')
+                      AND parse_status='ok'
+                      AND container_source_id != ?
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                    """,
+                    (content_hash, exclude_container_id),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT * FROM source_ingestion_members
+                    WHERE content_hash=? AND outcome IN ('success', 'duplicate')
+                      AND parse_status='ok'
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                    """,
+                    (content_hash,),
+                ).fetchone()
+        if row is None:
+            return None
+        return self._member_from_row(row)
 
     def request_cancel(self, container_source_id: str) -> None:
         with self.connect() as conn:

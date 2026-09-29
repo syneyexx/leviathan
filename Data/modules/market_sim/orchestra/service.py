@@ -84,6 +84,9 @@ class TradingOrchestraService:
         enabled: bool = True,
         role_knowledge: Any | None = None,
         trading_brain_adapter: Any | None = None,
+        trading_context_fabric: Any | None = None,
+        fincept_bridge: Any | None = None,
+        module_manager: Any | None = None,
     ) -> None:
         self.store = store
         self.fleet = fleet
@@ -103,9 +106,86 @@ class TradingOrchestraService:
                 self.role_knowledge = RoleAwareTradingKnowledge(trading_brain_adapter)
             except Exception:  # noqa: BLE001
                 self.role_knowledge = None
+        self.trading_context_fabric = trading_context_fabric
+        self.fincept_bridge = fincept_bridge
+        self.module_manager = module_manager
+        if self.trading_context_fabric is None:
+            self.trading_context_fabric = self._build_default_trading_context_fabric()
+        if self.module_manager is not None and self.fincept_bridge is None:
+            self.bind_fincept_bridge(module_manager=self.module_manager)
+        elif self.fincept_bridge is not None and self.trading_context_fabric is not None:
+            self._attach_fincept_lister_to_fabric()
         self.executor = TradingMissionExecutor(self)
         # Optional gate set by Research Command. None preserves historical launch behavior.
         self.mission_blocker: Any | None = None
+
+    def _build_default_trading_context_fabric(self) -> Any:
+        """ONE TradingContextFabric over existing owners — not a second Brain."""
+        from Data.modules.market_sim.trading_context import TradingContextFabric
+
+        strategy_memory_lister = None
+        lesson_retriever = None
+        plane = self.market_plane
+        if plane is not None and hasattr(plane, "store"):
+            store = plane.store
+
+            def _mem(*, as_of_ts: str | None = None, limit: int = 12, **_k: Any) -> list[dict[str, Any]]:
+                try:
+                    return list(
+                        store.list_strategy_memories(as_of_ts=as_of_ts, limit=limit) or []
+                    )
+                except Exception:  # noqa: BLE001
+                    return []
+
+            strategy_memory_lister = _mem
+
+            def _lessons() -> list[dict[str, Any]]:
+                try:
+                    if hasattr(store, "list_learning_lessons"):
+                        return list(store.list_learning_lessons(limit=12) or [])
+                except Exception:  # noqa: BLE001
+                    return []
+                return []
+
+            lesson_retriever = _lessons
+
+        return TradingContextFabric(
+            role_knowledge=self.role_knowledge,
+            trading_brain=self.trading_brain_adapter,
+            strategy_memory_lister=strategy_memory_lister,
+            lesson_retriever=lesson_retriever,
+        )
+
+    def _attach_fincept_lister_to_fabric(self) -> None:
+        fabric = self.trading_context_fabric
+        bridge = self.fincept_bridge
+        if fabric is None or bridge is None:
+            return
+        if getattr(fabric, "fincept_lister", None) is not None:
+            return
+
+        def _fincept_lister(*, limit: int = 6, **_k: Any) -> list[dict[str, Any]]:
+            # Evidence-only: surface discovery state / recent availability, never invent analytics.
+            try:
+                info = bridge.availability() if hasattr(bridge, "availability") else {}
+            except Exception:  # noqa: BLE001
+                info = {}
+            state = str((info or {}).get("state") or "UNKNOWN")
+            return [
+                {
+                    "artifact_id": f"fincept-availability-{state.lower()}",
+                    "module": "fincept-terminal",
+                    "summary": f"Fincept availability={state}",
+                    "result_state": state,
+                    "available_at": None,
+                    "command": "discover",
+                }
+            ][:limit]
+
+        try:
+            fabric.fincept_lister = _fincept_lister
+        except Exception:  # noqa: BLE001
+            pass
 
     def bind_role_knowledge(self, role_knowledge: Any | None = None, *, trading_brain_adapter: Any | None = None) -> None:
         if trading_brain_adapter is not None:
@@ -116,6 +196,41 @@ class TradingOrchestraService:
             from Data.modules.market_sim.role_knowledge import RoleAwareTradingKnowledge
 
             self.role_knowledge = RoleAwareTradingKnowledge(self.trading_brain_adapter)
+        if self.trading_context_fabric is not None:
+            try:
+                self.trading_context_fabric.role_knowledge = self.role_knowledge
+                self.trading_context_fabric.trading_brain = self.trading_brain_adapter
+            except Exception:  # noqa: BLE001
+                pass
+        elif self.trading_context_fabric is None:
+            self.trading_context_fabric = self._build_default_trading_context_fabric()
+
+    def bind_fincept_bridge(
+        self,
+        fincept_bridge: Any | None = None,
+        *,
+        module_manager: Any | None = None,
+    ) -> dict[str, Any] | None:
+        """Bind FinceptEvidenceBridge via ModuleManager capability discovery (evidence-only)."""
+        if module_manager is not None:
+            self.module_manager = module_manager
+        if fincept_bridge is not None:
+            self.fincept_bridge = fincept_bridge
+        if self.fincept_bridge is None:
+            from Data.modules.market_sim.fincept_bridge import FinceptEvidenceBridge
+
+            self.fincept_bridge = FinceptEvidenceBridge()
+        discovery = None
+        if self.module_manager is not None and hasattr(self.fincept_bridge, "bind_from_module_manager"):
+            discovery = self.fincept_bridge.bind_from_module_manager(self.module_manager)
+        self._attach_fincept_lister_to_fabric()
+        return discovery if isinstance(discovery, dict) else None
+
+    def bind_trading_context_fabric(self, fabric: Any | None) -> None:
+        self.trading_context_fabric = fabric
+        if self.trading_context_fabric is None:
+            self.trading_context_fabric = self._build_default_trading_context_fabric()
+        self._attach_fincept_lister_to_fabric()
 
     # ------------------------------------------------------------------ binding
 
@@ -891,6 +1006,8 @@ class TradingMissionExecutor:
             bars_provider=bars,
             memory_writer=service.memory_writer(orchestra_id=orchestra_id, mission_id=mission.mission_id),
             role_knowledge=service.role_knowledge,
+            trading_context_fabric=getattr(service, "trading_context_fabric", None),
+            fincept_bridge=getattr(service, "fincept_bridge", None),
             paper_router=service.paper_router(orchestra_id=orchestra_id),
             strategy_memory_writer=service.strategy_memory_writer(),
         )

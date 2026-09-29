@@ -43,6 +43,12 @@ class StrategySearchGrammarTests(unittest.TestCase):
             "risk_scaling",
             "portfolio_constraint",
             "execution_rule",
+            # Structural axes — grammar varies these, not only params.
+            "entry",
+            "exit",
+            "stop",
+            "horizon",
+            "features",
         ):
             self.assertIn(required, ids)
 

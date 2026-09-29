@@ -107,6 +107,86 @@ class MarketSimControlPlane:
         from .portefeuille.service import PortfolioService
 
         self.portfolios = PortfolioService(store, providers=self.providers, plane=self)
+        self.trading_context_fabric: Any | None = None
+        self.fincept_bridge: Any | None = None
+        self.module_manager: Any | None = None
+
+    def ensure_trading_context_fabric(self) -> Any:
+        """Lazy ONE TradingContextFabric over existing MarketSim owners."""
+        if self.trading_context_fabric is not None:
+            return self.trading_context_fabric
+        from .trading_context import TradingContextFabric
+
+        role_knowledge = None
+        trading_brain = getattr(self.brain, "trading_brain_adapter", None)
+        if trading_brain is not None:
+            try:
+                from .role_knowledge import RoleAwareTradingKnowledge
+
+                role_knowledge = RoleAwareTradingKnowledge(trading_brain)
+            except Exception:  # noqa: BLE001
+                role_knowledge = None
+
+        def _mem(*, as_of_ts: str | None = None, limit: int = 12, **_k: Any) -> list:
+            try:
+                return list(self.store.list_strategy_memories(as_of_ts=as_of_ts, limit=limit) or [])
+            except Exception:  # noqa: BLE001
+                return []
+
+        self.trading_context_fabric = TradingContextFabric(
+            role_knowledge=role_knowledge,
+            trading_brain=trading_brain,
+            brain_facade=getattr(self.brain, "brain_access", None) or getattr(self.brain, "access", None),
+            strategy_memory_lister=_mem,
+        )
+        return self.trading_context_fabric
+
+    def bind_module_manager(self, module_manager: Any | None) -> dict[str, Any] | None:
+        """Bind ModuleManager for Fincept evidence-only capability discovery."""
+        self.module_manager = module_manager
+        return self.bind_fincept_bridge(module_manager=module_manager)
+
+    def bind_fincept_bridge(
+        self,
+        fincept_bridge: Any | None = None,
+        *,
+        module_manager: Any | None = None,
+    ) -> dict[str, Any] | None:
+        if module_manager is not None:
+            self.module_manager = module_manager
+        if fincept_bridge is not None:
+            self.fincept_bridge = fincept_bridge
+        if self.fincept_bridge is None:
+            from .fincept_bridge import FinceptEvidenceBridge
+
+            self.fincept_bridge = FinceptEvidenceBridge()
+        discovery = None
+        if self.module_manager is not None and hasattr(self.fincept_bridge, "bind_from_module_manager"):
+            discovery = self.fincept_bridge.bind_from_module_manager(self.module_manager)
+        # Keep fabric fincept_lister wired when fabric already exists.
+        fabric = self.ensure_trading_context_fabric()
+        if fabric is not None and getattr(fabric, "fincept_lister", None) is None and self.fincept_bridge is not None:
+            bridge = self.fincept_bridge
+
+            def _fincept_lister(*, limit: int = 6, **_k: Any) -> list:
+                try:
+                    info = bridge.availability() if hasattr(bridge, "availability") else {}
+                except Exception:  # noqa: BLE001
+                    info = {}
+                state = str((info or {}).get("state") or "UNKNOWN")
+                return [
+                    {
+                        "artifact_id": f"fincept-availability-{state.lower()}",
+                        "module": "fincept-terminal",
+                        "summary": f"Fincept availability={state}",
+                        "result_state": state,
+                        "available_at": None,
+                        "command": "discover",
+                    }
+                ][:limit]
+
+            fabric.fincept_lister = _fincept_lister
+        return discovery if isinstance(discovery, dict) else None
 
     @classmethod
     def from_settings(
@@ -2160,16 +2240,30 @@ class MarketSimControlPlane:
             wallet = getattr(broker, "wallet", None)
         if wallet is None:
             raise MarketSimError("PAPER_WALLET_MISSING", session_id, http_status=500)
-        runner = PaperForwardRunner(
-            risk=RiskGuard(
-                RiskLimits(
-                    max_position_pct=25.0,
-                    max_drawdown_pct=20.0,
-                    per_trade_risk_pct=1.0,
-                    kill_switch_armed=bool(session.get("kill_switch")),
-                )
-            )
+        guard = RiskGuard(
+            RiskLimits(
+                max_position_pct=25.0,
+                max_drawdown_pct=20.0,
+                per_trade_risk_pct=1.0,
+                kill_switch_armed=bool(session.get("kill_switch")),
+            ),
+            receipt_sink=self._risk_receipt_sink(session),
         )
+        # Bind measured runtime health — never leave UNKNOWN as silent HEALTHY.
+        self._bind_paper_risk_health(
+            guard,
+            session=session,
+            feed_allowed=allowed,
+            feed_code=feed_code,
+            has_quote=True,
+        )
+        guard.set_receipt_context(
+            portfolio_id=session_id,
+            strategy_id=session.get("strategy_id"),
+            symbol=session.get("symbol"),
+            source_decision="paper_place_order",
+        )
+        runner = PaperForwardRunner(risk=guard)
         decision = runner.step(
             wallet=wallet,
             symbol=session["symbol"],
@@ -2177,7 +2271,7 @@ class MarketSimControlPlane:
             side=side,
             qty=qty,
             rationale="paper_place_order",
-            metadata={"session_id": session_id},
+            metadata={"session_id": session_id, "symbol": session.get("symbol")},
         )
         if not decision.get("allowed"):
             raise MarketSimError(
@@ -2242,13 +2336,31 @@ class MarketSimControlPlane:
         if price is None:
             raise MarketSimError("FEED_UNCERTAIN", "no quote for paper forward", http_status=409)
         wallet = broker.wallet_for_session(session_id, create=True) if hasattr(broker, "wallet_for_session") else broker.wallet
-        runner = PaperForwardRunner(risk=RiskGuard(RiskLimits()))
+        guard = RiskGuard(
+            RiskLimits(kill_switch_armed=bool(session.get("kill_switch"))),
+            receipt_sink=self._risk_receipt_sink(session),
+        )
+        self._bind_paper_risk_health(
+            guard,
+            session=session,
+            feed_allowed=allowed,
+            feed_code=feed_code,
+            has_quote=True,
+        )
+        guard.set_receipt_context(
+            portfolio_id=session_id,
+            strategy_id=session.get("strategy_id"),
+            symbol=session.get("symbol"),
+            source_decision="paper_forward_step",
+        )
+        runner = PaperForwardRunner(risk=guard)
         result = runner.step(
             wallet=wallet,
             symbol=session["symbol"],
             price=float(price),
             side=side,
             qty=qty,
+            metadata={"session_id": session_id, "symbol": session.get("symbol")},
         )
         meta = dict(session.get("metadata") or {})
         fwd = meta.get("paper_forward") or new_paper_forward_state(
@@ -2489,6 +2601,10 @@ class MarketSimControlPlane:
         session = self.paper_session_state(session_id)
         quote = (session.get("metadata") or {}).get("last_quote") or {}
         price = quote.get("price")
+        # Prefer explicit session feed_status; live quote ⇒ measured healthy feed.
+        feed_status = str(session.get("feed_status") or "").strip().lower()
+        if not feed_status or feed_status in {"unknown", "unmeasured"}:
+            feed_status = "live" if price is not None else "unknown"
         obs = record_shadow_observation(
             loop,
             symbol=session["symbol"],
@@ -2496,7 +2612,7 @@ class MarketSimControlPlane:
             proposed_qty=proposed_qty,
             risk_decision=risk_decision,
             hypothetical_price=float(price) if price is not None else None,
-            feed_status=str(session.get("feed_status") or "unknown"),
+            feed_status=feed_status,
             market_snapshot_ref=f"quote:{session.get('updated_at')}",
             metadata={"deployment_id": deployment_id, "no_order": True},
         )
@@ -2767,27 +2883,55 @@ class MarketSimControlPlane:
         if loop is None or not loop.paper_session_id:
             raise MarketSimError("PAPER_SESSION_MISSING", deployment_id, http_status=409)
         # Deterministic decision identity for this tick.
-        decision_generation = int((row.get("metadata_json") or {}).get("decision_generation") or 0) + 1
+        meta = dict(row.get("metadata_json") or {})
+        decision_generation = int(meta.get("decision_generation") or 0) + 1
         decision_id = f"{deployment_id}:{decision_generation}:{side}"
+        # Trading lineage IDs — extend existing receipt fields (no new system).
+        root_id = str(
+            meta.get("root_id")
+            or meta.get("root_trace_id")
+            or loop.paper_session_id
+            or deployment_id
+        )
+        parent_id = str(
+            meta.get("last_decision_id")
+            or meta.get("parent_id")
+            or meta.get("parent_trace_id")
+            or root_id
+        )
+        trace_id = str(meta.get("trace_id") or f"trace:{decision_id}")
         stepped = self.paper_forward_step(loop.paper_session_id, side=side, qty=qty)
+        order_payload = (stepped.get("result") or {}).get("order")
+        order_id = None
+        if isinstance(order_payload, dict):
+            order_id = order_payload.get("order_id") or order_payload.get("orderId")
         receipt = {
             "step_id": decision_id,
             "decision_id": decision_id,
             "decision_generation": decision_generation,
+            "trace_id": trace_id,
+            "root_id": root_id,
+            "root_trace_id": root_id,
+            "parent_id": parent_id,
+            "parent_trace_id": parent_id,
+            "order_id": order_id,
             "checkpoint_step": (stepped.get("forward") or {}).get("checkpoint_step"),
             "allowed": (stepped.get("result") or {}).get("allowed"),
             "blocked": bool((stepped.get("result") or {}).get("blocked")),
             "side": side,
-            "order": (stepped.get("result") or {}).get("order"),
-            "filled": bool((stepped.get("result") or {}).get("order")),
+            "order": order_payload,
+            "filled": bool(order_payload),
             "at": utc_now(),
         }
         loop.paper_step_receipts.append(receipt)
         loop.stage = "AUTONOMOUS_PAPER"
         loop.updated_at = utc_now()
-        meta = dict(row.get("metadata_json") or {})
         meta["decision_generation"] = decision_generation
         meta["last_decision_id"] = decision_id
+        meta["trace_id"] = trace_id
+        meta["root_id"] = root_id
+        meta["root_trace_id"] = root_id
+        meta["parent_id"] = parent_id
         meta["next_tick_at"] = utc_now()
         row["loop_state_json"] = loop.public_dict()
         row["metadata_json"] = meta
@@ -3511,11 +3655,87 @@ class MarketSimControlPlane:
             "executed_via": "market_sim.scan_batch",
         }
 
+    def _bind_paper_risk_health(
+        self,
+        guard: Any,
+        *,
+        session: dict[str, Any],
+        feed_allowed: bool,
+        feed_code: str,
+        has_quote: bool,
+    ) -> None:
+        """Bind measured paper-session health into RiskGuard (fail-closed UNKNOWN)."""
+        from .risk_guard import HealthState
+
+        meta = dict(session.get("metadata") or {})
+        quote = meta.get("last_quote") or {}
+        age = quote.get("age_seconds")
+        if age is None and quote.get("ts"):
+            age = 0.0
+        if age is None and has_quote:
+            age = 0.0
+        if feed_allowed and has_quote:
+            provider = HealthState.HEALTHY
+            freshness = HealthState.HEALTHY
+        elif not feed_allowed:
+            provider = HealthState.UNHEALTHY
+            freshness = HealthState.UNHEALTHY
+            if "UNKNOWN" in str(feed_code).upper() or "UNMEASURED" in str(feed_code).upper():
+                provider = HealthState.UNKNOWN
+                freshness = HealthState.UNKNOWN
+        else:
+            provider = HealthState.UNKNOWN
+            freshness = HealthState.UNKNOWN
+        recon = session.get("broker_reconciled")
+        if recon is None:
+            broker = HealthState.HEALTHY  # local paper broker is the reconciliation authority
+        else:
+            broker = HealthState.HEALTHY if recon else HealthState.UNHEALTHY
+        guard.bind_measured_runtime_health(
+            provider_health=provider,
+            broker_recon_health=broker,
+            data_age_seconds=float(age) if age is not None else None,
+            data_freshness_health=freshness,
+            model_health=session.get("model_health") or meta.get("model_health"),
+            model_ok=session.get("model_healthy") if "model_healthy" in session else None,
+        )
+
+    def _risk_receipt_sink(self, session: dict[str, Any] | None = None):
+        """Return a durable MARKET risk-receipt writer bound to this control plane."""
+
+        def _sink(entry: dict[str, Any]) -> None:
+            payload = dict(entry)
+            ctx = dict(payload.get("context") or {})
+            if session:
+                ctx.setdefault("portfolio_id", session.get("session_id"))
+                ctx.setdefault("strategy_id", session.get("strategy_id"))
+                ctx.setdefault("symbol", session.get("symbol"))
+            payload["context"] = ctx
+            payload["portfolio_id"] = ctx.get("portfolio_id")
+            payload["strategy_id"] = ctx.get("strategy_id")
+            payload["symbol"] = ctx.get("symbol")
+            payload["action"] = ctx.get("action")
+            payload["requested_qty"] = ctx.get("requested_qty")
+            payload["decision_id"] = ctx.get("decision_id")
+            payload["order_intent_id"] = ctx.get("order_intent_id")
+            payload["agent_id"] = ctx.get("agent_id")
+            payload["orchestra_id"] = ctx.get("orchestra_id")
+            payload["parent_trace_id"] = ctx.get("parent_trace_id")
+            payload["root_trace_id"] = ctx.get("root_trace_id")
+            payload["source_decision"] = ctx.get("source_decision")
+            self.store.save_risk_receipt(payload)
+
+        return _sink
+
     def _feed_allows_new_risk(self, *, session: dict[str, Any] | None = None) -> tuple[bool, str]:
         meta = dict((session or {}).get("metadata") or {})
         feed_id = meta.get("feed_id") or (session or {}).get("feed_id")
         if not feed_id:
-            return True, ""
+            # No feed fabric binding — allow only when a measured quote exists on the session.
+            quote = meta.get("last_quote") or {}
+            if quote.get("price") is not None:
+                return True, ""
+            return False, "FEED_UNKNOWN"
         try:
             feed_session = self.feed_runtime.get(str(feed_id))
         except MarketSimError:

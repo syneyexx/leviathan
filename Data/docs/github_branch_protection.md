@@ -5,6 +5,13 @@
 > protection was applied by an agent run. Cloud Agent `gh` access is read-only
 > for repository administration writes; PR creation uses ManagePullRequest only.
 
+## Current measured state (A–Z consolidation run)
+
+- API probe `GET /repos/syneyexx/leviathan/branches/main/protection` → **HTTP 403**
+  (`Resource not accessible by integration`).
+- Verdict: **OPERATOR_ACTION_REQUIRED** — server-side protection is not claimed applied.
+- Agents must not invent a green protection badge from documentation alone.
+
 ## Required settings (main / default branch)
 
 Configure via GitHub → Settings → Branches → Branch protection rules for `main`
@@ -21,6 +28,7 @@ Configure via GitHub → Settings → Branches → Branch protection rules for `
      - `Backend tests + security + rounds`
      - `Frontend typecheck + lint + test + build`
      - Any additional verifier jobs the workflow defines (native/offline gates)
+     - Optional (do not require until stable): `frontend-e2e`, `windows-launcher`
 
 3. **Require conversation resolution before merging**
 
@@ -33,7 +41,9 @@ Configure via GitHub → Settings → Branches → Branch protection rules for `
 
 Canonical workflow: `.github/workflows/leviathan-ci.yml`
 
-What it already enforces on `Data/**` changes:
+What it enforces on `Data/**` **and** root runtime paths (`leviathan.py`,
+`run_leviathan*.bat`, `installer.bat`, `build_run_leviathan_exe.bat`,
+`.env.example`, `requirements*`, release/verify scripts):
 
 - Full `Data/backend/tests` pytest suite
 - Security-sensitive Round 8 tests
@@ -41,6 +51,7 @@ What it already enforces on `Data/**` changes:
 - Frontier round exit gates
 - Offline `scripts/verify_leviathan.py --allow-incomplete`
 - Frontend `npm ci` → typecheck → lint → test → build
+- Windows launcher typecheck/tests (exe build remains OPERATOR_ACTION)
 
 Out of scope (honest NOT_APPLICABLE in CI plan): `Data/HADES/`, `editor/`.
 

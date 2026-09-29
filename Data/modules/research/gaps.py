@@ -87,9 +87,21 @@ def _primary_types_present(sources: list[Any], preferred: list[str]) -> set[str]
             if cls:
                 present.add(str(cls))
         uri = (getattr(src, "canonical_uri", None) or getattr(src, "original_uri", None) or "").lower()
-        if any(tok in uri for tok in (".gov", ".edu", "arxiv.org", "doi.org", "pubmed")):
+        # .gov can signal official_primary; scholarly TLDs/venues alone do NOT imply peer_reviewed.
+        if ".gov" in uri or uri.endswith(".mil") or ".mil/" in uri:
             present.add("official_primary")
-            present.add("peer_reviewed")
+        meta_pr = ""
+        if isinstance(meta, dict):
+            meta_pr = str(
+                meta.get("peer_review_status")
+                or meta.get("publication_type")
+                or meta.get("source_class")
+                or ""
+            ).lower()
+            if meta_pr in {"peer_reviewed", "peer_reviewed_article"} or meta.get("peer_reviewed") is True:
+                present.add("peer_reviewed")
+        if "arxiv.org" in uri:
+            present.add("preprint")
     preferred_set = {p.lower() for p in preferred}
     return preferred_set & {p.lower() for p in present}
 

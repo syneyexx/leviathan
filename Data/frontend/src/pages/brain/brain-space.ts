@@ -398,3 +398,12 @@ export function prefersReducedMotion(): boolean {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
+
+/** Labels stay hidden until hover or selection — zoom alone must not force identity text. */
+export function brainSpaceLabelVisible(args: {
+  showLabels: boolean;
+  selected: boolean;
+  hovered: boolean;
+}): boolean {
+  return Boolean(args.showLabels && (args.selected || args.hovered));
+}

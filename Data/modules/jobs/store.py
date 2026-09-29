@@ -385,6 +385,23 @@ class JobStore:
             ).fetchone()
         return int(row[0] if row is not None else 0)
 
+    def count_queued_for_pool(self, pool_id: str) -> int:
+        """COUNT QUEUED (+ RETRY_WAIT ready) jobs assigned to a worker pool."""
+        pool = str(pool_id or "").strip()
+        if not pool:
+            return 0
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS n FROM jobs
+                WHERE worker_pool = ?
+                  AND state IN (?, ?)
+                """,
+                (pool, JobState.QUEUED.value, JobState.RETRY_WAIT.value),
+            ).fetchone()
+        return int(row[0] if row is not None else 0)
+
     def list_children(self, parent_job_id: str, *, limit: int = 100) -> list[JobRecord]:
         with self.connect() as conn:
             self._ensure_schema(conn)

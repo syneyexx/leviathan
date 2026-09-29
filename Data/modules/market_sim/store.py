@@ -1392,6 +1392,140 @@ class MarketSimStore:
             for r in rows
         ]
 
+    def save_risk_receipt(self, entry: dict[str, Any]) -> dict[str, Any]:
+        """Persist a RiskGuard decision receipt into MARKET (survives API/worker restart)."""
+        receipt_id = str(entry.get("receipt_id") or uuid.uuid4())
+        ts = str(entry.get("timestamp") or entry.get("ts") or utc_now())
+        ctx = dict(entry.get("context") or {})
+        health = entry.get("health") if isinstance(entry.get("health"), dict) else {}
+        limits = entry.get("limits") if isinstance(entry.get("limits"), dict) else {}
+        row = {
+            "receipt_id": receipt_id,
+            "timestamp": ts,
+            "portfolio_id": entry.get("portfolio_id") or ctx.get("portfolio_id"),
+            "strategy_id": entry.get("strategy_id") or ctx.get("strategy_id"),
+            "agent_id": entry.get("agent_id") or ctx.get("agent_id"),
+            "orchestra_id": entry.get("orchestra_id") or ctx.get("orchestra_id"),
+            "decision_id": entry.get("decision_id") or ctx.get("decision_id"),
+            "order_intent_id": entry.get("order_intent_id") or ctx.get("order_intent_id"),
+            "symbol": entry.get("symbol") or ctx.get("symbol"),
+            "action": entry.get("action") or ctx.get("action"),
+            "requested_qty": entry.get("requested_qty", ctx.get("requested_qty")),
+            "sized_qty": entry.get("sized_qty", ctx.get("sized_qty")),
+            "decision": str(entry.get("decision") or ("REJECT" if entry.get("rejection_code") else "ALLOW")),
+            "rejection_code": entry.get("rejection_code"),
+            "reason": str(entry.get("reason") or ""),
+            "health": health,
+            "limits": limits,
+            "context": ctx,
+            "parent_trace_id": entry.get("parent_trace_id") or ctx.get("parent_trace_id"),
+            "root_trace_id": entry.get("root_trace_id") or ctx.get("root_trace_id"),
+            "source_decision": entry.get("source_decision") or ctx.get("source_decision"),
+            "persistence_status": str(entry.get("persistence_status") or "DURABLE"),
+            "payload": dict(entry),
+            "created_at": utc_now(),
+        }
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO market_risk_receipts(
+                    receipt_id, timestamp, portfolio_id, strategy_id, agent_id, orchestra_id,
+                    decision_id, order_intent_id, symbol, action, requested_qty, sized_qty,
+                    decision, rejection_code, reason, health_json, limits_json, context_json,
+                    parent_trace_id, root_trace_id, source_decision, persistence_status,
+                    payload_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["receipt_id"],
+                    row["timestamp"],
+                    row["portfolio_id"],
+                    row["strategy_id"],
+                    row["agent_id"],
+                    row["orchestra_id"],
+                    row["decision_id"],
+                    row["order_intent_id"],
+                    row["symbol"],
+                    row["action"],
+                    row["requested_qty"],
+                    row["sized_qty"],
+                    row["decision"],
+                    row["rejection_code"],
+                    row["reason"],
+                    json.dumps(row["health"]),
+                    json.dumps(row["limits"]),
+                    json.dumps(row["context"]),
+                    row["parent_trace_id"],
+                    row["root_trace_id"],
+                    row["source_decision"],
+                    row["persistence_status"],
+                    json.dumps(row["payload"], default=str),
+                    row["created_at"],
+                ),
+            )
+        return row
+
+    def get_risk_receipt(self, receipt_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            r = conn.execute(
+                "SELECT * FROM market_risk_receipts WHERE receipt_id=?",
+                (receipt_id,),
+            ).fetchone()
+        if not r:
+            return None
+        return {
+            "receipt_id": r["receipt_id"],
+            "timestamp": r["timestamp"],
+            "portfolio_id": r["portfolio_id"],
+            "strategy_id": r["strategy_id"],
+            "agent_id": r["agent_id"],
+            "orchestra_id": r["orchestra_id"],
+            "decision_id": r["decision_id"],
+            "order_intent_id": r["order_intent_id"],
+            "symbol": r["symbol"],
+            "action": r["action"],
+            "requested_qty": r["requested_qty"],
+            "sized_qty": r["sized_qty"],
+            "decision": r["decision"],
+            "rejection_code": r["rejection_code"],
+            "reason": r["reason"],
+            "health": _loads(r["health_json"], {}),
+            "limits": _loads(r["limits_json"], {}),
+            "context": _loads(r["context_json"], {}),
+            "parent_trace_id": r["parent_trace_id"],
+            "root_trace_id": r["root_trace_id"],
+            "source_decision": r["source_decision"],
+            "persistence_status": r["persistence_status"],
+            "payload": _loads(r["payload_json"], {}),
+            "created_at": r["created_at"],
+        }
+
+    def list_risk_receipts(
+        self,
+        *,
+        portfolio_id: str | None = None,
+        strategy_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            sql = "SELECT receipt_id FROM market_risk_receipts WHERE 1=1"
+            params: list[Any] = []
+            if portfolio_id:
+                sql += " AND portfolio_id=?"
+                params.append(portfolio_id)
+            if strategy_id:
+                sql += " AND strategy_id=?"
+                params.append(strategy_id)
+            sql += " ORDER BY timestamp DESC LIMIT ?"
+            params.append(int(limit))
+            ids = [row["receipt_id"] for row in conn.execute(sql, params).fetchall()]
+        out: list[dict[str, Any]] = []
+        for rid in ids:
+            row = self.get_risk_receipt(rid)
+            if row:
+                out.append(row)
+        return out
+
     def list_events(self, run_id: str, *, kind: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
         with self.connect() as conn:
             if kind:

@@ -29,6 +29,8 @@ class SourceAssessment:
     accessibility: float
     source_class: str
     independence_cluster: str | None = None
+    publication_type: str = "UNKNOWN"
+    peer_review_status: str = "UNKNOWN"
     notes: list[str] = field(default_factory=list)
 
     def public_dict(self) -> dict[str, Any]:
@@ -48,11 +50,14 @@ class SourceAssessment:
             "accessibility": self.accessibility,
             "source_class": self.source_class,
             "independence_cluster": self.independence_cluster,
+            "publication_type": self.publication_type,
+            "peer_review_status": self.peer_review_status,
             "notes": list(self.notes),
             "overall_weight": self.overall_weight(),
             "truth": {
                 "weight_is_not_truth_probability": True,
                 "contextual_assessment_only": True,
+                "tld_is_not_peer_review": True,
             },
         }
 
@@ -101,6 +106,17 @@ _SOCIAL_HOSTS = frozenset(
 )
 _SYNDICATE_HINTS = ("syndication", "wire-service", "reprinted", "via reuters", "via ap ")
 
+# Honest scholarly typing — TLD / venue host alone is NOT peer review evidence.
+PUBLICATION_TYPE_UNKNOWN = "UNKNOWN"
+PUBLICATION_TYPE_ARXIV_PREPRINT = "ARXIV_PREPRINT"
+PUBLICATION_TYPE_PEER_REVIEWED_ARTICLE = "PEER_REVIEWED_ARTICLE"
+PUBLICATION_TYPE_SCHOLARLY_PAGE = "SCHOLARLY_PAGE"
+PUBLICATION_TYPE_INDEX_OR_DOI = "INDEX_OR_DOI"
+
+PEER_REVIEW_UNKNOWN = "UNKNOWN"
+PEER_REVIEW_NOT_PEER_REVIEWED = "NOT_PEER_REVIEWED"
+PEER_REVIEW_PEER_REVIEWED = "PEER_REVIEWED"
+
 
 def _host(uri: str | None) -> str | None:
     if not uri:
@@ -147,28 +163,62 @@ def _parse_dt(value: str | None) -> datetime | None:
         return None
 
 
-def _classify_source(source: ResearchSource, host: str | None, title: str, uri: str) -> tuple[str, str, list[str]]:
-    """Return (source_class, primary_or_secondary, notes)."""
+def _explicit_peer_review_evidence(meta: dict[str, Any]) -> bool:
+    """Only treat peer review as evidenced when metadata explicitly says so."""
+    status = str(meta.get("peer_review_status") or "").strip().upper()
+    if status in {
+        PEER_REVIEW_PEER_REVIEWED,
+        PUBLICATION_TYPE_PEER_REVIEWED_ARTICLE,
+        "PEER_REVIEWED_ARTICLE",
+        "TRUE",
+        "YES",
+    }:
+        return True
+    pub = str(meta.get("publication_type") or "").strip().upper()
+    if pub == PUBLICATION_TYPE_PEER_REVIEWED_ARTICLE:
+        return True
+    if meta.get("peer_reviewed") is True:
+        return True
+    if str(meta.get("peer_reviewed") or "").strip().lower() in {"true", "yes", "peer_reviewed"}:
+        return True
+    return False
+
+
+def _classify_source(source: ResearchSource, host: str | None, title: str, uri: str) -> tuple[str, str, list[str], str, str]:
+    """Return (source_class, primary_or_secondary, notes, publication_type, peer_review_status).
+
+    Honesty rules:
+    - .edu / arxiv / pubmed / doi / scholar alone do NOT imply peer_reviewed
+    - ARXIV_PREPRINT is a preprint (not peer reviewed)
+    - PEER_REVIEWED_ARTICLE only when actually evidenced in metadata
+    - Unknown stays unknown
+    """
     notes: list[str] = []
     st = source.source_type.value if isinstance(source.source_type, SourceType) else str(source.source_type)
     meta = source.metadata if isinstance(source.metadata, dict) else {}
+    publication_type = str(meta.get("publication_type") or PUBLICATION_TYPE_UNKNOWN).upper() or PUBLICATION_TYPE_UNKNOWN
+    peer_review_status = str(meta.get("peer_review_status") or PEER_REVIEW_UNKNOWN).upper() or PEER_REVIEW_UNKNOWN
+
     explicit = meta.get("source_class")
     if explicit:
         por = str(meta.get("primary_or_secondary") or "unknown")
-        return str(explicit), por, notes
+        if _explicit_peer_review_evidence(meta):
+            publication_type = PUBLICATION_TYPE_PEER_REVIEWED_ARTICLE
+            peer_review_status = PEER_REVIEW_PEER_REVIEWED
+        return str(explicit), por, notes, publication_type, peer_review_status
 
     lower_uri = (uri or "").lower()
     lower_title = (title or "").lower()
 
     if st == SourceType.KNOWLEDGE.value:
-        return "technical_docs", "secondary", ["local knowledge chunk"]
+        return "technical_docs", "secondary", ["local knowledge chunk"], publication_type, peer_review_status
     if st == SourceType.SEED.value:
-        return "seed", "unknown", ["operator-provided seed"]
+        return "seed", "unknown", ["operator-provided seed"], publication_type, peer_review_status
 
     if host in _FORUM_HOSTS or any(h in (host or "") for h in ("stackexchange", "reddit")):
-        return "forum", "secondary", ["community discussion venue"]
+        return "forum", "secondary", ["community discussion venue"], publication_type, peer_review_status
     if host in _SOCIAL_HOSTS:
-        return "social", "secondary", ["social / short-form platform"]
+        return "social", "secondary", ["social / short-form platform"], publication_type, peer_review_status
 
     if host and (
         host.endswith(".gov")
@@ -177,34 +227,91 @@ def _classify_source(source: ResearchSource, host: str | None, title: str, uri: 
         or host.endswith(".mil")
     ):
         notes.append("government / official domain — still needs topical relevance")
-        return "official_primary", "primary", notes
+        return "official_primary", "primary", notes, publication_type, peer_review_status
 
-    if host and (
-        host.endswith(".edu")
-        or "arxiv.org" in host
-        or "pubmed" in host
-        or "doi.org" in lower_uri
-        or "scholar" in host
-    ):
-        notes.append("academic / scholarly venue signal")
-        return "peer_reviewed", "primary", notes
+    # Explicit peer-review evidence wins — never inferred from TLD alone.
+    if _explicit_peer_review_evidence(meta):
+        notes.append("peer review evidenced in source metadata")
+        return (
+            "peer_reviewed",
+            "primary",
+            notes,
+            PUBLICATION_TYPE_PEER_REVIEWED_ARTICLE,
+            PEER_REVIEW_PEER_REVIEWED,
+        )
+
+    if host and "arxiv.org" in host:
+        notes.append("arXiv is a preprint server — not peer-reviewed by default")
+        return (
+            "preprint",
+            "primary",
+            notes,
+            PUBLICATION_TYPE_ARXIV_PREPRINT,
+            PEER_REVIEW_NOT_PEER_REVIEWED,
+        )
+
+    if host and host.endswith(".edu"):
+        notes.append(".edu domain alone does not evidence peer review")
+        return (
+            "academic_unknown",
+            "unknown",
+            notes,
+            PUBLICATION_TYPE_SCHOLARLY_PAGE,
+            PEER_REVIEW_UNKNOWN,
+        )
+
+    if host and ("pubmed" in host or "ncbi.nlm.nih.gov" in host):
+        notes.append("PubMed/NCBI index hit — peer review not assumed without metadata")
+        return (
+            "scholarly_index",
+            "unknown",
+            notes,
+            PUBLICATION_TYPE_INDEX_OR_DOI,
+            PEER_REVIEW_UNKNOWN,
+        )
+
+    if "doi.org" in lower_uri or lower_uri.startswith("doi:"):
+        notes.append("DOI identifies a work — does not prove peer review")
+        return (
+            "scholarly_index",
+            "unknown",
+            notes,
+            PUBLICATION_TYPE_INDEX_OR_DOI,
+            PEER_REVIEW_UNKNOWN,
+        )
+
+    if host and "scholar" in host:
+        notes.append("scholar index / aggregator — not itself a peer-reviewed article")
+        return (
+            "scholarly_index",
+            "secondary",
+            notes,
+            PUBLICATION_TYPE_INDEX_OR_DOI,
+            PEER_REVIEW_UNKNOWN,
+        )
 
     if any(tok in lower_uri for tok in ("/docs/", "/documentation", "readthedocs", "developer.", "/api/")):
-        return "technical_docs", "primary", ["technical documentation path"]
+        return "technical_docs", "primary", ["technical documentation path"], publication_type, peer_review_status
 
     if _MARKETING_HINTS.search(lower_title) or _MARKETING_HINTS.search(lower_uri):
-        return "marketing", "secondary", ["marketing language detected"]
+        return "marketing", "secondary", ["marketing language detected"], publication_type, peer_review_status
 
     if host and any(tok in host for tok in ("blog", "substack", "wordpress", "medium")):
-        return "blog", "secondary", []
+        return "blog", "secondary", [], publication_type, peer_review_status
 
     if "anonymous" in lower_title or meta.get("anonymous"):
-        return "anonymous", "unknown", ["anonymous authorship"]
+        return "anonymous", "unknown", ["anonymous authorship"], publication_type, peer_review_status
 
     if st in {SourceType.WEB_PAGE.value, SourceType.WEB_SEARCH.value}:
-        return "journalism", "secondary", ["default web classification pending richer metadata"]
+        return (
+            "journalism",
+            "secondary",
+            ["default web classification pending richer metadata"],
+            publication_type,
+            peer_review_status,
+        )
 
-    return "unknown", "unknown", notes
+    return "unknown", "unknown", notes, publication_type, peer_review_status
 
 
 def assess_source(
@@ -219,7 +326,9 @@ def assess_source(
     source_type = (
         source.source_type.value if isinstance(source.source_type, SourceType) else str(source.source_type)
     )
-    source_class, primary_or_secondary, notes = _classify_source(source, host, title, uri)
+    source_class, primary_or_secondary, notes, publication_type, peer_review_status = _classify_source(
+        source, host, title, uri
+    )
 
     # Authority / expertise are contextual — .gov is not automatically "true".
     authority = 0.45
@@ -243,6 +352,19 @@ def assess_source(
         methodological_strength = 0.8
         citation_quality = 0.75
         bias_risk = 0.3
+    elif source_class == "preprint":
+        authority = 0.55
+        expertise = 0.7
+        methodological_strength = 0.55
+        citation_quality = 0.5
+        bias_risk = 0.4
+        notes.append("preprint authority is provisional pending peer review")
+    elif source_class in {"academic_unknown", "scholarly_index"}:
+        authority = 0.5
+        expertise = 0.55
+        methodological_strength = 0.4
+        bias_risk = 0.35
+        notes.append("scholarly venue signal without proven peer-review status")
     elif source_class == "technical_docs":
         authority = 0.65
         expertise = 0.7
@@ -345,6 +467,8 @@ def assess_source(
         accessibility=_clamp(accessibility),
         source_class=source_class,
         independence_cluster=None,
+        publication_type=publication_type,
+        peer_review_status=peer_review_status,
         notes=notes,
     )
 

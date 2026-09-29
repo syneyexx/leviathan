@@ -1,0 +1,16 @@
+{
+  "program": "az_consolidation_truth_hardening",
+  "baseline_main_sha": "5923e2018ecb63aab25d91a2f170ea3b2f34f768",
+  "strict_trading_source_commit": "06cecb6d0df3cc2acb522831bd17413923dcb417",
+  "strict_all_required_pass": true,
+  "counts": {
+    "PASS": 93,
+    "FEATURE_GATED": 1,
+    "NOT_TESTED_IN_CI": 1
+  },
+  "dirty": false,
+  "branch": "cursor/az-consolidation-truth-hardening-035b",
+  "generated_at": "2026-09-29T10:05:18+00:00",
+  "live_trading": "BLOCKED",
+  "branch_protection": "OPERATOR_ACTION_REQUIRED"
+}

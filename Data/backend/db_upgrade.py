@@ -572,6 +572,49 @@ def _dm7_market_research_hypotheses(conn: sqlite3.Connection, domain: DatabaseDo
             pass
 
 
+def _dm8_market_risk_receipts(conn: sqlite3.Connection, domain: DatabaseDomain) -> None:
+    """MARKET domain v8 — durable RiskGuard decision receipts (not in-memory only)."""
+    if domain is not DatabaseDomain.MARKET:
+        return
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS market_risk_receipts (
+            receipt_id TEXT PRIMARY KEY,
+            timestamp TEXT NOT NULL,
+            portfolio_id TEXT,
+            strategy_id TEXT,
+            agent_id TEXT,
+            orchestra_id TEXT,
+            decision_id TEXT,
+            order_intent_id TEXT,
+            symbol TEXT,
+            action TEXT,
+            requested_qty REAL,
+            sized_qty REAL,
+            decision TEXT NOT NULL,
+            rejection_code TEXT,
+            reason TEXT NOT NULL,
+            health_json TEXT NOT NULL DEFAULT '{}',
+            limits_json TEXT NOT NULL DEFAULT '{}',
+            context_json TEXT NOT NULL DEFAULT '{}',
+            parent_trace_id TEXT,
+            root_trace_id TEXT,
+            source_decision TEXT,
+            persistence_status TEXT NOT NULL DEFAULT 'DURABLE',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_market_risk_receipts_portfolio
+            ON market_risk_receipts(portfolio_id, timestamp);
+        CREATE INDEX IF NOT EXISTS idx_market_risk_receipts_strategy
+            ON market_risk_receipts(strategy_id, timestamp);
+        CREATE INDEX IF NOT EXISTS idx_market_risk_receipts_code
+            ON market_risk_receipts(rejection_code, timestamp);
+        """
+    )
+
+
 DOMAIN_MIGRATIONS: tuple[DomainMigration, ...] = (
     DomainMigration(
         version=2,
@@ -602,6 +645,11 @@ DOMAIN_MIGRATIONS: tuple[DomainMigration, ...] = (
         version=7,
         name="market_research_hypotheses",
         apply=_dm7_market_research_hypotheses,
+    ),
+    DomainMigration(
+        version=8,
+        name="market_risk_receipts",
+        apply=_dm8_market_risk_receipts,
     ),
 )
 

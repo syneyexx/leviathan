@@ -7,6 +7,14 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+
+from Data.modules.market_sim.risk_guard import RiskGuard
+
+
+def _bind_healthy(guard: RiskGuard) -> RiskGuard:
+    guard.bind_measured_runtime_health(provider_ok=True, broker_ok=True, data_age_seconds=0.0)
+    return guard
+
 from pathlib import Path
 
 from Data.modules.market_sim.experiments import evaluate_acceptance
@@ -693,6 +701,7 @@ class P0CRiskGuardDayResetTests(unittest.TestCase):
         from Data.modules.market_sim.risk_guard import RiskGuard, RiskLimits
 
         guard = RiskGuard(RiskLimits(max_orders_per_day=1))
+        _bind_healthy(guard)
         w = WalletBook().ensure_agent("a", initial_cash=10_000)
         guard.on_bar_timestamp("2024-01-01T23:00:00+00:00")
         intent = make_intent(
@@ -730,6 +739,7 @@ class P0CSizingModelTests(unittest.TestCase):
         src = inspect.getsource(RiskGuard.evaluate_intent)
         self.assertNotIn("risk_qty * 5", src)
         guard = RiskGuard(RiskLimits(per_trade_risk_pct=1.0, max_position_pct=25.0))
+        _bind_healthy(guard)
         w = WalletBook().ensure_agent("a", initial_cash=100_000)
         intent = make_intent(
             run_id="r", agent_id="a", wallet_id=w.wallet_id, side="BUY", qty=None,
@@ -761,6 +771,7 @@ class P0CInstrumentAndShortTests(unittest.TestCase):
             tick_size="0.01", min_notional="1",
         )
         guard = RiskGuard(RiskLimits(), instrument_spec=spec, short_margin_policy=None)
+        _bind_healthy(guard)
         w = WalletBook().ensure_agent("a", initial_cash=10_000)
         intent = make_intent(
             run_id="r", agent_id="a", wallet_id=w.wallet_id, side="SELL", qty=1,
@@ -784,6 +795,7 @@ class P0CInstrumentAndShortTests(unittest.TestCase):
         )
         policy = ShortMarginPolicy(initial_margin_pct=50.0, maintenance_margin_pct=30.0)
         guard = RiskGuard(RiskLimits(), instrument_spec=spec, short_margin_policy=policy)
+        _bind_healthy(guard)
         w = WalletBook().ensure_agent("a", initial_cash=10_000)
         intent = make_intent(
             run_id="r", agent_id="a", wallet_id=w.wallet_id, side="SELL", qty=1,
@@ -807,6 +819,7 @@ class P0CInstrumentAndShortTests(unittest.TestCase):
         )
         policy = ShortMarginPolicy(initial_margin_pct=50.0, maintenance_margin_pct=30.0)
         guard = RiskGuard(RiskLimits(), instrument_spec=spec, short_margin_policy=policy)
+        _bind_healthy(guard)
         w = WalletBook().ensure_agent("a", initial_cash=10_000)
         intent = make_intent(
             run_id="r", agent_id="a", wallet_id=w.wallet_id, side="SELL", qty=1,

@@ -1015,6 +1015,13 @@ class Settings:
                     "LEVIATHAN_LOOPBACK_ONLY=false requires a non-empty "
                     "LEVIATHAN_OPERATOR_TOKEN for mutation authentication"
                 )
+            # Fail-closed Host allowlist (same owner as http_auth TrustedHost).
+            from Data.modules.common.http_auth import resolve_trusted_hosts
+
+            try:
+                resolve_trusted_hosts(loopback_only=False, bind_host=host)
+            except RuntimeError as exc:
+                raise ConfigurationError(str(exc)) from exc
 
         base_url = (_env_raw("LEVIATHAN_LLM_BASE_URL", "http://127.0.0.1:1234/v1") or "").strip().rstrip("/")
         if not base_url:

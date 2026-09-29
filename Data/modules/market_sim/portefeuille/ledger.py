@@ -603,14 +603,22 @@ class PortfolioBook:
         return out
 
     def to_wallet_projection(self, symbol: str, mark: Any) -> Any:
-        """Project single-symbol state onto WalletLedger for RiskGuard compatibility."""
+        """Project single-symbol state onto WalletLedger for RiskGuard compatibility.
+
+        Shorts project as negative qty so SHORT/COVER go through RiskGuard sizing
+        and margin checks — no side-specific bypass.
+        """
         from ..accounting import WalletLedger
 
         pos = self.positions.get(symbol.upper())
-        qty = pos.qty if pos and pos.side == "LONG" else ZERO
-        # For shorts, RiskGuard long-only path sees 0 long qty; short checks elsewhere
+        if pos and pos.side == "LONG":
+            qty = pos.qty
+        elif pos and pos.side == "SHORT":
+            qty = -abs(pos.qty)
+        else:
+            qty = ZERO
         avg = pos.avg_entry if pos else ZERO
-        return WalletLedger(
+        wallet = WalletLedger(
             wallet_id=f"pf-{self.portfolio_id}-{symbol}",
             owner_id=self.portfolio_id,
             owner_kind="paper",
@@ -623,6 +631,15 @@ class PortfolioBook:
             peak_equity=self.peak_equity,
             currency=self.currency,
         )
+        wallet.shorting_enabled = bool(self.shorting_enabled)
+        if self.shorting_enabled:
+            from ..short_margin import ShortMarginPolicy
+
+            wallet.short_margin_policy = ShortMarginPolicy(
+                initial_margin_pct=float(self.initial_margin_pct or 50.0),
+                maintenance_margin_pct=float(self.maintenance_margin_pct or 30.0),
+            )
+        return wallet
 
     def serialize(self) -> dict[str, Any]:
         return {
