@@ -70,3 +70,12 @@ Keep semantic buttons/links, focus-visible, landmarks (`SkipLink` + `#main-conte
 5. Delete unused legacy CSS only after no route depends on it
 
 Media Control, Plugin & Runtime, Coding Agent, and other deep links remain registered even when not shown in the Screen 1 sidebar.
+
+## Brain migration
+
+- `/brain` uses `AppShell variant="v2"` with the shared `AppSidebarV2` / `AppTopbarV2`.
+- DNA double-helix network (`BrainDnaNetwork` + `brain-dna-layout`) is the default Graph visualization; Celestial / Technical / Tree / Timeline / Clusters / Analytics remain under the advanced graph surface.
+- Research group children are adapted from `MAIN_MENU` via `v2ChildrenFromMainMenu` — one canonical route source, V2 presentation only.
+- No page-local Brain V2 CSS file; styles live in `leviathan-v2.css` under knowledge-network sections.
+- Visual fixture: `src/mocks/brainV2VisualFixture.ts` + `e2e/brain-v2.visual.spec.ts` (reference: `docs/ui_reference/brain-v2-reference.png`).
+- Next pages (Research, Memory, Evidence, …) must reuse the same shell, tokens, and primitives.

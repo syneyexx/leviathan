@@ -247,6 +247,12 @@
   --lv2-trading: #f59e0b;
   --lv2-muted-blue: #64748b;
 
+  /* Semantic knowledge-network visualization */
+  --lv2-viz-entity: #3b82f6;
+  --lv2-viz-concept: #a855f7;
+  --lv2-viz-document: #22d3ee;
+  --lv2-viz-agent: #f59e0b;
+
   /* Typography */
   --lv2-text: #f1f5f9;
   --lv2-text-secondary: #94a3b8;
