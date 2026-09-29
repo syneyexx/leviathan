@@ -23,6 +23,10 @@ type ShellProps = {
   onV2Refresh?: () => void;
   v2StatusRows?: readonly SidebarStatusRow[];
   v2Now?: () => Date;
+  /** Generic topbar action slot (Chat / future pages). */
+  v2Actions?: ReactNode;
+  /** Hide default Refresh when page actions replace it. */
+  v2HideRefresh?: boolean;
   children: ReactNode;
 };
 
@@ -41,6 +45,8 @@ export function AppShell({
   onV2Refresh,
   v2StatusRows,
   v2Now,
+  v2Actions,
+  v2HideRefresh = false,
   children,
 }: ShellProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -75,6 +81,8 @@ export function AppShell({
           onRefresh={onV2Refresh}
           onMenuClick={() => setSidebarOpen((value) => !value)}
           now={v2Now}
+          actions={v2Actions}
+          hideRefresh={v2HideRefresh}
         />
         <div className="lv-body">
           <AppSidebarV2 open={sidebarOpen} statusRows={v2StatusRows} />

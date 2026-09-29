@@ -83,6 +83,12 @@ const ICONS: Record<V2NavIconId, ReactNode> = {
       <path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6.1 6.1l1.6 1.6M16.3 16.3l1.6 1.6M17.9 6.1l-1.6 1.6M7.7 16.3l-1.6 1.6" />
     </>
   ),
+  hades: (
+    <>
+      <path d="M12 4c-2.2 0-4 1.6-4 3.6 0 1.4.7 2.5 1.8 3.2L8 18h8l-1.8-7.2c1.1-.7 1.8-1.8 1.8-3.2C16 5.6 14.2 4 12 4z" />
+      <path d="M9 18h6M10 21h4" />
+    </>
+  ),
 };
 
 export type SidebarStatusRow = {

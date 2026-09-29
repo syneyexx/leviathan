@@ -2,8 +2,8 @@
  * Leviathan V2 primary navigation — Screen 1 sidebar contract.
  *
  * Route truth for expandable group children is adapted from MAIN_MENU
- * (canonical product IA). V2 presentation metadata (icons, Screen 1 labels)
- * lives here — do not maintain a second independent route tree.
+ * (canonical product IA) where possible. V2 presentation metadata (icons,
+ * Screen 1 labels) lives here — do not maintain a second independent route tree.
  */
 
 import { MAIN_MENU, normalizePath, type SubMenuItem } from "./menu";
@@ -34,6 +34,7 @@ export type V2NavIconId =
   | "agents"
   | "research"
   | "trading"
+  | "hades"
   | "lm"
   | "training"
   | "data"
@@ -57,18 +58,35 @@ export function v2ChildrenFromMainMenu(mainMenuId: string): readonly V2NavChild[
 }
 
 /**
- * Dashboard Screen 1 children (subset of Hades AI submenu).
- * Kept explicit so Coding Agent stays reachable via MAIN_MENU / router
- * without forcing it into the V2 Dashboard rail.
+ * Dashboard Screen 1 children — home + Taken.
+ * Chat moved under Hades AI (Chat V2 Screen 1). Coding Agent remains
+ * reachable via MAIN_MENU / router without forcing it into this rail.
  */
 const DASHBOARD_CHILDREN: readonly V2NavChild[] = [
   { id: "dashboard-home", label: "Dashboard", to: "/", match: ["/"] },
-  { id: "chat", label: "Chat", to: "/chat", match: ["/chat"] },
   { id: "taken", label: "Taken", to: "/tasks", match: ["/tasks"] },
 ];
 
 /** Research / Onderzoek & Kennis — full canonical submenu from MAIN_MENU. */
 const RESEARCH_CHILDREN = v2ChildrenFromMainMenu("research");
+
+/**
+ * Hades AI — Chat V2 Screen 1 submenu.
+ * Routes map to existing product surfaces; Prompts / Evaluations are
+ * first-class thin V2 pages over real backend capabilities.
+ *
+ * Top-level Agents owns `/agents` active highlighting so Hades does not
+ * create a dual-active parent when visiting Agents from the primary rail.
+ * Hades → Agents still links to `/agents`.
+ */
+const HADES_CHILDREN: readonly V2NavChild[] = [
+  { id: "chat", label: "Chat", to: "/chat", match: ["/chat"] },
+  { id: "reasoning", label: "Reasoning", to: "/cognition", match: ["/cognition"] },
+  { id: "hades-agents", label: "Agents", to: "/agents", match: ["/agents"] },
+  { id: "bibliotheek", label: "Bibliotheek", to: "/knowledge", match: ["/knowledge"] },
+  { id: "prompts", label: "Prompts", to: "/prompts", match: ["/prompts"] },
+  { id: "evaluations", label: "Evaluations", to: "/evaluations", match: ["/evaluations"] },
+];
 
 /**
  * Screen 1 primary rail. Deep-link destinations for Media / Plugin & Runtime /
@@ -80,7 +98,7 @@ export const V2_PRIMARY_NAV: readonly V2NavItem[] = [
     id: "dashboard",
     label: "Dashboard",
     to: "/",
-    match: ["/", "/chat", "/tasks"],
+    match: ["/", "/tasks"],
     expandable: true,
     icon: "dashboard",
     children: DASHBOARD_CHILDREN,
@@ -107,6 +125,15 @@ export const V2_PRIMARY_NAV: readonly V2NavItem[] = [
     to: "/trading/simulatie",
     match: ["/trading"],
     icon: "trading",
+  },
+  {
+    id: "hades",
+    label: "Hades AI",
+    to: "/chat",
+    match: ["/chat", "/cognition", "/prompts", "/evaluations"],
+    expandable: true,
+    icon: "hades",
+    children: HADES_CHILDREN,
   },
   {
     id: "lm",
@@ -199,6 +226,18 @@ export function findActiveV2Child(
 /** Expandable groups auto-open when their match prefixes are active. */
 export function shouldAutoExpandV2Group(item: V2NavItem, pathname: string): boolean {
   if (!item.expandable) return false;
+  // Hades owns Chat/Reasoning/Prompts/Evaluations expansion.
+  // On /agents or /knowledge prefer the dedicated top-level / Research group,
+  // but still open Hades when the active child inside Hades is selected via
+  // findActiveV2Child (Chat, Reasoning, Prompts, Evaluations).
+  if (item.id === "hades") {
+    return item.match.some((prefix) => pathMatchesPrefix(pathname, prefix));
+  }
+  if (item.id === "research") {
+    // Knowledge is also a Hades "Bibliotheek" destination — Research stays
+    // the owner for /knowledge expansion (canonical research IA).
+    return isV2NavItemActive(item, pathname);
+  }
   return isV2NavItemActive(item, pathname);
 }
 
