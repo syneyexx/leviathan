@@ -1394,28 +1394,69 @@
 }
 
 .lv-v2-dna__helix {
-  stroke: rgba(34, 211, 238, 0.35);
-  stroke-width: 1.6;
+  stroke: url(#lv2-dna-strand-grad);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.95;
 }
 
-.lv-v2-dna__helix--alt {
-  stroke: rgba(59, 130, 246, 0.3);
+.lv-v2-dna__helix--glow {
+  stroke: #22d3ee;
+  stroke-width: 6.5;
+  opacity: 0.18;
+  filter: none;
+}
+
+.lv-v2-dna__helix--a {
+  stroke: #22d3ee;
+  stroke-width: 2.6;
+  opacity: 0.92;
+}
+
+.lv-v2-dna__helix--b {
+  stroke: #38bdf8;
+  stroke-width: 2.55;
+  opacity: 0.88;
+}
+
+.lv-v2-dna__dust {
+  fill: #67e8f9;
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.lv-v2-dna__bead {
+  pointer-events: none;
+  opacity: 0.9;
+  stroke: rgba(2, 6, 23, 0.45);
+  stroke-width: 0.4;
 }
 
 .lv-v2-dna__edge {
   fill: none;
   stroke: #22d3ee;
-  stroke-width: 1.25;
+  stroke-width: 1.15;
 }
 
 .lv-v2-dna__edge--rung {
-  stroke: #60a5fa;
-  stroke-width: 1.5;
+  stroke: #67e8f9;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+}
+
+.lv-v2-dna__edge--strand {
+  stroke: #38bdf8;
+  stroke-width: 1.2;
 }
 
 .lv-v2-dna__edge--secondary {
-  stroke: #64748b;
-  stroke-width: 1;
+  stroke: #475569;
+  stroke-width: 0.85;
+}
+
+.lv-v2-dna-node__ring {
+  pointer-events: none;
 }
 
 .lv-v2-dna-node {

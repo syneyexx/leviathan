@@ -1,5 +1,5 @@
 /**
- * SVG DNA knowledge network — deterministic, data-driven, subdued motion.
+ * SVG DNA knowledge network — Screen 1 double-helix, data-driven, stable.
  */
 
 import {
@@ -52,10 +52,12 @@ function labelWorthy(
 ): boolean {
   if (node.focal) return true;
   if (node.id === selectedId || node.id === hoverId) return true;
-  if (zoom < 0.75) return false;
-  // Named Screen-1-class labels (non-generic) always show at default zoom.
-  if (!/^Node \d+$/i.test(node.label) && node.label.length <= 22) return true;
-  return node.degree >= 3 || node.r >= 9;
+  if (zoom < 0.8) return node.degree >= 4;
+  if (!/^Node \d+$/i.test(node.label) && node.label.length <= 20) {
+    // Bound labeled nodes so helix stays readable
+    return node.degree >= 2 || node.r >= 7;
+  }
+  return node.degree >= 4 || node.r >= 10;
 }
 
 export function BrainDnaNetwork({
@@ -73,8 +75,8 @@ export function BrainDnaNetwork({
   className = "",
 }: BrainDnaNetworkProps) {
   const shellRef = useRef<HTMLDivElement>(null);
-  const svgRef = useRef<SVGSVGElement>(null);
-  const [size, setSize] = useState({ width: 720, height: 340 });
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState({ width: 720, height: 300 });
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [hoverId, setHoverId] = useState<string | null>(null);
@@ -83,12 +85,12 @@ export function BrainDnaNetwork({
   const motionOff = reducedMotion ?? prefersReducedMotion();
 
   useEffect(() => {
-    const el = shellRef.current;
+    const el = stageRef.current;
     if (!el) return;
     const apply = () => {
       const rect = el.getBoundingClientRect();
-      const width = Math.max(320, rect.width || 720);
-      const height = Math.max(280, rect.height || 340);
+      const width = Math.max(280, rect.width || 720);
+      const height = Math.max(220, rect.height || 300);
       setSize((prev) =>
         Math.abs(prev.width - width) < 1 && Math.abs(prev.height - height) < 1
           ? prev
@@ -118,12 +120,29 @@ export function BrainDnaNetwork({
         width: size.width,
         height: size.height,
         preferredFocalId,
-        maxPrimary: 48,
+        maxPrimary: 36,
+        turns: 2.15,
       }),
     [filteredNodes, filteredEdges, size.width, size.height, preferredFocalId],
   );
 
   const pos = useMemo(() => new Map(layout.nodes.map((n) => [n.id, n])), [layout.nodes]);
+
+  // Cap simultaneous labels for Screen 1 density
+  const labeledIds = useMemo(() => {
+    const ranked = [...layout.nodes]
+      .filter((n) => !n.focal)
+      .sort((a, b) => b.degree - a.degree || a.id.localeCompare(b.id));
+    const keep = new Set<string>();
+    keep.add(layout.focalId ?? "");
+    for (const n of ranked) {
+      if (keep.size >= 14) break;
+      if (!/^Node \d+$/i.test(n.label)) keep.add(n.id);
+    }
+    if (selectedId) keep.add(selectedId);
+    if (hoverId) keep.add(hoverId);
+    return keep;
+  }, [layout.nodes, layout.focalId, selectedId, hoverId]);
 
   const clampZoom = useCallback((value: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value)), []);
 
@@ -151,7 +170,7 @@ export function BrainDnaNetwork({
       if (document.fullscreenElement) await document.exitFullscreen();
       else await el.requestFullscreen();
     } catch {
-      // Fullscreen may be blocked — non-fatal.
+      // non-fatal
     }
   }, []);
 
@@ -192,6 +211,9 @@ export function BrainDnaNetwork({
     .filter(Boolean)
     .join(" ");
 
+  const cx = size.width / 2;
+  const cy = size.height / 2;
+
   return (
     <div className={rootClass} ref={shellRef}>
       <div className="lv-v2-dna__tabs" role="tablist" aria-label="Kennisnetwerk filters">
@@ -210,6 +232,7 @@ export function BrainDnaNetwork({
       </div>
 
       <div
+        ref={stageRef}
         className="lv-v2-dna__stage"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -247,7 +270,6 @@ export function BrainDnaNetwork({
         ) : null}
 
         <svg
-          ref={svgRef}
           className="lv-v2-dna__svg"
           width="100%"
           height="100%"
@@ -257,12 +279,24 @@ export function BrainDnaNetwork({
         >
           <defs>
             <radialGradient id="lv2-dna-focal-glow" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.55" />
-              <stop offset="70%" stopColor="#22d3ee" stopOpacity="0.12" />
+              <stop offset="0%" stopColor="#67e8f9" stopOpacity="0.7" />
+              <stop offset="45%" stopColor="#22d3ee" stopOpacity="0.28" />
               <stop offset="100%" stopColor="#22d3ee" stopOpacity="0" />
             </radialGradient>
-            <filter id="lv2-dna-soft-glow" x="-40%" y="-40%" width="180%" height="180%">
-              <feGaussianBlur stdDeviation="2.2" result="blur" />
+            <linearGradient id="lv2-dna-strand-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.15" />
+              <stop offset="50%" stopColor="#67e8f9" stopOpacity="0.85" />
+              <stop offset="100%" stopColor="#22d3ee" stopOpacity="0.15" />
+            </linearGradient>
+            <filter id="lv2-dna-soft-glow" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="2.4" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+            <filter id="lv2-dna-strand-glow" x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="1.6" result="blur" />
               <feMerge>
                 <feMergeNode in="blur" />
                 <feMergeNode in="SourceGraphic" />
@@ -270,29 +304,94 @@ export function BrainDnaNetwork({
             </filter>
           </defs>
 
-          <g transform={`translate(${pan.x} ${pan.y}) scale(${zoom})`} style={{ transformOrigin: "center" }}>
-            {/* Ambient helix guides */}
-            <path
-              className="lv-v2-dna__helix"
-              d={`M ${size.width * 0.08} ${size.height * 0.5}
-                  Q ${size.width * 0.25} ${size.height * 0.18}, ${size.width * 0.42} ${size.height * 0.5}
-                  T ${size.width * 0.92} ${size.height * 0.5}`}
-              fill="none"
-            />
-            <path
-              className="lv-v2-dna__helix lv-v2-dna__helix--alt"
-              d={`M ${size.width * 0.08} ${size.height * 0.5}
-                  Q ${size.width * 0.25} ${size.height * 0.82}, ${size.width * 0.42} ${size.height * 0.5}
-                  T ${size.width * 0.92} ${size.height * 0.5}`}
-              fill="none"
-            />
+          <g
+            transform={`translate(${cx} ${cy}) scale(${zoom}) translate(${-cx + pan.x / zoom} ${-cy + pan.y / zoom})`}
+          >
+            {/* Ambient particles along helix (decorative, non-interactive) */}
+            {Array.from({ length: 18 }, (_, i) => {
+              const t = (i + 0.5) / 18;
+              const x = size.width * 0.08 + t * size.width * 0.84;
+              const y = cy + Math.sin(t * Math.PI * 2 * 2.15 + i) * (size.height * 0.28);
+              return (
+                <circle
+                  key={`dust-${i}`}
+                  className="lv-v2-dna__dust"
+                  cx={x}
+                  cy={y}
+                  r={i % 3 === 0 ? 1.6 : 1.1}
+                />
+              );
+            })}
 
+            {/* DNA backbone strands — Screen 1 silhouette (glow + core) */}
+            {layout.helix.strand0 ? (
+              <>
+                <path
+                  className="lv-v2-dna__helix lv-v2-dna__helix--glow"
+                  d={layout.helix.strand0}
+                  fill="none"
+                />
+                <path
+                  className="lv-v2-dna__helix lv-v2-dna__helix--a"
+                  d={layout.helix.strand0}
+                  fill="none"
+                  filter="url(#lv2-dna-strand-glow)"
+                />
+              </>
+            ) : null}
+            {layout.helix.strand1 ? (
+              <>
+                <path
+                  className="lv-v2-dna__helix lv-v2-dna__helix--glow"
+                  d={layout.helix.strand1}
+                  fill="none"
+                />
+                <path
+                  className="lv-v2-dna__helix lv-v2-dna__helix--b"
+                  d={layout.helix.strand1}
+                  fill="none"
+                  filter="url(#lv2-dna-strand-glow)"
+                />
+              </>
+            ) : null}
+
+            {/* Edges: rungs (+ Screen 1 beads), then strand, then faint secondary */}
             {layout.edges.map((edge) => {
               const a = pos.get(edge.source);
               const b = pos.get(edge.target);
               if (!a || !b) return null;
+              if (edge.kind === "rung") {
+                const beads = [0.22, 0.4, 0.5, 0.6, 0.78].map((t, i) => {
+                  const bx = a.x + (b.x - a.x) * t;
+                  const by = a.y + (b.y - a.y) * t;
+                  const palette = ["#a78bfa", "#22d3ee", "#67e8f9", "#fbbf24", "#34d399"];
+                  return (
+                    <circle
+                      key={`${edge.id}:bead:${i}`}
+                      className="lv-v2-dna__bead"
+                      cx={bx}
+                      cy={by}
+                      r={i === 2 ? 2.2 : 1.55}
+                      fill={palette[i % palette.length]}
+                    />
+                  );
+                });
+                return (
+                  <g key={edge.id}>
+                    <line
+                      className="lv-v2-dna__edge lv-v2-dna__edge--rung"
+                      x1={a.x}
+                      y1={a.y}
+                      x2={b.x}
+                      y2={b.y}
+                      opacity={edge.opacity}
+                    />
+                    {beads}
+                  </g>
+                );
+              }
               const midX = (a.x + b.x) / 2;
-              const midY = (a.y + b.y) / 2 + (edge.kind === "rung" ? 0 : (a.y < b.y ? -12 : 12));
+              const midY = (a.y + b.y) / 2 + (edge.kind === "strand" ? (a.strand === 0 ? -6 : 6) : 0);
               return (
                 <path
                   key={edge.id}
@@ -305,8 +404,10 @@ export function BrainDnaNetwork({
 
             {layout.nodes.map((node) => {
               const selected = node.id === selectedId;
-              const showLabel = labelWorthy(node, selectedId, hoverId, zoom);
-              const color = BRAIN_CATEGORY_HEX[node.category];
+              const showLabel =
+                labeledIds.has(node.id) || labelWorthy(node, selectedId, hoverId, zoom);
+              // Screen 1: focal hub is luminous cyan regardless of category
+              const color = node.focal ? "#22d3ee" : BRAIN_CATEGORY_HEX[node.category];
               return (
                 <g
                   key={node.id}
@@ -325,7 +426,11 @@ export function BrainDnaNetwork({
                   onMouseLeave={() => setHoverId((id) => (id === node.id ? null : id))}
                 >
                   {node.focal || selected ? (
-                    <circle className="lv-v2-dna-node__halo" r={node.r + 14} fill="url(#lv2-dna-focal-glow)" />
+                    <circle
+                      className="lv-v2-dna-node__halo"
+                      r={node.r + (node.focal ? 18 : 12)}
+                      fill="url(#lv2-dna-focal-glow)"
+                    />
                   ) : null}
                   <circle
                     className="lv-v2-dna-node__core"
@@ -333,8 +438,22 @@ export function BrainDnaNetwork({
                     fill={color}
                     filter={node.focal || selected ? "url(#lv2-dna-soft-glow)" : undefined}
                   />
+                  {node.focal ? (
+                    <circle
+                      className="lv-v2-dna-node__ring"
+                      r={node.r + 4}
+                      fill="none"
+                      stroke="#67e8f9"
+                      strokeWidth="1.4"
+                      opacity="0.85"
+                    />
+                  ) : null}
                   {showLabel ? (
-                    <text className="lv-v2-dna-node__label" y={-(node.r + 8)} textAnchor="middle">
+                    <text
+                      className="lv-v2-dna-node__label"
+                      y={node.focal ? -(node.r + 14) : node.strand === 0 ? -(node.r + 8) : node.r + 14}
+                      textAnchor="middle"
+                    >
                       {node.label}
                     </text>
                   ) : null}
