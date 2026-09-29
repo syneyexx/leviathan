@@ -21,9 +21,10 @@ tree. Live trading remains **BLOCKED**. Branch protection remains
 ## VERIFIED SOURCE SHA (strict trading)
 
 - Clean-tree strict trading: `06cecb6d0df3cc2acb522831bd17413923dcb417`
+- Evidence tip commit: `f8114d2dcdc030d9024137d3d0b751fa3ad6e0a1`
 - Branch: `cursor/az-consolidation-truth-hardening-035b`
-- Evidence tip may be this commit or a subsequent evidence-only commit; trading
-  report `source_commit` records the verified clean SHA above.
+- Trading report `source_commit` records the verified clean SHA
+  `06cecb6d0df3cc2acb522831bd17413923dcb417` (evidence tip adds this document only).
 
 ## ARCHITECTURE (no duplicate systems)
 
