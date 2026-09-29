@@ -46,8 +46,14 @@ def init_learner_priors(
     lessons: list[dict[str, Any]] | None = None,
     exploration_rate: float = 0.15,
     crossover_rate: float = 0.25,
+    cost_assumptions: dict[str, Any] | None = None,
 ) -> LearnerState:
-    """Initialize proposal priors from lineage / trial history / validated lessons — never SEALED."""
+    """Initialize proposal priors from lineage / trial history / validated lessons — never SEALED.
+
+    Rejected lessons influence priors but are not eternal prohibitions: a SUPERSEDED
+    lesson, or a REJECTED lesson whose cost_assumptions no longer match the active
+    cost pack, is down-weighted / ignored so exploration can reopen under new costs.
+    """
     state = LearnerState(exploration_rate=exploration_rate, crossover_rate=crossover_rate)
     # Mild bump for parent family
     if parent_family and parent_family in state.family_probabilities:
@@ -87,20 +93,62 @@ def init_learner_priors(
         total = sum(state.family_probabilities.values()) or 1.0
         state.family_probabilities = {k: v / total for k, v in state.family_probabilities.items()}
 
+    active_cost_fp = _cost_assumption_fingerprint(cost_assumptions)
     for lesson in lessons or []:
-        trust = str(lesson.get("trust") or "")
-        if trust not in {"VALIDATED", "AGENT_PROPOSED"}:
+        trust = str(lesson.get("trust") or lesson.get("epistemic_state") or lesson.get("lifecycle_state") or "")
+        trust_u = trust.upper()
+        # Accept legacy + canonical lifecycle labels.
+        if trust_u not in {
+            "VALIDATED",
+            "AGENT_PROPOSED",
+            "PROPOSED",
+            "OBSERVED",
+            "MEASURED",
+            "REPLICATED",
+            "VERIFIED",
+            "REJECTED",
+            "SUPERSEDED",
+        }:
+            continue
+        if trust_u == "SUPERSEDED":
+            # Retained for audit/retrieval but does not lock priors.
             continue
         conf = float(lesson.get("confidence") or 0.0)
-        if trust == "AGENT_PROPOSED":
+        if trust_u in {"AGENT_PROPOSED", "PROPOSED", "OBSERVED"}:
             conf *= 0.25  # not authoritative
+        elif trust_u == "REJECTED":
+            # Influence under matching cost assumptions; reopen when costs changed.
+            lesson_cost = (
+                lesson.get("cost_assumptions")
+                if isinstance(lesson.get("cost_assumptions"), dict)
+                else (lesson.get("metadata") or {}).get("cost_assumptions")
+                if isinstance(lesson.get("metadata"), dict)
+                else None
+            )
+            lesson_fp = _cost_assumption_fingerprint(lesson_cost if isinstance(lesson_cost, dict) else None)
+            if active_cost_fp and lesson_fp and lesson_fp != active_cost_fp:
+                continue  # supersedable under changed cost assumptions — not eternal ban
+            conf = max(conf, 0.35)
         applies = list(lesson.get("applies_to") or [])
         claim = str(lesson.get("claim") or "").lower()
-        weight = conf if "underperform" not in claim and "fail" not in claim else -conf
+        negative = bool(lesson.get("rejected")) or trust_u == "REJECTED" or any(
+            tok in claim for tok in ("underperform", "fail", "reject", "collapse", "cost")
+        )
+        weight = -conf if negative else conf
         for fam in applies:
             if fam in state.family_probabilities:
                 state.lesson_priors[fam] = state.lesson_priors.get(fam, 0.0) + weight
     return state
+
+
+def _cost_assumption_fingerprint(raw: dict[str, Any] | None) -> str:
+    if not raw:
+        return ""
+    if raw.get("fingerprint"):
+        return str(raw.get("fingerprint"))
+    keys = ("fee_bps", "slippage_bps", "spread_bps", "commission", "cost_pack_id", "version")
+    parts = [f"{k}={raw.get(k)}" for k in keys if raw.get(k) is not None]
+    return "|".join(parts)
 
 
 def create_learning_run(

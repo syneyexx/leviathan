@@ -2,18 +2,47 @@
 
 Lessons are advisory. Negative experience is first-class. Historical lessons
 must not prevent novel exploration — they inform failure modes and ranking.
+
+Lifecycle metadata uses LearningEpistemicState:
+PROPOSED / OBSERVED / MEASURED / REPLICATED / VERIFIED / REJECTED / SUPERSEDED.
 """
 
 from __future__ import annotations
 
 from typing import Any, Sequence
 
+from .learning_memory import (
+    LearningEpistemicState,
+    map_epistemic_to_trust,
+    map_legacy_epistemic_state,
+)
+
 
 # Bounded ranked context — avoid naive prompt stuffing.
 _MAX_PRIOR_LESSONS = 12
 _MAX_NEGATIVE_FIRST = 6
 
-_ADAPTIVE_TRUST = frozenset({"VALIDATED", "AGENT_PROPOSED", "MEASURED", "REPLICATED", "VERIFIED", "OBSERVED"})
+# Canonical lifecycle states persisted on lesson metadata (no new DB).
+LESSON_LIFECYCLE_STATES: tuple[str, ...] = tuple(s.value for s in LearningEpistemicState)
+
+_ADAPTIVE_LIFECYCLE = frozenset(
+    {
+        LearningEpistemicState.PROPOSED.value,
+        LearningEpistemicState.OBSERVED.value,
+        LearningEpistemicState.MEASURED.value,
+        LearningEpistemicState.REPLICATED.value,
+        LearningEpistemicState.VERIFIED.value,
+    }
+)
+# Rejected / superseded remain first-class advisory priors (not eternal bans).
+_ADVISORY_LIFECYCLE = _ADAPTIVE_LIFECYCLE | {
+    LearningEpistemicState.REJECTED.value,
+    LearningEpistemicState.SUPERSEDED.value,
+}
+
+_ADAPTIVE_TRUST = frozenset(
+    {"VALIDATED", "AGENT_PROPOSED", "MEASURED", "REPLICATED", "VERIFIED", "OBSERVED", "PROPOSED"}
+)
 _NEGATIVE_MARKERS = (
     "transaction-cost",
     "transaction_cost",
@@ -55,6 +84,7 @@ def _as_dict(lesson: Any) -> dict[str, Any]:
         "trust",
         "epistemic_state",
         "epistemicState",
+        "lifecycle_state",
         "available_at",
         "availableAt",
         "created_at",
@@ -64,6 +94,8 @@ def _as_dict(lesson: Any) -> dict[str, Any]:
         "metadata",
         "validation_stage",
         "failure_categories",
+        "supersedes",
+        "cost_assumptions",
         "strategy_id",
         "origin",
     ):
@@ -86,16 +118,30 @@ def _normalize_lesson(raw: dict[str, Any], *, source: str) -> dict[str, Any]:
         app = raw.get("applicability") if isinstance(raw.get("applicability"), dict) else {}
         applies = list(app.get("applies_to") or app.get("symbols") or [])
     evidence = list(raw.get("evidence_refs") or raw.get("evidenceRefs") or meta.get("evidence_refs") or [])
-    trust = str(
+    raw_trust = str(
         raw.get("trust")
         or raw.get("epistemic_state")
         or raw.get("epistemicState")
         or meta.get("trust")
         or meta.get("epistemic_state")
-        or ("REJECTED" if raw.get("rejected") else "AGENT_PROPOSED")
+        or meta.get("lifecycle_state")
+        or ("REJECTED" if raw.get("rejected") else "PROPOSED")
     )
+    lifecycle = map_legacy_epistemic_state(raw_trust)
+    trust = map_epistemic_to_trust(lifecycle)
     available_at = str(raw.get("available_at") or raw.get("availableAt") or raw.get("created_at") or "")
-    rejected = bool(raw.get("rejected")) or trust.upper() in {"REJECTED", "SUPERSEDED"}
+    rejected = bool(raw.get("rejected")) or lifecycle in {
+        LearningEpistemicState.REJECTED,
+        LearningEpistemicState.SUPERSEDED,
+    }
+    supersedes = list(raw.get("supersedes") or meta.get("supersedes") or [])
+    cost_assumptions: dict[str, Any] = {}
+    if isinstance(raw.get("cost_assumptions"), dict):
+        cost_assumptions = dict(raw["cost_assumptions"])
+    elif isinstance(meta.get("cost_assumptions"), dict):
+        cost_assumptions = dict(meta["cost_assumptions"])
+    elif meta.get("cost_assumption_fingerprint"):
+        cost_assumptions = {"fingerprint": meta.get("cost_assumption_fingerprint")}
     failure_categories = list(
         raw.get("failure_categories")
         or meta.get("failure_categories")
@@ -115,6 +161,8 @@ def _normalize_lesson(raw: dict[str, Any], *, source: str) -> dict[str, Any]:
         "applies_to": [str(a) for a in applies][:12],
         "confidence": float(raw.get("confidence") or meta.get("confidence") or 0.0),
         "trust": trust,
+        "epistemic_state": lifecycle.value,
+        "lifecycle_state": lifecycle.value,
         "available_at": available_at,
         "created_at": str(raw.get("created_at") or raw.get("createdAt") or available_at),
         "rejected": rejected,
@@ -127,6 +175,8 @@ def _normalize_lesson(raw: dict[str, Any], *, source: str) -> dict[str, Any]:
             or ""
         ),
         "failure_categories": failure_categories[:12],
+        "supersedes": supersedes[:12],
+        "cost_assumptions": cost_assumptions,
         "asset_class": str(raw.get("asset_class") or meta.get("asset_class") or ""),
         "regime": str(raw.get("regime") or meta.get("regime") or ""),
         "strategy_family": str(raw.get("strategy_family") or meta.get("strategy_family") or ""),
@@ -134,7 +184,11 @@ def _normalize_lesson(raw: dict[str, Any], *, source: str) -> dict[str, Any]:
         "source": source,
         "metadata": {
             "source": source,
+            "epistemic_state": lifecycle.value,
+            "lifecycle_state": lifecycle.value,
             "contradiction": bool(meta.get("contradiction") or raw.get("contradiction")),
+            "supersedes": supersedes[:12],
+            "cost_assumptions": cost_assumptions,
         },
     }
 
@@ -188,13 +242,20 @@ def _matches_scope(
             score += 0.5
     if lesson.get("rejected") or lesson.get("failure_categories"):
         score += 1.0  # negative experience is first-class
+    lifecycle = str(lesson.get("lifecycle_state") or lesson.get("epistemic_state") or "").upper()
     trust = str(lesson.get("trust") or "").upper()
-    if trust == "VALIDATED":
+    if lifecycle == LearningEpistemicState.VERIFIED.value or trust == "VALIDATED":
         score += 1.5
-    elif trust in {"MEASURED", "REPLICATED", "VERIFIED"}:
+    elif lifecycle in {
+        LearningEpistemicState.MEASURED.value,
+        LearningEpistemicState.REPLICATED.value,
+        LearningEpistemicState.OBSERVED.value,
+    }:
         score += 1.0
-    elif trust == "AGENT_PROPOSED":
+    elif lifecycle == LearningEpistemicState.PROPOSED.value or trust == "AGENT_PROPOSED":
         score += 0.25  # advisory, never treated as proof
+    elif lifecycle == LearningEpistemicState.SUPERSEDED.value:
+        score *= 0.35  # retained history, weak influence
     conf = float(lesson.get("confidence") or 0.0)
     score += min(max(conf, 0.0), 1.0)
     return score
@@ -249,9 +310,11 @@ def retrieve_prior_lessons_for_generation(
                     continue
                 if not _pit_ok(lesson, as_of=decision_as_of):
                     continue
+                lifecycle = str(lesson.get("lifecycle_state") or lesson.get("epistemic_state") or "").upper()
                 trust = str(lesson.get("trust") or "").upper()
-                if trust and trust not in _ADAPTIVE_TRUST and trust not in {"REJECTED", "SUPERSEDED"}:
-                    continue
+                if lifecycle and lifecycle not in _ADVISORY_LIFECYCLE:
+                    if trust and trust not in _ADAPTIVE_TRUST and trust not in {"REJECTED", "SUPERSEDED"}:
+                        continue
                 collected.append(lesson)
         except Exception:  # noqa: BLE001
             pass

@@ -2883,27 +2883,55 @@ class MarketSimControlPlane:
         if loop is None or not loop.paper_session_id:
             raise MarketSimError("PAPER_SESSION_MISSING", deployment_id, http_status=409)
         # Deterministic decision identity for this tick.
-        decision_generation = int((row.get("metadata_json") or {}).get("decision_generation") or 0) + 1
+        meta = dict(row.get("metadata_json") or {})
+        decision_generation = int(meta.get("decision_generation") or 0) + 1
         decision_id = f"{deployment_id}:{decision_generation}:{side}"
+        # Trading lineage IDs — extend existing receipt fields (no new system).
+        root_id = str(
+            meta.get("root_id")
+            or meta.get("root_trace_id")
+            or loop.paper_session_id
+            or deployment_id
+        )
+        parent_id = str(
+            meta.get("last_decision_id")
+            or meta.get("parent_id")
+            or meta.get("parent_trace_id")
+            or root_id
+        )
+        trace_id = str(meta.get("trace_id") or f"trace:{decision_id}")
         stepped = self.paper_forward_step(loop.paper_session_id, side=side, qty=qty)
+        order_payload = (stepped.get("result") or {}).get("order")
+        order_id = None
+        if isinstance(order_payload, dict):
+            order_id = order_payload.get("order_id") or order_payload.get("orderId")
         receipt = {
             "step_id": decision_id,
             "decision_id": decision_id,
             "decision_generation": decision_generation,
+            "trace_id": trace_id,
+            "root_id": root_id,
+            "root_trace_id": root_id,
+            "parent_id": parent_id,
+            "parent_trace_id": parent_id,
+            "order_id": order_id,
             "checkpoint_step": (stepped.get("forward") or {}).get("checkpoint_step"),
             "allowed": (stepped.get("result") or {}).get("allowed"),
             "blocked": bool((stepped.get("result") or {}).get("blocked")),
             "side": side,
-            "order": (stepped.get("result") or {}).get("order"),
-            "filled": bool((stepped.get("result") or {}).get("order")),
+            "order": order_payload,
+            "filled": bool(order_payload),
             "at": utc_now(),
         }
         loop.paper_step_receipts.append(receipt)
         loop.stage = "AUTONOMOUS_PAPER"
         loop.updated_at = utc_now()
-        meta = dict(row.get("metadata_json") or {})
         meta["decision_generation"] = decision_generation
         meta["last_decision_id"] = decision_id
+        meta["trace_id"] = trace_id
+        meta["root_id"] = root_id
+        meta["root_trace_id"] = root_id
+        meta["parent_id"] = parent_id
         meta["next_tick_at"] = utc_now()
         row["loop_state_json"] = loop.public_dict()
         row["metadata_json"] = meta

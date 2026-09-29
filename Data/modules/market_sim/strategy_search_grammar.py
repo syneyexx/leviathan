@@ -46,6 +46,33 @@ class SearchPrimitive(str, Enum):
     RISK_SCALING = "risk_scaling"
     PORTFOLIO_CONSTRAINT = "portfolio_constraint"
     EXECUTION_RULE = "execution_rule"
+    # Structural dimensions — grammar varies these, not only numeric params.
+    ENTRY = "entry"
+    EXIT = "exit"
+    STOP = "stop"
+    HORIZON = "horizon"
+    FEATURES = "features"
+
+
+# Explicit structural axes the search grammar must be able to vary.
+STRUCTURAL_PRIMITIVES: tuple[SearchPrimitive, ...] = (
+    SearchPrimitive.ENTRY,
+    SearchPrimitive.EXIT,
+    SearchPrimitive.STOP,
+    SearchPrimitive.HORIZON,
+    SearchPrimitive.FEATURES,
+)
+
+STRUCTURAL_PRIMITIVE_IDS: tuple[str, ...] = tuple(p.value for p in STRUCTURAL_PRIMITIVES)
+
+
+_HORIZON_CHOICES = ("intrabar", "bars", "session", "multi_day")
+_FEATURE_SETS = (
+    ("close", "volume"),
+    ("close", "high", "low"),
+    ("returns", "volatility"),
+    ("close", "volume", "atr"),
+)
 
 
 class SearchPhase(str, Enum):
@@ -275,8 +302,15 @@ def build_structure_for_family(
     extra_primitives: Iterable[SearchPrimitive | str] | None = None,
     phase: str = SearchPhase.HYPOTHESIS_GENERATION.value,
     structure_id: str | None = None,
+    horizon: str | None = None,
+    features: Sequence[str] | None = None,
+    stop_pct: float | None = None,
 ) -> StrategySearchStructure:
-    """Compose a default grammar for a known strategy family."""
+    """Compose a default grammar for a known strategy family.
+
+    Always includes structural primitives (entry/exit/stop/horizon/features)
+    so discovery varies structure — not only numeric parameters.
+    """
     fam = family if family in SUPPORTED_STRATEGY_FAMILIES else "ma_cross"
     base = list(_FAMILY_PRIMITIVES.get(fam, (SearchPrimitive.RETURNS, SearchPrimitive.TREND)))
     for raw in extra_primitives or ():
@@ -287,13 +321,39 @@ def build_structure_for_family(
     for required in (SearchPrimitive.RISK_SCALING, SearchPrimitive.EXECUTION_RULE, SearchPrimitive.PORTFOLIO_CONSTRAINT):
         if required not in base:
             base.append(required)
-    nodes = [GrammarNode(primitive=p) for p in base]
+    # Structural axes — first-class, not param-only.
+    for required in STRUCTURAL_PRIMITIVES:
+        if required not in base:
+            base.append(required)
+    hz = horizon if horizon in _HORIZON_CHOICES else "bars"
+    feats = list(features) if features else list(_FEATURE_SETS[0])
+    stop = float(stop_pct) if stop_pct is not None else 0.05
+    nodes: list[GrammarNode] = []
+    for p in base:
+        params: dict[str, Any] = {}
+        if p == SearchPrimitive.HORIZON:
+            params = {"horizon": hz}
+        elif p == SearchPrimitive.FEATURES:
+            params = {"features": feats}
+        elif p == SearchPrimitive.STOP:
+            params = {"stop_loss_pct": stop}
+        elif p == SearchPrimitive.ENTRY:
+            params = {"kind": fam}
+        elif p == SearchPrimitive.EXIT:
+            params = {"kind": fam, "mode": "signal_or_stop"}
+        nodes.append(GrammarNode(primitive=p, params=params))
     return StrategySearchStructure(
         structure_id=structure_id or str(uuid.uuid4()),
         family=fam,
         nodes=nodes,
         phase=str(phase),
-        metadata={"source": "strategy_search_grammar"},
+        metadata={
+            "source": "strategy_search_grammar",
+            "structural_primitives": list(STRUCTURAL_PRIMITIVE_IDS),
+            "horizon": hz,
+            "features": feats,
+            "stop_loss_pct": stop,
+        },
     )
 
 
@@ -335,6 +395,20 @@ def generate_hypothesis_candidate(
     )
     entry = copy.deepcopy(desc.entry_template) if desc else {"kind": fam, "version": 3, "parameters": params}
     exit_rules = copy.deepcopy(desc.exit_template) if desc else {"kind": fam}
+    # Vary structural axes on hypothesis generation (not param-only).
+    hz = str((structure.metadata or {}).get("horizon") or "bars")
+    feats = list((structure.metadata or {}).get("features") or ["close", "volume"])
+    stop_pct = float((structure.metadata or {}).get("stop_loss_pct") or 0.05)
+    entry = dict(entry)
+    entry["version"] = 3
+    entry["kind"] = fam
+    entry["horizon"] = hz
+    entry["features"] = feats
+    entry["stop_loss"] = {"pct": stop_pct}
+    exit_rules = dict(exit_rules)
+    exit_rules.setdefault("kind", fam)
+    exit_rules["horizon"] = hz
+    exit_rules["mode"] = exit_rules.get("mode") or "signal_or_stop"
     turnover = "medium"
     if fam in {"momentum", "breakout"}:
         turnover = "medium_high"
@@ -363,9 +437,14 @@ def generate_hypothesis_candidate(
         parameters=params,
         entry_rules=entry,
         exit_rules=exit_rules,
-        risk_rules={"max_position_pct": 25},
+        risk_rules={"max_position_pct": 25, "stop_loss": {"pct": stop_pct}},
         hypothesis_id=hypothesis_id,
-        metadata={"origin": "strategy_search_grammar.hypothesis"},
+        metadata={
+            "origin": "strategy_search_grammar.hypothesis",
+            "structural_primitives": list(STRUCTURAL_PRIMITIVE_IDS),
+            "horizon": hz,
+            "features": feats,
+        },
     )
 
 
@@ -471,3 +550,97 @@ def enrich_proposal_with_contract(
 
 def list_primitives() -> list[dict[str, str]]:
     return [{"id": p.value, "label": p.value.replace("_", " ")} for p in SearchPrimitive]
+
+
+def measure_candidate_novelty(
+    candidate: Mapping[str, Any] | StrategyCandidateContract,
+    *,
+    reference_pool: Sequence[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Measurable structural + parameter novelty relative to a reference pool.
+
+    Structural novelty counts differing entry/exit/stop/horizon/features/family.
+    Parameter novelty is normalized L1 distance over shared numeric keys.
+    """
+    if isinstance(candidate, StrategyCandidateContract):
+        cand = candidate.public_dict()
+    else:
+        cand = dict(candidate or {})
+    pool = list(reference_pool or [])
+    structural = _structural_signature(cand)
+    params = {
+        k: float(v)
+        for k, v in dict(cand.get("parameters") or {}).items()
+        if isinstance(v, (int, float)) and not isinstance(v, bool)
+    }
+    if not pool:
+        return {
+            "structural_novelty": 1.0,
+            "parameter_novelty": 1.0,
+            "novelty": 1.0,
+            "structural_signature": structural,
+            "truth": {"measurable": True, "reference_pool_empty": True},
+        }
+    struct_dists: list[float] = []
+    param_dists: list[float] = []
+    for ref in pool:
+        ref_sig = _structural_signature(ref)
+        keys = set(structural) | set(ref_sig)
+        if not keys:
+            struct_dists.append(0.0)
+        else:
+            diffs = sum(1 for k in keys if structural.get(k) != ref_sig.get(k))
+            struct_dists.append(diffs / len(keys))
+        ref_params = {
+            k: float(v)
+            for k, v in dict(ref.get("parameters") or {}).items()
+            if isinstance(v, (int, float)) and not isinstance(v, bool)
+        }
+        shared = set(params) & set(ref_params)
+        if not shared:
+            param_dists.append(1.0 if params or ref_params else 0.0)
+            continue
+        acc = 0.0
+        for k in shared:
+            scale = max(abs(ref_params[k]), abs(params[k]), 1.0)
+            acc += min(1.0, abs(params[k] - ref_params[k]) / scale)
+        param_dists.append(acc / len(shared))
+    structural_novelty = min(struct_dists) if struct_dists else 1.0
+    parameter_novelty = min(param_dists) if param_dists else 1.0
+    novelty = 0.6 * structural_novelty + 0.4 * parameter_novelty
+    return {
+        "structural_novelty": round(structural_novelty, 6),
+        "parameter_novelty": round(parameter_novelty, 6),
+        "novelty": round(novelty, 6),
+        "structural_signature": structural,
+        "truth": {"measurable": True, "reference_pool_empty": False},
+    }
+
+
+def _structural_signature(raw: Mapping[str, Any]) -> dict[str, str]:
+    entry = dict(raw.get("entry_rules") or {})
+    exit_rules = dict(raw.get("exit_rules") or {})
+    risk = dict(raw.get("risk_rules") or {})
+    meta = dict(raw.get("metadata") or {})
+    stop = entry.get("stop_loss") or risk.get("stop_loss") or {}
+    stop_pct = stop.get("pct") if isinstance(stop, dict) else stop
+    feats = entry.get("features") or meta.get("features") or []
+    if isinstance(feats, (list, tuple)):
+        feats_key = ",".join(str(f) for f in feats)
+    else:
+        feats_key = str(feats)
+    return {
+        "family": str(raw.get("family") or entry.get("kind") or ""),
+        "entry_kind": str(entry.get("kind") or ""),
+        "exit_kind": str(exit_rules.get("kind") or ""),
+        "exit_mode": str(exit_rules.get("mode") or ""),
+        "stop": str(stop_pct if stop_pct is not None else ""),
+        "horizon": str(entry.get("horizon") or exit_rules.get("horizon") or meta.get("horizon") or ""),
+        "features": feats_key,
+        "structure_hash": str(
+            (raw.get("structure") or {}).get("structure_hash")
+            if isinstance(raw.get("structure"), dict)
+            else meta.get("structure_hash")
+            or ""
+        ),
+    }

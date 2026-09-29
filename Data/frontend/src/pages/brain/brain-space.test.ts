@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { LiveBrainEdge, LiveBrainNode } from "./brain-live";
 import {
   brainSpaceDomainForNode,
+  brainSpaceLabelVisible,
   buildBrainSpaceProjection,
   createBrainSpaceAnimationLoop,
   nodeVisibleAtKnowledgeAge,
@@ -377,6 +378,13 @@ describe("createBrainSpaceAnimationLoop", () => {
     cb(wall);
     expect(loop.getSimTime()).toBe(0);
     loop.stop();
+  });
+
+  it("hides labels until hover or selection (zoom alone does not force labels)", () => {
+    expect(brainSpaceLabelVisible({ showLabels: true, selected: false, hovered: false })).toBe(false);
+    expect(brainSpaceLabelVisible({ showLabels: true, selected: false, hovered: true })).toBe(true);
+    expect(brainSpaceLabelVisible({ showLabels: true, selected: true, hovered: false })).toBe(true);
+    expect(brainSpaceLabelVisible({ showLabels: false, selected: true, hovered: true })).toBe(false);
   });
 });
 

@@ -11,6 +11,7 @@ import {
 import type { LiveBrainEdge, LiveBrainNode } from "./brain-live";
 import {
   buildBrainSpaceProjection,
+  brainSpaceLabelVisible,
   createBrainSpaceAnimationLoop,
   nodeVisibleAtKnowledgeAge,
   prefersReducedMotion,
@@ -584,7 +585,13 @@ export function BrainSpaceCanvas({
               detail: `${node.domain} · ${node.source.type}`,
             };
           }
-          if (live.showLabels && (live.selectedId === node.source.id || nextHover?.id === node.source.id || activeCamera.zoom > 1.35)) {
+          if (
+            brainSpaceLabelVisible({
+              showLabels: live.showLabels,
+              selected: live.selectedId === node.source.id,
+              hovered: nextHover?.id === node.source.id,
+            })
+          ) {
             ctx.font = "9px 'IBM Plex Sans', 'Segoe UI', sans-serif";
             ctx.fillStyle = "rgba(214,224,236,0.82)";
             ctx.fillText(node.source.label, point.x + radius + 5, point.y + 3);

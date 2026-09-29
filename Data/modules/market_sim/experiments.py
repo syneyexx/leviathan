@@ -480,15 +480,27 @@ def build_strategy_memory_record(
     extra_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Durable StrategyMemory row — available_at is when learned, never backdated to market T."""
+    from .learning_memory import map_legacy_epistemic_state
+
+    ep = map_legacy_epistemic_state(
+        epistemic_state or ("REJECTED" if rejected else "MEASURED")
+    )
     meta = {
         "origin": origin,
-        "epistemic_state": epistemic_state
-        or ("REJECTED" if rejected else "MEASURED"),
+        "epistemic_state": ep.value,
+        "lifecycle_state": ep.value,
         "validation_stage": validation_stage,
-        "rejected": bool(rejected),
+        "rejected": bool(rejected) or ep.value == "REJECTED",
     }
     if extra_metadata:
         meta.update(extra_metadata)
+        # Re-normalize if caller overrode epistemic_state in extras.
+        if "epistemic_state" in extra_metadata or "lifecycle_state" in extra_metadata:
+            ep2 = map_legacy_epistemic_state(
+                str(extra_metadata.get("epistemic_state") or extra_metadata.get("lifecycle_state") or ep.value)
+            )
+            meta["epistemic_state"] = ep2.value
+            meta["lifecycle_state"] = ep2.value
     return {
         "memory_id": str(uuid.uuid4()),
         "strategy_id": strategy_id,
@@ -499,7 +511,7 @@ def build_strategy_memory_record(
         "trial_id": trial_id,
         "available_at": available_at,
         "created_at": created_at or available_at,
-        "rejected": bool(rejected),
+        "rejected": bool(rejected) or meta.get("epistemic_state") == "REJECTED",
         "metadata": meta,
     }
 

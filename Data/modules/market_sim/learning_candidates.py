@@ -183,6 +183,37 @@ def mutate_spec(
             out["entry_rules"]["take_profit"] = {"pct": max(0.02, stop["pct"] * rng.uniform(1.5, 3.0))}
         ops.append("MODIFY_RISK")
 
+    # Structural exit / horizon variation — not param-only.
+    if rng.random() < float(rates.get("exit", 0.2)):
+        exit_rules = dict(out.get("exit_rules") or {})
+        modes = ("signal", "stop", "signal_or_stop", "time_stop")
+        exit_rules["mode"] = rng.choice(modes)
+        exit_rules["kind"] = out.get("family") or exit_rules.get("kind") or "ma_cross"
+        if exit_rules["mode"] == "time_stop":
+            max_bars = int(rng.choice([5, 10, 20, 40]))
+            exit_rules["max_bars"] = max_bars
+            out["entry_rules"]["time_stop"] = {"max_bars": max_bars}
+        out["exit_rules"] = exit_rules
+        ops.append("MODIFY_EXIT")
+
+    if rng.random() < float(rates.get("horizon", 0.15)):
+        horizons = ("intrabar", "bars", "session", "multi_day")
+        hz = rng.choice(horizons)
+        out["entry_rules"]["horizon"] = hz
+        out["exit_rules"] = dict(out.get("exit_rules") or {})
+        out["exit_rules"]["horizon"] = hz
+        ops.append("MODIFY_EXIT")
+
+    if rng.random() < float(rates.get("features", rates.get("feature", 0.15))):
+        feature_sets = (
+            ["close", "volume"],
+            ["close", "high", "low"],
+            ["returns", "volatility"],
+            ["close", "volume", "atr"],
+        )
+        out["entry_rules"]["features"] = list(rng.choice(feature_sets))
+        ops.append("REPLACE_FEATURE")
+
     if rng.random() < 0.08:
         new_fam = sample_family(state, rng)
         rebuilt = build_family_spec(new_fam, rng=rng, state=state)
@@ -500,7 +531,55 @@ def generate_population(
             if len(out) >= size:
                 break
 
-    return out[:size]
+    population = out[:size]
+    # Attach measurable novelty (structural + parameter) vs elite/prior references.
+    refs: list[dict[str, Any]] = []
+    for espec in elites:
+        refs.append(espec if isinstance(espec, dict) else {})
+    for prior in priors:
+        if hasattr(prior, "public_dict"):
+            refs.append(prior.public_dict())
+        elif isinstance(prior, dict):
+            refs.append(prior)
+    explore_rate = float(state.exploration_rate or objective.exploration_rate or 0.0)
+    for item in population:
+        novelty = measure_spec_novelty(item.get("spec") or {}, reference_pool=refs)
+        item["novelty"] = novelty
+        item["structural_novelty"] = novelty.get("structural_novelty")
+        item["parameter_novelty"] = novelty.get("parameter_novelty")
+        item["exploration_rate"] = explore_rate
+        meta = dict(item.get("metadata") or {})
+        meta["novelty"] = novelty
+        meta["exploration_rate"] = explore_rate
+        item["metadata"] = meta
+    return population
+
+
+def measure_spec_novelty(
+    spec: dict[str, Any],
+    *,
+    reference_pool: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Expose measurable structural + parameter novelty for a candidate spec."""
+    from .strategy_search_grammar import measure_candidate_novelty
+
+    payload = {
+        "family": spec.get("family"),
+        "entry_rules": dict(spec.get("entry_rules") or {}),
+        "exit_rules": dict(spec.get("exit_rules") or {}),
+        "parameters": dict(spec.get("parameters") or {}),
+        "risk_rules": dict(spec.get("risk_rules") or {}),
+        "metadata": dict(spec.get("metadata") or {}),
+    }
+    refs = []
+    for ref in reference_pool or []:
+        if not isinstance(ref, dict):
+            continue
+        if "entry_rules" in ref or "parameters" in ref:
+            refs.append(ref)
+        elif "spec" in ref and isinstance(ref["spec"], dict):
+            refs.append(ref["spec"])
+    return measure_candidate_novelty(payload, reference_pool=refs)
 
 
 def merge_agent_proposals_into_population(
