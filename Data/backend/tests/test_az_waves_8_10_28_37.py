@@ -144,7 +144,8 @@ class LessonLifecycleWave8Tests(unittest.TestCase):
             origin="test",
             epistemic_state="AGENT_PROPOSED",
         )
-        self.assertEqual(row["metadata"]["epistemic_state"], "PROPOSED")
+        # Specialized token preserved; canonical lifecycle is PROPOSED.
+        self.assertEqual(row["metadata"]["epistemic_state"], "AGENT_PROPOSED")
         self.assertEqual(row["metadata"]["lifecycle_state"], "PROPOSED")
 
 

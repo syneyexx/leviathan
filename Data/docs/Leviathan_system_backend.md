@@ -1732,13 +1732,17 @@ Owner: `Data/modules/source_ingestion/progress.py`.
 
 Owner: `Data/modules/workers/admission.py` (`PressureState`, `classify_pressure`, `ResourceAdmission`).
 
-Pressure states gate admission for memory/VRAM-heavy classes. Protected / DB_SERIAL classes are not casually shed. Dashboard surfaces admission observability — does not invent a second governor.
+Pressure states: `NORMAL | PRESSURE | CRITICAL | UNKNOWN`. Unknown telemetry is **not** NORMAL — admission is conservative under UNKNOWN. Protected / DB_SERIAL classes are not casually shed. Host RAM/VRAM profile fields (`LEVIATHAN_HOST_RAM_MB`, `LEVIATHAN_VRAM_PRIMARY_MB`, `LEVIATHAN_VRAM_SECONDARY_MB`, reserves, scale-to-zero) load from env via `WorkerSettings` into ResourceAdmission. Demand-driven scale-to-zero keeps essential/sticky pools warm and eligible cold pools at zero when idle. Dashboard surfaces admission observability — does not invent a second governor.
 
 ## 30.7 RiskGuard paper envelope
 
-Owner: `Data/modules/market_sim/risk_guard.py` (+ portefeuille risk helpers).
+Owner: `Data/modules/market_sim/risk_guard.py` (+ portefeuille risk helpers + `market_risk_receipts`).
 
-Deterministic authority for paper size/margin/kill-switch envelopes. Models propose; RiskGuard allows/vetoes. Autonomous paper loop and paper-forward runner both route through RiskGuard. Live money BLOCKED independently.
+Deterministic authority for paper size/margin/kill-switch envelopes. Models propose; RiskGuard allows/vetoes. **Every** risk-increasing paper path — including portfolio SHORT/COVER — routes through RiskGuard (no side-specific bypass). Health uses fail-closed `HealthState`: `HEALTHY | DEGRADED | UNHEALTHY | UNKNOWN`. Defaults are UNKNOWN; UNKNOWN never silently becomes HEALTHY. Live paper order paths bind measured provider/broker/freshness health before evaluation. Decisive rejections write durable MARKET `market_risk_receipts` (in-memory log alone is not persistence). Live money BLOCKED independently.
+
+Operating profile `AUTONOMOUS_PAPER_REAL_DATA` (`operating_profiles.py`) configures real-data paper-only execution of the existing MarketSim path — not a second engine.
+
+Shadow / autonomous paper evidence distinguish **MEASURED** from **PASS**. Count thresholds alone cannot self-pass; A3/A4 builders do not invent `sealed_pass` / `acceptance.passed` when evidence is omitted.
 
 ## 30.8 Strategy search grammar
 
