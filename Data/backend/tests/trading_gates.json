@@ -1273,22 +1273,19 @@
         "Data/backend/tests/trading_gates.json",
         "Data/backend/tests/trading_completion_report.json"
       ],
-      "test_node_ids": [],
+      "test_node_ids": [
+        "Data/backend/tests/test_trading_gate_meta_w22.py::TradingGateMetaTests::test_verifier_and_canonical_docs_present"
+      ],
       "checks": [
         {
-          "kind": "file_exists",
-          "path": "scripts/verify_trading_100.py"
-        },
-        {
-          "kind": "file_exists",
-          "path": "Data/docs/Leviathan_system_backend.md"
-        },
-        {
-          "kind": "file_exists",
-          "path": "Data/docs/Leviathan_system_frontend.md"
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_trading_gate_meta_w22.py::TradingGateMetaTests::test_verifier_and_canonical_docs_present"
+          ],
+          "timeout_sec": 60
         }
       ],
-      "notes": "Slice 16: verifier + canonical docs"
+      "notes": "Wave 22: measurable verifier+docs meta pytest (file_exists alone insufficient)"
     },
     "G44": {
       "title": "Completion Report with evidence",
@@ -1299,14 +1296,19 @@
         "Data/backend/tests/trading_completion_report.json written by verify_trading_100.py",
         "Gate table + anti-shortcut scan"
       ],
-      "test_node_ids": [],
+      "test_node_ids": [
+        "Data/backend/tests/test_trading_gate_meta_w22.py::TradingGateMetaTests::test_completion_report_schema_when_present"
+      ],
       "checks": [
         {
-          "kind": "file_exists",
-          "path": "scripts/verify_trading_100.py"
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_trading_gate_meta_w22.py::TradingGateMetaTests::test_completion_report_schema_when_present"
+          ],
+          "timeout_sec": 60
         }
       ],
-      "notes": "Slice 16 completion report path"
+      "notes": "Wave 22: completion report schema measured by pytest"
     },
     "G45": {
       "title": "All T0 characterization \u2192 regressions",
@@ -1857,9 +1859,9 @@
         "Data/frontend/src/pages/tradingOrchestraContracts.test.ts"
       ],
       "test_node_ids": [
-        "Data/frontend/src/pages/tradingOrchestraContracts.test.ts"
+        "Data/backend/tests/test_trading_gate_meta_w22.py::TradingGateMetaTests::test_orchestra_frontend_contracts_present"
       ],
-      "notes": "vitest contract test; visual check recorded in PR \u2014 vitest not run by verify_trading_100.py; run `npm test` in Data/frontend",
+      "notes": "Wave 22: contract files measured via pytest meta; full vitest also run in frontend CI",
       "assertions": [
         "readiness label never inferred client-side",
         "PnL UNMEASURED without fill records",
@@ -1868,12 +1870,11 @@
       ],
       "checks": [
         {
-          "kind": "file_exists",
-          "path": "Data/frontend/src/pages/tradingOrchestraContracts.test.ts"
-        },
-        {
-          "kind": "file_exists",
-          "path": "Data/frontend/src/pages/agents/TradeOrchestraSection.tsx"
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_trading_gate_meta_w22.py::TradingGateMetaTests::test_orchestra_frontend_contracts_present"
+          ],
+          "timeout_sec": 60
         }
       ]
     },
@@ -2402,7 +2403,7 @@
       "notes": "autonomous_paper_pass=true alone is not proof"
     },
     "AP03": {
-      "title": "Shadow → autonomous paper → drift → challenger closed loop",
+      "title": "Shadow \u2192 autonomous paper \u2192 drift \u2192 challenger closed loop",
       "phase": "A4-Autonomous-Paper",
       "status": "PASS",
       "required": true,
@@ -2632,7 +2633,7 @@
           "timeout_sec": 120
         }
       ],
-      "notes": "Product machinery only — does not claim market edge; sealed path optional"
+      "notes": "Product machinery only \u2014 does not claim market edge; sealed path optional"
     },
     "G67": {
       "title": "Autonomous research adversarial honesty (causality, DSL, expectancy, live, VLM)",
