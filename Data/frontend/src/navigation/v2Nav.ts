@@ -1,9 +1,12 @@
 /**
  * Leviathan V2 primary navigation — Screen 1 sidebar contract.
- * Route truth stays centralized here; MAIN_MENU remains for legacy footer submenus.
+ *
+ * Route truth for expandable group children is adapted from MAIN_MENU
+ * (canonical product IA). V2 presentation metadata (icons, Screen 1 labels)
+ * lives here — do not maintain a second independent route tree.
  */
 
-import { normalizePath } from "./menu";
+import { MAIN_MENU, normalizePath, type SubMenuItem } from "./menu";
 
 export type V2NavChild = {
   id: string;
@@ -38,6 +41,35 @@ export type V2NavIconId =
   | "system"
   | "settings";
 
+/** Map MAIN_MENU submenu rows into V2 child presentation nodes. */
+export function v2ChildrenFromMainMenu(mainMenuId: string): readonly V2NavChild[] {
+  const section = MAIN_MENU.find((item) => item.id === mainMenuId);
+  if (!section) return [];
+  return section.submenu.map((item: SubMenuItem) => {
+    const pathOnly = item.to.split("?")[0] || item.to;
+    return {
+      id: item.id,
+      label: item.label,
+      to: item.to,
+      match: [pathOnly],
+    };
+  });
+}
+
+/**
+ * Dashboard Screen 1 children (subset of Hades AI submenu).
+ * Kept explicit so Coding Agent stays reachable via MAIN_MENU / router
+ * without forcing it into the V2 Dashboard rail.
+ */
+const DASHBOARD_CHILDREN: readonly V2NavChild[] = [
+  { id: "dashboard-home", label: "Dashboard", to: "/", match: ["/"] },
+  { id: "chat", label: "Chat", to: "/chat", match: ["/chat"] },
+  { id: "taken", label: "Taken", to: "/tasks", match: ["/tasks"] },
+];
+
+/** Research / Onderzoek & Kennis — full canonical submenu from MAIN_MENU. */
+const RESEARCH_CHILDREN = v2ChildrenFromMainMenu("research");
+
 /**
  * Screen 1 primary rail. Deep-link destinations for Media / Plugin & Runtime /
  * Coding / etc. remain registered in the router and MAIN_MENU; they are not
@@ -51,11 +83,7 @@ export const V2_PRIMARY_NAV: readonly V2NavItem[] = [
     match: ["/", "/chat", "/tasks"],
     expandable: true,
     icon: "dashboard",
-    children: [
-      { id: "dashboard-home", label: "Dashboard", to: "/", match: ["/"] },
-      { id: "chat", label: "Chat", to: "/chat", match: ["/chat"] },
-      { id: "taken", label: "Taken", to: "/tasks", match: ["/tasks"] },
-    ],
+    children: DASHBOARD_CHILDREN,
   },
   {
     id: "agents",
@@ -69,7 +97,9 @@ export const V2_PRIMARY_NAV: readonly V2NavItem[] = [
     label: "Research",
     to: "/research",
     match: ["/research", "/brain", "/memory", "/knowledge", "/evidence"],
+    expandable: true,
     icon: "research",
+    children: RESEARCH_CHILDREN,
   },
   {
     id: "trading",
@@ -166,7 +196,7 @@ export function findActiveV2Child(
   return best;
 }
 
-/** Dashboard group should auto-expand on /, /chat, /tasks. */
+/** Expandable groups auto-open when their match prefixes are active. */
 export function shouldAutoExpandV2Group(item: V2NavItem, pathname: string): boolean {
   if (!item.expandable) return false;
   return isV2NavItemActive(item, pathname);
