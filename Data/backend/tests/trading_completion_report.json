@@ -1,17 +1,17 @@
 {
-  "generated_at": "2026-09-28T15:54:46+00:00",
-  "source_commit": "21288fd8f76c93d1778260f926847dd6d6b32d3f",
-  "source_tree": "c54e2ef38876678c9f944ab18d57f225856a2ad7",
+  "generated_at": "2026-09-28T23:59:09+00:00",
+  "source_commit": "721ab04fbf2f7fb7c525a721711145664e711ff2",
+  "source_tree": "fdc83a0cf33eda07b1f8864694d3e28a2fe6ee67",
   "dirty": true,
-  "branch": "cursor/autonomous-trading-research-loop-5483",
-  "strict": false,
+  "branch": "cursor/institutional-hardening-e3ae",
+  "strict": true,
   "phase": "Slice16/A0-A4",
   "program": "Master Program v4.1",
   "all_required_pass": false,
   "strict_all_required_pass": false,
   "no_hard_failures": true,
   "stale_source_commit": false,
-  "allow_incomplete": true,
+  "allow_incomplete": false,
   "operating_envelope": {
     "live_trading": "BLOCKED",
     "canonical_databases": [
@@ -23,8 +23,8 @@
       "Data/HADES/",
       "editor/"
     ],
-    "strict": false,
-    "allow_incomplete": true
+    "strict": true,
+    "allow_incomplete": false
   },
   "counts": {
     "PASS": 83,
@@ -1422,5 +1422,5 @@
     "gates_manifest_is_policy_not_outcome": true,
     "stale_commit_is_not_release_evidence": true
   },
-  "exit_reason": "incomplete gates reported honestly (10 open); no FAIL"
+  "exit_reason": "strict: dirty working tree cannot be release evidence"
 }

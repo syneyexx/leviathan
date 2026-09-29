@@ -2094,6 +2094,113 @@ class ResearchService:
 
         return ClaimEvidenceGraphBuilder(self.store).build(project_id).public_dict()
 
+    def verify_claims_independently(self, project_id: str) -> dict[str, Any]:
+        """Independent verifier path — does not reuse authoring-model judgments.
+
+        Deterministic entailment + source-independence only. Cross-model
+        verification remains UNAVAILABLE unless a separate verifier is wired.
+        """
+        self.get_project(project_id)
+        from .independent_verifier import IndependentClaimVerifier
+
+        report = IndependentClaimVerifier(self.store).verify_project(project_id)
+        self.store.add_event(
+            project_id,
+            "independent_verification",
+            f"Independent verifier report {report.report_id}",
+            {
+                "report_id": report.report_id,
+                "counts": report.public_dict()["counts"],
+                "cross_model_status": report.cross_model_status,
+            },
+        )
+        return report.public_dict()
+
+    def bounded_web_search(
+        self,
+        queries: list[str],
+        *,
+        limit: int = 5,
+        max_workers: int | None = None,
+    ) -> dict[str, Any]:
+        """Search multiple queries with a hard concurrency ceiling (Wave 10–11)."""
+        from .concurrency import (
+            DEFAULT_SEARCH_CONCURRENCY,
+            BoundedConcurrencyGate,
+            clamp_concurrency,
+            partition_successes,
+        )
+
+        gate = BoundedConcurrencyGate(
+            max_workers=clamp_concurrency(
+                max_workers,
+                default=DEFAULT_SEARCH_CONCURRENCY,
+                ceiling=8,
+            ),
+            name="research.search",
+        )
+        provider = self.web
+
+        def _one(q: str) -> dict[str, Any]:
+            hits = provider.search(str(q), limit=limit)
+            return {
+                "query": q,
+                "results": [h.public_dict() if hasattr(h, "public_dict") else h for h in hits],
+            }
+
+        raw = gate.run_bounded(list(queries or []), _one)
+        ok, err = partition_successes(raw)
+        return {
+            "results": ok,
+            "errors": [{"error": str(e)[:300]} for e in err],
+            "concurrency": gate.public_dict(),
+            "truth": {
+                "bounded_concurrency": True,
+                "search_hits_are_discovery_only": True,
+            },
+        }
+
+    def bounded_web_fetch(
+        self,
+        urls: list[str],
+        *,
+        max_workers: int | None = None,
+        timeout_seconds: float = 20.0,
+    ) -> dict[str, Any]:
+        """Fetch multiple URLs with a hard concurrency ceiling (Wave 10–11)."""
+        from .concurrency import (
+            DEFAULT_FETCH_CONCURRENCY,
+            BoundedConcurrencyGate,
+            clamp_concurrency,
+            partition_successes,
+        )
+
+        gate = BoundedConcurrencyGate(
+            max_workers=clamp_concurrency(
+                max_workers,
+                default=DEFAULT_FETCH_CONCURRENCY,
+                ceiling=8,
+            ),
+            name="research.fetch",
+        )
+        provider = self.web
+
+        def _one(url: str) -> dict[str, Any]:
+            page = provider.fetch_page(str(url), timeout_seconds=timeout_seconds)
+            return page.public_dict() if hasattr(page, "public_dict") else dict(page)
+
+        raw = gate.run_bounded(list(urls or []), _one)
+        ok, err = partition_successes(raw)
+        return {
+            "pages": ok,
+            "errors": [{"error": str(e)[:300]} for e in err],
+            "concurrency": gate.public_dict(),
+            "truth": {
+                "bounded_concurrency": True,
+                "fetched_content_is_source_of_truth": True,
+            },
+        }
+
     def list_gaps(self, project_id: str) -> list[dict[str, Any]]:
         project = self.get_project(project_id)
         from .gaps import GapAnalyzer

@@ -371,6 +371,20 @@ class JobStore:
             ).fetchone()
         return int(row[0] if row is not None else 0)
 
+    def count_by_states(self, states: list[str] | tuple[str, ...] | None = None) -> int:
+        """COUNT jobs in the given states — used for scheduler backpressure."""
+        wanted = [str(s) for s in (states or [JobState.QUEUED.value]) if str(s).strip()]
+        if not wanted:
+            return 0
+        placeholders = ",".join("?" for _ in wanted)
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                f"SELECT COUNT(*) AS n FROM jobs WHERE state IN ({placeholders})",
+                tuple(wanted),
+            ).fetchone()
+        return int(row[0] if row is not None else 0)
+
     def list_children(self, parent_job_id: str, *, limit: int = 100) -> list[JobRecord]:
         with self.connect() as conn:
             self._ensure_schema(conn)

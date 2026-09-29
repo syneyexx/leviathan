@@ -40,10 +40,15 @@ class ScheduleRunner:
             "fired": 0,
             "errors": 0,
             "duplicates_suppressed": 0,
+            "backpressure_skips": 0,
             "last_tick_at": None,
             "last_tick_duration_ms": None,
             "last_error": None,
         }
+        self.queue_backpressure_limit = 50
+
+    def configure_backpressure(self, *, limit: int = 50) -> None:
+        self.queue_backpressure_limit = max(1, int(limit))
 
     def tick(self, *, execute: bool = False) -> list[dict[str, Any]]:
         """Fire due schedules.
@@ -67,11 +72,31 @@ class ScheduleRunner:
         self.telemetry["ticks"] = int(self.telemetry.get("ticks", 0)) + 1
         results: list[dict[str, Any]] = []
         try:
+            # Global backpressure: when job queues are saturated, skip firing to
+            # avoid duplicate research waves from scheduler races under load.
+            if self.jobs is not None and self._queues_saturated():
+                self.telemetry["backpressure_skips"] = (
+                    int(self.telemetry.get("backpressure_skips", 0)) + 1
+                )
+                results.append(
+                    {
+                        "ok": False,
+                        "backpressure": True,
+                        "reason": "job_queue_saturated",
+                        "limit": self.queue_backpressure_limit,
+                    }
+                )
+                return results
             for schedule in self.store.due(now=utc_now()):
                 try:
                     fired = self._fire(schedule, execute=execute)
                     self.store.mark_ran(schedule.schedule_id)
                     self.telemetry["fired"] = int(self.telemetry.get("fired", 0)) + 1
+                    # Count idempotent reuse when occurrence already had a job.
+                    if fired.get("idempotent_reuse"):
+                        self.telemetry["duplicates_suppressed"] = (
+                            int(self.telemetry.get("duplicates_suppressed", 0)) + 1
+                        )
                     results.append({"schedule_id": schedule.schedule_id, "ok": True, **fired})
                 except Exception as exc:  # noqa: BLE001
                     self.telemetry["errors"] = int(self.telemetry.get("errors", 0)) + 1
@@ -85,6 +110,14 @@ class ScheduleRunner:
                 (time.monotonic() - started) * 1000.0, 3
             )
         return results
+
+    def _queues_saturated(self) -> bool:
+        from .operating_pipeline import queue_is_saturated
+
+        store = getattr(self.jobs, "store", None)
+        if store is None:
+            return False
+        return queue_is_saturated(store, limit=self.queue_backpressure_limit)
 
     def _fire(self, schedule: ScheduleRecord, *, execute: bool = False) -> dict[str, Any]:
         if schedule.target_kind == ScheduleTargetKind.JOB:
@@ -113,12 +146,18 @@ class ScheduleRunner:
                 enqueue_kwargs["worker_pool"] = worker_pool
             job = self.jobs.enqueue(**enqueue_kwargs)
             # Detect idempotent reuse (duplicate occurrence after crash/reclaim).
-            if getattr(job, "idempotency_key", None) == idem and getattr(
-                job, "created_at", None
-            ):
-                # JobRuntime returns existing job on idempotency hit — count suppressions
-                # when the returned job was not just created this tick (best-effort).
-                pass
+            idempotent_reuse = False
+            existing = None
+            try:
+                existing = self.jobs.store.get_by_idempotency_key(idem)
+            except Exception:  # noqa: BLE001
+                existing = None
+            if existing is not None and existing.job_id == job.job_id:
+                # Job existed before this tick if created_at is older than a few ms —
+                # best-effort: treat same idempotency key return as reuse when
+                # last_run_at is set on the schedule (second delivery).
+                if schedule.last_run_at:
+                    idempotent_reuse = True
             done = None
             if execute:
                 # TEST-ONLY — production scheduler must never call process_next.
@@ -130,6 +169,7 @@ class ScheduleRunner:
                 "worker_pool": getattr(job, "worker_pool", None) or worker_pool,
                 "executed_inline": bool(execute),
                 "occurrence": occurrence,
+                "idempotent_reuse": idempotent_reuse,
             }
         if schedule.target_kind == ScheduleTargetKind.WORKFLOW:
             if self.workflows is None:

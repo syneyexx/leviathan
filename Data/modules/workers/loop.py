@@ -657,6 +657,25 @@ def run_pool_loop(
                     arguments=getattr(job, "arguments", None),
                 )
 
+        # Wave 17 — durable autonomous action telemetry receipt (extends ObservabilityHub).
+        try:
+            from Data.modules.observability.action_receipts import emit_action_receipt
+
+            receipt_job = final if final is not None else job
+            # Ensure pool/resource fields visible even if store row lagged.
+            if getattr(receipt_job, "worker_pool", None) is None:
+                try:
+                    receipt_job.worker_pool = pool_id  # type: ignore[attr-defined]
+                except Exception:  # noqa: BLE001
+                    pass
+            emit_action_receipt(
+                ctx.get("observability_hub") if isinstance(ctx, dict) else None,
+                receipt_job,
+                runtime_ms=duration_ms,
+            )
+        except Exception:  # noqa: BLE001 — telemetry never breaks the worker loop
+            pass
+
         processed += 1
         if max_jobs is not None and processed >= max_jobs:
             break

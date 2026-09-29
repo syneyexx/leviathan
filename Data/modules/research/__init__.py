@@ -10,6 +10,8 @@ from .citation_audit import (
 )
 from .evidence import EvidenceLedger
 from .gaps import GapAnalyzer, ResearchGap, select_next_queries, should_stop
+from .claim_relations import ClaimRelation, normalize_claim_relation, relation_from_entailment_status
+from .concurrency import BoundedConcurrencyGate, clamp_concurrency
 from .graph import (
     ClaimEvidenceGraph,
     ClaimEvidenceGraphBuilder,
@@ -17,6 +19,7 @@ from .graph import (
     ReproducibilityBundleExporter,
     citation_entailment_check,
 )
+from .independent_verifier import IndependentClaimVerifier, IndependentVerificationReport
 from .local_retrieval import LocalResearchRetriever, build_default_local_retriever
 from .planner import apply_plan_edits, build_plan
 from .quality_scorecard import ResearchQualityScorecard, build_quality_scorecard
@@ -65,10 +68,14 @@ __all__ = [
     "CitationAuditItem",
     "CitationAuditReport",
     "CitationAuditStatus",
+    "BoundedConcurrencyGate",
     "ClaimEvidenceGraph",
     "ClaimEvidenceGraphBuilder",
+    "ClaimRelation",
     "ClaimStatus",
     "CitationResolution",
+    "IndependentClaimVerifier",
+    "IndependentVerificationReport",
     "CoverageSummary",
     "EvidenceLedger",
     "GapAnalyzer",
@@ -120,11 +127,14 @@ __all__ = [
     "build_web_provider",
     "build_web_readiness",
     "citation_entailment_check",
+    "clamp_concurrency",
     "cluster_dependent_sources",
     "independent_support_count",
     "list_presets",
+    "normalize_claim_relation",
     "plan_assignments",
     "probe_web_research",
+    "relation_from_entailment_status",
     "select_next_queries",
     "should_stop",
     "validate_url_for_fetch",

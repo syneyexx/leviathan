@@ -12,6 +12,11 @@ from typing import Any
 
 from Data.modules.common.atomic import atomic_write_text, ensure_dir
 
+from .claim_relations import (
+    ClaimRelation,
+    normalize_claim_relation,
+    relation_from_entailment_status,
+)
 from .store import ResearchStore
 from .types import ClaimStatus, ResearchClaim, ResearchEvidence, ResearchProject, ResearchSource
 
@@ -25,20 +30,25 @@ class ClaimEvidenceEdge:
     edge_id: str
     claim_id: str
     evidence_id: str
-    relation: str  # supports | contradicts | related
+    relation: str  # SUPPORTS | CONTRADICTS | QUALIFIES | BACKGROUND | INSUFFICIENT
     uncertainty: str  # low | medium | high
     entailment_score: float | None = None
     entailment_passed: bool | None = None
 
     def public_dict(self) -> dict[str, Any]:
+        rel = normalize_claim_relation(self.relation)
         return {
             "edge_id": self.edge_id,
             "claim_id": self.claim_id,
             "evidence_id": self.evidence_id,
-            "relation": self.relation,
+            "relation": rel.value,
             "uncertainty": self.uncertainty,
             "entailment_score": self.entailment_score,
             "entailment_passed": self.entailment_passed,
+            "truth": {
+                "closed_relation_vocabulary": True,
+                "allowed_relations": [r.value for r in ClaimRelation],
+            },
         }
 
 
@@ -178,7 +188,7 @@ class ClaimEvidenceGraphBuilder:
                             edge_id=f"edge_{uuid.uuid4().hex[:10]}",
                             claim_id=claim.claim_id,
                             evidence_id=eid,
-                            relation="contradicts",
+                            relation=ClaimRelation.CONTRADICTS.value,
                             uncertainty="high",
                             entailment_score=float(check["overlap_ratio"]),
                             entailment_passed=False,
@@ -236,14 +246,24 @@ class ClaimEvidenceGraphBuilder:
                 uncertainty = "low" if check["passed"] and status == ClaimStatus.SUPPORTED else (
                     "high" if not check["passed"] else "medium"
                 )
+                rel = relation_from_entailment_status(str(check.get("status") or ""))
+                if not check["passed"] and rel == ClaimRelation.SUPPORTS:
+                    rel = ClaimRelation.INSUFFICIENT
+                # Weak lexical support that neither confirms nor contradicts → QUALIFIES
+                # when overlap is partial but non-zero; BACKGROUND when essentially unrelated.
+                overlap = float(check.get("overlap_ratio") or 0.0)
+                if rel == ClaimRelation.INSUFFICIENT and overlap > 0.05:
+                    rel = ClaimRelation.QUALIFIES
+                elif rel == ClaimRelation.INSUFFICIENT and overlap <= 0.05:
+                    rel = ClaimRelation.BACKGROUND
                 edges.append(
                     ClaimEvidenceEdge(
                         edge_id=f"edge_{uuid.uuid4().hex[:10]}",
                         claim_id=claim.claim_id,
                         evidence_id=eid,
-                        relation="supports",
+                        relation=rel.value,
                         uncertainty=uncertainty,
-                        entailment_score=float(check["overlap_ratio"]),
+                        entailment_score=overlap,
                         entailment_passed=bool(check["passed"]),
                     )
                 )
@@ -253,7 +273,7 @@ class ClaimEvidenceGraphBuilder:
                         edge_id=f"edge_{uuid.uuid4().hex[:10]}",
                         claim_id=claim.claim_id,
                         evidence_id=eid,
-                        relation="contradicts",
+                        relation=ClaimRelation.CONTRADICTS.value,
                         uncertainty="medium",
                     )
                 )

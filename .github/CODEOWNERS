@@ -1,0 +1,28 @@
+# CODEOWNERS — LEVIATHAN (Data/)
+#
+# Review routing for institutional hardening. Paths are repo-relative.
+# HADES/ and editor/ remain out of LEVIATHAN CI ownership.
+
+# Default Data/ reviewers — operators owning the control plane.
+/Data/ @cursor
+
+# Trading / MarketSim authority
+/Data/modules/market_sim/ @cursor
+/Data/backend/routes/market_sim.py @cursor
+/Data/backend/routes/research_command.py @cursor
+
+# Research academic engine
+/Data/modules/research/ @cursor
+
+# Worker fabric / jobs / schedules / observability
+/Data/modules/workers/ @cursor
+/Data/modules/jobs/ @cursor
+/Data/modules/schedules/ @cursor
+/Data/modules/observability/ @cursor
+
+# Frontend operator surfaces
+/Data/frontend/ @cursor
+
+# Docs + governance
+/Data/docs/ @cursor
+/.github/ @cursor

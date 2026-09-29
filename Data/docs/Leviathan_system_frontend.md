@@ -360,17 +360,18 @@ These are intentionally distinct backend concepts.
 
 `src/pages/BrainPage.tsx` composes:
 
-- `pages/brain/BrainGraphCanvas.tsx` — technical graph;
-- Celestial Nexus/celestial graph components in the Brain directory — live graph visualization;
+- `pages/brain/BrainGraphCanvas.tsx` — technical graph with hover labels for node identity/type/cluster (no detached promo badges);
+- Celestial Nexus / `BrainSpaceCanvas.tsx` — live celestial visualization with intentionally slower orbital/ambient motion for readability;
 - `BrainTreeView.tsx` — hierarchy;
-- `BrainClustersView.tsx` — clusters;
+- `BrainClustersView.tsx` + `brain-cluster-layout.ts` — clusters layout (deterministic cluster keys, expanded canvas sizing for dense graphs);
+- `brain-graph-layout.ts` / tests — force/cluster positioning contracts;
 - `BrainAnalyticsView.tsx` — analytics;
 - `BrainTimelineView.tsx` — timeline;
 - `brain-live.ts` — live API mapping;
 - `brain-shared.tsx` — shared contracts/components;
 - explicitly named mock support for tests/reference only.
 
-Current graph views are backed by `/api/brain/graph`; selection/filter state remains under BrainPage ownership.
+Current graph views are backed by `/api/brain/graph`; selection/filter state remains under BrainPage ownership. Hover labels are graph-native (title/type/cluster), not floating marketing chips.
 
 ## Memory — `/memory`
 
@@ -927,3 +928,13 @@ chart vision is advisory
 paper uses simulated capital
 live-money trading remains BLOCKED
 ```
+
+---
+
+# 40. Institutional UI notes (CURRENT)
+
+- **Brain graph hover labels / celestial slower / clusters layout** — see §13 Brain; layout owners `brain-graph-layout.ts`, `brain-cluster-layout.ts`, celestial motion tuned in `brain-space.ts` / `BrainSpaceCanvas.tsx`.
+- **Paper trading operator surface** — `/trading/paper` projects RiskGuard envelope, kill switch, autonomous loop receipts; does not invent broker authority.
+- **Research claim graph** — Research UI may show SUPPORTS/CONTRADICTS/QUALIFIES/BACKGROUND/INSUFFICIENT edges from backend claim graphs; model prose is not relation proof.
+- **Governance** — PRs use `.github/PULL_REQUEST_TEMPLATE.md`; branch protection requirements in `Data/docs/github_branch_protection.md` (operator-applied, not agent-claimed).
+- **Autonomous paper runbook** — backend companion §31.
