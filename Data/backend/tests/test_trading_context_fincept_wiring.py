@@ -82,7 +82,7 @@ class TradingContextFabricProductionPathTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             store = OrchestraStore(Path(tmp) / "orch.db")
-            store.ensure_schema()
+            store.initialize()
             service = TradingOrchestraService(store=store, enabled=True)
             self.assertIsNotNone(service.trading_context_fabric)
             self.assertTrue(hasattr(service.trading_context_fabric, "assemble"))
