@@ -7,6 +7,16 @@
 export const RESEARCH_V2_VISUAL_FROZEN_ISO = "2025-05-25T14:37:26";
 
 const now = RESEARCH_V2_VISUAL_FROZEN_ISO;
+const minutesAgo = (mins: number) => {
+  const d = new Date(now);
+  d.setMinutes(d.getMinutes() - mins);
+  return d.toISOString();
+};
+const hoursAgo = (hours: number) => {
+  const d = new Date(now);
+  d.setHours(d.getHours() - hours);
+  return d.toISOString();
+};
 const day = (offset: number, hour = 12) => {
   const d = new Date(now);
   d.setDate(d.getDate() + offset);
@@ -128,7 +138,7 @@ export const RESEARCH_V2_VISUAL_FIXTURE = {
       title: "Private LLM infrastructuur analyse",
       status: "researching",
       depth: "deep",
-      updated_at: day(0, 14),
+      updated_at: minutesAgo(2),
       source_count: 48,
     }),
     project({
@@ -139,7 +149,7 @@ export const RESEARCH_V2_VISUAL_FIXTURE = {
       depth: "standard",
       phase: "completed",
       progress_pct: 100,
-      updated_at: day(0, 12),
+      updated_at: minutesAgo(15),
       source_count: 36,
     }),
     project({
@@ -148,7 +158,7 @@ export const RESEARCH_V2_VISUAL_FIXTURE = {
       topic: "Vector database vergelijking",
       status: "researching",
       depth: "deep",
-      updated_at: day(0, 11),
+      updated_at: hoursAgo(1),
       source_count: 22,
     }),
     project({
@@ -159,7 +169,7 @@ export const RESEARCH_V2_VISUAL_FIXTURE = {
       depth: "standard",
       phase: "completed",
       progress_pct: 100,
-      updated_at: day(-1, 16),
+      updated_at: hoursAgo(3),
       source_count: 41,
     }),
     project({
@@ -170,7 +180,7 @@ export const RESEARCH_V2_VISUAL_FIXTURE = {
       depth: "standard",
       phase: "idle",
       progress_pct: 0,
-      updated_at: day(-1, 9),
+      updated_at: hoursAgo(5),
       source_count: 0,
       evidence_count: 0,
       claim_count: 0,
@@ -183,7 +193,7 @@ export const RESEARCH_V2_VISUAL_FIXTURE = {
       depth: "expert",
       phase: "completed",
       progress_pct: 100,
-      updated_at: day(-2, 15),
+      updated_at: hoursAgo(8),
       source_count: 55,
     }),
     project({
@@ -202,7 +212,7 @@ export const RESEARCH_V2_VISUAL_FIXTURE = {
       topic: "Knowledge graph ontology",
       status: "queued",
       depth: "deep",
-      updated_at: day(-4, 11),
+      updated_at: hoursAgo(2),
       source_count: 12,
     }),
     project({

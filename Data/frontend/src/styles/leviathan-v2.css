@@ -3240,9 +3240,27 @@
 }
 
 .lv-v2-hero--research {
-  min-height: 122px;
-  max-height: 134px;
+  min-height: 128px;
+  max-height: 148px;
   grid-template-columns: minmax(0, 1.4fr) minmax(200px, 0.7fr);
+}
+
+.lv-v2-hero--research .lv-v2-hero__content {
+  gap: 5px;
+  padding: 14px 18px;
+}
+
+.lv-v2-hero--research .lv-v2-hero__copy {
+  font-size: 11px;
+  max-width: 58ch;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.lv-v2-hero--research .lv-v2-hero__actions {
+  margin-top: 2px;
 }
 
 .lv-v2-hero--research .lv-v2-hero__quote {
@@ -3293,8 +3311,45 @@
   display: grid;
   grid-template-columns: minmax(240px, 0.95fr) minmax(0, 1.35fr) minmax(220px, 0.9fr);
   gap: 10px;
-  min-height: 320px;
+  min-height: 300px;
   align-items: stretch;
+}
+
+.lv-v2-research-workspace > .lv-v2-panel {
+  min-height: 0;
+}
+
+.lv-v2-research-composer .lv-v2-panel__body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.lv-v2-research-composer__inner {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+}
+
+.lv-v2-type-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.lv-v2-type-card {
+  min-height: 48px;
+  padding: 7px 9px;
+}
+
+.lv-v2-field textarea {
+  min-height: 72px;
+}
+
+.lv-v2-research-bottom {
+  min-height: 140px;
 }
 
 .lv-v2-research-workspace--run {
@@ -3550,6 +3605,12 @@
   justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+.lv-v2-research-composer__footer .lv-v2-button {
+  min-width: 160px;
 }
 
 .lv-v2-research-advanced-toggle {

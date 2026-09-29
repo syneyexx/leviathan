@@ -94,6 +94,19 @@ function visualFixtureActive(): boolean {
   return Boolean((window as Window & { __LV_V2_VISUAL_FIXTURE__?: boolean }).__LV_V2_VISUAL_FIXTURE__);
 }
 
+function visualFixtureNowMs(): number | null {
+  if (typeof window === "undefined") return null;
+  const frozen = (window as Window & { __LV_V2_FROZEN_NOW__?: string }).__LV_V2_FROZEN_NOW__;
+  if (!frozen) return null;
+  const t = Date.parse(frozen);
+  return Number.isNaN(t) ? null : t;
+}
+
+function clockNow(): Date {
+  const ms = visualFixtureNowMs();
+  return ms != null ? new Date(ms) : new Date();
+}
+
 export type ResearchWorkspace = {
   loading: boolean;
   refreshing: boolean;
@@ -765,7 +778,7 @@ export function useResearchWorkspace(): ResearchWorkspace {
     };
   }, [loading, projects, workers.length, poolWorkers.length, sources, knowledgeDocCount, knowledgeDocError]);
 
-  const stats7d = useMemo(() => aggregateProjectStats(projects, 7), [projects]);
+  const stats7d = useMemo(() => aggregateProjectStats(projects, 7, clockNow()), [projects]);
 
   const knowledgeStatus = useMemo((): KnowledgeStatusRow[] => {
     const localDocs =

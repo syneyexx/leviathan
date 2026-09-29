@@ -38,9 +38,15 @@ test.describe("Research V2 visual", () => {
     await expect(nav.getByRole("link", { name: "Datasets", exact: true })).toBeVisible();
 
     await expect(page.getByRole("heading", { name: "Leviathan Research" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "+ Nieuw Onderzoek" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Voorbeeld templates" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Onderzoek starten/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Geavanceerde opties/ })).toBeVisible();
     await expect(page.getByText("Actieve Onderzoeken", { exact: true })).toBeVisible();
     await expect(page.getByText("Onderzoeks Agents", { exact: true })).toBeVisible();
-    await expect(page.getByText("Kennisbronnen", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "Research KPI's" }).getByText("Kennisbronnen", { exact: true }),
+    ).toBeVisible();
     await expect(page.getByText("Web Bronnen", { exact: true })).toBeVisible();
     await expect(page.getByText("Documenten", { exact: true })).toBeVisible();
     await expect(page.getByText("Recente Onderzoeken", { exact: true })).toBeVisible();
@@ -83,15 +89,15 @@ test.describe("Research V2 visual", () => {
 
     await page.getByPlaceholder("Zoek onderzoeken…").fill("Vector");
     await expect(page.getByText("Vector database vergelijking")).toBeVisible();
+    await page.getByPlaceholder("Zoek onderzoeken…").fill("");
 
     await page.getByRole("tab", { name: /Afgerond/ }).click();
     await expect(page.getByText("Markt analyse AI hardware 2025")).toBeVisible();
 
     await page.getByRole("tab", { name: /Alle/ }).click();
-    await page.getByPlaceholder("Zoek onderzoeken…").fill("");
 
-    await page.getByRole("button", { name: "Deep Research", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Deep Research", exact: true })).toHaveAttribute(
+    await page.locator(".lv-v2-type-card", { hasText: "Deep Research" }).click();
+    await expect(page.locator(".lv-v2-type-card", { hasText: "Deep Research" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );

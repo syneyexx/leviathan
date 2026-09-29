@@ -12,6 +12,14 @@ type Props = {
   ws: ResearchWorkspace;
 };
 
+function fixtureNowMs(): number {
+  if (typeof window === "undefined") return Date.now();
+  const frozen = (window as Window & { __LV_V2_FROZEN_NOW__?: string }).__LV_V2_FROZEN_NOW__;
+  if (!frozen) return Date.now();
+  const t = Date.parse(frozen);
+  return Number.isNaN(t) ? Date.now() : t;
+}
+
 const FILTERS: Array<{ id: ResearchFilterTab; label: string }> = [
   { id: "all", label: "Alle" },
   { id: "active", label: "Actief" },
@@ -106,7 +114,9 @@ export function ResearchHistory({ ws }: Props) {
                     <em>{depthLabelNl(p.depth)}</em>
                   </span>
                   <Badge tone={statusBadgeTone(p.status)}>{statusLabelNl(p.status)}</Badge>
-                  <time className="lv-v2-research-row__time">{relativeAgoNl(p.updated_at || p.created_at)}</time>
+                  <time className="lv-v2-research-row__time">
+                    {relativeAgoNl(p.updated_at || p.created_at, fixtureNowMs())}
+                  </time>
                 </button>
               </li>
             );
