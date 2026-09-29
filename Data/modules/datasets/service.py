@@ -1257,8 +1257,9 @@ class DatasetService:
         offline_only: bool = True,
     ) -> dict[str, Any]:
         from .offline import offline_index_preflight
+        from .trading_classification import allows_knowledge_auto_index
 
-        self.get_dataset(dataset_id)
+        ds = self.get_dataset(dataset_id)
         ver = self.get_version(version_id)
         size = int(ver.byte_size or 0)
         embedding_status = None
@@ -1272,6 +1273,18 @@ class DatasetService:
             embedding_status=embedding_status,
             offline_only=offline_only,
         )
+        # Keep preflight aligned with enqueue_learn_to_brain classification gate.
+        classification = self.ensure_dataset_classification(
+            dataset_id, version_id=ver.version_id
+        )
+        forced = bool((ds.metadata or {}).get("forceKnowledgeIndex"))
+        if not allows_knowledge_auto_index(classification) and not forced:
+            pf.ok = False
+            pf.blockers.append(
+                "CLASSIFICATION_ROUTE_BLOCKS_KNOWLEDGE "
+                f"route={classification.route.value} domain={classification.domain.value}"
+            )
+            pf.details["classification"] = classification.public_dict()
         return pf.public_dict()
 
     def list_brain_indexes(self, *, limit: int = 100) -> list[dict[str, Any]]:
