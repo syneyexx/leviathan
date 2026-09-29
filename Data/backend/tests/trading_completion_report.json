@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-09-29T00:56:44+00:00",
-  "source_commit": "3104cfb4815f7d5404393dcbe8621f4d89928bae",
-  "source_tree": "5e1b51f3f5d74c4c1065c0bc1549a40fad0393e4",
+  "generated_at": "2026-09-29T10:05:18+00:00",
+  "source_commit": "06cecb6d0df3cc2acb522831bd17413923dcb417",
+  "source_tree": "055fa255c69798beb773d3e6c8156942e67478bc",
   "dirty": false,
-  "branch": "cursor/institutional-hardening-e3ae",
+  "branch": "cursor/az-consolidation-truth-hardening-035b",
   "strict": true,
   "phase": "Slice16/A0-A4",
   "program": "Master Program v4.1",
