@@ -70,27 +70,50 @@ if errorlevel 1 (
 
 echo [LEVIATHAN] Starting via leviathan.py (host/port from settings)
 echo [LEVIATHAN] Keep this window open. Press Ctrl+C to stop.
-echo [LEVIATHAN] Heavy jobs: use run_leviathan_workers.bat for external Worker Supervisor
-echo [LEVIATHAN] ^(unless workers are already autostarted via leviathan.py bootstrap^).
+echo [LEVIATHAN] WorkerSupervisor: owned by leviathan.py bootstrap when WORKERS_ENABLED=true
+echo [LEVIATHAN] Manual recovery path: run_leviathan_workers.bat (singleton lease — never dual-own)
 echo.
 
 REM Source Ingestion production owner is Worker Fabric (source_ingestion pool).
 REM Do NOT autostart the legacy standalone worker when Worker Supervisor is enabled.
-REM Deprecated: LEVIATHAN_SOURCE_INGESTION_RUNNER=external now means fabric ownership,
+REM Deprecated: LEVIATHAN_SOURCE_INGESTION_RUNNER=external means fabric ownership,
 REM not "start scripts\source_ingestion_worker.py".
+REM
+REM Dual-supervisor mitigation:
+REM   leviathan.py (default) already starts API + WorkerSupervisor under a lease.
+REM   LEVIATHAN_WORKERS_AUTOSTART=1 is LEGACY recovery for API-only mode.
+REM   Prefer NOT spawning a second supervisor window when bootstrap already owns it.
 findstr /B /C:"LEVIATHAN_WORKERS_AUTOSTART=1" ".env" >nul 2>&1
 if not errorlevel 1 (
-  echo [LEVIATHAN] Autostarting Worker Supervisor ^(LEVIATHAN_WORKERS_AUTOSTART=1^)
+  findstr /B /C:"LEVIATHAN_WORKERS_ENABLED=false" ".env" >nul 2>&1
+  if not errorlevel 1 goto :autostart_workers
+  findstr /B /C:"LEVIATHAN_WORKERS_ENABLED=0" ".env" >nul 2>&1
+  if not errorlevel 1 goto :autostart_workers
+  findstr /B /C:"LEVIATHAN_WORKERS_SUPERVISOR_ENABLED=false" ".env" >nul 2>&1
+  if not errorlevel 1 goto :autostart_workers
+  findstr /B /C:"LEVIATHAN_WORKERS_SUPERVISOR_ENABLED=0" ".env" >nul 2>&1
+  if not errorlevel 1 goto :autostart_workers
+  echo [LEVIATHAN] Skipping LEVIATHAN_WORKERS_AUTOSTART — leviathan.py bootstrap owns WorkerSupervisor
+  echo [LEVIATHAN] Source Ingestion owned by Worker Fabric — standalone worker NOT started
+  goto :after_workers_autostart
+)
+
+:autostart_workers
+findstr /B /C:"LEVIATHAN_WORKERS_AUTOSTART=1" ".env" >nul 2>&1
+if not errorlevel 1 (
+  echo [LEVIATHAN] LEGACY AUTOSTART: separate Worker Supervisor window ^(API-only / recovery^)
   echo [LEVIATHAN] Source Ingestion owned by Worker Fabric — standalone worker NOT started
   start "LEVIATHAN Workers" /D "%~dp0" "%~dp0run_leviathan_workers.bat"
-) else (
-  REM Legacy diagnostics only: explicit standalone_legacy without fabric autostart.
-  findstr /B /C:"LEVIATHAN_SOURCE_INGESTION_RUNNER=standalone_legacy" ".env" >nul 2>&1
-  if not errorlevel 1 (
-    echo [LEVIATHAN] Starting LEGACY standalone source ingestion worker ^(diagnostics only^)
-    start "LEVIATHAN Source Ingestion LEGACY" /D "%~dp0" "%PY%" scripts\source_ingestion_worker.py
-  )
+  goto :after_workers_autostart
 )
+REM Legacy diagnostics only: explicit standalone_legacy without fabric autostart.
+findstr /B /C:"LEVIATHAN_SOURCE_INGESTION_RUNNER=standalone_legacy" ".env" >nul 2>&1
+if not errorlevel 1 (
+  echo [LEVIATHAN] Starting LEGACY standalone source ingestion worker ^(diagnostics only^)
+  start "LEVIATHAN Source Ingestion LEGACY" /D "%~dp0" "%PY%" scripts\source_ingestion_worker.py
+)
+
+:after_workers_autostart
 
 "%PY%" leviathan.py
 set "EXITCODE=%ERRORLEVEL%"

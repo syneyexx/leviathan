@@ -30,6 +30,8 @@ if not exist ".env" (
 
 REM Canonical externalization: ONE consolidated supervisor owns ALL specialist pools.
 REM Do NOT open a separate CMD window per worker / domain.
+REM Prefer leviathan.py bootstrap (API+supervisor). This BAT is the manual recovery /
+REM LEGACY path when the Control Plane runs API-only. Singleton lease prevents dual owners.
 set "LEVIATHAN_WORKERS_ENABLED=1"
 set "LEVIATHAN_WORKERS_SUPERVISOR_ENABLED=1"
 set "LEVIATHAN_WORKERS_EXTERNALIZE_API=1"
@@ -62,7 +64,8 @@ if errorlevel 1 (
 
 echo.
 echo [LEVIATHAN Workers] Starting consolidated Worker Supervisor ^(ONE window for ALL pools^)
-echo [LEVIATHAN Workers] Does NOT start the web Control Plane.
+echo [LEVIATHAN Workers] Recovery / LEGACY path — does NOT start the web Control Plane.
+echo [LEVIATHAN Workers] If leviathan.py bootstrap already holds the lease, this exits cleanly.
 echo [LEVIATHAN Workers] Keep this window open. Press Ctrl+C for graceful shutdown.
 echo.
 

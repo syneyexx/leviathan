@@ -1,0 +1,47 @@
+[project]
+name = "leviathan"
+version = "0.0.0"
+description = "LEVIATHAN local-first AI operating system (Data/ runtime)"
+readme = "README.md"
+requires-python = ">=3.12"
+# Runtime deps live in requirements.txt — this file is tooling / metadata only.
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+# Incremental adoption: lint is advisory until the backlog is cleared.
+# Do not add `ruff check` as a blocking CI gate until warning volume is manageable.
+extend-exclude = [
+  "editor",
+  "Data/HADES",
+  "Data/frontend",
+  "Data/launcher",
+  ".venv",
+  "dist",
+  "build",
+]
+
+[tool.ruff.lint]
+# Minimal starter select — expand gradually; unused/style noise stays out of CI fail.
+select = [
+  "E9",   # runtime syntax errors
+  "F63",  # invalid print/assert
+  "F7",   # syntax errors
+  "F82",  # undefined names
+]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+"Data/backend/tests/**" = ["E501"]
+"scripts/**" = ["E501"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["Data/backend/tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-q --tb=line"
+filterwarnings = [
+  "ignore::DeprecationWarning",
+]

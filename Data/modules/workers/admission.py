@@ -59,8 +59,11 @@ class PressureState(str, Enum):
     """Host memory/VRAM pressure for admission (Wave 12).
 
     Profile baseline: 16GB system RAM + dual VRAM profile (16GB primary / 6GB secondary).
+
+    UNKNOWN means telemetry was missing or unreadable — never silently treat as NORMAL.
     """
 
+    UNKNOWN = "UNKNOWN"
     NORMAL = "NORMAL"
     PRESSURE = "PRESSURE"
     CRITICAL = "CRITICAL"
@@ -146,20 +149,29 @@ def classify_pressure(
     vram_available_mb: float | None = None,
     vram_total_mb: float | None = None,
 ) -> PressureState:
-    """Classify NORMAL / PRESSURE / CRITICAL from measured headroom.
+    """Classify UNKNOWN / NORMAL / PRESSURE / CRITICAL from measured headroom.
 
     Thresholds (16GB RAM profile):
       PRESSURE  — RAM used ≥ 70% or available < 4GB; VRAM used ≥ 75%
       CRITICAL  — RAM used ≥ 88% or available < 1.5GB; VRAM used ≥ 92%
-    Unknown telemetry → NORMAL (existing admission still applies conservative denies).
+    Missing / unreadable telemetry → UNKNOWN (never silently NORMAL).
     """
-    ram_pressure = PressureState.NORMAL
+    ram_known = ram_used_pct is not None or ram_available_mb is not None
+    vram_known = vram_used_pct is not None or (
+        vram_available_mb is not None and vram_total_mb is not None and float(vram_total_mb) > 0
+    )
+    if not ram_known and not vram_known:
+        return PressureState.UNKNOWN
+
+    ram_pressure = PressureState.UNKNOWN
     if ram_used_pct is not None:
         pct = float(ram_used_pct)
         if pct >= 88.0:
             ram_pressure = PressureState.CRITICAL
         elif pct >= 70.0:
             ram_pressure = PressureState.PRESSURE
+        else:
+            ram_pressure = PressureState.NORMAL
     elif ram_available_mb is not None:
         # Available-MB is the authoritative signal when provided — do not also
         # re-derive used% from host_total (that double-penalizes fixtures that
@@ -173,13 +185,15 @@ def classify_pressure(
             ram_pressure = PressureState.NORMAL
         _ = ram_total_mb  # retained for API compatibility / callers
 
-    vram_pressure = PressureState.NORMAL
+    vram_pressure = PressureState.UNKNOWN
     if vram_used_pct is not None:
         vp = float(vram_used_pct)
         if vp >= 92.0:
             vram_pressure = PressureState.CRITICAL
         elif vp >= 75.0:
             vram_pressure = PressureState.PRESSURE
+        else:
+            vram_pressure = PressureState.NORMAL
     elif vram_available_mb is not None and vram_total_mb:
         avail_v = float(vram_available_mb)
         total_v = float(vram_total_mb)
@@ -189,12 +203,20 @@ def classify_pressure(
                 vram_pressure = PressureState.CRITICAL
             elif used >= 75.0:
                 vram_pressure = PressureState.PRESSURE
+            else:
+                vram_pressure = PressureState.NORMAL
 
     order = {
+        PressureState.UNKNOWN: -1,
         PressureState.NORMAL: 0,
         PressureState.PRESSURE: 1,
         PressureState.CRITICAL: 2,
     }
+    # Prefer the worse *measured* signal. If only one domain is known, use it.
+    if ram_pressure == PressureState.UNKNOWN:
+        return vram_pressure
+    if vram_pressure == PressureState.UNKNOWN:
+        return ram_pressure
     return ram_pressure if order[ram_pressure] >= order[vram_pressure] else vram_pressure
 
 
@@ -227,7 +249,8 @@ class AdmissionDecision:
                 "unknown_vram_is_not_zero": True,
                 "unknown_uses_conservative_policy": True,
                 "exclusive_is_per_device_when_known": True,
-                "pressure_states": ["NORMAL", "PRESSURE", "CRITICAL"],
+                "pressure_states": ["UNKNOWN", "NORMAL", "PRESSURE", "CRITICAL"],
+                "unknown_pressure_is_not_normal": True,
             },
         }
 
@@ -420,6 +443,37 @@ class ResourceAdmission:
             self._last_governor = decision
             return decision
 
+        if pressure == PressureState.UNKNOWN:
+            # Conservative: unknown must not become NORMAL. Deny nonessential
+            # memory-heavy work; preserve control / paper / DB paths.
+            if protected:
+                decision = ResourceGovernorDecision(
+                    pressure=pressure.value,
+                    allowed=True,
+                    action="admit_protected_unknown",
+                    reason="UNKNOWN telemetry: protected control-plane / paper / risk path preserved",
+                )
+            elif resource_class in _NONESSENTIAL_MEMORY_HEAVY:
+                decision = ResourceGovernorDecision(
+                    pressure=pressure.value,
+                    allowed=False,
+                    action="deny_nonessential_unknown",
+                    reason=(
+                        "RESOURCE_ADMISSION_DENIED: UNKNOWN pressure — "
+                        "nonessential memory-heavy work refused until telemetry is known"
+                    ),
+                    details={"resource_class": resource_class.value},
+                )
+            else:
+                decision = ResourceGovernorDecision(
+                    pressure=pressure.value,
+                    allowed=True,
+                    action="admit_essential_unknown",
+                    reason="UNKNOWN telemetry: essential / light work still admitted",
+                )
+            self._last_governor = decision
+            return decision
+
         if pressure == PressureState.PRESSURE:
             # Stop admitting nonessential memory-heavy work; preserve control + paper.
             if protected:
@@ -528,6 +582,7 @@ class ResourceAdmission:
                 "never_kill_db_writer_mid_commit": True,
                 "lazy_startup_scale_to_zero_compatible": True,
                 "browser_affinity_not_broken": True,
+                "unknown_pressure_is_not_normal": True,
             },
         }
 
