@@ -115,7 +115,7 @@ Tests include `shellStatus.test.ts` / `useShellStatus.test.ts` and page-specific
 | Hades AI | Chatten, Coding Agent, Taken |
 | LLM | Modellen, Agents, Training, Statistieken |
 | Media Control | Overview, YouTube, TikTok, Instagram, Facebook, Queue, Viral Radar, Calendar, Analytics, Library, Personas |
-| TradingCenter | Simulation, Strategies, Market Data, Portfolio, PAPER, BROKER, Onderzoek, Research Lab, Control Room |
+| TradingCenter | Command Hub, Strategy Lab, Trading Desk, Market Data (WAVE 1 four-workspace IA; legacy routes redirect) |
 | Onderzoek & Kennis | Research, Brain, Geheugen, Knowledge, Evidence, Datasets |
 | Runtime & Tools | Performance, Tools, Modules, Skills, MCP, Workflows, Console |
 | Settings | General plus behavior, studio, security, benchmarks, media, storage, runtime, logs, RAG, cognition, agents, tools, market-sim and data/research sections |
@@ -164,18 +164,16 @@ The “Hades AI” navigation label is UI naming. It does not make `Data/HADES/`
 
 Trading pages are lazy-loaded and rendered inside Suspense/ErrorBoundary.
 
+WAVE 1 four-workspace architecture (`src/pages/trading/workspaces/`). Discovery matrices: `Data/docs/trading_center_wave0/`.
+
 | Route | Page |
 |---|---|
-| `/trading` | redirect to `/trading/simulatie` |
-| `/trading/simulatie` | `SimulatiePage` |
-| `/trading/strategieen` | `StrategieenPage` |
-| `/trading/marktdata` | `MarktdataPage` |
-| `/trading/portefeuille` | `PortefeuillePage` |
-| `/trading/paper` | `PaperTradingPage` |
-| `/trading/broker` | `BrokerTradingPage` |
-| `/trading/onderzoek` | `OnderzoekPage` → Research Command |
-| `/trading/lab` | `ResearchLabPage` |
-| `/trading/control-room` | `InstitutionalControlRoomPage` |
+| `/trading` | redirect to `/trading/command-hub` |
+| `/trading/command-hub` | `CommandHubPage` (Research Command + Control Room surfaces) |
+| `/trading/strategy-lab` | `StrategyLabWorkspacePage` (Lab + Strategies + Simulation) |
+| `/trading/trading-desk` | `TradingDeskPage` (Paper + Portefeuille + Broker boundary) |
+| `/trading/market-data` | `MarketDataWorkspacePage` (Marktdata library) |
+| Legacy `/trading/{simulatie,strategieen,lab,marktdata,portefeuille,paper,broker,onderzoek,control-room}` | redirect into the matching workspace `?surface=` |
 
 ## Research/knowledge
 

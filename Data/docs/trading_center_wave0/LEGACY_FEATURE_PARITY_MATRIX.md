@@ -190,10 +190,10 @@ Agents page `TradeOrchestraSection` remains Agents-owned but Trading Desk embeds
 
 ## Parity gate summary
 
-| Metric | WAVE 0 |
-|---|---|
-| Legacy routes inventoried | 9/9 |
-| Features mapped to a workspace | 100% of supported features |
-| Features intentionally dropped | Only disabled stubs + live order placement |
-| Features needing **new** UI beyond legacy | See `BEYOND_LEGACY_UI.md` |
-| Migrated implementation (`DONE`) | 0% (WAVE 0 docs only) |
+| Metric | WAVE 0 | WAVE 1 |
+|---|---|---|
+| Legacy routes inventoried | 9/9 | 9/9 |
+| Features mapped to a workspace | 100% of supported features | Embedded via workspace surfaces |
+| Features intentionally dropped | Only disabled stubs + live order placement | unchanged |
+| Features needing **new** UI beyond legacy | See `BEYOND_LEGACY_UI.md` | Still pending densify (WAVE 2+) |
+| Migrated implementation (`DONE`) | 0% (WAVE 0 docs only) | Scaffold: 4 routes + redirects + embedded legacy = reachable |

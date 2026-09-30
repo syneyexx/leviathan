@@ -12,7 +12,7 @@ import { PaperTradingToolbar } from "./PaperTradingToolbar";
 import { usePaperTradingOperator } from "./hooks/usePaperTradingOperator";
 import "../../../styles/trading-paper.css";
 
-export function PaperTradingPage() {
+export function PaperTradingPage({ embedded = false }: { embedded?: boolean } = {}) {
   const {
     state,
     setState,
@@ -32,8 +32,8 @@ export function PaperTradingPage() {
   const dash = state.dashboard;
   const positions = dash?.positions || [];
 
-  return (
-    <AppShell layout="wide" pageClass="lv-app--trading">
+  const body = (
+    <>
       <main className="lv-main lv-tp-main lv-paper-page">
         <PaperTradingHero />
 
@@ -134,6 +134,13 @@ export function PaperTradingPage() {
           </section>
         </div>
       </main>
+        </>
+  );
+
+  if (embedded) return body;
+  return (
+    <AppShell layout="wide" pageClass="lv-app--trading">
+      {body}
     </AppShell>
   );
 }

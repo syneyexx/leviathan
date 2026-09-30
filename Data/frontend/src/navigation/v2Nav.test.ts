@@ -132,9 +132,13 @@ describe("v2Nav media / trading / runtime groups", () => {
   it("keeps Trading Center children including Markt Simulatie", () => {
     expect(trading).toBeDefined();
     if (!trading) return;
-    expect(trading.children?.[0]?.label).toBe("Markt Simulatie");
-    expect(trading.children?.map((c) => c.label)).toContain("PAPER Trading");
-    expect(trading.children?.map((c) => c.label)).toContain("BROKER Trading");
+    expect(trading.children?.map((c) => c.label)).toEqual([
+      "Command Hub",
+      "Strategy Lab",
+      "Trading Desk",
+      "Market Data",
+    ]);
+    expect(shouldAutoExpandV2Group(trading, "/trading/trading-desk")).toBe(true);
     expect(shouldAutoExpandV2Group(trading, "/trading/paper")).toBe(true);
   });
 
