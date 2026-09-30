@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -19,6 +20,10 @@ from Data.modules.module_manager.errors import (
 )
 
 logger = logging.getLogger("leviathan.modules")
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 class ModuleExecuteRequest(BaseModel):
@@ -116,6 +121,15 @@ def build_modules_router(
                 "modules": [],
                 "truth": {"module_manager_feature_flag_off": True},
             }
+        # Hydrate persisted update evidence before projecting the snapshot.
+        if hasattr(module_manager, "list"):
+            for managed in module_manager.list():
+                mid = getattr(getattr(managed, "manifest", None), "module_id", None)
+                if mid and hasattr(module_manager, "hydrate_update_evidence"):
+                    try:
+                        module_manager.hydrate_update_evidence(mid)
+                    except Exception:  # noqa: BLE001
+                        pass
         return module_manager.public_snapshot()
 
     @router.post("/api/modules/discover")
@@ -279,13 +293,28 @@ def build_modules_router(
         }
 
     @router.get("/api/modules/{module_id}/jobs")
-    def module_jobs(module_id: str) -> dict:
+    def module_jobs(module_id: str, limit: int = Query(default=50, ge=1, le=200)) -> dict:
         _require_enabled()
         try:
-            jobs = module_manager.active_jobs(module_id)
+            active_ids = module_manager.active_jobs(module_id)
         except ModuleManagerError as exc:
             _raise_lifecycle(exc)
-        return {"module_id": module_id, "jobs": jobs, "count": len(jobs)}
+        jobs = _project_module_jobs(
+            job_runtime=job_runtime,
+            module_id=module_id,
+            active_ids=active_ids,
+            limit=limit,
+        )
+        return {
+            "module_id": module_id,
+            "jobs": jobs,
+            "active_job_ids": list(active_ids),
+            "count": len(jobs),
+            "truth": {
+                "job_runtime_owns_durable_job_state": True,
+                "module_manager_projects_active_job_ids": True,
+            },
+        }
 
     @router.get("/api/modules/{module_id}/versions")
     def module_versions(module_id: str) -> dict:
@@ -336,31 +365,39 @@ def build_modules_router(
     @router.post("/api/modules/{module_id}/activate-version")
     def module_activate_version(module_id: str, payload: ModuleActivateVersionRequest) -> dict:
         _require_enabled()
-        try:
-            result = module_manager.activate_version(module_id, payload.version_id)
-        except ModuleManagerError as exc:
-            _raise_lifecycle(exc)
-        observability.emit(
-            "module_manager",
-            "activate_version",
-            payload={"module_id": module_id, "version_id": payload.version_id},
+        _require_known(module_id, "activate_version")
+        return _queue_module_lifecycle(
+            job_runtime=job_runtime,
+            module_id=module_id,
+            capability_id="external.module.activate_version",
+            action="activate_version",
+            emit=_emit,
+            raise_lifecycle=_raise_lifecycle,
+            module_manager=module_manager,
+            allow_sync_fallback=allow_sync_install_fallback,
+            arguments={"module_id": module_id, "version_id": payload.version_id, "action": "activate_version"},
         )
-        return {"result": result, "module": module_manager.get(module_id).public_dict()}
 
     @router.post("/api/modules/{module_id}/rollback-version")
     def module_rollback_version(module_id: str, payload: ModuleRollbackVersionRequest | None = None) -> dict:
         _require_enabled()
         payload = payload or ModuleRollbackVersionRequest()
-        try:
-            result = module_manager.rollback_version(module_id, version_id=payload.version_id)
-        except ModuleManagerError as exc:
-            _raise_lifecycle(exc)
-        observability.emit(
-            "module_manager",
-            "rollback_version",
-            payload={"module_id": module_id, "version_id": payload.version_id},
+        _require_known(module_id, "rollback_version")
+        return _queue_module_lifecycle(
+            job_runtime=job_runtime,
+            module_id=module_id,
+            capability_id="external.module.rollback_version",
+            action="rollback_version",
+            emit=_emit,
+            raise_lifecycle=_raise_lifecycle,
+            module_manager=module_manager,
+            allow_sync_fallback=allow_sync_install_fallback,
+            arguments={
+                "module_id": module_id,
+                "version_id": payload.version_id,
+                "action": "rollback_version",
+            },
         )
-        return {"result": result, "module": module_manager.get(module_id).public_dict()}
 
     @router.post("/api/modules/sweep-idle")
     def sweep_idle_modules() -> dict:
@@ -404,7 +441,14 @@ def build_modules_router(
                     "job_id": getattr(job, "job_id", None),
                     "capability_id": "external.module.invoke",
                     "worker_pool": "module_runtime",
-                    "truth": {"fastapi_does_not_spawn_module_subprocess": True},
+                    "operation": "execute",
+                    "module_id": module_id,
+                    "accepted_at": _utc_now(),
+                    "state": _job_state(job) or "QUEUED",
+                    "truth": {
+                        "fastapi_does_not_spawn_module_subprocess": True,
+                        "enqueue_is_not_completion": True,
+                    },
                 }
             except Exception as exc:  # noqa: BLE001
                 raise HTTPException(
@@ -447,6 +491,74 @@ _HARD_BLOCKER_CODES = {
     "NETWORK_POLICY_BLOCKED",
     "SOURCE_UNAVAILABLE",
 }
+
+_MODULE_CAPABILITY_PREFIXES = (
+    "external.module.",
+)
+
+
+def _project_module_jobs(
+    *,
+    job_runtime: Any,
+    module_id: str,
+    active_ids: list[str],
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Merge ModuleManager active job ids with JobRuntime durable history for a module."""
+    by_id: dict[str, dict[str, Any]] = {}
+    if job_runtime is not None and hasattr(job_runtime, "list"):
+        try:
+            for job in job_runtime.list(limit=max(limit * 4, 100)):
+                payload = job.public_dict() if hasattr(job, "public_dict") else dict(job)
+                args = payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}
+                meta = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+                cap = str(payload.get("capability_id") or "")
+                matches = str(args.get("module_id") or "") == module_id or str(
+                    meta.get("module_id") or ""
+                ) == module_id
+                if not matches and any(cap.startswith(p) for p in _MODULE_CAPABILITY_PREFIXES):
+                    # Some historical jobs may only carry module_id nested under arguments.
+                    matches = any(
+                        isinstance(v, str) and v == module_id for v in args.values()
+                    )
+                if not matches:
+                    continue
+                jid = str(payload.get("job_id") or "")
+                if not jid:
+                    continue
+                by_id[jid] = {
+                    **payload,
+                    "source": "job_runtime",
+                    "active": str(payload.get("state") or "").upper() in _ACTIVE_JOB_STATES,
+                }
+        except Exception:  # noqa: BLE001
+            logger.debug("module jobs JobRuntime projection failed", exc_info=True)
+    for jid in active_ids:
+        if jid in by_id:
+            by_id[jid]["active"] = True
+            continue
+        resolved = None
+        if job_runtime is not None and hasattr(job_runtime, "get"):
+            try:
+                job = job_runtime.get(jid)
+                if job is not None:
+                    resolved = job.public_dict() if hasattr(job, "public_dict") else dict(job)
+            except Exception:  # noqa: BLE001
+                resolved = None
+        by_id[jid] = {
+            **(resolved or {"job_id": jid, "state": "UNKNOWN"}),
+            "source": "job_runtime" if resolved else "module_manager_active",
+            "active": True,
+            "module_id": module_id,
+        }
+    # Active first, then newest by created/updated timestamps when present.
+    def _sort_key(item: dict[str, Any]) -> tuple:
+        active = 0 if item.get("active") else 1
+        ts = str(item.get("updated_at") or item.get("created_at") or item.get("queued_at") or "")
+        return (active, ts)
+
+    ordered = sorted(by_id.values(), key=_sort_key)
+    return ordered[:limit]
 
 
 def _safe_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -670,15 +782,18 @@ def _queue_module_lifecycle(
     raise_lifecycle: Any,
     module_manager: Any,
     allow_sync_fallback: bool = False,
+    arguments: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Queue process lifecycle (start/stop/restart/ensure_ready) onto module_runtime."""
+    """Queue process lifecycle (start/stop/restart/ensure_ready/version) onto module_runtime."""
     from Data.modules.module_manager.external.install_gate import allow_sync_install_for_tests
 
+    args = dict(arguments or {"module_id": module_id, "action": action})
+    accepted_at = _utc_now()
     if job_runtime is not None and hasattr(job_runtime, "enqueue"):
         try:
             job = job_runtime.enqueue(
                 capability_id=capability_id,
-                arguments={"module_id": module_id, "action": action},
+                arguments=args,
                 requested_by=f"api.modules.{action}",
                 worker_pool="module_runtime",
                 latency_class="interactive",
@@ -686,21 +801,41 @@ def _queue_module_lifecycle(
                 consumer="api.modules",
                 metadata={"worker_kind": "module_runtime", "execution_class": "EXTERNAL_REQUIRED"},
             )
+            state = _job_state(job) or "QUEUED"
+            job_id = getattr(job, "job_id", None)
+            if job_id and hasattr(module_manager, "register_job"):
+                try:
+                    module_manager.register_job(module_id, str(job_id))
+                except Exception:  # noqa: BLE001
+                    pass
+            # Project transitional desired/runtime hints without claiming completion.
+            managed = module_manager.get(module_id) if hasattr(module_manager, "get") else None
+            if managed is not None and action in {"start", "restart", "ensure_ready"}:
+                managed.desired_state = "ACTIVE" if action != "ensure_ready" else (managed.desired_state or "ACTIVE")
+            if managed is not None and action == "stop":
+                managed.desired_state = "STOPPED"
             emit(
                 f"{action}_queued",
-                {"module_id": module_id, "job_id": getattr(job, "job_id", None)},
+                {"module_id": module_id, "job_id": job_id, "state": state},
             )
             return {
                 "queued": True,
-                "job_id": getattr(job, "job_id", None),
+                "job_id": job_id,
                 "capability_id": capability_id,
                 "worker_pool": "module_runtime",
+                "operation": action,
+                "module_id": module_id,
+                "accepted_at": accepted_at,
+                "state": state,
                 "module": (
                     module_manager.get(module_id).public_dict()
                     if module_manager.get(module_id) is not None
                     else None
                 ),
-                "truth": {"fastapi_does_not_spawn_module_subprocess": True},
+                "truth": {
+                    "fastapi_does_not_spawn_module_subprocess": True,
+                    "enqueue_is_not_completion": True,
+                },
             }
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
@@ -723,7 +858,14 @@ def _queue_module_lifecycle(
             },
         )
     try:
-        result = getattr(module_manager, action)(module_id)
+        if action == "activate_version":
+            result = module_manager.activate_version(module_id, str(args.get("version_id") or ""))
+        elif action == "rollback_version":
+            result = module_manager.rollback_version(
+                module_id, version_id=args.get("version_id")
+            )
+        else:
+            result = getattr(module_manager, action)(module_id)
     except ModuleManagerError as exc:
         raise_lifecycle(exc)
     emit(action, {"module_id": module_id, "inprocess_test": True})
@@ -731,6 +873,10 @@ def _queue_module_lifecycle(
     return {
         "queued": False,
         "inprocess_test": True,
+        "operation": action,
+        "module_id": module_id,
+        "accepted_at": accepted_at,
+        "state": "SUCCEEDED",
         "result": result,
         "module": managed.public_dict() if managed is not None else None,
     }

@@ -1054,7 +1054,12 @@ export const api = {
     return request(`/api/modules/${encodeURIComponent(moduleId)}/capabilities`);
   },
 
-  moduleJobs(moduleId: string): Promise<{ jobs: string[]; count: number }> {
+  moduleJobs(moduleId: string): Promise<{
+    jobs: Array<Record<string, unknown> | string>;
+    active_job_ids?: string[];
+    count: number;
+    truth?: Record<string, boolean>;
+  }> {
     return request(`/api/modules/${encodeURIComponent(moduleId)}/jobs`);
   },
 

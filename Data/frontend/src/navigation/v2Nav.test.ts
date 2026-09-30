@@ -24,7 +24,7 @@ describe("v2Nav primary rail contract", () => {
       "Media Control",
       "Trading Center",
       "Onderzoek & Kennis",
-      "Plugins & Runtime",
+      "Runtime & Tools",
       "Instellingen",
     ]);
   });
@@ -143,7 +143,7 @@ describe("v2Nav media / trading / runtime groups", () => {
     expect(shouldAutoExpandV2Group(trading, "/trading/paper")).toBe(true);
   });
 
-  it("keeps Plugins & Runtime children starting with Performance", () => {
+  it("keeps Runtime & Tools children starting with Performance", () => {
     expect(runtime).toBeDefined();
     if (!runtime) return;
     expect(runtime.children?.map((c) => c.label)).toEqual([

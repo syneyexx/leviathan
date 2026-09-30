@@ -15,7 +15,7 @@ describe("navigation menu", () => {
       "Media Control",
       "Trading Center",
       "Onderzoek & Kennis",
-      "Plugins & Runtime",
+      "Runtime & Tools",
       "Instellingen",
     ]);
   });
@@ -50,10 +50,10 @@ describe("navigation menu", () => {
     ]);
   });
 
-  it("labels Workflows under Plugins & Runtime", () => {
+  it("labels Workflows under Runtime & Tools", () => {
     const runtime = findMainMenuByPath("/workflows");
     expect(runtime.id).toBe("runtime");
-    expect(runtime.label).toBe("Plugins & Runtime");
+    expect(runtime.label).toBe("Runtime & Tools");
     expect(runtime.submenu.some((item) => item.id === "workflows" && item.to === "/workflows")).toBe(true);
   });
 
@@ -80,7 +80,7 @@ describe("navigation menu", () => {
     );
   });
 
-  it("splits Tools and Modules under Plugins & Runtime", () => {
+  it("splits Tools and Modules under Runtime & Tools", () => {
     const section = findMainMenuByPath("/tools");
     expect(section.id).toBe("runtime");
     const tools = section.submenu.find((item) => item.id === "tools");

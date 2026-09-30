@@ -16,7 +16,7 @@ describe("shell navigation contract", () => {
     expect(labels).toContain("Dashboard");
     expect(labels).toContain("Instellingen");
     expect(labels).toContain("Trading Center");
-    expect(labels).toContain("Plugins & Runtime");
+    expect(labels).toContain("Runtime & Tools");
     expect(labels).not.toContain("Hades AI");
     expect(labels).not.toContain("Home");
     expect(labels).not.toContain("Finance");

@@ -130,6 +130,7 @@ class ModuleHealth:
     status: ModuleStatus
     detail: str = "ok"
     telemetry: dict[str, Any] = field(default_factory=dict)
+    checked_at: str | None = None
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -137,6 +138,7 @@ class ModuleHealth:
             "status": self.status.value,
             "detail": self.detail,
             "telemetry": self.telemetry,
+            "checked_at": self.checked_at,
         }
 
 

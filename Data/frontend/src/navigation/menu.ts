@@ -21,7 +21,7 @@ export type MainMenuItem = {
  *
  * Canonical left-nav IA (V2 + legacy):
  * Dashboard, LLM, Media Control, Trading Center, Onderzoek & Kennis,
- * Plugins & Runtime, Instellingen — nothing else in between.
+ * Runtime & Tools, Instellingen — nothing else in between.
  */
 export const MAIN_MENU: readonly MainMenuItem[] = [
   {
@@ -101,7 +101,7 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
   },
   {
     id: "runtime",
-    label: "Plugins & Runtime",
+    label: "Runtime & Tools",
     to: "/performance",
     match: ["/tools", "/modules", "/skills", "/performance", "/mcp", "/workflows", "/console"],
     submenu: [

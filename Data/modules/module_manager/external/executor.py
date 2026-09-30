@@ -235,6 +235,8 @@ class ExternalModuleExecutor:
             "external.module.stop",
             "external.module.restart",
             "external.module.ensure_ready",
+            "external.module.activate_version",
+            "external.module.rollback_version",
         }:
             module_id = str(arguments.get("module_id") or "")
             if not module_id:
@@ -250,13 +252,23 @@ class ExternalModuleExecutor:
             try:
                 if job_id:
                     self.module_manager.register_job(module_id, job_id)
-                method = {
-                    "start": "start",
-                    "stop": "stop",
-                    "restart": "restart",
-                    "ensure_ready": "ensure_ready",
-                }[action]
-                if action == "stop":
+                if action == "activate_version":
+                    version_id = str(arguments.get("version_id") or "")
+                    if not version_id:
+                        return CapabilityResult(
+                            request_id=request_id or "",
+                            capability_id=capability_id,
+                            status=CapabilityStatus.REJECTED,
+                            error="version_id required",
+                            provider_kind="module",
+                            provider_ref=provider_ref,
+                        )
+                    result = self.module_manager.activate_version(module_id, version_id)
+                elif action == "rollback_version":
+                    result = self.module_manager.rollback_version(
+                        module_id, version_id=arguments.get("version_id")
+                    )
+                elif action == "stop":
                     gen = arguments.get("expected_generation")
                     if gen is None:
                         gen = arguments.get("launch_generation")
@@ -267,6 +279,11 @@ class ExternalModuleExecutor:
                             gen = None
                     result = self.module_manager.stop(module_id, expected_generation=gen)
                 else:
+                    method = {
+                        "start": "start",
+                        "restart": "restart",
+                        "ensure_ready": "ensure_ready",
+                    }[action]
                     result = getattr(self.module_manager, method)(module_id)
                 status = CapabilityStatus.COMPLETED
                 if isinstance(result, dict) and result.get("refused") == "STALE_GENERATION":
