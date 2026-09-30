@@ -1119,6 +1119,92 @@ export type DatasetLearningState = {
   learning?: Record<string, unknown>;
 };
 
+export type DatasetQuality = {
+  measured: boolean;
+  score: number | null;
+  label: string;
+  bars: number | null;
+  versionId?: string | null;
+  constituents?: Record<string, unknown>;
+  formula?: string;
+  truth?: Record<string, boolean>;
+};
+
+export type DatasetOverviewStorageBreakdown = {
+  id: string;
+  label: string;
+  bytes: number | null;
+  provenance: string;
+};
+
+export type DatasetOverview = {
+  totalDatasets: number;
+  totalSamples: number;
+  samplesMeasuredDatasets: number;
+  samplesUnmeasuredDatasets: number;
+  samplesMeasurementComplete: boolean;
+  samplesMeasurementStatus: "COMPLETE" | "PARTIAL" | "UNMEASURED" | string;
+  totalKnownBytes: number;
+  bytesMeasuredDatasets: number;
+  bytesUnmeasuredDatasets: number;
+  storage: {
+    usedBytes: number;
+    capacityBytes: number | null;
+    freeBytes: number | null;
+    usedPercent: number | null;
+    breakdown: DatasetOverviewStorageBreakdown[];
+    measurementStatus: string;
+    truth?: Record<string, boolean>;
+  };
+  activeImports: number;
+  activeImportsRunning: number;
+  activeImportsQueued: number;
+  validationIssues: number;
+  criticalValidationIssues: number;
+  validationWarnings: number;
+  validationErrors: number;
+  datasetsWithValidation: number;
+  datasetsWithoutValidation: number;
+  catalogStatus: {
+    label: string;
+    state: string;
+    lastReconcileAt?: string | null;
+    entryCount?: number | null;
+    detail?: Record<string, unknown>;
+  };
+  byStatus: Record<string, number>;
+  bySource: Record<string, number>;
+  tagCounts: Record<string, number>;
+  truth?: Record<string, boolean>;
+};
+
+export type DatasetListQuery = {
+  q?: string;
+  limit?: number;
+  offset?: number;
+  status?: string;
+  source?: string;
+  sourceType?: string;
+  category?: string;
+  split?: string;
+  tag?: string;
+  tags?: string;
+  type?: string;
+  sort?: string;
+  includeBrain?: boolean;
+  includeQuality?: boolean;
+};
+
+export type DatasetListPage = {
+  datasets: DatasetRecord[];
+  total?: number;
+  limit?: number;
+  offset?: number;
+  sort?: string;
+  hasMore?: boolean;
+  truth?: Record<string, boolean>;
+};
+
 export type DatasetRecord = {
   datasetId: string;
   name: string;
@@ -1154,6 +1240,8 @@ export type DatasetRecord = {
   indexes?: DatasetIndex[];
   learningState?: DatasetLearningState;
   canonicalState?: string;
+  /** Evidence-based quality projection from DatasetService (optional). */
+  quality?: DatasetQuality | null;
 };
 
 export type DatasetSemanticProfileSummary = {

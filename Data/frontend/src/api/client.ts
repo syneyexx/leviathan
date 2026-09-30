@@ -48,6 +48,9 @@ import type {
   DatasetLearningEnrichedJob,
   DatasetLearningState,
   DatasetLearningStatus,
+  DatasetListPage,
+  DatasetListQuery,
+  DatasetOverview,
   DatasetPreviewRow,
   DatasetRecord,
   DatasetRecoveryAssessment,
@@ -1720,8 +1723,40 @@ export const api = {
 
   /* ---------- Datasets ---------- */
 
-  listDatasets(limit = 100): Promise<{ datasets: DatasetRecord[] }> {
-    return request(`/api/datasets?limit=${encodeURIComponent(String(limit))}`);
+  /**
+   * List / query datasets.
+   * Backward compatible: `listDatasets()`, `listDatasets(100)`, `listDatasets(200)`
+   * still work. Pass a query object for server-side search/filter/pagination.
+   */
+  listDatasets(limitOrQuery: number | DatasetListQuery = 100): Promise<DatasetListPage> {
+    if (typeof limitOrQuery === "number") {
+      return request(`/api/datasets?limit=${encodeURIComponent(String(limitOrQuery))}`);
+    }
+    const q = limitOrQuery;
+    const params = new URLSearchParams();
+    const set = (key: string, value: string | number | boolean | undefined | null) => {
+      if (value === undefined || value === null || value === "") return;
+      params.set(key, String(value));
+    };
+    set("q", q.q);
+    set("limit", q.limit ?? 100);
+    set("offset", q.offset);
+    set("status", q.status);
+    set("source", q.source ?? q.sourceType);
+    set("sourceType", q.sourceType);
+    set("category", q.category);
+    set("split", q.split);
+    set("tag", q.tag ?? q.tags);
+    set("type", q.type);
+    set("sort", q.sort);
+    if (q.includeBrain !== undefined) set("includeBrain", q.includeBrain);
+    if (q.includeQuality !== undefined) set("includeQuality", q.includeQuality);
+    const qs = params.toString();
+    return request(`/api/datasets${qs ? `?${qs}` : ""}`);
+  },
+
+  getDatasetsOverview(): Promise<{ overview: DatasetOverview }> {
+    return request("/api/datasets/overview");
   },
 
   createDataset(payload: {

@@ -1,4 +1,4 @@
-import type { DatasetMgmtStatus } from "../../mocks/dataset-management";
+import type { DatasetMgmtStatus } from "../datasets/datasetManagementConstants";
 
 export type { DatasetMgmtStatus };
 
