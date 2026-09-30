@@ -6,11 +6,8 @@ import {
   capabilitiesFromRow,
   declaredOperations,
   dependenciesFromRow,
-  dependencyStateLabel,
-  dependencyStateTone,
   formatMeasured,
   healthLabel,
-  installPhaseSteps,
   lifecycleBadges,
   measuredFromHealth,
   moduleDescription,
@@ -22,14 +19,11 @@ import {
   type ActionAvailability,
   type CapabilityItem,
   type DetailTabId,
-  type InstallOperationView,
-  type InstallPlanView,
   type ManagedModuleRow,
   type StatusTone,
 } from "../../pages/plugin-runtime/modules/viewModels";
 import {
   IconCapabilities,
-  IconClose,
   IconCopy,
   IconDownload,
   IconEnsure,
@@ -54,13 +48,11 @@ type PendingLifecycle = {
 
 type Props = {
   selected: ManagedModuleRow | null;
+  detailTab: DetailTabId;
+  setDetailTab: (tab: DetailTabId) => void;
   actions: ActionAvailability;
   lifecycleBusy: boolean;
   pendingLifecycle: PendingLifecycle;
-  detailTab: DetailTabId;
-  onDetailTab: (tab: DetailTabId) => void;
-  onLifecycle: (action: LifecycleAction) => void;
-  onCancelPending: () => void;
   healthPayload: Record<string, unknown> | null;
   logLines: string[] | null;
   jobsPayload: unknown[] | null;
@@ -69,26 +61,21 @@ type Props = {
   panelJson: string | null;
   lastResult: string | null;
   lastAction: string | null;
+  activityEvents: Array<Record<string, unknown>>;
+  ops: string[];
   operation: string;
   setOperation: (v: string) => void;
   argsJson: string;
   setArgsJson: (v: string) => void;
-  ops: string[];
   executing: boolean;
-  onExecute: () => void;
   versionRef: string;
   setVersionRef: (v: string) => void;
   versionId: string;
   setVersionId: (v: string) => void;
-  installPlan: InstallPlanView | null;
-  installOperation: InstallOperationView | null;
-  installPanelOpen: boolean;
-  setInstallPanelOpen: (v: boolean) => void;
-  installPolling: boolean;
-  primaryInstallCta: string;
-  approveAndInstallEverything: () => void;
-  retryInstall: () => void;
-  recentActivity?: Array<{ at: string; label: string; status: string }>;
+  onLifecycle: (action: LifecycleAction) => void;
+  onExecute: () => void;
+  onCancelJob: () => void;
+  onOpenInstall: () => void;
 };
 
 function badgeTone(tone: StatusTone): "success" | "warning" | "danger" | "info" | "muted" | "trading" | "system" {
@@ -119,6 +106,16 @@ function externalMeta(row: ManagedModuleRow | null): Record<string, unknown> | n
   if (!meta || typeof meta !== "object") return null;
   const external = (meta as Record<string, unknown>).external;
   return external && typeof external === "object" ? (external as Record<string, unknown>) : null;
+}
+
+function formatActivityTime(ev: Record<string, unknown>): string {
+  const ms = typeof ev.created_at_ms === "number" ? ev.created_at_ms : null;
+  if (ms != null) {
+    const d = new Date(ms);
+    return d.toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+  if (typeof ev.at === "string") return ev.at;
+  return "—";
 }
 
 function detailPanelText(args: {
@@ -192,11 +189,12 @@ function detailPanelText(args: {
 }
 
 type ToolDef = {
-  action: LifecycleAction;
+  action: LifecycleAction | "install-open";
   label: string;
   icon: ReactNode;
   enabled: boolean;
   reason?: string;
+  onClick: () => void;
 };
 
 export function ModulesDetail(props: Props) {
@@ -235,28 +233,83 @@ export function ModulesDetail(props: Props) {
 
   const a = props.actions;
   const tools: ToolDef[] = [
-    { action: "install", label: "Install", icon: <IconInstall />, enabled: a.canInstall, reason: a.installReason },
-    { action: "start", label: "Start", icon: <IconPlay />, enabled: a.canStart, reason: a.startReason },
-    { action: "stop", label: "Stop", icon: <IconStop />, enabled: a.canStop, reason: a.stopReason },
-    { action: "restart", label: "Restart", icon: <IconRestart />, enabled: a.canRestart, reason: a.restartReason },
+    {
+      action: "install-open",
+      label: "Install",
+      icon: <IconInstall />,
+      enabled: a.canInstall,
+      reason: a.installReason,
+      onClick: props.onOpenInstall,
+    },
+    {
+      action: "start",
+      label: "Start",
+      icon: <IconPlay />,
+      enabled: a.canStart,
+      reason: a.startReason,
+      onClick: () => props.onLifecycle("start"),
+    },
+    {
+      action: "stop",
+      label: "Stop",
+      icon: <IconStop />,
+      enabled: a.canStop,
+      reason: a.stopReason,
+      onClick: () => props.onLifecycle("stop"),
+    },
+    {
+      action: "restart",
+      label: "Restart",
+      icon: <IconRestart />,
+      enabled: a.canRestart,
+      reason: a.restartReason,
+      onClick: () => props.onLifecycle("restart"),
+    },
     {
       action: "ensure-ready",
       label: "Ensure Ready",
       icon: <IconEnsure />,
       enabled: a.canEnsureReady,
       reason: a.ensureReadyReason,
+      onClick: () => props.onLifecycle("ensure-ready"),
     },
-    { action: "health", label: "Health", icon: <IconHealth />, enabled: a.canHealth, reason: a.healthReason },
-    { action: "jobs", label: "Jobs", icon: <IconJobs />, enabled: a.canJobs },
-    { action: "versions", label: "Versions", icon: <IconVersions />, enabled: a.canVersions },
+    {
+      action: "health",
+      label: "Health",
+      icon: <IconHealth />,
+      enabled: a.canHealth,
+      reason: a.healthReason,
+      onClick: () => props.onLifecycle("health"),
+    },
+    {
+      action: "jobs",
+      label: "Jobs",
+      icon: <IconJobs />,
+      enabled: a.canJobs,
+      onClick: () => props.onLifecycle("jobs"),
+    },
+    {
+      action: "versions",
+      label: "Versions",
+      icon: <IconVersions />,
+      enabled: a.canVersions,
+      onClick: () => props.onLifecycle("versions"),
+    },
     {
       action: "check-update",
       label: "Check Update",
       icon: <IconUpdate />,
       enabled: a.canCheckUpdate,
       reason: a.checkUpdateReason,
+      onClick: () => props.onLifecycle("check-update"),
     },
-    { action: "capabilities", label: "Capabilities", icon: <IconCapabilities />, enabled: a.canCapabilities },
+    {
+      action: "capabilities",
+      label: "Capabilities",
+      icon: <IconCapabilities />,
+      enabled: a.canCapabilities,
+      onClick: () => props.onLifecycle("capabilities"),
+    },
   ];
 
   const sideEffects =
@@ -349,7 +402,7 @@ export function ModulesDetail(props: Props) {
                 disabled={disabled}
                 title={title}
                 aria-label={t.label}
-                onClick={() => void props.onLifecycle(t.action)}
+                onClick={t.onClick}
               >
                 <span className="lv-v2-modules-tool__icon">{t.icon}</span>
                 <span className="lv-v2-modules-tool__label">{t.label}</span>
@@ -364,7 +417,7 @@ export function ModulesDetail(props: Props) {
               Job {props.pendingLifecycle.jobId.slice(0, 8)}… — {props.pendingLifecycle.action} (
               {props.pendingLifecycle.state})
             </span>
-            <Button variant="ghost" size="sm" onClick={() => void props.onCancelPending()}>
+            <Button variant="ghost" size="sm" onClick={() => void props.onCancelJob()}>
               Annuleer
             </Button>
           </div>
@@ -397,20 +450,6 @@ export function ModulesDetail(props: Props) {
           </div>
         </dl>
 
-        {props.installPanelOpen && (props.installPlan || props.installOperation) ? (
-          <InstallDrawer
-            selected={selected}
-            installPlan={props.installPlan}
-            installOperation={props.installOperation}
-            installPolling={props.installPolling}
-            lifecycleBusy={props.lifecycleBusy}
-            primaryInstallCta={props.primaryInstallCta}
-            onClose={() => props.setInstallPanelOpen(false)}
-            onApprove={() => void props.approveAndInstallEverything()}
-            onRetry={() => void props.retryInstall()}
-          />
-        ) : null}
-
         <div className="lv-v2-modules-tabs" role="tablist" aria-label="Module detail tabs">
           {DETAIL_TABS.map((tab) => {
             const jobsCount =
@@ -422,7 +461,7 @@ export function ModulesDetail(props: Props) {
                 role="tab"
                 aria-selected={props.detailTab === tab.id}
                 className={`lv-v2-modules-tab${props.detailTab === tab.id ? " is-active" : ""}`}
-                onClick={() => props.onDetailTab(tab.id)}
+                onClick={() => props.setDetailTab(tab.id)}
               >
                 {tab.label}
                 {tab.id === "jobs" && jobsCount != null ? ` (${jobsCount})` : ""}
@@ -434,18 +473,9 @@ export function ModulesDetail(props: Props) {
             role="tab"
             aria-selected={props.detailTab === "execute"}
             className={`lv-v2-modules-tab${props.detailTab === "execute" ? " is-active" : ""}`}
-            onClick={() => props.onDetailTab("execute")}
+            onClick={() => props.setDetailTab("execute")}
           >
             Execute
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={props.detailTab === "versions"}
-            className={`lv-v2-modules-tab${props.detailTab === "versions" ? " is-active" : ""}`}
-            onClick={() => props.onDetailTab("versions")}
-          >
-            Versions
           </button>
           <div className="lv-v2-modules-tabs__tools">
             <button type="button" className="lv-v2-modules-icon-btn" title="Kopieer panel" onClick={() => copyText(panelText)}>
@@ -551,18 +581,24 @@ export function ModulesDetail(props: Props) {
                 <dt>Strategies</dt>
                 <dd>{strategies.length ? strategies.join(", ") : "UNMEASURED"}</dd>
                 <dt>Python deps</dt>
-                <dd>{depList.length ? depList.join(", ") : formatMeasured(deps)}</dd>
+                <dd>
+                  {depList.length
+                    ? depList.join(", ")
+                    : deps.kind === "measured"
+                      ? "UNMEASURED"
+                      : formatMeasured({ kind: deps.kind })}
+                </dd>
               </dl>
             </Panel>
 
             <Panel title="Recente Activiteiten" className="lv-v2-modules-subpanel">
-              {props.recentActivity?.length ? (
+              {props.activityEvents.length ? (
                 <ul className="lv-v2-modules-activity">
-                  {props.recentActivity.map((ev, i) => (
-                    <li key={`${ev.at}-${i}`}>
-                      <time>{ev.at}</time>
-                      <span>{ev.label}</span>
-                      <Badge tone="success">{ev.status}</Badge>
+                  {props.activityEvents.map((ev, i) => (
+                    <li key={String(ev.event_id ?? i)}>
+                      <time>{formatActivityTime(ev)}</time>
+                      <span>{String(ev.label ?? ev.event ?? "event")}</span>
+                      <Badge tone="success">{String(ev.status ?? "OK")}</Badge>
                     </li>
                   ))}
                 </ul>
@@ -673,176 +709,5 @@ export function ModulesDetail(props: Props) {
         <span>Adapter: {selected.adapter ?? "—"}</span>
       </footer>
     </aside>
-  );
-}
-
-function InstallDrawer({
-  selected,
-  installPlan,
-  installOperation,
-  installPolling,
-  lifecycleBusy,
-  primaryInstallCta,
-  onClose,
-  onApprove,
-  onRetry,
-}: {
-  selected: ManagedModuleRow;
-  installPlan: InstallPlanView | null;
-  installOperation: InstallOperationView | null;
-  installPolling: boolean;
-  lifecycleBusy: boolean;
-  primaryInstallCta: string;
-  onClose: () => void;
-  onApprove: () => void;
-  onRetry: () => void;
-}) {
-  return (
-    <section className="lv-v2-modules-install" aria-label="Module install plan">
-      <header className="lv-v2-modules-install__head">
-        <h3>Install plan</h3>
-        <button type="button" className="lv-v2-modules-icon-btn" onClick={onClose} aria-label="Sluiten">
-          <IconClose />
-        </button>
-      </header>
-
-      {installPlan ? (
-        <div className="lv-v2-modules-install__grid">
-          <div>
-            <div className="lv-v2-modules-install__label">Module</div>
-            <div>{installPlan.moduleId || moduleId(selected)}</div>
-          </div>
-          <div>
-            <div className="lv-v2-modules-install__label">Source / ref</div>
-            <div>
-              {String(installPlan.source.source || installPlan.source.url || "—")}
-              {" @ "}
-              {installPlan.requestedRef}
-            </div>
-          </div>
-          <div>
-            <div className="lv-v2-modules-install__label">Strategies</div>
-            <div>{installPlan.strategies.join(", ") || "—"}</div>
-          </div>
-          <div>
-            <div className="lv-v2-modules-install__label">Package manager</div>
-            <div>{installPlan.packageManager || "NONE"}</div>
-          </div>
-          <div>
-            <div className="lv-v2-modules-install__label">Host privilege</div>
-            <div>{installPlan.privilegeState || "UNMEASURED"}</div>
-          </div>
-          <div>
-            <div className="lv-v2-modules-install__label">Approval</div>
-            <div>
-              {installPlan.requiresApproval || installOperation?.status === "APPROVAL_REQUIRED"
-                ? "REQUIRED"
-                : "NOT REQUIRED"}
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {installPlan?.observations?.length ? (
-        <div className="lv-v2-modules-install__block">
-          <div className="lv-v2-modules-install__label">Dependencies</div>
-          <ul>
-            {installPlan.observations.map((obs) => (
-              <li key={obs.dependencyId}>
-                <span>{obs.dependencyId}</span>
-                <Badge tone={badgeTone(dependencyStateTone(obs.state))}>
-                  {dependencyStateLabel(obs.state)}
-                </Badge>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      {installPlan?.blockers?.length ? (
-        <div className="lv-v2-modules-install__block is-err">
-          <div className="lv-v2-modules-install__label">Blockers</div>
-          <ul>
-            {installPlan.blockers.map((b, i) => (
-              <li key={`${String(b.code)}-${i}`}>
-                {String(b.code)}
-                {b.detail ? `: ${String(b.detail)}` : ""}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      {installOperation &&
-      [
-        "QUEUED",
-        "RUNNING",
-        "PREPARING",
-        "INSTALLING_SYSTEM_DEPENDENCIES",
-        "VERIFYING_SYSTEM_DEPENDENCIES",
-        "FETCHING_SOURCE",
-        "PREPARING_RUNTIME",
-        "INSTALLING_APPLICATION_DEPENDENCIES",
-        "POST_INSTALL",
-        "VERIFYING_INSTALLATION",
-        "ACTIVATING",
-        "READY",
-        "FAILED",
-      ].includes(installOperation.phase || installOperation.status) ? (
-        <div className="lv-v2-modules-install__progress">
-          <div className="lv-v2-modules-install__label">
-            Progress{installPolling ? " (live)" : ""}
-            {installOperation.phase ? ` — ${installOperation.phase}` : ""}
-          </div>
-          <ol>
-            {installPhaseSteps(installOperation.phase || installOperation.status).map((step) => (
-              <li key={step.id} className={`is-${step.state}`}>
-                {step.state === "done" ? "✓" : step.state === "active" ? "●" : "○"} {step.label}
-              </li>
-            ))}
-          </ol>
-        </div>
-      ) : null}
-
-      {installOperation?.status === "FAILED" || installOperation?.phase === "FAILED" ? (
-        <div className="lv-v2-modules-install__block is-err" role="alert">
-          <div className="lv-v2-modules-install__label">Install failed</div>
-          <p>
-            {[installOperation.errorCode, installOperation.errorDetail].filter(Boolean).join(" — ") ||
-              "Structured failure from backend"}
-          </p>
-        </div>
-      ) : null}
-
-      <div className="lv-v2-modules-install__actions">
-        {installOperation?.status === "FAILED" || installOperation?.phase === "FAILED" ? (
-          <Button variant="primary" size="sm" disabled={lifecycleBusy} onClick={onRetry}>
-            RETRY INSTALL
-          </Button>
-        ) : ["QUEUED", "RUNNING", "CREATED", "RETRY_WAIT", "READY", "INSTALLED", "COMPLETED"].includes(
-            installOperation?.status || "",
-          ) ? (
-          <Button variant="primary" size="sm" disabled>
-            {primaryInstallCta}
-          </Button>
-        ) : (
-          <Button
-            variant="primary"
-            size="sm"
-            disabled={
-              lifecycleBusy ||
-              Boolean(
-                installPlan &&
-                  !installPlan.installable &&
-                  installPlan.blockers.some((b) => String(b.code) !== "PRIVILEGE_REQUIRED"),
-              )
-            }
-            onClick={onApprove}
-          >
-            {primaryInstallCta}
-          </Button>
-        )}
-      </div>
-    </section>
   );
 }

@@ -23,7 +23,6 @@ import {
   parseInstallPlan,
   primaryInstallCta,
   tryParseArgs,
-  updateAvailableFromEvidence,
   type DetailTabId,
   type InstallOperationView,
   type InstallPlanView,
@@ -157,16 +156,31 @@ export function useModulesWorkspace() {
     setLoading(true);
     setLoadError(null);
     try {
-      if (typeof window !== "undefined") {
-        const flag = (window as Window & { __LV_V2_VISUAL_FIXTURE__?: string }).__LV_V2_VISUAL_FIXTURE__;
-        if (flag === "modules") {
-          const { MODULES_V2_VISUAL_FIXTURE } = await import("../../../mocks/modulesV2VisualFixture");
-          applySnapshot(MODULES_V2_VISUAL_FIXTURE as unknown as ModuleSnapshot);
-          setActivityEvents([...(MODULES_V2_VISUAL_FIXTURE.activity as Array<Record<string, unknown>>)]);
-          setStale(false);
-          setLoading(false);
-          return;
-        }
+      // TEST-ONLY: Screen 1 visual fixture — never used as production default.
+      if (isModulesVisualFixtureActive()) {
+        const fixture = MODULES_V2_VISUAL_FIXTURE;
+        const snap = {
+          enabled: fixture.enabled,
+          modules: fixture.modules as unknown as ModuleSnapshot["modules"],
+          telemetry: fixture.telemetry as ModuleSnapshot["telemetry"],
+          discovery_roots: [...fixture.discovery_roots],
+          truth: { ...fixture.truth },
+        } satisfies ModuleSnapshot;
+        applySnapshot(snap);
+        setUpdateEvidenceByModule(() => {
+          const evidence: Record<string, Record<string, unknown> | null | undefined> = {};
+          for (const row of snap.modules ?? []) {
+            const id = moduleId(row);
+            if (row.update_evidence && typeof row.update_evidence === "object") {
+              evidence[id] = row.update_evidence as Record<string, unknown>;
+            }
+          }
+          return evidence;
+        });
+        setSelectedId(fixture.selectedModuleId);
+        setActivityEvents(fixture.activity.map((e) => ({ ...e })));
+        setStale(false);
+        return;
       }
       const snap = await api.listModules();
       applySnapshot(snap);
@@ -360,21 +374,15 @@ export function useModulesWorkspace() {
 
   const counts = useMemo(() => {
     if (isModulesVisualFixtureActive()) {
-      return MODULES_V2_VISUAL_FIXTURE.displayKpis.filterCounts;
+      return { ...MODULES_V2_VISUAL_FIXTURE.displayKpis.filterCounts };
     }
     return filterCounts(modules, updateEvidenceByModule);
   }, [modules, updateEvidenceByModule]);
 
   const visualSparklines = useMemo(() => {
     if (!isModulesVisualFixtureActive()) return undefined;
-    return MODULES_V2_VISUAL_FIXTURE.sparklines;
+    return { ...MODULES_V2_VISUAL_FIXTURE.sparklines };
   }, [snapshot]);
-
-  const visualRecentActivity = useMemo(() => {
-    if (!isModulesVisualFixtureActive()) return undefined;
-    if (effectiveSelectedId !== MODULES_V2_VISUAL_FIXTURE.selectedModuleId) return undefined;
-    return MODULES_V2_VISUAL_FIXTURE.recentActivity;
-  }, [effectiveSelectedId, snapshot]);
 
   const effectiveSelectedId = useMemo(() => {
     if (selectedId && rows.some((row) => moduleId(row) === selectedId)) return selectedId;
@@ -396,9 +404,9 @@ export function useModulesWorkspace() {
       setActivityEvents([]);
       return;
     }
-    if (typeof window !== "undefined") {
-      const flag = (window as Window & { __LV_V2_VISUAL_FIXTURE__?: string }).__LV_V2_VISUAL_FIXTURE__;
-      if (flag === "modules") return;
+    if (isModulesVisualFixtureActive()) {
+      setActivityEvents(MODULES_V2_VISUAL_FIXTURE.activity.map((e) => ({ ...e })));
+      return;
     }
     let cancelled = false;
     void (async () => {
@@ -888,13 +896,12 @@ export function useModulesWorkspace() {
     return capabilitiesFromRow(selected);
   }, [capabilitiesPayload, selected]);
 
-  const installedCount = useMemo(
-    () => modules.filter((m) => updateAvailableFromEvidence(updateEvidenceByModule[moduleId(m)]) || true).length,
-    // installed count uses status, not update evidence — keep filterCounts.installed
-    [modules],
-  );
-
-  const realInstalledCount = useMemo(() => counts.installed, [counts.installed]);
+  const realInstalledCount = useMemo(() => {
+    if (isModulesVisualFixtureActive()) {
+      return MODULES_V2_VISUAL_FIXTURE.displayKpis.installedCount;
+    }
+    return counts.installed;
+  }, [counts.installed]);
 
   return {
     snapshot,
@@ -908,6 +915,7 @@ export function useModulesWorkspace() {
     counts,
     kpis,
     installedCount: realInstalledCount,
+    visualSparklines,
     selected,
     selectedId: effectiveSelectedId,
     query,

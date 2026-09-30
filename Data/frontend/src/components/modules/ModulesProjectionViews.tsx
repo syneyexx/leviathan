@@ -13,10 +13,10 @@ import type { ModuleSnapshot } from "../../types/api";
 
 type Props = {
   view: "runtimes" | "installation" | "environments";
-  snapshot: ModuleSnapshot | null;
   modules: ManagedModuleRow[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
+  onSelectModule: (id: string) => void;
+  snapshot?: ModuleSnapshot | null;
+  selectedId?: string | null;
 };
 
 function badgeTone(tone: StatusTone): "success" | "warning" | "danger" | "info" | "muted" | "trading" {
@@ -29,7 +29,7 @@ function badgeTone(tone: StatusTone): "success" | "warning" | "danger" | "info" 
 }
 
 /** Runtimes / Installation / Environments projections from existing module snapshot. */
-export function ModulesProjectionViews({ view, snapshot, modules, selectedId, onSelect }: Props) {
+export function ModulesProjectionViews({ view, modules, onSelectModule, snapshot = null, selectedId = null }: Props) {
   if (view === "runtimes") {
     const runtimeRows = modules.filter((m) => isInstalled(m) || isExecutable(m) || m.runtime_state);
     return (
@@ -42,54 +42,56 @@ export function ModulesProjectionViews({ view, snapshot, modules, selectedId, on
         <p className="lv-v2-muted lv-v2-modules-projection__lead">
           Projectie van ModuleManager + JobRuntime — geen aparte runtime service.
         </p>
-        <table className="lv-v2-table">
-          <thead>
-            <tr>
-              <th>Module</th>
-              <th>Adapter</th>
-              <th>Runtime</th>
-              <th>Desired</th>
-              <th>Jobs</th>
-            </tr>
-          </thead>
-          <tbody>
-            {runtimeRows.length === 0 ? (
+        <div className="lv-v2-table-wrap">
+          <table className="lv-v2-table">
+            <thead>
               <tr>
-                <td colSpan={5} className="lv-v2-modules-empty-cell">
-                  Geen runtime state in snapshot.
-                </td>
+                <th>Module</th>
+                <th>Adapter</th>
+                <th>Runtime</th>
+                <th>Desired</th>
+                <th>Jobs</th>
               </tr>
-            ) : (
-              runtimeRows.map((row) => {
-                const id = moduleId(row);
-                return (
-                  <tr
-                    key={id}
-                    className={selectedId === id ? "is-selected" : undefined}
-                    onClick={() => onSelect(id)}
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        onSelect(id);
-                      }
-                    }}
-                  >
-                    <td>{moduleName(row)}</td>
-                    <td>{row.adapter ?? "—"}</td>
-                    <td>
-                      <Badge tone={badgeTone(statusTone(row.runtime_state ?? row.status))}>
-                        {(row.runtime_state ?? row.status ?? "—").toUpperCase()}
-                      </Badge>
-                    </td>
-                    <td>{row.desired_state ?? "—"}</td>
-                    <td>{row.active_jobs?.length ?? 0}</td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {runtimeRows.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="lv-v2-modules-empty-cell">
+                    Geen runtime state in snapshot.
+                  </td>
+                </tr>
+              ) : (
+                runtimeRows.map((row) => {
+                  const id = moduleId(row);
+                  return (
+                    <tr
+                      key={id}
+                      className={selectedId === id ? "is-selected" : undefined}
+                      onClick={() => onSelectModule(id)}
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          onSelectModule(id);
+                        }
+                      }}
+                    >
+                      <td>{moduleName(row)}</td>
+                      <td>{row.adapter ?? "—"}</td>
+                      <td>
+                        <Badge tone={badgeTone(statusTone(row.runtime_state ?? row.status))}>
+                          {(row.runtime_state ?? row.status ?? "—").toUpperCase()}
+                        </Badge>
+                      </td>
+                      <td>{row.desired_state ?? "—"}</td>
+                      <td>{row.active_jobs?.length ?? 0}</td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </Panel>
     );
   }
@@ -108,7 +110,7 @@ export function ModulesProjectionViews({ view, snapshot, modules, selectedId, on
                 const id = moduleId(row);
                 return (
                   <li key={id}>
-                    <button type="button" className="lv-v2-linkish" onClick={() => onSelect(id)}>
+                    <button type="button" className="lv-v2-linkish" onClick={() => onSelectModule(id)}>
                       {moduleName(row)}
                     </button>
                     <span className="lv-v2-muted">v{moduleVersion(row) ?? "—"}</span>
@@ -128,7 +130,7 @@ export function ModulesProjectionViews({ view, snapshot, modules, selectedId, on
                 const id = moduleId(row);
                 return (
                   <li key={id}>
-                    <button type="button" className="lv-v2-linkish" onClick={() => onSelect(id)}>
+                    <button type="button" className="lv-v2-linkish" onClick={() => onSelectModule(id)}>
                       {moduleName(row)}
                     </button>
                     <span className="lv-v2-muted">{row.source_type ?? "—"}</span>
@@ -156,7 +158,6 @@ export function ModulesProjectionViews({ view, snapshot, modules, selectedId, on
     );
   }
 
-  // environments
   return (
     <Panel
       title="Environments"
@@ -167,55 +168,57 @@ export function ModulesProjectionViews({ view, snapshot, modules, selectedId, on
       <p className="lv-v2-muted lv-v2-modules-projection__lead">
         Externe module-isolatie uit ModuleSnapshot — geen aparte environment service.
       </p>
-      <table className="lv-v2-table">
-        <thead>
-          <tr>
-            <th>Module</th>
-            <th>Isolation</th>
-            <th>Source path</th>
-            <th>Resource</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {modules.length === 0 ? (
+      <div className="lv-v2-table-wrap">
+        <table className="lv-v2-table">
+          <thead>
             <tr>
-              <td colSpan={5} className="lv-v2-modules-empty-cell">
-                Geen modules in snapshot.
-              </td>
+              <th>Module</th>
+              <th>Isolation</th>
+              <th>Source path</th>
+              <th>Resource</th>
+              <th>Status</th>
             </tr>
-          ) : (
-            modules.map((row) => {
-              const id = moduleId(row);
-              const isolation = row.isolation ?? row.manifest?.isolation ?? "—";
-              return (
-                <tr
-                  key={id}
-                  className={selectedId === id ? "is-selected" : undefined}
-                  onClick={() => onSelect(id)}
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      onSelect(id);
-                    }
-                  }}
-                >
-                  <td>{moduleName(row)}</td>
-                  <td>
-                    <code>{isolation}</code>
-                  </td>
-                  <td className="lv-v2-modules-path">{row.manifest?.source_path ?? "—"}</td>
-                  <td>{row.resource_class ?? "—"}</td>
-                  <td>
-                    <Badge tone={badgeTone(statusTone(row.status))}>{(row.status ?? "—").toUpperCase()}</Badge>
-                  </td>
-                </tr>
-              );
-            })
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {modules.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="lv-v2-modules-empty-cell">
+                  Geen modules in snapshot.
+                </td>
+              </tr>
+            ) : (
+              modules.map((row) => {
+                const id = moduleId(row);
+                const isolation = row.isolation ?? row.manifest?.isolation ?? "—";
+                return (
+                  <tr
+                    key={id}
+                    className={selectedId === id ? "is-selected" : undefined}
+                    onClick={() => onSelectModule(id)}
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onSelectModule(id);
+                      }
+                    }}
+                  >
+                    <td>{moduleName(row)}</td>
+                    <td>
+                      <code>{isolation}</code>
+                    </td>
+                    <td className="lv-v2-modules-path">{row.manifest?.source_path ?? "—"}</td>
+                    <td>{row.resource_class ?? "—"}</td>
+                    <td>
+                      <Badge tone={badgeTone(statusTone(row.status))}>{(row.status ?? "—").toUpperCase()}</Badge>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
     </Panel>
   );
 }

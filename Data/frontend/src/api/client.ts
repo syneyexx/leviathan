@@ -1014,7 +1014,7 @@ export const api = {
 
   moduleInstallPlan(
     moduleId: string,
-    payload: { force?: boolean; ref?: string } = {},
+    payload: { force?: boolean; ref?: string; auto_resolve_dependencies?: boolean } = {},
   ): Promise<Record<string, unknown>> {
     return request(`/api/modules/${encodeURIComponent(moduleId)}/install-plan`, {
       method: "POST",

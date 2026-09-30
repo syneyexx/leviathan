@@ -26,8 +26,6 @@ function visualFixtureNow(): Date | undefined {
 export function ModulesPage() {
   const ws = useModulesWorkspace();
   const frozen = visualFixtureNow();
-  const installedCount =
-    ws.snapshot == null ? null : (ws.modules ?? []).filter((m) => isInstalled(m)).length;
 
   const openInstallForSelected = () => {
     if (!ws.selected) {
@@ -70,7 +68,12 @@ export function ModulesPage() {
           }}
         />
 
-        <ModulesMetrics kpis={ws.kpis} installedCount={installedCount ?? 0} loading={ws.loading && !ws.snapshot} />
+        <ModulesMetrics
+          kpis={ws.kpis}
+          installedCount={ws.installedCount}
+          loading={ws.loading && !ws.snapshot}
+          sparklines={ws.visualSparklines}
+        />
 
         {ws.loadError ? <ErrorState title="Modules laden mislukt" detail={ws.loadError} /> : null}
         {ws.loading && !ws.snapshot ? <LoadingState label="Modules laden…" /> : null}
@@ -139,6 +142,8 @@ export function ModulesPage() {
               <ModulesProjectionViews
                 view={ws.workspaceView}
                 modules={ws.modules}
+                snapshot={ws.snapshot}
+                selectedId={ws.selectedId}
                 onSelectModule={(id) => {
                   ws.selectModule(id);
                   ws.setWorkspaceView("modules");
