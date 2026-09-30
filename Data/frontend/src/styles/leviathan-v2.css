@@ -6770,3 +6770,578 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ==========================================================================
+   Geheugen / Memory V2 — Screen 1 layout under .lv-v2-page--memory
+   No memory-v2.css. Reuses shell, panels, metrics, tables, badges.
+   ========================================================================== */
+
+.lv-v2-page--memory {
+  gap: 10px;
+}
+
+.lv-v2-hero--memory {
+  min-height: 128px;
+  max-height: 152px;
+  grid-template-columns: minmax(0, 1.45fr) minmax(200px, 0.7fr);
+}
+
+.lv-v2-hero--memory .lv-v2-hero__content {
+  gap: 4px;
+  padding: 14px 18px;
+}
+
+.lv-v2-hero--memory .lv-v2-hero__copy {
+  font-size: 11px;
+  max-width: 62ch;
+}
+
+.lv-v2-hero--memory .lv-v2-hero__copy--secondary {
+  opacity: 0.82;
+  -webkit-line-clamp: 2;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.lv-v2-hero--memory .lv-v2-hero__quote {
+  font-size: 13px;
+  z-index: 3;
+}
+
+.lv-v2-hero__shade--memory {
+  background:
+    linear-gradient(90deg, rgba(2, 6, 23, 0.94) 0%, rgba(2, 12, 36, 0.72) 45%, rgba(2, 6, 23, 0.45) 100%),
+    linear-gradient(0deg, rgba(2, 6, 23, 0.55), transparent 55%);
+}
+
+.lv-v2-hero__media--memory img {
+  object-position: center 40%;
+  filter: saturate(1.05) brightness(0.82);
+}
+
+.lv-v2-metrics--memory {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.lv-v2-memory-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.9fr);
+  gap: 10px;
+  align-items: start;
+  min-height: 0;
+}
+
+.lv-v2-memory-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.lv-v2-memory-right {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.lv-v2-memory-search__form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.lv-v2-memory-search__form .lv-v2-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.lv-v2-memory-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: center;
+}
+
+.lv-v2-memory-filters .lv-v2-select {
+  min-width: 132px;
+  font-size: 11.5px;
+}
+
+.lv-v2-memory-advanced {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--lv2-border);
+  font-size: 11.5px;
+}
+
+.lv-v2-memory-advanced label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lv-v2-memory-mode {
+  font-size: 11px;
+  color: var(--lv2-text-secondary);
+}
+
+.lv-v2-memory-table-wrap {
+  max-height: 360px;
+  overflow: auto;
+}
+
+.lv-v2-memory-table td,
+.lv-v2-memory-table th {
+  font-size: 11.5px;
+  padding: 6px 8px;
+}
+
+.lv-v2-memory-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lv-v2-memory-title strong {
+  font-weight: 600;
+}
+
+.lv-v2-memory-pin {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fbbf24;
+  box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.25);
+  flex: 0 0 auto;
+}
+
+.lv-v2-memory-score {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 72px;
+}
+
+.lv-v2-memory-score__bar {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #38bdf8, #2563eb);
+  max-width: 48px;
+}
+
+.lv-v2-memory-row-menu {
+  position: relative;
+}
+
+.lv-v2-memory-row-menu summary {
+  list-style: none;
+  cursor: pointer;
+  width: 28px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--lv2-text-secondary);
+}
+
+.lv-v2-memory-row-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.lv-v2-memory-row-menu__body {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 20;
+  min-width: 150px;
+  background: var(--lv2-panel);
+  border: 1px solid var(--lv2-border);
+  border-radius: 8px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+}
+
+.lv-v2-memory-row-menu__body button,
+.lv-v2-memory-row-menu__body a {
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: var(--lv2-text);
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.lv-v2-memory-row-menu__body button:hover,
+.lv-v2-memory-row-menu__body a:hover {
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.lv-v2-memory-pager {
+  margin-top: 8px;
+}
+
+.lv-v2-memory-kv {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  font-size: 11.5px;
+}
+
+.lv-v2-memory-kv > div {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 8px;
+}
+
+.lv-v2-memory-kv dt {
+  color: var(--lv2-text-secondary);
+  margin: 0;
+}
+
+.lv-v2-memory-kv dd {
+  margin: 0;
+  word-break: break-word;
+}
+
+.lv-v2-memory-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lv-v2-memory-donut {
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  gap: 12px;
+  align-items: center;
+}
+
+.lv-v2-memory-donut__chart {
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  mask: radial-gradient(circle at center, transparent 42%, #000 43%);
+  -webkit-mask: radial-gradient(circle at center, transparent 42%, #000 43%);
+}
+
+.lv-v2-memory-donut__legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--lv2-text-secondary);
+}
+
+.lv-v2-memory-donut__legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lv-v2-memory-donut__legend span {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+
+.lv-v2-memory-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lv-v2-memory-chart svg {
+  width: 100%;
+  height: 110px;
+}
+
+.lv-v2-memory-chart__legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--lv2-text-secondary);
+}
+
+.lv-v2-memory-chart__legend li {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.lv-v2-memory-chart__legend span {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.lv-v2-memory-manage {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.lv-v2-memory-manage .lv-v2-button,
+.lv-v2-memory-manage a.lv-v2-button {
+  width: 100%;
+  justify-content: center;
+  text-decoration: none;
+  font-size: 12px;
+}
+
+.lv-v2-memory-manage-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+}
+
+.lv-v2-memory-processing {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lv-v2-switch-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.lv-v2-switch-row input[type="checkbox"] {
+  width: 36px;
+  height: 20px;
+  appearance: none;
+  background: rgba(148, 163, 184, 0.25);
+  border-radius: 999px;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.lv-v2-switch-row input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  transition: transform 0.15s ease;
+}
+
+.lv-v2-switch-row input[type="checkbox"]:checked {
+  background: #2563eb;
+}
+
+.lv-v2-switch-row input[type="checkbox"]:checked::after {
+  transform: translateX(16px);
+}
+
+.lv-v2-memory-bottom {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.lv-v2-memory-activity,
+.lv-v2-memory-recent {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11.5px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.lv-v2-memory-activity li {
+  display: grid;
+  grid-template-columns: 54px 1fr auto;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.lv-v2-memory-activity time,
+.lv-v2-memory-activity em {
+  color: var(--lv2-text-secondary);
+  font-style: normal;
+}
+
+.lv-v2-memory-recent button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  padding: 4px 0;
+  cursor: pointer;
+  font-size: 11.5px;
+}
+
+.lv-v2-memory-recent button:hover {
+  color: var(--lv2-cyan, #38bdf8);
+}
+
+.lv-v2-table--compact th,
+.lv-v2-table--compact td {
+  font-size: 11px;
+  padding: 4px 6px;
+}
+
+.lv-v2-memory-lifecycle {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  font-size: 11.5px;
+  color: var(--lv2-text-secondary);
+}
+
+.lv-v2-memory-lifecycle .lv-v2-progress {
+  width: 120px;
+}
+
+.lv-v2-memory-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lv-v2-memory-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.lv-v2-memory-form textarea.lv-v2-input {
+  resize: vertical;
+  min-height: 88px;
+}
+
+.lv-v2-check {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px;
+}
+
+.lv-v2-memory-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: min(420px, 92vw);
+  height: 100vh;
+  z-index: 80;
+  background: rgba(2, 6, 23, 0.96);
+  border-left: 1px solid var(--lv2-border);
+  padding: 14px;
+  overflow: auto;
+  box-shadow: -16px 0 40px rgba(0, 0, 0, 0.4);
+}
+
+.lv-v2-memory-drawer__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.lv-v2-memory-drawer__head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.lv-v2-memory-drawer__content {
+  white-space: pre-wrap;
+  font-size: 12.5px;
+  line-height: 1.45;
+  margin: 0 0 12px;
+}
+
+.lv-v2-memory-drawer__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.lv-v2-memory-settings-pre {
+  font-size: 11px;
+  background: rgba(15, 23, 42, 0.7);
+  border-radius: 8px;
+  padding: 10px;
+  overflow: auto;
+}
+
+.lv-v2-warn {
+  margin: 0;
+  font-size: 12px;
+  color: #fbbf24;
+}
+
+.lv-v2-metric-card__chart--empty {
+  opacity: 0.25;
+}
+
+@media (max-width: 1440px) {
+  .lv-v2-memory-workspace {
+    grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.95fr);
+  }
+}
+
+@media (max-width: 1200px) {
+  .lv-v2-metrics--memory {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .lv-v2-memory-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .lv-v2-memory-bottom {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .lv-v2-metrics--memory,
+  .lv-v2-memory-bottom,
+  .lv-v2-memory-manage {
+    grid-template-columns: 1fr;
+  }
+
+  .lv-v2-hero--memory {
+    grid-template-columns: 1fr;
+    max-height: none;
+  }
+}
