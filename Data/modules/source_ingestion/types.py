@@ -76,6 +76,14 @@ ERROR_DATASET_ROUTE_UNAVAILABLE = "DATASET_ROUTE_UNAVAILABLE"
 ERROR_BRAIN_SYNC_FAILED = "BRAIN_SYNC_FAILED"
 
 
+# Durable owner project for Knowledge Library uploads (not a per-upload fake project).
+# Sources still live in ResearchStore because SI currently keys durable state by project_id;
+# caller_context distinguishes Library vs Research without cloning the pipeline.
+KNOWLEDGE_LIBRARY_OWNER_PROJECT_ID = "system-knowledge-library"
+CALLER_CONTEXT_RESEARCH = "research"
+CALLER_CONTEXT_KNOWLEDGE_LIBRARY = "knowledge_library"
+
+
 class DatasetRouteState(str, Enum):
     ROUTE_PENDING = "ROUTE_PENDING"
     ROUTE_QUEUED = "ROUTE_QUEUED"

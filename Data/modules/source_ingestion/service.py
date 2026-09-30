@@ -32,10 +32,13 @@ from .types import (
     CAPABILITY_OCR_EXTRACT,
     CAPABILITY_OCR_CONTINUE,
     CAPABILITY_PROCESS,
+    CALLER_CONTEXT_KNOWLEDGE_LIBRARY,
+    CALLER_CONTEXT_RESEARCH,
     ERROR_DOCUMENT_AI_UNAVAILABLE,
     ERROR_OCR_UNAVAILABLE,
     IngestionError,
     IngestionPhase,
+    KNOWLEDGE_LIBRARY_OWNER_PROJECT_ID,
 )
 
 
@@ -151,6 +154,28 @@ class SourceIngestionService:
         except Exception:  # noqa: BLE001
             pass
 
+    def ensure_knowledge_library_owner(self) -> str:
+        """Ensure the durable Knowledge Library owner project exists (idempotent).
+
+        This is a single system owner used by Library uploads — not a fake Research
+        project created per file. Research UI should generally hide/filter it.
+        """
+        existing = self.research.get_project(KNOWLEDGE_LIBRARY_OWNER_PROJECT_ID)
+        if existing is not None:
+            return existing.project_id
+        from Data.modules.research.types import ResearchDepth, ResearchExecutionMode
+
+        self.research.create_project(
+            title="Knowledge Library",
+            topic="knowledge_library",
+            objective="Durable owner for Knowledge Library source ingestion",
+            depth=ResearchDepth.STANDARD,
+            allow_web=False,
+            execution_mode=ResearchExecutionMode.CUSTOM,
+            project_id=KNOWLEDGE_LIBRARY_OWNER_PROJECT_ID,
+        )
+        return KNOWLEDGE_LIBRARY_OWNER_PROJECT_ID
+
     def accept_upload(
         self,
         project_id: str,
@@ -158,6 +183,7 @@ class SourceIngestionService:
         filename: str,
         stream: BinaryIO,
         content_type: str | None = None,
+        caller_context: str = CALLER_CONTEXT_RESEARCH,
     ) -> dict[str, Any]:
         if not self.settings.enabled:
             raise ResearchError(
@@ -165,6 +191,18 @@ class SourceIngestionService:
                 "Source ingestion is disabled",
                 http_status=503,
             )
+
+        context = (caller_context or CALLER_CONTEXT_RESEARCH).strip().lower()
+        if context not in {CALLER_CONTEXT_RESEARCH, CALLER_CONTEXT_KNOWLEDGE_LIBRARY}:
+            raise ResearchError(
+                "INVALID_CALLER_CONTEXT",
+                f"Unsupported caller_context: {caller_context}",
+                http_status=422,
+                details={"caller_context": caller_context},
+            )
+        if context == CALLER_CONTEXT_KNOWLEDGE_LIBRARY:
+            # Library uploads always land under the durable system owner.
+            project_id = self.ensure_knowledge_library_owner()
 
         safe_name = sanitize_filename(filename)
         # Peek first chunk for detection without loading whole file into memory.
@@ -230,11 +268,18 @@ class SourceIngestionService:
                 "project_id": project_id,
                 "research_source_id": source_id,
                 "is_archive": detection.is_archive,
+                "caller_context": context,
+                "owner_kind": (
+                    "knowledge_library"
+                    if context == CALLER_CONTEXT_KNOWLEDGE_LIBRARY
+                    else "research"
+                ),
             },
             metadata={
                 "upload": True,
                 "is_container": detection.is_archive,
                 "ingestion_phase": IngestionPhase.STORED.value,
+                "caller_context": context,
             },
             created_at=utc_now(),
         )
@@ -251,6 +296,7 @@ class SourceIngestionService:
                 "filename": safe_name,
                 "source": stored.public_dict(),
                 "idempotent": True,
+                "caller_context": context,
                 "progress": progress.public_dict(),
             }
 
@@ -266,7 +312,12 @@ class SourceIngestionService:
             project_id,
             "source_upload_stored",
             safe_name,
-            {"source_id": source_id, "size_bytes": size, "is_archive": detection.is_archive},
+            {
+                "source_id": source_id,
+                "size_bytes": size,
+                "is_archive": detection.is_archive,
+                "caller_context": context,
+            },
         )
 
         job_id = self._enqueue_process(source_id, project_id)
@@ -281,7 +332,7 @@ class SourceIngestionService:
             project_id,
             "ingestion_queued",
             safe_name,
-            {"source_id": source_id, "job_id": job_id},
+            {"source_id": source_id, "job_id": job_id, "caller_context": context},
         )
         self._wake.set()
 
@@ -296,7 +347,95 @@ class SourceIngestionService:
             "source": stored.public_dict(),
             "extracted_chars": 0,
             "page_count": None,
+            "caller_context": context,
+            "owner_project_id": project_id,
             "progress": self.get_status(source_id).public_dict(),
+            "max_upload_bytes": int(self.settings.max_upload_bytes),
+        }
+
+    def accept_knowledge_library_upload(
+        self,
+        *,
+        filename: str,
+        stream: BinaryIO,
+        content_type: str | None = None,
+    ) -> dict[str, Any]:
+        """First-class Knowledge Library upload entrypoint (reuses accept_upload)."""
+        owner_id = self.ensure_knowledge_library_owner()
+        return self.accept_upload(
+            owner_id,
+            filename=filename,
+            stream=stream,
+            content_type=content_type,
+            caller_context=CALLER_CONTEXT_KNOWLEDGE_LIBRARY,
+        )
+
+    def list_recent_ingestions(
+        self,
+        *,
+        project_id: str | None = None,
+        caller_context: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Bounded recent ingestion history for Library / Research UIs."""
+        safe_limit = max(1, min(int(limit), 100))
+        safe_offset = max(0, int(offset))
+        owner = project_id
+        context = (caller_context or "").strip().lower() or None
+        if context == CALLER_CONTEXT_KNOWLEDGE_LIBRARY:
+            owner = self.ensure_knowledge_library_owner()
+        if not owner:
+            raise ResearchError(
+                "PROJECT_REQUIRED",
+                "project_id or knowledge_library caller_context required",
+                http_status=422,
+            )
+        sources = self.research.list_sources(owner, limit=safe_limit + safe_offset + 50)
+        # Newest first (store currently returns ASC).
+        sources = sorted(sources, key=lambda s: s.created_at or "", reverse=True)
+        sliced = sources[safe_offset : safe_offset + safe_limit]
+        items: list[dict[str, Any]] = []
+        for src in sliced:
+            meta = src.metadata or {}
+            prov = src.provenance or {}
+            if context and str(prov.get("caller_context") or meta.get("caller_context") or "") != context:
+                # Soft filter when mixed owners share a project (should not happen for Library).
+                continue
+            progress = self.get_status(src.source_id)
+            size = prov.get("size_bytes")
+            try:
+                size_i = int(size) if size is not None else None
+            except (TypeError, ValueError):
+                size_i = None
+            items.append(
+                {
+                    "source_id": src.source_id,
+                    "filename": src.title or prov.get("filename") or src.source_id,
+                    "created_at": src.created_at,
+                    "size_bytes": size_i,
+                    "status": progress.status.value if hasattr(progress.status, "value") else str(progress.status),
+                    "phase": progress.phase.value if hasattr(progress.phase, "value") else str(progress.phase),
+                    "progress_pct": progress.progress_pct,
+                    "measured": bool(getattr(progress, "measured", True)),
+                    "job_id": progress.job_id,
+                    "is_archive": bool(prov.get("is_archive") or meta.get("is_container")),
+                    "brain_status": src.brain_status.value if hasattr(src.brain_status, "value") else str(src.brain_status),
+                    "brain_document_id": src.brain_document_id,
+                    "caller_context": prov.get("caller_context") or meta.get("caller_context"),
+                }
+            )
+        return {
+            "items": items,
+            "limit": safe_limit,
+            "offset": safe_offset,
+            "project_id": owner,
+            "caller_context": context,
+            "truth": {
+                "bounded": True,
+                "status_from_source_ingestion": True,
+                "owner_is_not_per_upload_fake_project": True,
+            },
         }
 
     def _enqueue_process(self, source_id: str, project_id: str) -> str | None:

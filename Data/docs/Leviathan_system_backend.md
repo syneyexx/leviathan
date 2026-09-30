@@ -397,7 +397,33 @@ Cognition/perception should use Brain instead of inventing private direct retrie
 - `why_library.py` — Why Library;
 - `economy.py` — retrieval budgets;
 - `chunking.py`, `hashing.py`, `index_generations.py` — indexing mechanics;
-- `pipeline/artifact.py`, `curator.py`, `committer.py` — artifact preparation/commit.
+- `pipeline/artifact.py`, `curator.py`, `committer.py` — artifact preparation/commit;
+- `library.py` — Knowledge Library type/tag normalization + summary projection helpers
+  (not a second Knowledge authority).
+
+### Knowledge Library operator read model (additive)
+
+`KnowledgeStore.query_library` / `library_overview` power the V2 `/knowledge` page:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/knowledge/library` | Bounded summary list (`q`/`type`/`tag`/`status`/dates/`sort`/`cursor`/`limit`) |
+| `GET /api/knowledge/library/overview` | KPIs: totals, measured bytes+coverage, type/tag counts, embedding chunk coverage, latest ingestion |
+| `GET /api/knowledge/library/{id}` | Summary detail (no content dump) |
+| `GET /api/knowledge/library/{id}/preview` | Bounded preview metadata/text |
+| `GET /api/knowledge/library/{id}/content` / `…/download` | Path-safe artifact streaming |
+| `GET /api/knowledge/library/{id}/content-chunks` | Paginated chunk content |
+| `GET /api/knowledge/library/{id}/embeddings` | Per-doc embedding coverage (READY ≠ embedded) |
+| `GET /api/knowledge/library/{id}/relations` / `…/related` | Explicit atoms + related sources |
+| `POST /api/knowledge/library/ingestion/upload` | SourceIngestion caller (`caller_context=knowledge_library`) |
+| `GET/POST …/ingestion/recent|status|cancel|retry` | Durable SI progress / control |
+
+Existing `/api/knowledge` document/search/write/health/path-ingest routes remain compatible.
+Schema additions stay inside the canonical Knowledge DB: `library_type` column +
+`knowledge_document_tags` index. No `knowledge_library.db`.
+
+Library uploads reuse `SourceIngestionService` with durable owner project
+`system-knowledge-library` (single system owner — not a fake Research project per upload).
 
 ### Knowledge execution topology (production)
 

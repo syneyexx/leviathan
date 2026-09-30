@@ -1802,6 +1802,14 @@ class SourceIngestionPipeline:
         content_hash = source.content_hash or sha256_text(text)
         doc_id = f"research-upload:{content_hash}"
         prov = source.provenance or {}
+        meta = source.metadata or {}
+        caller_context = str(
+            prov.get("caller_context") or meta.get("caller_context") or "research"
+        )
+        from_library = caller_context == "knowledge_library"
+        knowledge_source = "knowledge_library" if from_library else "research_upload"
+        if from_library:
+            doc_id = f"knowledge-library:{content_hash}"
         alias = {
             "project_id": source.project_id,
             "source_id": source.source_id,
@@ -1811,6 +1819,7 @@ class SourceIngestionPipeline:
             "archive_filename": prov.get("archive_filename"),
             "content_hash": content_hash,
             "source_type": source.source_type.value if hasattr(source.source_type, "value") else str(source.source_type),
+            "caller_context": caller_context,
             "first_seen": prov.get("first_seen") or utc_now(),
             "last_seen": utc_now(),
         }
@@ -1825,9 +1834,12 @@ class SourceIngestionPipeline:
         loc_key = f"{alias.get('container_source_id')}:{alias.get('relative_path')}:{source.source_id}"
         merged = [a for a in existing_locations if f"{a.get('container_source_id')}:{a.get('relative_path')}:{a.get('source_id')}" != loc_key]
         merged.append(alias)
+        detection = prov.get("detection") if isinstance(prov.get("detection"), dict) else {}
+        library_type_hint = detection.get("kind")
         trust = {
             "trust": "user_supplied",
-            "source": "research_upload",
+            "source": knowledge_source,
+            "caller_context": caller_context,
             "project_id": source.project_id,
             "research_source_id": source.source_id,
             "filename": source.title,
@@ -1841,7 +1853,16 @@ class SourceIngestionPipeline:
             "relative_path": prov.get("relative_path"),
             "original_path": prov.get("relative_path") or source.original_uri,
             "source_locations": merged,
+            "detection": detection,
         }
+        if library_type_hint:
+            trust["library_type"] = library_type_hint
+        # Prefer raw artifact size over text length when known.
+        raw_size = prov.get("size_bytes")
+        try:
+            size_bytes = int(raw_size) if raw_size is not None else len(text.encode("utf-8"))
+        except (TypeError, ValueError):
+            size_bytes = len(text.encode("utf-8"))
         # Page/slide/sheet provenance when present
         for key in ("page_count", "pages", "slides", "sheets", "locations", "language", "module_path"):
             if key in prov:
@@ -1851,11 +1872,11 @@ class SourceIngestionPipeline:
                 document_id=doc_id,
                 title=self._brain_title(source),
                 content=text,
-                source="research_upload",
+                source=knowledge_source,
                 original_path=str(prov.get("relative_path") or source.original_uri),
-                size_bytes=len(text.encode("utf-8")),
+                size_bytes=size_bytes,
                 parser=source.parser or "source_ingestion",
-                source_type="research_upload",
+                source_type=knowledge_source,
                 trust_metadata=trust,
             )
             return self._mark_brain(

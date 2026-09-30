@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Callable
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from Data.modules.knowledge import DeepRecallRequest, DeepRecallService, RetrievalQuery
@@ -109,11 +110,16 @@ def build_knowledge_router(
     workers_externalize_fn: Callable[[], bool] | None = None,
     evaluation_externalize_fn: Callable[[], bool] | None = None,
     enqueue_ingest_scan_fn: Callable[..., dict] | None = None,
+    source_ingestion: Any | None = None,
+    research_store: Any | None = None,
 ) -> APIRouter:
     """Knowledge HTTP surface — staging/enqueue/read only when workers are externalized.
 
     ``workers_externalize_fn`` is the canonical predicate. ``evaluation_externalize_fn``
     remains accepted as a deprecated alias for call-site compatibility.
+
+    ``source_ingestion`` is the optional SourceIngestionService used by Knowledge
+    Library uploads (same pipeline as Research — no second uploader).
     """
     from Data.modules.knowledge.execution_gate import (
         refuse_inline_knowledge,
@@ -128,6 +134,17 @@ def build_knowledge_router(
         workers_externalize_fn or evaluation_externalize_fn,
         settings=settings,
     )
+
+    def _require_source_ingestion() -> Any:
+        if source_ingestion is None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "SOURCE_INGESTION_UNAVAILABLE",
+                    "message": "SourceIngestionService is not bound to Knowledge routes",
+                },
+            )
+        return source_ingestion
 
     @router.get("/api/knowledge")
     def list_knowledge() -> dict:
@@ -318,6 +335,333 @@ def build_knowledge_router(
         if hasattr(knowledge, "index_health"):
             return {"health": knowledge.index_health()}
         return {"health": {"available": False}}
+
+    @router.get("/api/knowledge/library/overview")
+    def knowledge_library_overview() -> dict:
+        """Bounded Library KPIs — totals/types/tags/embedding coverage/latest ingest."""
+        if not hasattr(knowledge, "library_overview"):
+            raise HTTPException(status_code=501, detail="Library overview unavailable")
+        # Opportunistic idempotent backfill for legacy rows (bounded, cheap).
+        if hasattr(knowledge, "backfill_library_metadata"):
+            try:
+                knowledge.backfill_library_metadata(limit=500)
+            except Exception:  # noqa: BLE001
+                pass
+        overview = knowledge.library_overview()
+        # Prefer durable SourceIngestion latest event when SI is bound.
+        if source_ingestion is not None and hasattr(source_ingestion, "list_recent_ingestions"):
+            try:
+                from Data.modules.source_ingestion.types import CALLER_CONTEXT_KNOWLEDGE_LIBRARY
+
+                recent = source_ingestion.list_recent_ingestions(
+                    caller_context=CALLER_CONTEXT_KNOWLEDGE_LIBRARY,
+                    limit=1,
+                    offset=0,
+                )
+                items = recent.get("items") or []
+                if items:
+                    first = items[0]
+                    overview = {
+                        **overview,
+                        "latest_ingestion": {
+                            "source_id": first.get("source_id"),
+                            "title": first.get("filename"),
+                            "created_at": first.get("created_at"),
+                            "updated_at": first.get("created_at"),
+                            "status": first.get("status"),
+                            "source": "source_ingestion",
+                            "size_bytes": first.get("size_bytes"),
+                            "kind": "source_ingestion",
+                            "progress_pct": first.get("progress_pct"),
+                            "measured": first.get("measured"),
+                        },
+                        "truth": {
+                            **dict(overview.get("truth") or {}),
+                            "latest_ingestion_from_source_ingestion": True,
+                        },
+                    }
+            except Exception:  # noqa: BLE001
+                pass
+        return {"overview": overview}
+
+    @router.get("/api/knowledge/library")
+    def knowledge_library_list(
+        q: Annotated[str, Query(max_length=4000)] = "",
+        type: Annotated[str, Query(max_length=64)] = "",
+        tag: Annotated[str, Query(max_length=64)] = "",
+        status: Annotated[str, Query(max_length=32)] = "",
+        date_from: Annotated[str, Query(max_length=64)] = "",
+        date_to: Annotated[str, Query(max_length=64)] = "",
+        sort: Annotated[str, Query(max_length=32)] = "",
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+        offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
+        cursor: Annotated[str, Query(max_length=64)] = "",
+    ) -> dict:
+        """Bounded Knowledge Library query — summary rows only."""
+        if not hasattr(knowledge, "query_library"):
+            raise HTTPException(status_code=501, detail="Library query unavailable")
+        try:
+            result = knowledge.query_library(
+                q=q or None,
+                library_type=type or None,
+                tag=tag or None,
+                status=status or None,
+                date_from=date_from or None,
+                date_to=date_to or None,
+                sort=sort or None,
+                limit=limit,
+                offset=offset,
+                cursor=cursor or None,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return result
+
+    @router.get("/api/knowledge/library/ingestion/capabilities")
+    def knowledge_library_ingestion_capabilities() -> dict:
+        """Advertised SourceIngestion format/upload limits for Library UI."""
+        from Data.modules.source_ingestion.capabilities import build_format_capabilities
+        from Data.modules.source_ingestion.settings import load_source_ingestion_settings
+
+        return build_format_capabilities(load_source_ingestion_settings())
+
+    @router.post("/api/knowledge/library/ingestion/upload")
+    async def knowledge_library_upload(file: UploadFile = File(...)) -> dict:
+        """Stream upload into SourceIngestionService (Knowledge Library caller).
+
+        Heavy parse/ZIP/OCR work runs on source_ingestion workers — never file.text().
+        """
+        si = _require_source_ingestion()
+        from Data.modules.research.types import ResearchError
+
+        try:
+            result = si.accept_knowledge_library_upload(
+                filename=file.filename or "upload.bin",
+                stream=file.file,
+                content_type=file.content_type,
+            )
+        except ResearchError as exc:
+            raise HTTPException(
+                status_code=int(getattr(exc, "http_status", None) or 422),
+                detail={
+                    "error": getattr(exc, "code", None) or "SOURCE_INGESTION_ERROR",
+                    "message": str(exc),
+                    "details": getattr(exc, "details", None) or {},
+                },
+            ) from exc
+        except Exception as exc:  # noqa: BLE001
+            # SourceIngestion may raise IngestionError for size limits.
+            code = getattr(exc, "code", None) or "SOURCE_INGESTION_ERROR"
+            status = int(getattr(exc, "http_status", None) or 422)
+            raise HTTPException(
+                status_code=status,
+                detail={"error": code, "message": str(exc)[:500]},
+            ) from exc
+        return result
+
+    @router.get("/api/knowledge/library/ingestion/recent")
+    def knowledge_library_recent_ingestions(
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+        offset: Annotated[int, Query(ge=0, le=100_000)] = 0,
+    ) -> dict:
+        si = _require_source_ingestion()
+        from Data.modules.research.types import ResearchError
+        from Data.modules.source_ingestion.types import CALLER_CONTEXT_KNOWLEDGE_LIBRARY
+
+        try:
+            return si.list_recent_ingestions(
+                caller_context=CALLER_CONTEXT_KNOWLEDGE_LIBRARY,
+                limit=limit,
+                offset=offset,
+            )
+        except ResearchError as exc:
+            raise HTTPException(
+                status_code=int(getattr(exc, "http_status", None) or 422),
+                detail={"error": getattr(exc, "code", None), "message": str(exc)},
+            ) from exc
+
+    @router.get("/api/knowledge/library/ingestion/{source_id}")
+    def knowledge_library_ingestion_status(source_id: str) -> dict:
+        si = _require_source_ingestion()
+        progress = si.get_status(source_id)
+        payload = progress.public_dict() if hasattr(progress, "public_dict") else dict(progress)
+        return {"source_id": source_id, "progress": payload}
+
+    @router.post("/api/knowledge/library/ingestion/{source_id}/cancel")
+    def knowledge_library_ingestion_cancel(source_id: str) -> dict:
+        si = _require_source_ingestion()
+        return {"progress": si.cancel(source_id)}
+
+    @router.post("/api/knowledge/library/ingestion/{source_id}/retry")
+    def knowledge_library_ingestion_retry(
+        source_id: str,
+        failed_only: Annotated[bool, Query()] = True,
+    ) -> dict:
+        si = _require_source_ingestion()
+        return si.retry(source_id, failed_only=failed_only)
+
+    @router.post("/api/knowledge/library/ingestion/{source_id}/brain-retry")
+    def knowledge_library_ingestion_brain_retry(source_id: str) -> dict:
+        si = _require_source_ingestion()
+        if not hasattr(si, "retry_brain"):
+            raise HTTPException(status_code=501, detail="Brain retry unavailable")
+        return si.retry_brain(source_id)
+
+    @router.get("/api/knowledge/library/{document_id}")
+    def knowledge_library_document(document_id: str) -> dict:
+        """Library summary for one document (no content/chunks)."""
+        if not hasattr(knowledge, "get_library_document_summary"):
+            raise HTTPException(status_code=501, detail="Library summary unavailable")
+        summary = knowledge.get_library_document_summary(document_id)
+        if summary is None:
+            raise HTTPException(status_code=404, detail="Knowledge document not found")
+        return {"document": summary}
+
+    @router.post("/api/knowledge/library/{document_id}/tags")
+    def knowledge_library_set_tags(document_id: str, payload: dict[str, Any]) -> dict:
+        """Replace or append document tags via canonical Knowledge metadata."""
+        if not hasattr(knowledge, "set_document_tags"):
+            raise HTTPException(status_code=501, detail="Library tags unavailable")
+        tags_raw = payload.get("tags")
+        if not isinstance(tags_raw, list):
+            raise HTTPException(status_code=422, detail="tags must be a list of strings")
+        mode = str(payload.get("mode") or "replace").strip().lower()
+        try:
+            if mode == "add" and hasattr(knowledge, "add_document_tags"):
+                tags = knowledge.add_document_tags(document_id, [str(t) for t in tags_raw])
+            else:
+                tags = knowledge.set_document_tags(document_id, [str(t) for t in tags_raw])
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Knowledge document not found") from exc
+        return {"document_id": document_id, "tags": tags, "mode": mode}
+
+    @router.get("/api/knowledge/library/{document_id}/preview")
+    def knowledge_library_preview(
+        document_id: str,
+        max_chars: Annotated[int, Query(ge=256, le=50_000)] = 8000,
+    ) -> dict:
+        """Bounded preview metadata/text. Binary/PDF clients use /content URL."""
+        if not hasattr(knowledge, "bounded_text_preview"):
+            raise HTTPException(status_code=501, detail="Preview unavailable")
+        preview = knowledge.bounded_text_preview(document_id, max_chars=max_chars)
+        if preview is None:
+            raise HTTPException(status_code=404, detail="Knowledge document not found")
+        summary = (
+            knowledge.get_library_document_summary(document_id)
+            if hasattr(knowledge, "get_library_document_summary")
+            else None
+        )
+        mime = (preview.get("mime_type") or (summary or {}).get("mime_type") or "").lower()
+        kind = "text"
+        if mime.startswith("image/"):
+            kind = "image"
+        elif mime == "application/pdf" or mime.endswith("/pdf"):
+            kind = "pdf"
+        elif "parquet" in mime or mime in {"text/csv", "application/json"}:
+            kind = "table"
+        preview = {**preview, "preview_kind": kind}
+        # Provide secure content URL hint — never a filesystem path.
+        preview["content_url"] = f"/api/knowledge/library/{document_id}/content"
+        preview["download_url"] = f"/api/knowledge/library/{document_id}/download"
+        return {"preview": preview, "document": summary}
+
+    @router.get("/api/knowledge/library/{document_id}/content")
+    def knowledge_library_content(document_id: str) -> FileResponse:
+        """Stream original artifact bytes for PDF/image preview (path-safe)."""
+        return _library_download_response(document_id, inline=True)
+
+    @router.get("/api/knowledge/library/{document_id}/download")
+    def knowledge_library_download(document_id: str) -> FileResponse:
+        """Stream original artifact as attachment (path-safe)."""
+        return _library_download_response(document_id, inline=False)
+
+    def _library_download_response(document_id: str, *, inline: bool) -> FileResponse:
+        if not hasattr(knowledge, "resolve_downloadable_artifact"):
+            raise HTTPException(status_code=501, detail="Download unavailable")
+        sources_root = None
+        if source_ingestion is not None:
+            sources_root = getattr(source_ingestion, "sources_root", None)
+        rs = research_store
+        if rs is None and source_ingestion is not None:
+            rs = getattr(source_ingestion, "research", None)
+        resolved = knowledge.resolve_downloadable_artifact(
+            document_id,
+            research_store=rs,
+            sources_root=sources_root,
+        )
+        if resolved is None:
+            raise HTTPException(status_code=404, detail="Knowledge document not found")
+        path = resolved.get("path")
+        if path is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": resolved.get("error") or "RAW_ARTIFACT_UNAVAILABLE",
+                    "message": "No downloadable original artifact for this source",
+                },
+            )
+        filename = str(resolved.get("filename") or f"{document_id}.bin")
+        mime = str(resolved.get("mime_type") or "application/octet-stream")
+        disposition = "inline" if inline else "attachment"
+        return FileResponse(
+            path=str(path),
+            media_type=mime,
+            filename=filename,
+            headers={
+                "Content-Disposition": f'{disposition}; filename="{filename}"',
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @router.get("/api/knowledge/library/{document_id}/content-chunks")
+    def knowledge_library_content_chunks(
+        document_id: str,
+        offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
+        limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    ) -> dict:
+        if not hasattr(knowledge, "list_document_content_chunks"):
+            raise HTTPException(status_code=501, detail="Content chunks unavailable")
+        payload = knowledge.list_document_content_chunks(
+            document_id, offset=offset, limit=limit
+        )
+        if payload is None:
+            raise HTTPException(status_code=404, detail="Knowledge document not found")
+        return payload
+
+    @router.get("/api/knowledge/library/{document_id}/embeddings")
+    def knowledge_library_embeddings(document_id: str) -> dict:
+        if not hasattr(knowledge, "document_embedding_status"):
+            raise HTTPException(status_code=501, detail="Embedding status unavailable")
+        status = knowledge.document_embedding_status(document_id)
+        if status is None:
+            raise HTTPException(status_code=404, detail="Knowledge document not found")
+        return {"embeddings": status}
+
+    @router.get("/api/knowledge/library/{document_id}/relations")
+    def knowledge_library_relations(
+        document_id: str,
+        limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    ) -> dict:
+        if not hasattr(knowledge, "list_document_relations"):
+            raise HTTPException(status_code=501, detail="Relations unavailable")
+        payload = knowledge.list_document_relations(document_id, limit=limit)
+        if payload is None:
+            raise HTTPException(status_code=404, detail="Knowledge document not found")
+        return payload
+
+    @router.get("/api/knowledge/library/{document_id}/related")
+    def knowledge_library_related(
+        document_id: str,
+        limit: Annotated[int, Query(ge=1, le=40)] = 12,
+    ) -> dict:
+        if not hasattr(knowledge, "list_related_library_sources"):
+            raise HTTPException(status_code=501, detail="Related sources unavailable")
+        payload = knowledge.list_related_library_sources(
+            document_id, limit=limit, retriever=retriever
+        )
+        if payload is None:
+            raise HTTPException(status_code=404, detail="Knowledge document not found")
+        return payload
 
     @router.get("/api/knowledge/{document_id}")
     def get_knowledge_document(document_id: str) -> dict:
