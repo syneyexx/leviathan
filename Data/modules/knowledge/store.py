@@ -1750,6 +1750,374 @@ class KnowledgeStore:
             error=row["error"],
         )
 
+    def document_embedding_status(self, document_id: str) -> dict[str, Any] | None:
+        """Per-document embedding coverage — READY ≠ embedded."""
+        doc = self.get_document(document_id)
+        if doc is None:
+            return None
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            chunks = conn.execute(
+                "SELECT COUNT(*) AS c FROM knowledge_chunks WHERE document_id = ?",
+                (document_id,),
+            ).fetchone()
+            embedded = conn.execute(
+                """
+                SELECT COUNT(*) AS c
+                FROM knowledge_chunk_embeddings e
+                JOIN knowledge_chunks c ON c.chunk_id = e.chunk_id
+                WHERE c.document_id = ?
+                """,
+                (document_id,),
+            ).fetchone()
+            sample = conn.execute(
+                """
+                SELECT e.provider_id, e.dimensions, e.updated_at
+                FROM knowledge_chunk_embeddings e
+                JOIN knowledge_chunks c ON c.chunk_id = e.chunk_id
+                WHERE c.document_id = ?
+                ORDER BY e.updated_at DESC
+                LIMIT 1
+                """,
+                (document_id,),
+            ).fetchone()
+        chunk_total = int(chunks["c"] if chunks else 0)
+        emb_total = int(embedded["c"] if embedded else 0)
+        provider_id = getattr(self.embedding_provider, "provider_id", "") or ""
+        provider_available = bool(self.embedding_provider.available())
+        provider_configured = bool(provider_id) and provider_id not in {"null", "none", "disabled"}
+        if not provider_configured:
+            status = "NOT_CONFIGURED"
+            coverage: float | None = None
+        elif not provider_available:
+            status = "UNAVAILABLE"
+            coverage = None
+        elif chunk_total == 0:
+            status = "NO_CHUNKS"
+            coverage = None
+        else:
+            coverage = round(100.0 * emb_total / chunk_total, 2)
+            status = "OK" if coverage >= 99.999 else "PARTIAL"
+        return {
+            "document_id": document_id,
+            "document_status": doc.status.value,
+            "indexed": doc.status == IngestStatus.READY,
+            "chunks_total": chunk_total,
+            "chunks_embedded": emb_total,
+            "chunks_missing": max(0, chunk_total - emb_total),
+            "coverage_percent": coverage,
+            "embedding_status": status,
+            "provider_id": (sample["provider_id"] if sample else None) or (provider_id if provider_configured else None),
+            "dimensions": int(sample["dimensions"]) if sample and sample["dimensions"] is not None else None,
+            "embeddings_updated_at": sample["updated_at"] if sample else None,
+            "provider_configured": provider_configured,
+            "provider_available": provider_available and provider_configured,
+            "truth": {
+                "ready_is_not_embedded": True,
+                "vectors_not_returned": True,
+                "coverage_uses_chunk_denominator": True,
+            },
+        }
+
+    def list_document_content_chunks(
+        self,
+        document_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> dict[str, Any] | None:
+        """Bounded chunk content for Inhoud tab — never dump full document into one response."""
+        if self.get_document(document_id) is None:
+            return None
+        safe_limit = max(1, min(int(limit), 50))
+        safe_offset = max(0, int(offset))
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            total = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS c FROM knowledge_chunks WHERE document_id = ?",
+                    (document_id,),
+                ).fetchone()["c"]
+            )
+            rows = conn.execute(
+                """
+                SELECT chunk_id, chunk_index, content, content_hash, token_estimate,
+                       start_offset, end_offset, source_type, provenance_json
+                FROM knowledge_chunks
+                WHERE document_id = ?
+                ORDER BY chunk_index ASC
+                LIMIT ? OFFSET ?
+                """,
+                (document_id, safe_limit, safe_offset),
+            ).fetchall()
+        items = []
+        for row in rows:
+            text = row["content"] or ""
+            # Bound individual chunk payload for UI safety.
+            if len(text) > 20_000:
+                text = text[:20_000] + "…"
+            try:
+                prov = json.loads(row["provenance_json"] or "{}")
+            except Exception:  # noqa: BLE001
+                prov = {}
+            items.append(
+                {
+                    "chunk_id": row["chunk_id"],
+                    "chunk_index": int(row["chunk_index"]),
+                    "content": text,
+                    "token_estimate": int(row["token_estimate"] or 0),
+                    "start_offset": int(row["start_offset"] or 0),
+                    "end_offset": int(row["end_offset"] or 0),
+                    "source_type": row["source_type"] or "document",
+                    "content_hash": row["content_hash"],
+                    "provenance": prov if isinstance(prov, dict) else {},
+                }
+            )
+        next_offset = safe_offset + len(items)
+        return {
+            "document_id": document_id,
+            "chunks": items,
+            "total": total,
+            "offset": safe_offset,
+            "limit": safe_limit,
+            "has_more": next_offset < total,
+            "next_offset": next_offset if next_offset < total else None,
+            "truth": {"bounded": True, "full_document_not_returned": True},
+        }
+
+    def list_document_relations(
+        self,
+        document_id: str,
+        *,
+        limit: int = 50,
+    ) -> dict[str, Any] | None:
+        """Explicit Brain/Knowledge relation atoms for a document."""
+        if self.get_document(document_id) is None:
+            return None
+        safe_limit = max(1, min(int(limit), 200))
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            rows = conn.execute(
+                """
+                SELECT * FROM directional_relation_atoms
+                WHERE document_id = ?
+                ORDER BY created_at DESC, atom_id
+                LIMIT ?
+                """,
+                (document_id, safe_limit),
+            ).fetchall()
+            total = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS c FROM directional_relation_atoms WHERE document_id = ?",
+                    (document_id,),
+                ).fetchone()["c"]
+            )
+        atoms = [self._row_to_atom(row).public_dict() for row in rows]
+        for atom in atoms:
+            atom["relationship_kind"] = "explicit"
+        return {
+            "document_id": document_id,
+            "relations": atoms,
+            "total": total,
+            "limit": safe_limit,
+            "truth": {
+                "explicit_relations_only_in_this_list": True,
+                "relation_atom_is_not_authority": True,
+            },
+        }
+
+    def list_related_library_sources(
+        self,
+        document_id: str,
+        *,
+        limit: int = 12,
+        retriever: Any | None = None,
+    ) -> dict[str, Any] | None:
+        """Related sources: explicit relations first, then bounded semantic similarity."""
+        doc = self.get_document(document_id)
+        if doc is None:
+            return None
+        safe_limit = max(1, min(int(limit), 40))
+        related: list[dict[str, Any]] = []
+        seen: set[str] = {document_id}
+
+        # 1) Explicit relation atoms pointing at other knowledge documents.
+        rel = self.list_document_relations(document_id, limit=safe_limit) or {}
+        for atom in rel.get("relations") or []:
+            for ref_key in ("object_ref", "subject_ref"):
+                ref = str(atom.get(ref_key) or "")
+                other_id = None
+                if ref.startswith("knowledge:document:"):
+                    other_id = ref.split("knowledge:document:", 1)[-1]
+                elif ref.startswith("document:"):
+                    other_id = ref.split("document:", 1)[-1]
+                if other_id and other_id not in seen:
+                    summary = self.get_library_document_summary(other_id)
+                    if summary:
+                        seen.add(other_id)
+                        related.append(
+                            {
+                                **summary,
+                                "relationship_kind": "explicit",
+                                "relation_class": atom.get("relation_class"),
+                                "score": atom.get("confidence"),
+                            }
+                        )
+            if len(related) >= safe_limit:
+                break
+
+        # 2) Semantic similarity via canonical retriever (not React title matching).
+        if retriever is not None and len(related) < safe_limit:
+            try:
+                from Data.modules.knowledge.retrieval import RetrievalQuery
+
+                query_text = (doc.title or "").strip() or (doc.content or "")[:500]
+                if query_text:
+                    hits = retriever.search(
+                        RetrievalQuery(text=query_text, limit=min(20, safe_limit * 2))
+                    )
+                    for hit in hits:
+                        other_id = getattr(hit, "document_id", None) or (
+                            hit.public_dict().get("document_id") if hasattr(hit, "public_dict") else None
+                        )
+                        if not other_id or other_id in seen:
+                            continue
+                        summary = self.get_library_document_summary(str(other_id))
+                        if not summary:
+                            continue
+                        seen.add(str(other_id))
+                        score = getattr(hit, "score", None)
+                        related.append(
+                            {
+                                **summary,
+                                "relationship_kind": "semantic_similarity",
+                                "score": float(score) if score is not None else None,
+                                "chunk_id": getattr(hit, "chunk_id", None),
+                            }
+                        )
+                        if len(related) >= safe_limit:
+                            break
+            except Exception:  # noqa: BLE001
+                pass
+
+        return {
+            "document_id": document_id,
+            "related": related[:safe_limit],
+            "total": len(related[:safe_limit]),
+            "limit": safe_limit,
+            "truth": {
+                "excludes_selected_source": True,
+                "semantic_similarity_is_not_proven_fact": True,
+                "no_filename_guessing": True,
+            },
+        }
+
+    def resolve_downloadable_artifact(
+        self,
+        document_id: str,
+        *,
+        research_store: Any | None = None,
+        sources_root: Path | None = None,
+    ) -> dict[str, Any] | None:
+        """Resolve a safe on-disk artifact for streaming download.
+
+        Never returns an arbitrary client-supplied path. Prefers SourceIngestion
+        raw artifact under sources_root; falls back to data_root-relative original_path.
+        """
+        doc = self.get_document(document_id)
+        if doc is None:
+            return None
+        trust = doc.trust_metadata if isinstance(doc.trust_metadata, dict) else {}
+        candidates: list[Path] = []
+        source_id = trust.get("research_source_id")
+        if research_store is not None and source_id:
+            try:
+                src = research_store.get_source(str(source_id))
+            except Exception:  # noqa: BLE001
+                src = None
+            if src is not None:
+                prov = src.provenance or {}
+                raw = prov.get("raw_path")
+                if raw:
+                    candidates.append(Path(str(raw)))
+                if src.snapshot_path:
+                    candidates.append(Path(str(src.snapshot_path)))
+        if doc.original_path:
+            candidates.append(Path(doc.original_path))
+
+        allowed_roots: list[Path] = []
+        if sources_root is not None:
+            allowed_roots.append(Path(sources_root).resolve())
+        if self.data_root is not None:
+            allowed_roots.append(Path(self.data_root).resolve())
+        if self.path.parent.exists():
+            # Never treat the DB path itself as an artifact root.
+            pass
+
+        for cand in candidates:
+            try:
+                resolved = cand.resolve()
+            except OSError:
+                continue
+            if not resolved.is_file():
+                continue
+            if allowed_roots:
+                ok = False
+                for root in allowed_roots:
+                    try:
+                        resolved.relative_to(root)
+                        ok = True
+                        break
+                    except ValueError:
+                        continue
+                if not ok:
+                    continue
+            mime = trust.get("mime_type") if isinstance(trust.get("mime_type"), str) else None
+            filename = (
+                str(trust.get("filename") or Path(resolved.name).name or doc.title or document_id)
+            )
+            # Sanitize disposition filename
+            safe_name = re.sub(r"[^\w.\- ()\[\]]+", "_", filename)[:180] or f"{document_id}.bin"
+            return {
+                "document_id": document_id,
+                "path": resolved,
+                "filename": safe_name,
+                "mime_type": mime or "application/octet-stream",
+                "size_bytes": resolved.stat().st_size,
+                "truth": {
+                    "path_not_client_supplied": True,
+                    "stream_do_not_load_into_ram": True,
+                },
+            }
+        return {
+            "document_id": document_id,
+            "path": None,
+            "error": "RAW_ARTIFACT_UNAVAILABLE",
+            "truth": {"path_not_client_supplied": True},
+        }
+
+    def bounded_text_preview(self, document_id: str, *, max_chars: int = 8000) -> dict[str, Any] | None:
+        """Bounded text preview for Preview tab (not full content dump)."""
+        doc = self.get_document(document_id)
+        if doc is None:
+            return None
+        trust = doc.trust_metadata if isinstance(doc.trust_metadata, dict) else {}
+        mime = trust.get("mime_type") if isinstance(trust.get("mime_type"), str) else None
+        text = doc.content or ""
+        truncated = len(text) > max_chars
+        if truncated:
+            text = text[:max_chars]
+        return {
+            "document_id": document_id,
+            "preview_kind": "text",
+            "mime_type": mime,
+            "text": text,
+            "truncated": truncated,
+            "max_chars": max_chars,
+            "page_count": trust.get("page_count"),
+            "truth": {"bounded": True, "not_full_document": truncated or True},
+        }
+
     def list_chunks(self, document_id: str) -> list[ChunkRecord]:
         with self.connect() as conn:
             self._ensure_schema(conn)

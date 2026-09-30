@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Annotated, Any, Callable
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from Data.modules.knowledge import DeepRecallRequest, DeepRecallService, RetrievalQuery
@@ -110,6 +111,7 @@ def build_knowledge_router(
     evaluation_externalize_fn: Callable[[], bool] | None = None,
     enqueue_ingest_scan_fn: Callable[..., dict] | None = None,
     source_ingestion: Any | None = None,
+    research_store: Any | None = None,
 ) -> APIRouter:
     """Knowledge HTTP surface — staging/enqueue/read only when workers are externalized.
 
@@ -532,6 +534,134 @@ def build_knowledge_router(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Knowledge document not found") from exc
         return {"document_id": document_id, "tags": tags, "mode": mode}
+
+    @router.get("/api/knowledge/library/{document_id}/preview")
+    def knowledge_library_preview(
+        document_id: str,
+        max_chars: Annotated[int, Query(ge=256, le=50_000)] = 8000,
+    ) -> dict:
+        """Bounded preview metadata/text. Binary/PDF clients use /content URL."""
+        if not hasattr(knowledge, "bounded_text_preview"):
+            raise HTTPException(status_code=501, detail="Preview unavailable")
+        preview = knowledge.bounded_text_preview(document_id, max_chars=max_chars)
+        if preview is None:
+            raise HTTPException(status_code=404, detail="Knowledge document not found")
+        summary = (
+            knowledge.get_library_document_summary(document_id)
+            if hasattr(knowledge, "get_library_document_summary")
+            else None
+        )
+        mime = (preview.get("mime_type") or (summary or {}).get("mime_type") or "").lower()
+        kind = "text"
+        if mime.startswith("image/"):
+            kind = "image"
+        elif mime == "application/pdf" or mime.endswith("/pdf"):
+            kind = "pdf"
+        elif "parquet" in mime or mime in {"text/csv", "application/json"}:
+            kind = "table"
+        preview = {**preview, "preview_kind": kind}
+        # Provide secure content URL hint — never a filesystem path.
+        preview["content_url"] = f"/api/knowledge/library/{document_id}/content"
+        preview["download_url"] = f"/api/knowledge/library/{document_id}/download"
+        return {"preview": preview, "document": summary}
+
+    @router.get("/api/knowledge/library/{document_id}/content")
+    def knowledge_library_content(document_id: str) -> FileResponse:
+        """Stream original artifact bytes for PDF/image preview (path-safe)."""
+        return _library_download_response(document_id, inline=True)
+
+    @router.get("/api/knowledge/library/{document_id}/download")
+    def knowledge_library_download(document_id: str) -> FileResponse:
+        """Stream original artifact as attachment (path-safe)."""
+        return _library_download_response(document_id, inline=False)
+
+    def _library_download_response(document_id: str, *, inline: bool) -> FileResponse:
+        if not hasattr(knowledge, "resolve_downloadable_artifact"):
+            raise HTTPException(status_code=501, detail="Download unavailable")
+        sources_root = None
+        if source_ingestion is not None:
+            sources_root = getattr(source_ingestion, "sources_root", None)
+        rs = research_store
+        if rs is None and source_ingestion is not None:
+            rs = getattr(source_ingestion, "research", None)
+        resolved = knowledge.resolve_downloadable_artifact(
+            document_id,
+            research_store=rs,
+            sources_root=sources_root,
+        )
+        if resolved is None:
+            raise HTTPException(status_code=404, detail="Knowledge document not found")
+        path = resolved.get("path")
+        if path is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": resolved.get("error") or "RAW_ARTIFACT_UNAVAILABLE",
+                    "message": "No downloadable original artifact for this source",
+                },
+            )
+        filename = str(resolved.get("filename") or f"{document_id}.bin")
+        mime = str(resolved.get("mime_type") or "application/octet-stream")
+        disposition = "inline" if inline else "attachment"
+        return FileResponse(
+            path=str(path),
+            media_type=mime,
+            filename=filename,
+            headers={
+                "Content-Disposition": f'{disposition}; filename="{filename}"',
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @router.get("/api/knowledge/library/{document_id}/content-chunks")
+    def knowledge_library_content_chunks(
+        document_id: str,
+        offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
+        limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    ) -> dict:
+        if not hasattr(knowledge, "list_document_content_chunks"):
+            raise HTTPException(status_code=501, detail="Content chunks unavailable")
+        payload = knowledge.list_document_content_chunks(
+            document_id, offset=offset, limit=limit
+        )
+        if payload is None:
+            raise HTTPException(status_code=404, detail="Knowledge document not found")
+        return payload
+
+    @router.get("/api/knowledge/library/{document_id}/embeddings")
+    def knowledge_library_embeddings(document_id: str) -> dict:
+        if not hasattr(knowledge, "document_embedding_status"):
+            raise HTTPException(status_code=501, detail="Embedding status unavailable")
+        status = knowledge.document_embedding_status(document_id)
+        if status is None:
+            raise HTTPException(status_code=404, detail="Knowledge document not found")
+        return {"embeddings": status}
+
+    @router.get("/api/knowledge/library/{document_id}/relations")
+    def knowledge_library_relations(
+        document_id: str,
+        limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    ) -> dict:
+        if not hasattr(knowledge, "list_document_relations"):
+            raise HTTPException(status_code=501, detail="Relations unavailable")
+        payload = knowledge.list_document_relations(document_id, limit=limit)
+        if payload is None:
+            raise HTTPException(status_code=404, detail="Knowledge document not found")
+        return payload
+
+    @router.get("/api/knowledge/library/{document_id}/related")
+    def knowledge_library_related(
+        document_id: str,
+        limit: Annotated[int, Query(ge=1, le=40)] = 12,
+    ) -> dict:
+        if not hasattr(knowledge, "list_related_library_sources"):
+            raise HTTPException(status_code=501, detail="Related sources unavailable")
+        payload = knowledge.list_related_library_sources(
+            document_id, limit=limit, retriever=retriever
+        )
+        if payload is None:
+            raise HTTPException(status_code=404, detail="Knowledge document not found")
+        return payload
 
     @router.get("/api/knowledge/{document_id}")
     def get_knowledge_document(document_id: str) -> dict:

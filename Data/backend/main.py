@@ -2628,6 +2628,7 @@ app.include_router(
         evaluation_externalize_fn=_evaluation_externalize,
         enqueue_ingest_scan_fn=_enqueue_ingest_scan,
         source_ingestion=getattr(research_service, "source_ingestion", None),
+        research_store=getattr(research_service, "store", None),
     )
 )
 app.include_router(
