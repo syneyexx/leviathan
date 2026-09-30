@@ -11,6 +11,7 @@ import {
 const dashboard = V2_PRIMARY_NAV.find((item) => item.id === "dashboard");
 const research = V2_PRIMARY_NAV.find((item) => item.id === "research");
 const hades = V2_PRIMARY_NAV.find((item) => item.id === "hades");
+const lm = V2_PRIMARY_NAV.find((item) => item.id === "lm");
 
 describe("v2Nav dashboard group", () => {
   it("marks dashboard group active on / and /tasks, not /chat", () => {
@@ -111,5 +112,45 @@ describe("v2Nav research group", () => {
 
   it("does not duplicate dashboard children into research", () => {
     expect(research?.children?.some((c) => c.to === "/chat")).toBe(false);
+  });
+});
+
+describe("v2Nav LM group", () => {
+  it("is expandable and derives children from MAIN_MENU('llm')", () => {
+    expect(lm).toBeDefined();
+    if (!lm) return;
+    expect(lm.expandable).toBe(true);
+    const fromMenu = v2ChildrenFromMainMenu("llm");
+    expect(lm.children?.map((c) => c.to)).toEqual(fromMenu.map((c) => c.to));
+    const main = MAIN_MENU.find((m) => m.id === "llm");
+    expect(main).toBeDefined();
+    expect(lm.children?.map((c) => c.to)).toEqual(main!.submenu.map((s) => s.to));
+    expect(lm.children?.map((c) => c.label)).toContain("Modellen");
+  });
+
+  it("only marks LM active on /models — top-level Agents/Training/Data stay route owners", () => {
+    expect(lm).toBeDefined();
+    if (!lm) return;
+    expect(isV2NavItemActive(lm, "/models")).toBe(true);
+    expect(isV2NavItemActive(lm, "/agents")).toBe(false);
+    expect(isV2NavItemActive(lm, "/training")).toBe(false);
+    expect(isV2NavItemActive(lm, "/dataset-management")).toBe(false);
+    expect(isV2NavItemActive(lm, "/offline-datasets")).toBe(false);
+    expect(isV2NavItemActive(lm, "/analytics")).toBe(false);
+  });
+
+  it("shouldAutoExpandV2Group expands LM only on /models, not /agents or /training", () => {
+    expect(lm).toBeDefined();
+    if (!lm) return;
+    expect(shouldAutoExpandV2Group(lm, "/models")).toBe(true);
+    expect(shouldAutoExpandV2Group(lm, "/agents")).toBe(false);
+    expect(shouldAutoExpandV2Group(lm, "/training")).toBe(false);
+    expect(shouldAutoExpandV2Group(lm, "/dataset-management")).toBe(false);
+  });
+
+  it("findActiveV2Child marks Modellen active on /models", () => {
+    expect(lm).toBeDefined();
+    if (!lm) return;
+    expect(findActiveV2Child(lm, "/models")?.label).toBe("Modellen");
   });
 });

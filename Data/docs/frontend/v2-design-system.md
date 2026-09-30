@@ -99,3 +99,13 @@ Media Control, Plugin & Runtime, Coding Agent, and other deep links remain regis
 - Visual fixture: `src/mocks/researchV2VisualFixture.ts` + `e2e/research-v2.visual.spec.ts` (reference: `docs/ui_reference/research-v2-reference.png`).
 - Trading Research (`/trading/onderzoek`, `/trading/lab`) is untouched.
 
+## Models migration
+
+- `/models` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "LM / Models").
+- LM is a new expandable nav group, derived from `MAIN_MENU` via `v2ChildrenFromMainMenu("llm")`. Its `match` claims only `/models` — `/agents`, `/training`, `/dataset-management`, `/offline-datasets`, and `/analytics` stay owned by their existing dedicated top-level Dashboard/Training items (route-ownership pattern, same as the Hades AI / Research groups).
+- `ModelsPage.tsx` composes four card rows (Runtime Provider / Hardware / VRAM; Model list / Load Config / Multi-GPU / Advanced; wide Optimalisatie; Resource Estimate / Performance / Actions) plus a manage-links footer that opens drawers for the existing `ProviderManager`, `ModelGatewayPanel`, `ModelRouterPanel`, and `ModelResidencyPanel` panels — those advanced surfaces are reused unchanged, not rebuilt.
+- All page composition lives in `src/components/models/*` (11 focused card components + `useModelsWorkspace` for data/mutation orchestration). No page-local CSS file; layout, form controls (select/range/toggle rows, tables, meters) live in `leviathan-v2.css` under `.lv-v2-page--models` / `.lv-v2-models-*`.
+- Capability-gating truth discipline: LM Studio control-plane fields the active provider/version doesn't support render disabled with a visible "Niet ondersteund door LM Studio …" note (`ws.capNote()` / `ws.capSupport()`), instead of silently hiding the control. A small hardcoded set (`seed`, `cpuThreads`, `prefixCache`) is always disabled because LM Studio has no control surface for them at all today.
+- No fake hardcoded hardware/metrics in the production path — `useModelsWorkspace` only calls the real Model Control Plane APIs (`Data/backend/routes/models.py`, `Data/modules/models/*`, including the LM Studio control (`lm_studio_control.py`) and optimizer (`optimizer.py`) modules). Only the dedicated visual-fixture module below may contain deterministic mock data, gated behind `window.__LV_V2_VISUAL_FIXTURE__`.
+- Visual fixture: `src/mocks/modelsV2VisualFixture.ts` + helper `e2e/helpers/modelsV2Visual.ts` + `e2e/models-v2.visual.spec.ts` (reference: `docs/ui_reference/models-v2-reference.png`), covering load, nav-ownership, and interaction flows (select model, search, edit context/offload/GPU-split, estimate, optimize, load/unload).
+

@@ -16,6 +16,7 @@ from Data.modules.models.contracts import (
     DeploymentPlan,
     DeviceAssignment,
     DeviceHealth,
+    DeviceRole,
     HardwareSnapshot,
     LoadOptions,
     ModelResourceProfile,
@@ -109,11 +110,57 @@ class PlacementPlanner:
         default_ram_headroom_bytes: int = 1_073_741_824,
         specialist_vram_threshold_bytes: int = 4 * 1024**3,
         preserve_large_gpu: bool = True,
+        per_device_headroom_bytes: dict[str, int] | None = None,
+        role_headroom_bytes: dict[str, int] | None = None,
     ) -> None:
         self.default_vram_headroom_bytes = int(default_vram_headroom_bytes)
         self.default_ram_headroom_bytes = int(default_ram_headroom_bytes)
         self.specialist_vram_threshold_bytes = int(specialist_vram_threshold_bytes)
         self.preserve_large_gpu = bool(preserve_large_gpu)
+        self.per_device_headroom_bytes: dict[str, int] = dict(per_device_headroom_bytes or {})
+        # role -> bytes (DISPLAY / AUXILIARY / COMPUTE / RESERVED / AUTO)
+        self.role_headroom_bytes: dict[str, int] = dict(role_headroom_bytes or {})
+
+    def set_headroom_policy(
+        self,
+        *,
+        default_vram_headroom_bytes: int | None = None,
+        default_ram_headroom_bytes: int | None = None,
+        per_device_headroom_bytes: dict[str, int] | None = None,
+        role_headroom_bytes: dict[str, int] | None = None,
+    ) -> None:
+        if default_vram_headroom_bytes is not None:
+            self.default_vram_headroom_bytes = int(default_vram_headroom_bytes)
+        if default_ram_headroom_bytes is not None:
+            self.default_ram_headroom_bytes = int(default_ram_headroom_bytes)
+        if per_device_headroom_bytes is not None:
+            self.per_device_headroom_bytes = {
+                str(k): int(v) for k, v in per_device_headroom_bytes.items()
+            }
+        if role_headroom_bytes is not None:
+            self.role_headroom_bytes = {str(k).upper(): int(v) for k, v in role_headroom_bytes.items()}
+
+    def headroom_for_device(
+        self,
+        device: ComputeDevice,
+        *,
+        override_headroom: int | None = None,
+    ) -> int:
+        """Resolve per-device VRAM headroom.
+
+        Priority: explicit override → per-device policy → role default → global default.
+        """
+        if override_headroom is not None:
+            return max(0, int(override_headroom))
+        if device.headroom_bytes is not None:
+            return max(0, int(device.headroom_bytes))
+        stable = device.stable_device_id
+        if stable in self.per_device_headroom_bytes:
+            return max(0, int(self.per_device_headroom_bytes[stable]))
+        role = device.role.value if isinstance(device.role, DeviceRole) else str(device.role or "AUTO")
+        if role in self.role_headroom_bytes:
+            return max(0, int(self.role_headroom_bytes[role]))
+        return max(0, int(self.default_vram_headroom_bytes))
 
     def plan(
         self,
@@ -205,9 +252,18 @@ class PlacementPlanner:
                 feasible=True,
             )
 
-        caps = list(capacities) if capacities is not None else [
-            usable_capacity_for_device(d, headroom_bytes=headroom_vram) for d in hardware.devices
-        ]
+        # Per-device headroom: never apply a single global reserve blindly when
+        # device roles / per-device policy are configured.
+        if capacities is not None:
+            caps = list(capacities)
+        else:
+            caps = [
+                usable_capacity_for_device(
+                    d,
+                    headroom_bytes=self.headroom_for_device(d),
+                )
+                for d in hardware.devices
+            ]
         by_id = {c.device.stable_device_id: c for c in caps}
 
         pin_mode = requirement.pin_mode

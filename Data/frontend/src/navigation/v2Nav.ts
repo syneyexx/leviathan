@@ -89,6 +89,19 @@ const HADES_CHILDREN: readonly V2NavChild[] = [
 ];
 
 /**
+ * LM — Screen 1 submenu, derived from MAIN_MENU("llm") (Modellen / Agents /
+ * Training / Dataset Management / Offline Datasets / Statestieken).
+ *
+ * Route-ownership mirrors Hades: top-level Agents/Training/Data remain the
+ * *owners* of `/agents`, `/training`, `/dataset-management`,
+ * `/offline-datasets`, `/analytics` active-highlighting — LM's own `match`
+ * only claims `/models` so visiting those dedicated top-level destinations
+ * does not also light up (or auto-expand) the LM group. LM children still
+ * link to those canonical routes.
+ */
+const LLM_CHILDREN = v2ChildrenFromMainMenu("llm");
+
+/**
  * Screen 1 primary rail. Deep-link destinations for Media / Plugin & Runtime /
  * Coding / etc. remain registered in the router and MAIN_MENU; they are not
  * deleted — they stay reachable from those pages' own surfaces.
@@ -140,7 +153,9 @@ export const V2_PRIMARY_NAV: readonly V2NavItem[] = [
     label: "LM",
     to: "/models",
     match: ["/models"],
+    expandable: true,
     icon: "lm",
+    children: LLM_CHILDREN,
   },
   {
     id: "training",

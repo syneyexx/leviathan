@@ -71,6 +71,10 @@ import type {
   ModelRuntimeBinding,
   ModelHardwareInventory,
   ModelsStatus,
+  ModelLoadOptions,
+  ProviderControlCapabilities,
+  ModelEstimateResult,
+  ModelOptimizationRun,
   NeuroAssessmentResponse,
   NeuroResidualStatus,
   ResidencyPolicy,
@@ -1492,6 +1496,47 @@ export const api = {
     truth?: Record<string, boolean>;
   }> {
     return request(`/api/models/router/decisions?limit=${encodeURIComponent(String(limit))}`);
+  },
+
+  /* ---------- Models V2 — capabilities, estimate, optimizer ---------- */
+
+  getProviderCapabilities(providerId: string): Promise<ProviderControlCapabilities> {
+    return request(`/api/models/providers/${encodeURIComponent(providerId)}/capabilities`);
+  },
+
+  estimateModelLoad(modelId: string, options: Partial<ModelLoadOptions> = {}): Promise<ModelEstimateResult> {
+    return request(`/api/models/${encodeURIComponent(modelId)}/estimate`, {
+      method: "POST",
+      body: JSON.stringify(options),
+    });
+  },
+
+  startModelOptimization(
+    modelId: string,
+    payload: Partial<ModelLoadOptions> & {
+      objectives?: Record<string, boolean>;
+      maxCandidates?: number;
+      deadlineSeconds?: number;
+    } = {},
+  ): Promise<{ queued: boolean; optimization: ModelOptimizationRun }> {
+    return request(`/api/models/${encodeURIComponent(modelId)}/optimization`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getModelOptimization(runId: string): Promise<{ optimization: ModelOptimizationRun }> {
+    return request(`/api/models/optimization/${encodeURIComponent(runId)}`);
+  },
+
+  listModelOptimizations(modelId: string): Promise<{ optimizations: ModelOptimizationRun[] }> {
+    return request(`/api/models/${encodeURIComponent(modelId)}/optimization`);
+  },
+
+  cancelModelOptimization(runId: string): Promise<{ optimization: ModelOptimizationRun }> {
+    return request(`/api/models/optimization/${encodeURIComponent(runId)}/cancel`, {
+      method: "POST",
+    });
   },
 
   /* ---------- Datasets ---------- */

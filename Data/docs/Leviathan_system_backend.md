@@ -477,6 +477,16 @@ Key files:
 - `capability_probe.py`, `vision.py`, `efficiency_capabilities.py` — measured capabilities;
 - `downloads.py`, `import_service.py`, `benchmarks.py` — acquisition/benchmarking;
 - `providers/` — LM Studio, Ollama, OpenAI-compatible and other configured adapters.
+- `lm_studio_control.py` — LM Studio capability probing, REST/CLI load-config compiler,
+  estimate parsing, and applied-config receipts (native `/api/v1/models/load|unload`).
+- `optimizer.py` — bounded deterministic load-profile search (real load → benchmark → unload;
+  explicit objective weights; no LLM scoring).
+
+LM Studio remains an externally owned runtime (`managed_by_leviathan=false`) but is
+**lifecycle-controllable** via its official native REST API when reachable. Capability
+fields are `SUPPORTED` / `UNSUPPORTED` / `UNKNOWN` from live probe evidence — not assumed.
+Per-device VRAM headroom (display/aux roles keyed by `stableDeviceId`) is enforced in
+`PlacementPlanner.headroom_for_device` before load.
 
 A configured/listed model is not automatically resident, healthy or tool/vision/reasoning capable. Capability probes and runtime evidence determine support.
 
