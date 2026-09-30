@@ -123,7 +123,10 @@ class TrainingLifecycleArchitectureTests(unittest.TestCase):
         src2 = inspect.getsource(TrainingService.enqueue_dataset_hash)
         self.assertIn('resource_class="IO_HEAVY"', src2)
         src3 = inspect.getsource(TrainingService.start_job)
-        self.assertIn('resource_class="GPU_EXCLUSIVE"', src3)
+        # Production training still uses GPU_EXCLUSIVE; fixture uses CPU_HEAVY.
+        self.assertIn("GPU_EXCLUSIVE", src3)
+        self.assertIn("CPU_HEAVY", src3)
+        self.assertIn("is_fixture", src3)
 
     def test_catalog_registers_new_training_caps(self) -> None:
         catalog = build_default_catalog()

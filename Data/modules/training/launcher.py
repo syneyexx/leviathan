@@ -15,6 +15,22 @@ from .config import TrainingConfig
 from .env_policy import build_trainer_child_env
 
 
+def _merge_env(
+    env: dict[str, str] | None,
+    *,
+    cuda_visible_devices: str | None,
+    extra_env: dict[str, str] | None,
+) -> dict[str, str] | None:
+    merged: dict[str, str] = {}
+    if env:
+        merged.update(env)
+    if extra_env:
+        merged.update(extra_env)
+    if cuda_visible_devices is not None:
+        merged["CUDA_VISIBLE_DEVICES"] = str(cuda_visible_devices)
+    return merged or None
+
+
 class TrainingLauncher:
     def __init__(self, *, python_executable: str | None = None) -> None:
         self.python_executable = python_executable or sys.executable
@@ -52,6 +68,19 @@ class TrainingLauncher:
         atomic_write_text(path, redact_secrets(json.dumps(config.public_dict(), indent=2)))
         return path
 
+    def build_child_env(
+        self,
+        *,
+        env: dict[str, str] | None = None,
+        cuda_visible_devices: str | None = None,
+        extra_env: dict[str, str] | None = None,
+        base: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        return build_trainer_child_env(
+            _merge_env(env, cuda_visible_devices=cuda_visible_devices, extra_env=extra_env),
+            base=base,
+        )
+
     def spawn(
         self,
         *,
@@ -63,6 +92,8 @@ class TrainingLauncher:
         events_path: Path,
         env: dict[str, str] | None = None,
         cwd: Path | None = None,
+        cuda_visible_devices: str | None = None,
+        extra_env: dict[str, str] | None = None,
     ) -> subprocess.Popen[Any]:
         ensure_dir(output_dir)
         ensure_dir(log_path.parent)
@@ -78,7 +109,9 @@ class TrainingLauncher:
             events_path=events_path,
         )
         # Scrubbed env — never copy full host/API secrets into trainer.
-        child_env = build_trainer_child_env(env)
+        child_env = build_trainer_child_env(
+            _merge_env(env, cuda_visible_devices=cuda_visible_devices, extra_env=extra_env)
+        )
         # Log sink is a file handle so a full pipe cannot deadlock the child.
         log_handle = log_path.open("a", encoding="utf-8")
         popen_kwargs: dict[str, Any] = {

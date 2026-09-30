@@ -15,7 +15,9 @@ from Data.modules.common.secrets import redact_secrets
 
 from .artifacts import export_artifact
 from .capabilities import probe_training_capabilities
+from .checkpoint_verify import verify_checkpoint
 from .config import TrainingConfig
+from .device_resolve import build_device_env, select_training_device
 from .evaluation import evaluate_job
 from .events import TrainingEventLog
 from .execution_gate import (
@@ -27,7 +29,7 @@ from .execution_gate import (
 )
 from .hardware import probe_hardware
 from .launcher import TrainingLauncher
-from .planner import plan_training
+from .planner import apply_plan_to_config, plan_training
 from .preflight import run_preflight
 from .recovery import reconcile_active_jobs
 from .store import TrainingStore, utc_now
@@ -171,16 +173,21 @@ class TrainingService:
         if errors:
             raise TrainingError("Invalid training config", details={"errors": errors})
 
+        # Planner suggestions are advisory unless the operator explicitly accepts them.
+        accept_plan = bool(
+            config.apply_planner_suggestions
+            or payload.get("accept_plan")
+            or payload.get("acceptPlan")
+            or (payload.get("extra") or {}).get("accept_plan")
+        )
+        if accept_plan and not config.apply_planner_suggestions:
+            config = config.with_updates(apply_planner_suggestions=True)
+
         hw = probe_hardware(corpus_path=self.corpus.training)
         caps = probe_training_capabilities()
-        plan = plan_training(config, hw, caps)
-        preflight = run_preflight(
-            config,
-            store=self.store,
-            hardware=hw,
-            capabilities=caps,
-            corpus_root=self.corpus.training,
-        )
+        plan = plan_training(config, hw, caps, apply_suggestions=accept_plan)
+        if accept_plan:
+            config = apply_plan_to_config(config, plan)
 
         job_id = str(uuid.uuid4())
         job_dir = self.corpus.training_jobs / job_id
@@ -190,16 +197,20 @@ class TrainingService:
         log_path = self.corpus.training_logs / job_id / "worker.log"
         ensure_dir(log_path.parent)
 
-        # Apply planner suggestions into stored config snapshot (non-destructive copy).
-        cfg = config.to_dict()
-        cfg["train_batch_size"] = plan.train_batch_size
-        cfg["gradient_accumulation"] = plan.gradient_accumulation
-        cfg["max_seq_length"] = plan.max_seq_length
-        cfg["precision"] = plan.precision
-        cfg["gradient_checkpointing"] = plan.gradient_checkpointing
-        cfg["load_in_4bit"] = plan.load_in_4bit
-        cfg["output_dir"] = str(output_dir)
-        stored = TrainingConfig.from_dict(cfg)
+        # Persist operator (or explicitly accepted) config only — no silent planner mutation.
+        stored = config.with_updates(output_dir=str(output_dir))
+        selection = select_training_device(stored, hw)
+        # Record launch-time device resolution without inventing operator selections.
+        if selection.ok and selection.device is not None and stored.selected_stable_device_ids:
+            stored = stored.with_updates(resolved_cuda_ordinals=selection.ordinals)
+
+        preflight = run_preflight(
+            stored,
+            store=self.store,
+            hardware=hw,
+            capabilities=caps,
+            corpus_root=self.corpus.training,
+        )
 
         job = self.store.create_job(
             job_id=job_id,
@@ -218,6 +229,8 @@ class TrainingService:
                     "gpuCount": len(hw.gpus),
                     "ramAvailableBytes": hw.ram_available_bytes,
                 },
+                "deviceSelection": selection.public_dict(),
+                "plannerSuggestionsApplied": bool(accept_plan and plan.suggestions_applied),
             },
             seed=stored.seed,
             config_hash=stored.config_hash(),
@@ -290,6 +303,19 @@ class TrainingService:
                     http_status=503,
                     details={"code": "TRAINING_WORKER_UNAVAILABLE"},
                 )
+            # Fixture CI jobs must not lock GPU_EXCLUSIVE.
+            method = (config.method or "").lower()
+            is_fixture = method == "fixture"
+            resource_class = "CPU_HEAVY" if is_fixture else "GPU_EXCLUSIVE"
+            resource_request: dict[str, Any] = {}
+            if not is_fixture:
+                selection = select_training_device(config, hw)
+                if selection.device is not None:
+                    resource_request = {
+                        "stableDeviceIds": selection.stable_device_ids,
+                        "deviceStrategy": selection.strategy,
+                        "reason": selection.reason,
+                    }
             # API does not hold trainer Popen — training_control worker owns the process.
             self.job_runtime.enqueue(
                 capability_id="training.control",
@@ -300,8 +326,9 @@ class TrainingService:
                 domain_entity_type="training_job",
                 domain_entity_id=job_id,
                 worker_pool="training_control",
-                resource_class="GPU_EXCLUSIVE",
+                resource_class=resource_class,
                 latency_class="batch",
+                resource_request=resource_request or None,
             )
             return self.store.update_job(
                 job_id,
@@ -347,6 +374,15 @@ class TrainingService:
         job = self.store.get_job(job_id)
         if job is None:
             raise TrainingError("Training job not found", http_status=404)
+        if job.status in {
+            DurableTrainingStatus.CANCELLING,
+            DurableTrainingStatus.CANCELLED,
+        } or bool(job.cancel_requested):
+            raise TrainingError(
+                "Refusing to spawn trainer for a cancelling/cancelled job",
+                http_status=409,
+                details={"code": "TRAINING_SPAWN_REFUSED_CANCEL"},
+            )
 
         # Idempotency: do not spawn a second trainer for a live launch generation.
         env_meta = dict(job.environment or {})
@@ -389,15 +425,32 @@ class TrainingService:
                     "adopted": True,
                 }
 
+        # Resolve stable device → CUDA ordinals at launch; pin trainer env.
+        hw = probe_hardware(corpus_path=self.corpus.training)
+        selection = select_training_device(config, hw)
+        device_env = build_device_env(selection)
+        launch_cfg = config
+        if selection.device is not None:
+            launch_cfg = config.with_updates(
+                resolved_cuda_ordinals=selection.ordinals,
+                selected_stable_device_ids=selection.stable_device_ids
+                if config.selected_stable_device_ids
+                else list(config.selected_stable_device_ids),
+            )
+            env_meta["device_selection"] = selection.public_dict()
+            env_meta["cuda_visible_devices"] = device_env.get("CUDA_VISIBLE_DEVICES")
+
         launch_generation = self._next_launch_generation(job)
         proc = self.launcher.spawn(
             job_id=job_id,
             db_path=self.store.db_path,
-            config=config,
+            config=launch_cfg,
             output_dir=output_dir,
             log_path=log_path,
             events_path=events_path,
             cwd=Path(__file__).resolve().parents[3],  # repo root (/workspace)
+            extra_env=device_env or None,
+            cuda_visible_devices=device_env.get("CUDA_VISIBLE_DEVICES"),
         )
         self._processes[job_id] = proc
         # Reap immediately if spawn failed instantly.
@@ -662,9 +715,32 @@ class TrainingService:
         raw_ckpt = (job.checkpoint or {}).get("path")
         if raw_ckpt:
             resolved = resolve_resume_checkpoint_path(raw_ckpt)
-            if resolved:
-                cfg["resume_from_checkpoint"] = resolved
-                cfg["resume_from_step"] = (job.checkpoint or {}).get("step")
+            if not resolved:
+                raise TrainingError(
+                    "Resume checkpoint path could not be resolved",
+                    http_status=409,
+                    details={"code": "RESUME_CHECKPOINT_MISSING", "path": raw_ckpt},
+                )
+            report = verify_checkpoint(Path(resolved), job=job)
+            if not report.get("resumable"):
+                raise TrainingError(
+                    "Resume checkpoint failed integrity verification",
+                    http_status=409,
+                    details={
+                        "code": report.get("code") or "RESUME_CHECKPOINT_INVALID",
+                        "path": resolved,
+                        "report": report,
+                    },
+                )
+            # Config / dataset immutability: resume must reuse the stored snapshot.
+            cfg["resume_from_checkpoint"] = resolved
+            cfg["resume_from_step"] = (job.checkpoint or {}).get("step")
+        elif job.status == DurableTrainingStatus.INTERRUPTED:
+            raise TrainingError(
+                "No checkpoint available to resume an interrupted job",
+                http_status=409,
+                details={"code": "RESUME_CHECKPOINT_MISSING"},
+            )
         self.store.update_job(
             job_id,
             status=DurableTrainingStatus.QUEUED,

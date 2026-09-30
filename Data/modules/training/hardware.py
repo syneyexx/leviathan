@@ -6,6 +6,7 @@ import os
 import platform
 import shutil
 import subprocess
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -58,57 +59,72 @@ def _disk_free(path: Path) -> int | None:
         return None
 
 
+def _slug(value: str) -> str:
+    cleaned = "".join(ch.lower() if ch.isalnum() else "-" for ch in value)
+    while "--" in cleaned:
+        cleaned = cleaned.replace("--", "-")
+    return cleaned.strip("-")[:48] or "device"
+
+
+def stable_device_id_for(
+    *,
+    uuid: str | None,
+    pci_bus_id: str | None,
+    ordinal: int | None,
+    name: str | None,
+) -> str:
+    """Stable GPU identity — same scheme as ``models.resource_manager`` / admission."""
+    if uuid:
+        return f"gpu-uuid-{uuid}"
+    if pci_bus_id:
+        return f"gpu-pci-{pci_bus_id}"
+    if ordinal is not None and name:
+        return f"gpu-ord-{ordinal}-{_slug(str(name))}"
+    if ordinal is not None:
+        return f"gpu-ord-{ordinal}"
+    return f"gpu-unknown-{_slug(str(name or 'device'))}"
+
+
 def _probe_nvidia_smi() -> tuple[list[GpuDeviceInfo], str | None, list[str]]:
     """Best-effort nvidia-smi probe. Empty when unavailable — never fabricates."""
-    notes: list[str] = []
-    exe = shutil.which("nvidia-smi")
-    if not exe:
-        notes.append("nvidia-smi not found — GPU telemetry unavailable")
-        return [], None, notes
-    try:
-        proc = subprocess.run(
-            [
-                exe,
-                "--query-gpu=index,name,memory.total,memory.free,memory.used,driver_version",
-                "--format=csv,noheader,nounits",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        notes.append(f"nvidia-smi probe failed: {exc}")
-        return [], None, notes
-    if proc.returncode != 0:
-        notes.append("nvidia-smi returned non-zero — GPU telemetry unavailable")
-        return [], None, notes
+    from Data.modules.observability.system_telemetry import probe_nvidia_smi
+
+    samples, notes = probe_nvidia_smi(which=shutil.which, runner=subprocess.run, timeout=5.0)
     gpus: list[GpuDeviceInfo] = []
     driver: str | None = None
-    for line in proc.stdout.splitlines():
-        parts = [p.strip() for p in line.split(",")]
-        if len(parts) < 6:
-            continue
-        try:
-            index = int(parts[0])
-            total = int(float(parts[2]) * 1024 * 1024)
-            free = int(float(parts[3]) * 1024 * 1024)
-            used = int(float(parts[4]) * 1024 * 1024)
-        except ValueError:
-            continue
-        driver = parts[5] or driver
+    for sample in samples:
+        driver = sample.driver_version or driver
         gpus.append(
             GpuDeviceInfo(
-                index=index,
-                name=parts[1],
-                total_vram_bytes=total,
-                free_vram_bytes=free,
-                used_vram_bytes=used,
+                index=sample.index,
+                name=sample.name,
+                total_vram_bytes=sample.vram_total_bytes,
+                free_vram_bytes=sample.vram_free_bytes,
+                used_vram_bytes=sample.vram_used_bytes,
+                stable_device_id=stable_device_id_for(
+                    uuid=sample.uuid,
+                    pci_bus_id=sample.pci_bus_id,
+                    ordinal=sample.index,
+                    name=sample.name,
+                ),
+                uuid=sample.uuid,
+                pci_bus_id=sample.pci_bus_id,
+                utilization_pct=sample.utilization_pct,
+                temperature_c=sample.temperature_c,
+                probe_source="nvidia-smi",
             )
         )
-    if not gpus:
-        notes.append("nvidia-smi produced no parseable GPU rows")
-    return gpus, driver, notes
+    return gpus, driver, list(notes)
+
+
+def _torch_props_uuid(props: Any) -> str | None:
+    raw = getattr(props, "uuid", None)
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    return text if text.upper().startswith("GPU-") else f"GPU-{text}"
 
 
 def _probe_torch_cuda() -> tuple[bool, str | None, list[GpuDeviceInfo], list[str]]:
@@ -141,6 +157,7 @@ def _probe_torch_cuda() -> tuple[bool, str | None, list[GpuDeviceInfo], list[str
                 major = getattr(props, "major", None)
                 minor = getattr(props, "minor", None)
                 cc = f"{major}.{minor}" if major is not None and minor is not None else None
+                uuid = _torch_props_uuid(props)
                 gpus.append(
                     GpuDeviceInfo(
                         index=idx,
@@ -149,6 +166,11 @@ def _probe_torch_cuda() -> tuple[bool, str | None, list[GpuDeviceInfo], list[str
                         free_vram_bytes=free,
                         used_vram_bytes=used,
                         compute_capability=cc,
+                        stable_device_id=stable_device_id_for(
+                            uuid=uuid, pci_bus_id=None, ordinal=idx, name=name
+                        ),
+                        uuid=uuid,
+                        probe_source="torch",
                     )
                 )
             except Exception as exc:  # noqa: BLE001
@@ -156,6 +178,22 @@ def _probe_torch_cuda() -> tuple[bool, str | None, list[GpuDeviceInfo], list[str
     else:
         notes.append("torch reports CUDA unavailable")
     return cuda_available, str(torch_cuda_ver) if torch_cuda_ver else None, gpus, notes
+
+
+def _merge_compute_capability(
+    smi_gpus: list[GpuDeviceInfo], torch_gpus: list[GpuDeviceInfo]
+) -> list[GpuDeviceInfo]:
+    """Attach torch-measured compute capability to nvidia-smi rows by UUID only."""
+    by_uuid = {g.uuid.upper(): g for g in torch_gpus if g.uuid}
+    if not by_uuid:
+        return list(smi_gpus)
+    merged: list[GpuDeviceInfo] = []
+    for gpu in smi_gpus:
+        match = by_uuid.get((gpu.uuid or "").upper())
+        if match is not None and match.compute_capability and not gpu.compute_capability:
+            gpu = replace(gpu, compute_capability=match.compute_capability)
+        merged.append(gpu)
+    return merged
 
 
 def probe_hardware(*, corpus_path: Path | None = None) -> HardwareSnapshot:
@@ -174,7 +212,7 @@ def probe_hardware(*, corpus_path: Path | None = None) -> HardwareSnapshot:
     notes.extend(torch_notes)
 
     # Prefer nvidia-smi rows when present; else torch; else empty (honest).
-    gpus = smi_gpus or torch_gpus
+    gpus = _merge_compute_capability(smi_gpus, torch_gpus) if smi_gpus else torch_gpus
 
     bnb = safe_import("bitsandbytes")
     supports_4bit = True if bnb is not None else None
