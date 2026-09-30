@@ -11,11 +11,12 @@ const ICONS: Record<string, ReactNode> = {
       <path d="M12 4.5v2M12 17.5v2M4.5 12h2M17.5 12h2" />
     </>
   ),
-  hades: (
+  dashboard: (
     <>
-      <path d="M4 11.5L12 5l8 6.5" />
-      <path d="M6.5 10.5V19h11V10.5" />
-      <path d="M10 19v-5h4v5" />
+      <rect x="4" y="4" width="7" height="7" rx="1.2" />
+      <rect x="13" y="4" width="7" height="7" rx="1.2" />
+      <rect x="4" y="13" width="7" height="7" rx="1.2" />
+      <rect x="13" y="13" width="7" height="7" rx="1.2" />
     </>
   ),
   llm: (
@@ -104,9 +105,9 @@ export function AppSidebar({ open }: AppSidebarProps) {
         </NavLink>
 
         {MAIN_MENU.map((item) => {
-          // Command owns the exact `/` landing highlight; Hades stays active on its other routes.
+          // Command owns the exact `/` landing highlight; Dashboard stays active on chat/tasks.
           const active =
-            item.id === "hades" && commandActive
+            item.id === "dashboard" && commandActive
               ? false
               : isMainMenuActive(item, location.pathname);
           return (

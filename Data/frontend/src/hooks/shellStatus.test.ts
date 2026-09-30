@@ -13,9 +13,11 @@ describe("shell navigation contract", () => {
 
   it("does not introduce screenshot-only menu labels as canonical items", () => {
     const labels = MAIN_MENU.map((item) => item.label);
-    expect(labels).toContain("Hades AI");
+    expect(labels).toContain("Dashboard");
     expect(labels).toContain("Instellingen");
-    expect(labels).toContain("TradingCenter");
+    expect(labels).toContain("Trading Center");
+    expect(labels).toContain("Plugins & Runtime");
+    expect(labels).not.toContain("Hades AI");
     expect(labels).not.toContain("Home");
     expect(labels).not.toContain("Finance");
     expect(labels).not.toContain("Reports");

@@ -66,12 +66,12 @@ test.describe("Brain V2 visual", () => {
     expect(errors, `console/page errors: ${errors.join(" | ")}`).toEqual([]);
   });
 
-  test("/brain keeps Research group open with Brain child active", async ({ page }) => {
+  test("/brain keeps Onderzoek & Kennis group open with Brain child active", async ({ page }) => {
     await installBrainV2VisualFixture(page);
     await page.goto("/brain");
     await expect(page.locator(".lv-v2")).toBeVisible({ timeout: 20_000 });
     await expect(page.locator(".lv-v2-nav-group.is-open .lv-v2-nav-item__label")).toContainText(
-      "Research",
+      "Onderzoek & Kennis",
     );
     await expect(page.locator(".lv-v2-nav-child.is-active")).toContainText("Brain");
   });
@@ -83,9 +83,10 @@ test.describe("Brain V2 visual", () => {
     await expect(page.locator(".lv-v2-nav-group.is-open")).toBeVisible();
     await expect(page.locator(".lv-v2-nav-child.is-active")).toContainText("Dashboard");
     await expect(page.getByRole("link", { name: "Taken", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Chat", exact: true })).toBeVisible();
     await expect(
       page.getByRole("navigation", { name: "Hoofdmenu" }).getByRole("button", { name: /Hades AI/i }),
-    ).toBeVisible();
+    ).toHaveCount(0);
   });
 });
 

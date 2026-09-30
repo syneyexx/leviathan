@@ -18,16 +18,20 @@ export type MainMenuItem = {
 /**
  * HOOFDMENU (left sidebar) + SUBMENU (footer dock under the middle box).
  * Every submenu item has its own route.
+ *
+ * Canonical left-nav IA (V2 + legacy):
+ * Dashboard, LLM, Media Control, Trading Center, Onderzoek & Kennis,
+ * Plugins & Runtime, Instellingen — nothing else in between.
  */
 export const MAIN_MENU: readonly MainMenuItem[] = [
   {
-    id: "hades",
-    label: "Hades AI",
+    id: "dashboard",
+    label: "Dashboard",
     to: "/",
-    match: ["/", "/chat", "/coding", "/tasks", "/status"],
+    match: ["/", "/chat", "/tasks"],
     submenu: [
-      { id: "chatten", label: "Chatten", to: "/chat" },
-      { id: "coding", label: "Coding Agent", to: "/coding" },
+      { id: "dashboard-home", label: "Dashboard", to: "/" },
+      { id: "chat", label: "Chat", to: "/chat" },
       { id: "taken", label: "Taken", to: "/tasks" },
     ],
   },
@@ -40,7 +44,7 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
       { id: "modellen", label: "Modellen", to: "/models" },
       { id: "agents", label: "Agents", to: "/agents" },
       { id: "training", label: "Training", to: "/training" },
-      { id: "dataset-management", label: "Dataset Management", to: "/dataset-management" },
+      { id: "dataset-management", label: "Dataset Manager", to: "/dataset-management" },
       { id: "offline-datasets", label: "Offline Datasets", to: "/offline-datasets" },
       { id: "stats", label: "Statestieken", to: "/analytics" },
     ],
@@ -52,11 +56,11 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
     match: ["/media"],
     submenu: [
       { id: "overzicht", label: "Overzicht", to: "/media" },
-      { id: "youtube", label: "YouTube", to: "/media/youtube" },
-      { id: "tiktok", label: "TikTok", to: "/media/tiktok" },
+      { id: "youtube", label: "Youtube", to: "/media/youtube" },
+      { id: "tiktok", label: "Tiktok", to: "/media/tiktok" },
       { id: "instagram", label: "Instagram", to: "/media/instagram" },
       { id: "facebook", label: "Facebook", to: "/media/facebook" },
-      { id: "queue", label: "Algemene publicatiewachtrij", to: "/media/queue" },
+      { id: "queue", label: "Algemene Publicatiewachtrij", to: "/media/queue" },
       { id: "viral", label: "Viral Radar", to: "/media/viral" },
       { id: "calendar", label: "Calendar", to: "/media/calendar" },
       { id: "media-analytics", label: "Analytics", to: "/media/analytics" },
@@ -66,16 +70,16 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
   },
   {
     id: "trading",
-    label: "TradingCenter",
+    label: "Trading Center",
     to: "/trading/simulatie",
     match: ["/trading"],
     submenu: [
-      { id: "simulatie", label: "Simulatie", to: "/trading/simulatie" },
+      { id: "simulatie", label: "Markt Simulatie", to: "/trading/simulatie" },
       { id: "strategieen", label: "Strategieen", to: "/trading/strategieen" },
       { id: "marktdata", label: "Marktdata", to: "/trading/marktdata" },
       { id: "portefeuille", label: "Portefeuille", to: "/trading/portefeuille" },
-      { id: "paper", label: "PAPER trading", to: "/trading/paper" },
-      { id: "broker", label: "BROKER trading", to: "/trading/broker" },
+      { id: "paper", label: "PAPER Trading", to: "/trading/paper" },
+      { id: "broker", label: "BROKER Trading", to: "/trading/broker" },
       { id: "onderzoek", label: "Onderzoek", to: "/trading/onderzoek" },
       { id: "lab", label: "Research Lab", to: "/trading/lab" },
       { id: "control-room", label: "Control Room", to: "/trading/control-room" },
@@ -97,8 +101,8 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
   },
   {
     id: "runtime",
-    label: "Plugin & Runtime",
-    to: "/tools",
+    label: "Plugins & Runtime",
+    to: "/performance",
     match: ["/tools", "/modules", "/skills", "/performance", "/mcp", "/workflows", "/console"],
     submenu: [
       { id: "performance", label: "Performance", to: "/performance" },

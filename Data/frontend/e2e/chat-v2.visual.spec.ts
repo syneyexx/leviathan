@@ -16,7 +16,7 @@ test.describe("Chat V2 visual", () => {
     deviceScaleFactor: 1,
   });
 
-  test("chat loads with Hades AI nav expanded and Screen 1 sections", async ({ page }) => {
+  test("chat loads with Dashboard nav expanded and Screen 1 sections", async ({ page }) => {
     await installChatV2VisualFixture(page);
     const errors: string[] = [];
     page.on("pageerror", (err) => errors.push(err.message));
@@ -31,13 +31,14 @@ test.describe("Chat V2 visual", () => {
 
     const nav = page.getByRole("navigation", { name: "Hoofdmenu" });
     await expect(page.locator(".lv-v2-nav-group.is-open .lv-v2-nav-item__label")).toContainText(
-      "Hades AI",
+      "Dashboard",
     );
     await expect(page.locator(".lv-v2-nav-child.is-active")).toContainText("Chat");
-    await expect(nav.getByRole("link", { name: "Reasoning", exact: true })).toBeVisible();
-    await expect(nav.getByRole("link", { name: "Bibliotheek", exact: true })).toBeVisible();
-    await expect(nav.getByRole("link", { name: "Prompts", exact: true })).toBeVisible();
-    await expect(nav.getByRole("link", { name: "Evaluations", exact: true })).toBeVisible();
+    await expect(nav.getByRole("link", { name: "Taken", exact: true })).toBeVisible();
+    await expect(nav.getByRole("link", { name: "Dashboard", exact: true })).toBeVisible();
+    await expect(nav.getByRole("link", { name: "Reasoning", exact: true })).toHaveCount(0);
+    await expect(nav.getByRole("link", { name: "Prompts", exact: true })).toHaveCount(0);
+    await expect(nav.getByRole("link", { name: "Evaluations", exact: true })).toHaveCount(0);
 
     await expect(page.getByRole("heading", { name: "Hades AI / Chat" })).toBeVisible();
     await expect(page.getByText("Geselecteerd Model", { exact: true })).toBeVisible();
@@ -78,12 +79,12 @@ test.describe("Chat V2 visual", () => {
     expect(errors, `console/page errors: ${errors.join(" | ")}`).toEqual([]);
   });
 
-  test("/chat keeps Hades AI group open with Chat child active", async ({ page }) => {
+  test("/chat keeps Dashboard group open with Chat child active", async ({ page }) => {
     await installChatV2VisualFixture(page);
     await page.goto("/chat");
     await expect(page.locator(".lv-v2")).toBeVisible({ timeout: 20_000 });
     await expect(page.locator(".lv-v2-nav-group.is-open .lv-v2-nav-item__label")).toContainText(
-      "Hades AI",
+      "Dashboard",
     );
     await expect(page.locator(".lv-v2-nav-child.is-active")).toContainText("Chat");
   });

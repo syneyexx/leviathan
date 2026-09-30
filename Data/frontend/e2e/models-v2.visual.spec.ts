@@ -29,7 +29,7 @@ test.describe("Models V2 visual", () => {
     deviceScaleFactor: 1,
   });
 
-  test("models loads with LM nav expanded and Screen 1 sections", async ({ page }) => {
+  test("models loads with LLM nav expanded and Screen 1 sections", async ({ page }) => {
     await installModelsV2VisualFixture(page);
     const errors: string[] = [];
     page.on("pageerror", (err) => errors.push(err.message));
@@ -44,6 +44,7 @@ test.describe("Models V2 visual", () => {
     await expect(page.locator(".lv-v2-nav-group.is-open")).toBeVisible();
     await expect(page.locator(".lv-v2-nav-child.is-active")).toContainText("Modellen");
     await expect(nav.getByRole("link", { name: "Modellen", exact: true })).toBeVisible();
+    await expect(nav.getByRole("button", { name: /^LLM$/i })).toBeVisible();
     await expect(nav.getByRole("link", { name: "LM", exact: true })).toHaveCount(0);
 
     await expect(page.getByRole("heading", { name: "LM / Models" })).toBeVisible();
@@ -87,11 +88,11 @@ test.describe("Models V2 visual", () => {
     expect(errors, `console/page errors: ${errors.join(" | ")}`).toEqual([]);
   });
 
-  test("/models keeps LM group open with Modellen child active", async ({ page }) => {
+  test("/models keeps LLM group open with Modellen child active", async ({ page }) => {
     await installModelsV2VisualFixture(page);
     await page.goto("/models");
     await expect(page.locator(".lv-v2")).toBeVisible({ timeout: 20_000 });
-    await expect(page.locator(".lv-v2-nav-group.is-open .lv-v2-nav-item__label")).toContainText("LM");
+    await expect(page.locator(".lv-v2-nav-group.is-open .lv-v2-nav-item__label")).toContainText("LLM");
     await expect(page.locator(".lv-v2-nav-child.is-active")).toContainText("Modellen");
   });
 

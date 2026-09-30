@@ -8,11 +8,28 @@ import {
 } from "./menu";
 
 describe("navigation menu", () => {
-  it("maps dashboard and chat under Hades AI", () => {
-    expect(findMainMenuByPath("/").id).toBe("hades");
-    expect(findMainMenuByPath("/chat").id).toBe("hades");
-    expect(findMainMenuByPath("/tasks").id).toBe("hades");
-    expect(findMainMenuByPath("/coding").id).toBe("hades");
+  it("exposes exactly the canonical left-nav hoofdmenu labels", () => {
+    expect(MAIN_MENU.map((item) => item.label)).toEqual([
+      "Dashboard",
+      "LLM",
+      "Media Control",
+      "Trading Center",
+      "Onderzoek & Kennis",
+      "Plugins & Runtime",
+      "Instellingen",
+    ]);
+  });
+
+  it("maps dashboard, chat and tasks under Dashboard", () => {
+    expect(findMainMenuByPath("/").id).toBe("dashboard");
+    expect(findMainMenuByPath("/chat").id).toBe("dashboard");
+    expect(findMainMenuByPath("/tasks").id).toBe("dashboard");
+    const dashboard = findMainMenuByPath("/");
+    expect(dashboard.submenu.map((item) => item.label)).toEqual([
+      "Dashboard",
+      "Chat",
+      "Taken",
+    ]);
   });
 
   it("maps models/training/agents/analytics/dataset pages under LLM", () => {
@@ -27,21 +44,20 @@ describe("navigation menu", () => {
       "Modellen",
       "Agents",
       "Training",
-      "Dataset Management",
+      "Dataset Manager",
       "Offline Datasets",
       "Statestieken",
     ]);
   });
 
-  it("labels Coding Agent under Hades and Workflows under Plugin & Runtime", () => {
-    const hades = findMainMenuByPath("/coding");
-    expect(hades.submenu.find((item) => item.id === "coding")?.label).toBe("Coding Agent");
+  it("labels Workflows under Plugins & Runtime", () => {
     const runtime = findMainMenuByPath("/workflows");
     expect(runtime.id).toBe("runtime");
+    expect(runtime.label).toBe("Plugins & Runtime");
     expect(runtime.submenu.some((item) => item.id === "workflows" && item.to === "/workflows")).toBe(true);
   });
 
-  it("restores Brain under Onderzoek & Kennis and renames Bestanden to Datasets", () => {
+  it("restores Brain under Onderzoek & Kennis and keeps Datasets", () => {
     const section = findMainMenuByPath("/brain");
     expect(section.id).toBe("research");
     expect(section.submenu.some((item) => item.id === "brain" && item.to === "/brain")).toBe(true);
@@ -51,7 +67,7 @@ describe("navigation menu", () => {
     expect(findMainMenuByPath("/knowledge").id).toBe("research");
   });
 
-  it("labels Datasets (not Bestanden) under Onderzoek & Kennis", () => {
+  it("labels Datasets under Onderzoek & Kennis", () => {
     const section = findMainMenuByPath("/datasets");
     expect(section.id).toBe("research");
     const datasets = section.submenu.find((item) => item.to === "/datasets");
@@ -64,7 +80,7 @@ describe("navigation menu", () => {
     );
   });
 
-  it("splits Tools and Modules under Plugin & Runtime", () => {
+  it("splits Tools and Modules under Plugins & Runtime", () => {
     const section = findMainMenuByPath("/tools");
     expect(section.id).toBe("runtime");
     const tools = section.submenu.find((item) => item.id === "tools");
@@ -99,20 +115,27 @@ describe("navigation menu", () => {
     expect(media.id).toBe("media");
     expect(findSubMenuItem(media, "/media")?.id).toBe("overzicht");
     expect(findSubMenuItem(media, "/media/youtube")?.id).toBe("youtube");
+    expect(findSubMenuItem(media, "/media/youtube")?.label).toBe("Youtube");
     expect(findSubMenuItem(media, "/media/queue")?.id).toBe("queue");
+    expect(findSubMenuItem(media, "/media/queue")?.label).toBe("Algemene Publicatiewachtrij");
     expect(findSubMenuItem(media, "/media/viral")?.label).toBe("Viral Radar");
     expect(findSubMenuItem(media, "/media/calendar")?.label).toBe("Calendar");
     expect(findSubMenuItem(media, "/media/library")?.label).toBe("Bibliotheek");
     expect(findSubMenuItem(media, "/media/personas")?.label).toBe("Personas");
     expect(findMainMenuByPath("/trading/simulatie").id).toBe("trading");
+    expect(findMainMenuByPath("/trading/simulatie").label).toBe("Trading Center");
+    expect(findSubMenuItem(findMainMenuByPath("/trading/simulatie"), "/trading/simulatie")?.label).toBe(
+      "Markt Simulatie",
+    );
     expect(findSubMenuItem(findMainMenuByPath("/trading/paper"), "/trading/paper")?.id).toBe("paper");
+    expect(findSubMenuItem(findMainMenuByPath("/trading/paper"), "/trading/paper")?.label).toBe("PAPER Trading");
     expect(findMainMenuByPath("/evidence").id).toBe("research");
     expect(findSubMenuItem(findMainMenuByPath("/evidence"), "/evidence")?.label).toBe("Evidence Vault");
   });
 
-  it("leaves dashboard submenu inactive on Hades landing", () => {
-    const hades = findMainMenuByPath("/");
-    expect(findSubMenuItem(hades, "/")).toBeNull();
+  it("highlights Dashboard submenu home on /", () => {
+    const dashboard = findMainMenuByPath("/");
+    expect(findSubMenuItem(dashboard, "/")?.id).toBe("dashboard-home");
   });
 
   it("gives every submenu item a dedicated route", () => {
