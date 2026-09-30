@@ -1109,6 +1109,15 @@ QualificationAuthority — not EvaluationPlatform.
 
 `Data/modules/module_manager/` is the dynamic module lifecycle authority. It handles discovery, installation, readiness, start/stop/restart, health, logs/jobs, capability registration, version lifecycle, idle sweep and external adapters.
 
+`ManagedModule.public_dict()` / `GET /api/modules` returns a **cheap control-plane snapshot**:
+
+- health is **cached** (`last_health` / `health_freshness` FRESH|STALE|UNMEASURED) — never fans out to live `instance.health()` during listing;
+- explicit `GET /api/modules/{id}/health` measures and caches;
+- server-projected `allowed_actions` / `blocked_reasons` are authoritative over frontend guesses;
+- `update_evidence` may be hydrated from the external CONTROL store metadata after check-update.
+
+Lifecycle mutations that are EXTERNAL_REQUIRED (start/stop/restart/ensure_ready/invoke/install/activate_version/rollback_version) enqueue onto `module_runtime`. HTTP accepted / QUEUED is **not** completion — clients must reconcile JobRuntime terminal state.
+
 The external fabric under `Data/modules/module_manager/external/` is generic. Supported declarative families include CLI, MCP, owned process/service, HTTP/OpenAPI, skill pack, catalog and composite. External sources are described in manifests under `Data/external_capabilities/`; per-repository bespoke wrapper classes are intentionally avoided.
 
 External state is CONTROL-owned. PluginRegistry is rehydrated after external capabilities register so durable plugin bindings do not become a competing runtime.

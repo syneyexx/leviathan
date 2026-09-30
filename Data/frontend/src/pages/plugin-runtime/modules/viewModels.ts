@@ -57,6 +57,8 @@ export type ActionAvailability = {
   ensureReadyReason?: string;
   executeReason?: string;
   activateReason?: string;
+  healthReason?: string;
+  checkUpdateReason?: string;
 };
 
 export type CapabilityItem = {
@@ -85,35 +87,49 @@ export const DETAIL_TABS: readonly { id: DetailTabId; label: string }[] = [
   { id: "manifest", label: "Manifest" },
 ] as const;
 
-/** Real sibling routes under Plugin & Runtime; unsupported items stay disabled. */
-export const LOCAL_NAV: readonly LocalNavItem[] = [
-  {
-    id: "overview",
-    label: "Overview",
-    to: "/performance",
-    title: "Open Performance overview",
-  },
-  { id: "modules", label: "Modules", to: "/modules", active: true },
-  {
-    id: "runtimes",
-    label: "Runtimes",
-    disabled: true,
-    title: "Runtimes view is not available yet",
-  },
-  {
-    id: "installation",
-    label: "Installation",
-    disabled: true,
-    title: "Installation workspace is not available yet",
-  },
-  {
-    id: "environments",
-    label: "Environments",
-    disabled: true,
-    title: "Environments view is not available yet",
-  },
-  { id: "settings", label: "Settings", to: "/settings", title: "Open Settings" },
-] as const;
+/** Real sibling routes / addressable workspace views under Runtime & Tools. */
+export function localNavItems(activeView: string): LocalNavItem[] {
+  return [
+    {
+      id: "overview",
+      label: "Overview",
+      to: "/performance",
+      title: "Open Performance overview",
+    },
+    {
+      id: "modules",
+      label: "Modules",
+      to: "/modules",
+      active: activeView === "modules",
+      title: "Modules library",
+    },
+    {
+      id: "runtimes",
+      label: "Runtimes",
+      to: "/modules?view=runtimes",
+      active: activeView === "runtimes",
+      title: "Runtime projection of ModuleManager + JobRuntime",
+    },
+    {
+      id: "installation",
+      label: "Installation",
+      to: "/modules?view=installation",
+      active: activeView === "installation",
+      title: "Install plans, operations and version history",
+    },
+    {
+      id: "environments",
+      label: "Environments",
+      to: "/modules?view=environments",
+      active: activeView === "environments",
+      title: "External module environment isolation projection",
+    },
+    { id: "settings", label: "Settings", to: "/settings", title: "Open Settings" },
+  ];
+}
+
+/** @deprecated Prefer localNavItems(activeView) for URL-addressable views. */
+export const LOCAL_NAV: readonly LocalNavItem[] = localNavItems("modules");
 
 const INSTALLED_STATUSES = new Set([
   "INSTALLED",
@@ -241,13 +257,16 @@ export function deriveKpis(
   const managerOn = snapshot.enabled !== false;
   let measuredUpdates = 0;
   let anyChecked = false;
+  let anyPartial = false;
   for (const row of modules) {
     const id = moduleId(row);
-    const evidence = updateEvidenceByModule[id];
+    const evidence = updateEvidenceByModule[id] ?? row.update_evidence ?? null;
     const avail = updateAvailableFromEvidence(evidence);
     if (avail.kind === "measured") {
       anyChecked = true;
       if (avail.value) measuredUpdates += 1;
+    } else if (avail.kind === "unmeasured") {
+      anyPartial = true;
     }
   }
   return {
@@ -257,7 +276,9 @@ export function deriveKpis(
     healthIssues: modules.filter(hasHealthIssue).length,
     updateAvailable: anyChecked
       ? { kind: "measured", value: measuredUpdates }
-      : { kind: "not_checked" },
+      : anyPartial
+        ? { kind: "unmeasured" }
+        : { kind: "not_checked" },
   };
 }
 
@@ -341,6 +362,58 @@ export function actionAvailability(
       executeReason: "No module selected",
     };
   }
+
+  // Prefer server-projected lifecycle capability state when present.
+  const server = row.allowed_actions;
+  const blocked = row.blocked_reasons ?? {};
+  if (server && typeof server === "object") {
+    const busyOverride = opts.lifecycleBusy;
+    const bool = (key: string, fallback: boolean) => {
+      if (busyOverride && ["can_install", "can_start", "can_stop", "can_restart", "can_ensure_ready", "can_execute", "can_install_version", "can_activate_version", "can_rollback"].includes(key)) {
+        return false;
+      }
+      const v = (server as Record<string, unknown>)[key];
+      return typeof v === "boolean" ? v : fallback;
+    };
+    const reason = (key: string, fallback?: string) => {
+      if (busyOverride && ["can_install", "can_start", "can_stop", "can_restart", "can_ensure_ready", "can_execute"].includes(key)) {
+        return "Lifecycle operation in progress";
+      }
+      const r = blocked[key];
+      return typeof r === "string" ? r : fallback;
+    };
+    const canActivate =
+      bool("can_activate_version", false) && opts.hasVersionId && !busyOverride;
+    return {
+      canInstall: bool("can_install", false),
+      canStart: bool("can_start", false),
+      canStop: bool("can_stop", false),
+      canRestart: bool("can_restart", false),
+      canEnsureReady: bool("can_ensure_ready", false),
+      canHealth: bool("can_check_health", opts.managerEnabled),
+      canJobs: bool("can_jobs", opts.managerEnabled),
+      canLogs: bool("can_logs", opts.managerEnabled),
+      canCapabilities: bool("can_capabilities", opts.managerEnabled),
+      canVersions: bool("can_versions", opts.managerEnabled),
+      canCheckUpdate: bool("can_check_update", opts.managerEnabled),
+      canInstallVersion: bool("can_install_version", false),
+      canActivateVersion: canActivate,
+      canRollback: bool("can_rollback", false),
+      canExecute: bool("can_execute", false),
+      installReason: reason("can_install"),
+      startReason: reason("can_start"),
+      stopReason: reason("can_stop"),
+      restartReason: reason("can_restart"),
+      ensureReadyReason: reason("can_ensure_ready"),
+      executeReason: reason("can_execute"),
+      activateReason: !opts.hasVersionId
+        ? "version_id is required to activate"
+        : reason("can_activate_version"),
+      healthReason: reason("can_check_health"),
+      checkUpdateReason: reason("can_check_update"),
+    };
+  }
+
   const s = statusUpper(row.status);
   const lifecycle = canLifecycle(row);
   const busy = opts.lifecycleBusy || isBusyStatus(row);
@@ -483,12 +556,22 @@ export function safeConfiguration(row: ManagedModuleRow | null): Record<string, 
 
 export function healthLabel(row: ManagedModuleRow | null): { label: string; tone: StatusTone; detail: string } {
   if (!row) return { label: "UNMEASURED", tone: "muted", detail: "No module selected" };
+  const freshness = String(row.health_freshness ?? "").toUpperCase();
+  if (freshness === "STALE") {
+    return { label: "STALE", tone: "warn", detail: "Cached health is stale — refresh with Health" };
+  }
+  if (freshness === "UNMEASURED" && !row.health) {
+    return { label: "UNMEASURED", tone: "muted", detail: "Health not measured" };
+  }
   const hs =
     row.health && typeof row.health === "object"
       ? statusUpper(String((row.health as Record<string, unknown>).status ?? ""))
       : "";
   const s = hs || statusUpper(row.status);
   if (!s) return { label: "UNMEASURED", tone: "muted", detail: "Health not measured" };
+  if (s === "STALE") {
+    return { label: "STALE", tone: "warn", detail: "Cached health is stale — refresh with Health" };
+  }
   if (s === "READY" || s === "RUNNING" || s === "INSTALLED") {
     return {
       label: s === "INSTALLED" ? "Installed" : "Healthy",
@@ -535,7 +618,8 @@ export function measuredFromHealth(
 export function formatMeasured(m: MeasuredValue<string | number | boolean>, fallback = "UNMEASURED"): string {
   if (m.kind === "measured") return String(m.value);
   if (m.kind === "not_checked") return "NOT CHECKED";
-  if (m.kind === "not_available") return "NOT AVAILABLE";
+  if (m.kind === "not_available") return "—";
+  if (m.kind === "unmeasured") return "Partieel";
   return fallback;
 }
 
@@ -746,14 +830,13 @@ export function lifecycleBadges(row: ManagedModuleRow): { label: string; tone: S
   const badges: { label: string; tone: StatusTone }[] = [];
   const s = statusUpper(row.status);
   const failed = s === "FAILED" || s === "ERROR";
-  if (!failed && (s === "DISCOVERED" || !isInstalled(row))) {
-    badges.push({ label: "DISCOVERED", tone: "cyan" });
-  }
-  if (isInstalled(row)) {
+  if (!failed && (s === "DISCOVERED" || s === "NOT_INSTALLED" || (!isInstalled(row) && !s))) {
+    badges.push({ label: s === "NOT_INSTALLED" ? "NOT INSTALLED" : "DISCOVERED", tone: "cyan" });
+  } else if (s && s !== "INSTALLED") {
+    // Prefer live lifecycle status (READY/RUNNING/DEGRADED/…) over a redundant INSTALLED chip.
+    badges.push({ label: s === "NOT_INSTALLED" ? "NOT INSTALLED" : s, tone: statusTone(s) });
+  } else if (isInstalled(row)) {
     badges.push({ label: "INSTALLED", tone: "ok" });
-  }
-  if (s && s !== "DISCOVERED" && s !== "INSTALLED" && s !== "NOT_INSTALLED") {
-    badges.push({ label: s, tone: statusTone(s) });
   }
   if (row.adapter) {
     badges.push({ label: row.adapter.toUpperCase(), tone: "muted" });

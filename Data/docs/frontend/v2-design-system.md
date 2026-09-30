@@ -169,3 +169,12 @@ Media Control, Plugin & Runtime, Coding Agent, and other deep links remain regis
 - KPIs/search/table/analytics/semantic-index/processing are real API-backed; fixture-only Screen 1 numbers live in `src/mocks/memoryV2VisualFixture.ts`.
 - Visual: `e2e/helpers/memoryV2Visual.ts` + `e2e/memory-v2.visual.spec.ts` (reference: `docs/ui_reference/memory-v2-reference.png`).
 - Memory ≠ Knowledge ≠ Brain — document/web actions deep-link to Knowledge/Research authorities.
+## Modules migration
+
+- `/modules` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "Runtime & Tools / Modules").
+- MAIN_MENU parent label is **Runtime & Tools** (`id: runtime` unchanged). Children stay MAIN_MENU-derived via `v2ChildrenFromMainMenu`.
+- Composition: `ModulesPage` + `useModulesWorkspace` + `src/components/modules/*` (hero, metrics, local nav, library, detail, install drawer, projection views).
+- No page-local Modules CSS; layout lives in `leviathan-v2.css` under `.lv-v2-page--modules` / `.lv-v2-modules-*`. Legacy `modules-page.css` is unused by `/modules`.
+- Lifecycle enqueue awaits JobRuntime terminal state; Feature Flag / KPIs / filters / update evidence are API-backed.
+- Local views `?view=runtimes|installation|environments` are projections — not new backend systems.
+- Visual fixture: `src/mocks/modulesV2VisualFixture.ts` + `e2e/modules-v2.visual.spec.ts` (reference: `docs/ui_reference/modules-v2-reference.png`, 1672×941). Production never imports fixture defaults.

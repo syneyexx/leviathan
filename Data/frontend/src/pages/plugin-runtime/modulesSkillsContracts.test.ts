@@ -7,18 +7,21 @@ const here = dirname(fileURLToPath(import.meta.url));
 const modulesSrc = readFileSync(join(here, "ModulesPage.tsx"), "utf8");
 const hookSrc = readFileSync(join(here, "modules", "useModulesWorkspace.ts"), "utf8");
 const viewSrc = readFileSync(join(here, "modules", "viewModels.ts"), "utf8");
+const heroSrc = readFileSync(join(here, "../../components/modules/ModulesHero.tsx"), "utf8");
+const installPanelSrc = readFileSync(join(here, "../../components/modules/ModulesInstallPanel.tsx"), "utf8");
+const metricsSrc = readFileSync(join(here, "../../components/modules/ModulesMetrics.tsx"), "utf8");
 const skillsEntry = readFileSync(join(here, "SkillsPage.tsx"), "utf8");
 const skillsPage = readFileSync(join(here, "skills/SkillsPage.tsx"), "utf8");
 const skillsHook = readFileSync(join(here, "skills/hooks/useSkillsPage.ts"), "utf8");
 const chatSrc = readFileSync(join(here, "..", "ChatPage.tsx"), "utf8");
-const combined = `${modulesSrc}\n${hookSrc}\n${viewSrc}`;
+const combined = `${modulesSrc}\n${hookSrc}\n${viewSrc}\n${installPanelSrc}\n${metricsSrc}`;
 
-describe("ModulesPage external fabric lifecycle", () => {
-  it("wires Sweep Idle to api.sweepIdleModules", () => {
+describe("ModulesPage V2 external fabric lifecycle", () => {
+  it("wires Sweep Idle to api.sweepIdleModules via workspace hook", () => {
     expect(hookSrc).toContain("sweepIdleModules");
-    expect(modulesSrc).toContain("Sweep Idle");
     expect(hookSrc).toContain('"sweep-idle"');
-    expect(modulesSrc).toContain("/api/modules/sweep-idle");
+    expect(modulesSrc).toContain("onSweepIdle");
+    expect(modulesSrc).toContain("sweep-idle");
   });
 
   it("does not treat a queued install as a completed install", () => {
@@ -27,6 +30,9 @@ describe("ModulesPage external fabric lifecycle", () => {
     expect(viewSrc).toContain("Approval required");
     expect(hookSrc).toContain("installActionText");
     expect(hookSrc).toContain("lifecycleFailureText");
+    expect(hookSrc).toContain("awaitJob");
+    expect(hookSrc).toContain("getJob");
+    expect(hookSrc).toContain("isTerminalJobStatus");
   });
 
   it("wires dependency-aware install plan and approve-everything CTA", () => {
@@ -36,13 +42,14 @@ describe("ModulesPage external fabric lifecycle", () => {
     expect(hookSrc).toContain("plan_hash");
     expect(hookSrc).toContain("approval_id");
     expect(hookSrc).toContain("primaryInstallCta");
-    expect(modulesSrc).toContain("Install plan");
-    expect(modulesSrc).toContain("RETRY INSTALL");
+    expect(modulesSrc).toContain("ModulesInstallPanel");
     expect(modulesSrc).toContain("primaryInstallCta");
+    expect(installPanelSrc).toContain("Install plan");
     expect(viewSrc).toContain("parseInstallPlan");
     expect(viewSrc).toContain("APPROVE & INSTALL EVERYTHING");
     expect(viewSrc).toContain("MISSING — WILL INSTALL");
-    expect(viewSrc).not.toMatch(/Magic install failed/);
+    expect(viewSrc).toContain("RETRY INSTALL");
+    expect(combined).not.toMatch(/Magic install failed/);
   });
 
   it("exposes install/start/stop/restart/ensure-ready without inventing runtime truth", () => {
@@ -74,14 +81,24 @@ describe("ModulesPage external fabric lifecycle", () => {
     expect(hookSrc).toContain("executeModule");
     expect(viewSrc).toContain("not_checked");
     expect(viewSrc).toContain("UNMEASURED");
-    expect(modulesSrc).toContain("NOT CHECKED");
+    expect(viewSrc).toContain("NOT CHECKED");
     expect(modulesSrc).not.toContain("342 ms");
     expect(modulesSrc).not.toContain("48.2 MB");
   });
 
-  it("imports dedicated modules page styles and real hero asset", () => {
-    expect(modulesSrc).toContain("modules-page.css");
-    expect(modulesSrc).toContain("pluginRuntimeHeroes.modules");
+  it("uses global V2 shell and shared styles — no legacy modules-page.css", () => {
+    expect(modulesSrc).not.toContain("modules-page.css");
+    expect(modulesSrc).toContain('variant="v2"');
+    expect(modulesSrc).toContain("lv-v2-page--modules");
+    expect(modulesSrc).toContain("Runtime & Tools / Modules");
+    expect(heroSrc).toContain("pluginRuntimeHeroes.modules");
+  });
+
+  it("exposes Runtimes/Installation/Environments URL projections", () => {
+    expect(hookSrc).toContain('viewParam === "runtimes"');
+    expect(hookSrc).toContain('viewParam === "installation"');
+    expect(hookSrc).toContain('viewParam === "environments"');
+    expect(modulesSrc).toContain("ModulesProjectionViews");
   });
 });
 

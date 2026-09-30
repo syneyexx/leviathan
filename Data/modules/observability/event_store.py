@@ -190,6 +190,7 @@ class EventStore:
         subsystem: str | None = None,
         source: str | None = None,
         correlation_id: str | None = None,
+        module_id: str | None = None,
         q: str | None = None,
         since_ms: float | None = None,
         until_ms: float | None = None,
@@ -220,6 +221,9 @@ class EventStore:
         if correlation_id:
             clauses.append("correlation_id = ?")
             params.append(correlation_id)
+        if module_id:
+            clauses.append("module_id = ?")
+            params.append(module_id)
         if since_ms is not None:
             clauses.append("created_at_ms >= ?")
             params.append(float(since_ms))

@@ -1,6 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../../../api/client";
+import { isTerminalJobStatus } from "../../../lib/jobStatus";
+import {
+  MODULES_V2_VISUAL_FIXTURE,
+  isModulesVisualFixtureActive,
+} from "../../../mocks/modulesV2VisualFixture";
 import { useAppToast } from "../../../state/useAppToast";
 import type { ModuleSnapshot } from "../../../types/api";
 import {
@@ -23,12 +28,38 @@ import {
   type InstallPlanView,
   type ManagedModuleRow,
   type ModuleFilterId,
+  type ModuleKpis,
 } from "./viewModels";
+
+const JOB_POLL_MS = 900;
+const JOB_POLL_TIMEOUT_MS = 180_000;
 
 function errorMessage(err: unknown): string {
   if (err instanceof ApiError) return err.message;
   if (err instanceof Error) return err.message;
   return "Request failed";
+}
+
+function extractJobId(response: unknown): string | null {
+  if (!response || typeof response !== "object") return null;
+  const obj = response as Record<string, unknown>;
+  const direct = obj.job_id ?? obj.jobId;
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+  const job = obj.job;
+  if (job && typeof job === "object") {
+    const j = job as Record<string, unknown>;
+    const id = j.job_id ?? j.jobId ?? j.id;
+    if (typeof id === "string" && id.trim()) return id.trim();
+  }
+  return null;
+}
+
+function isQueuedResponse(response: unknown): boolean {
+  if (!response || typeof response !== "object") return false;
+  const obj = response as Record<string, unknown>;
+  if (obj.queued === true) return true;
+  const state = String(obj.state ?? obj.status ?? "").toUpperCase();
+  return state === "QUEUED" || state === "RUNNING" || state === "CREATED" || state === "RETRY_WAIT";
 }
 
 export type LifecycleAction =
@@ -48,6 +79,16 @@ export type LifecycleAction =
   | "capabilities"
   | "sweep-idle";
 
+export type PendingLifecycle = {
+  jobId: string;
+  action: string;
+  moduleId: string;
+  acceptedAt: string;
+  state: string;
+};
+
+export type WorkspaceView = "modules" | "runtimes" | "installation" | "environments";
+
 export function useModulesWorkspace() {
   const toast = useAppToast();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -55,11 +96,12 @@ export function useModulesWorkspace() {
   const [loading, setLoading] = useState(true);
   const [discovering, setDiscovering] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(searchParams.get("module"));
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<ModuleFilterId>("all");
   const [lifecycleBusy, setLifecycleBusy] = useState(false);
-  const [detailTab, setDetailTab] = useState<DetailTabId>("configuration");
+  const [detailTab, setDetailTab] = useState<DetailTabId>("runtime");
   const [operation, setOperation] = useState("");
   const [argsJson, setArgsJson] = useState("{}");
   const [executing, setExecuting] = useState(false);
@@ -80,9 +122,29 @@ export function useModulesWorkspace() {
   const [installOperation, setInstallOperation] = useState<InstallOperationView | null>(null);
   const [installPanelOpen, setInstallPanelOpen] = useState(false);
   const [installPolling, setInstallPolling] = useState(false);
+  const [pendingLifecycle, setPendingLifecycle] = useState<PendingLifecycle | null>(null);
+  const [newModuleOpen, setNewModuleOpen] = useState(false);
+  const [activityEvents, setActivityEvents] = useState<Array<Record<string, unknown>>>([]);
+  const jobPollAbort = useRef(0);
+
+  const viewParam = searchParams.get("view");
+  const workspaceView: WorkspaceView =
+    viewParam === "runtimes" || viewParam === "installation" || viewParam === "environments"
+      ? viewParam
+      : "modules";
 
   const applySnapshot = useCallback((next: ModuleSnapshot) => {
     setSnapshot(next);
+    const evidence: Record<string, Record<string, unknown> | null | undefined> = {};
+    for (const row of next.modules ?? []) {
+      const id = moduleId(row);
+      if (row.update_evidence && typeof row.update_evidence === "object") {
+        evidence[id] = row.update_evidence as Record<string, unknown>;
+      }
+    }
+    if (Object.keys(evidence).length > 0) {
+      setUpdateEvidenceByModule((prev) => ({ ...prev, ...evidence }));
+    }
     const ids = (next.modules ?? []).map(moduleId);
     setSelectedId((prev) => {
       if (prev && ids.includes(prev)) return prev;
@@ -94,19 +156,118 @@ export function useModulesWorkspace() {
     setLoading(true);
     setLoadError(null);
     try {
+      // TEST-ONLY: Screen 1 visual fixture — never used as production default.
+      if (isModulesVisualFixtureActive()) {
+        const fixture = MODULES_V2_VISUAL_FIXTURE;
+        const snap = {
+          enabled: fixture.enabled,
+          modules: fixture.modules as unknown as ModuleSnapshot["modules"],
+          telemetry: fixture.telemetry as ModuleSnapshot["telemetry"],
+          discovery_roots: [...fixture.discovery_roots],
+          truth: { ...fixture.truth },
+        } satisfies ModuleSnapshot;
+        applySnapshot(snap);
+        setUpdateEvidenceByModule(() => {
+          const evidence: Record<string, Record<string, unknown> | null | undefined> = {};
+          for (const row of snap.modules ?? []) {
+            const id = moduleId(row);
+            if (row.update_evidence && typeof row.update_evidence === "object") {
+              evidence[id] = row.update_evidence as Record<string, unknown>;
+            }
+          }
+          return evidence;
+        });
+        setSelectedId(fixture.selectedModuleId);
+        setActivityEvents(fixture.activity.map((e) => ({ ...e })));
+        setStale(false);
+        return;
+      }
       const snap = await api.listModules();
       applySnapshot(snap);
+      setStale(false);
     } catch (err) {
       setLoadError(errorMessage(err));
-      setSnapshot(null);
+      setStale((prev) => prev || snapshot != null);
+      if (snapshot == null) setSnapshot(null);
     } finally {
       setLoading(false);
     }
-  }, [applySnapshot]);
+  }, [applySnapshot, snapshot]);
 
   useEffect(() => {
+    // Initial load only — refresh is explicit.
     void load();
-  }, [load]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const awaitJob = useCallback(
+    async (jobId: string, actionLabel: string): Promise<{ ok: boolean; message?: string; state?: string }> => {
+      const token = ++jobPollAbort.current;
+      const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
+      setPendingLifecycle((prev) =>
+        prev && prev.jobId === jobId
+          ? { ...prev, state: "RUNNING" }
+          : {
+              jobId,
+              action: actionLabel,
+              moduleId: prev?.moduleId ?? "",
+              acceptedAt: prev?.acceptedAt ?? new Date().toISOString(),
+              state: "QUEUED",
+            },
+      );
+      while (Date.now() < deadline) {
+        if (token !== jobPollAbort.current) {
+          return { ok: false, message: "Operatie geannuleerd" };
+        }
+        try {
+          const res = await api.getJob(jobId);
+          const job = res.job as Record<string, unknown>;
+          const state = String(job.state ?? job.status ?? "").toUpperCase();
+          setPendingLifecycle((prev) => (prev && prev.jobId === jobId ? { ...prev, state } : prev));
+          if (isTerminalJobStatus(state)) {
+            setPendingLifecycle(null);
+            if (state === "SUCCEEDED" || state === "COMPLETED" || state === "SUCCESS") {
+              return { ok: true, state };
+            }
+            if (state === "CANCELLED" || state === "CANCELED") {
+              return { ok: false, message: "Geannuleerd", state };
+            }
+            if (state === "TIMED_OUT" || state === "TIMEOUT") {
+              return { ok: false, message: "Timed out", state };
+            }
+            return {
+              ok: false,
+              message: String(job.error ?? job.error_code ?? `Job ${state}`),
+              state,
+            };
+          }
+        } catch (err) {
+          if (err instanceof ApiError && err.status === 404) {
+            setPendingLifecycle(null);
+            return { ok: false, message: "Job niet gevonden" };
+          }
+        }
+        await new Promise((r) => window.setTimeout(r, JOB_POLL_MS));
+      }
+      setPendingLifecycle(null);
+      return { ok: false, message: "Timeout tijdens wachten op module_runtime job", state: "TIMED_OUT" };
+    },
+    [],
+  );
+
+  const cancelPendingJob = useCallback(async () => {
+    const pending = pendingLifecycle;
+    if (!pending?.jobId) return;
+    try {
+      await api.cancelJob(pending.jobId);
+      jobPollAbort.current += 1;
+      setPendingLifecycle((prev) => (prev ? { ...prev, state: "CANCEL_REQUESTED" } : prev));
+      toast("Cancel requested");
+      setLastAction("Cancel requested");
+    } catch (err) {
+      toast(errorMessage(err));
+    }
+  }, [pendingLifecycle, toast]);
 
   function applyInstallResponse(res: Record<string, unknown>) {
     const op = parseInstallOperation(res);
@@ -197,18 +358,32 @@ export function useModulesWorkspace() {
     [modules, query, filter, updateEvidenceByModule],
   );
 
-  const counts = useMemo(
-    () => filterCounts(modules, updateEvidenceByModule),
-    [modules, updateEvidenceByModule],
-  );
+  const kpis = useMemo((): ModuleKpis => {
+    if (isModulesVisualFixtureActive()) {
+      const d = MODULES_V2_VISUAL_FIXTURE.displayKpis;
+      return {
+        featureFlag: d.featureFlag,
+        totalModules: d.totalModules,
+        executable: d.executable,
+        healthIssues: d.healthIssues,
+        updateAvailable: d.updateAvailable,
+      };
+    }
+    return deriveKpis(snapshot, updateEvidenceByModule);
+  }, [snapshot, updateEvidenceByModule]);
 
-  const kpis = useMemo(
-    () => deriveKpis(snapshot, updateEvidenceByModule),
-    [snapshot, updateEvidenceByModule],
-  );
+  const counts = useMemo(() => {
+    if (isModulesVisualFixtureActive()) {
+      return { ...MODULES_V2_VISUAL_FIXTURE.displayKpis.filterCounts };
+    }
+    return filterCounts(modules, updateEvidenceByModule);
+  }, [modules, updateEvidenceByModule]);
 
-  // When the active filter hides the selected row, show the first visible row
-  // without mutating the underlying selection (restored when the filter clears).
+  const visualSparklines = useMemo(() => {
+    if (!isModulesVisualFixtureActive()) return undefined;
+    return { ...MODULES_V2_VISUAL_FIXTURE.sparklines };
+  }, [snapshot]);
+
   const effectiveSelectedId = useMemo(() => {
     if (selectedId && rows.some((row) => moduleId(row) === selectedId)) return selectedId;
     if (selectedId && !rows.some((row) => moduleId(row) === selectedId)) {
@@ -222,6 +397,30 @@ export function useModulesWorkspace() {
     if (!id) return null;
     return modules.find((row) => moduleId(row) === id) ?? null;
   }, [modules, effectiveSelectedId]);
+
+  useEffect(() => {
+    const id = effectiveSelectedId;
+    if (!id) {
+      setActivityEvents([]);
+      return;
+    }
+    if (isModulesVisualFixtureActive()) {
+      setActivityEvents(MODULES_V2_VISUAL_FIXTURE.activity.map((e) => ({ ...e })));
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await api.moduleActivity(id, 20);
+        if (!cancelled) setActivityEvents(Array.isArray(res.events) ? res.events : []);
+      } catch {
+        if (!cancelled) setActivityEvents([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveSelectedId]);
 
   useEffect(() => {
     setInstallPlan(null);
@@ -271,17 +470,42 @@ export function useModulesWorkspace() {
 
   useEffect(() => {
     const id = effectiveSelectedId;
-    if (!id) return;
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev);
-        if (next.get("module") === id) return prev;
-        next.set("module", id);
-        return next;
+        let changed = false;
+        if (id) {
+          if (next.get("module") !== id) {
+            next.set("module", id);
+            changed = true;
+          }
+        }
+        if (!viewParam || viewParam === "modules") {
+          if (next.has("view")) {
+            next.delete("view");
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
       },
       { replace: true },
     );
-  }, [effectiveSelectedId, setSearchParams]);
+  }, [effectiveSelectedId, setSearchParams, viewParam]);
+
+  const setWorkspaceView = useCallback(
+    (view: WorkspaceView) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (view === "modules") next.delete("view");
+          else next.set("view", view);
+          return next;
+        },
+        { replace: false },
+      );
+    },
+    [setSearchParams],
+  );
 
   const ops = useMemo(() => declaredOperations(selected), [selected]);
   const resolvedOperation = operation && ops.includes(operation) ? operation : ops[0] || operation || "health";
@@ -290,10 +514,10 @@ export function useModulesWorkspace() {
     () =>
       actionAvailability(selected, {
         managerEnabled,
-        lifecycleBusy,
+        lifecycleBusy: lifecycleBusy || pendingLifecycle != null,
         hasVersionId: Boolean(versionId.trim()),
       }),
-    [selected, managerEnabled, lifecycleBusy, versionId],
+    [selected, managerEnabled, lifecycleBusy, pendingLifecycle, versionId],
   );
 
   const selectModule = useCallback((id: string) => {
@@ -304,7 +528,8 @@ export function useModulesWorkspace() {
     setPanelJson(null);
     setHealthPayload(null);
     setOperation("");
-  }, []);
+    setWorkspaceView("modules");
+  }, [setWorkspaceView]);
 
   async function onDiscover() {
     setDiscovering(true);
@@ -321,6 +546,18 @@ export function useModulesWorkspace() {
       toast(msg);
     } finally {
       setDiscovering(false);
+    }
+  }
+
+  async function reconcileAfterTerminal(id: string) {
+    const snap = await api.listModules().catch(() => null);
+    if (snap) applySnapshot(snap);
+    try {
+      const jobsRes = await api.moduleJobs(id);
+      const jobs = Array.isArray(jobsRes.jobs) ? jobsRes.jobs : [];
+      setJobsPayload(jobs);
+    } catch {
+      /* optional refresh */
     }
   }
 
@@ -346,27 +583,93 @@ export function useModulesWorkspace() {
     setLifecycleBusy(true);
     try {
       if (action === "install") {
+        // Plan-first: generate install plan, then show panel for approval/execute.
         const ref = versionRef.trim() || undefined;
-        const res = await api.installModule(id, { ref, activate: true, auto_resolve_dependencies: true });
-        const text = applyInstallResponse(res);
-        toast(text);
-        setLastAction(text);
-      } else if (action === "start") {
-        await api.startModule(id);
-        toast(`Started ${id}`);
-        setLastAction("Started successfully");
-      } else if (action === "stop") {
-        await api.stopModule(id);
-        toast(`Stopped ${id}`);
-        setLastAction("Stopped successfully");
-      } else if (action === "restart") {
-        await api.restartModule(id);
-        toast(`Restarted ${id}`);
-        setLastAction("Restarted successfully");
-      } else if (action === "ensure-ready") {
-        const res = await api.ensureReadyModule(id);
-        toast(`Ensure ready: ${JSON.stringify(res.result ?? "ok")}`);
-        setLastAction("Ensure ready completed");
+        try {
+          const planRes = await api.moduleInstallPlan(id, { ref, auto_resolve_dependencies: true });
+          const plan = parseInstallPlan(planRes.plan ?? planRes);
+          if (plan) setInstallPlan(plan);
+          const op = parseInstallOperation(planRes);
+          if (op) setInstallOperation(op);
+          else if (plan) {
+            setInstallOperation({
+              operationId: null,
+              status: plan.requiresApproval ? "APPROVAL_REQUIRED" : "PLANNING",
+              phase: "PLANNING",
+              progress: null,
+              jobId: null,
+              approvalId:
+                planRes.approval && typeof planRes.approval === "object"
+                  ? String((planRes.approval as Record<string, unknown>).approval_id ?? "") || null
+                  : null,
+              planHash: plan.planHash,
+              errorCode: null,
+              errorDetail: null,
+              retryable: false,
+              plan,
+            });
+          }
+          setInstallPanelOpen(true);
+          setPanelJson(JSON.stringify(planRes, null, 2));
+          setLastAction("Install plan prepared");
+          toast(plan?.requiresApproval ? "Approval required — review the install plan" : "Install plan ready");
+        } catch {
+          // Fallback: direct install path still durable via JobRuntime.
+          const res = await api.installModule(id, { ref, activate: true, auto_resolve_dependencies: true });
+          const text = applyInstallResponse(res);
+          toast(text);
+          setLastAction(text);
+        }
+      } else if (
+        action === "start" ||
+        action === "stop" ||
+        action === "restart" ||
+        action === "ensure-ready"
+      ) {
+        const apiCall =
+          action === "start"
+            ? api.startModule(id)
+            : action === "stop"
+              ? api.stopModule(id)
+              : action === "restart"
+                ? api.restartModule(id)
+                : api.ensureReadyModule(id);
+        const res = await apiCall;
+        const jobId = extractJobId(res);
+        setPanelJson(JSON.stringify(res, null, 2));
+        if (jobId && isQueuedResponse(res)) {
+          const acceptedAt =
+            typeof (res as Record<string, unknown>).accepted_at === "string"
+              ? String((res as Record<string, unknown>).accepted_at)
+              : new Date().toISOString();
+          setPendingLifecycle({
+            jobId,
+            action,
+            moduleId: id,
+            acceptedAt,
+            state: String((res as Record<string, unknown>).state ?? "QUEUED"),
+          });
+          setLastAction(`${action} requested`);
+          toast(`${action} queued — waiting for module_runtime`);
+          const terminal = await awaitJob(jobId, action);
+          await reconcileAfterTerminal(id);
+          if (terminal.ok) {
+            setLastAction(`${action} succeeded`);
+            toast(`${action} succeeded`);
+          } else {
+            const msg = terminal.message || `${action} failed`;
+            setLastAction(msg);
+            toast(msg);
+          }
+        } else if ((res as Record<string, unknown>).inprocess_test) {
+          setLastAction(`${action} completed (inprocess_test)`);
+          toast(`${action} completed`);
+          await reconcileAfterTerminal(id);
+        } else {
+          setLastAction(`${action} accepted`);
+          toast(`${action} accepted`);
+          await reconcileAfterTerminal(id);
+        }
       } else if (action === "health") {
         const res = await api.moduleHealth(id);
         const health = (res.health ?? res) as Record<string, unknown>;
@@ -375,13 +678,15 @@ export function useModulesWorkspace() {
         setDetailTab("health");
         toast(`Health: ${JSON.stringify(health?.status ?? "ok")}`);
         setLastAction("Health checked");
+        const snap = await api.listModules().catch(() => null);
+        if (snap) applySnapshot(snap);
       } else if (action === "jobs") {
         const res = await api.moduleJobs(id);
         const jobs = Array.isArray(res.jobs) ? res.jobs : [];
         setJobsPayload(jobs);
         setPanelJson(JSON.stringify(res, null, 2));
         setDetailTab("jobs");
-        toast(`Active jobs: ${res.count ?? jobs.length}`);
+        toast(`Jobs: ${res.count ?? jobs.length}`);
         setLastAction("Jobs refreshed");
       } else if (action === "versions") {
         const res = await api.moduleVersions(id);
@@ -399,14 +704,38 @@ export function useModulesWorkspace() {
         setDetailTab("versions");
         toast(`Update available: ${String(result?.update_available ?? "?")}`);
         setLastAction("Update check completed");
+        const snap = await api.listModules().catch(() => null);
+        if (snap) applySnapshot(snap);
       } else if (action === "install-version") {
         const ref = versionRef.trim() || undefined;
         const res = await api.installModuleVersion(id, { ref, activate: false });
         const text = installActionText("install-version", res);
         setPanelJson(JSON.stringify(res, null, 2));
         setDetailTab("versions");
-        toast(text);
-        setLastAction(text);
+        const jobId = extractJobId(res);
+        if (jobId && isQueuedResponse(res)) {
+          setLastAction("Version install queued");
+          toast("Version install queued — waiting for module_runtime");
+          setPendingLifecycle({
+            jobId,
+            action: "install-version",
+            moduleId: id,
+            acceptedAt: new Date().toISOString(),
+            state: "QUEUED",
+          });
+          const terminal = await awaitJob(jobId, "install-version");
+          await reconcileAfterTerminal(id);
+          if (terminal.ok) {
+            setLastAction("Version installed");
+            toast("Version installed");
+          } else {
+            toast(terminal.message || "Version install failed");
+            setLastAction(terminal.message || "Version install failed");
+          }
+        } else {
+          toast(text);
+          setLastAction(text);
+        }
       } else if (action === "activate-version") {
         const vid = versionId.trim();
         if (!vid) {
@@ -416,14 +745,60 @@ export function useModulesWorkspace() {
         const res = await api.activateModuleVersion(id, vid);
         setPanelJson(JSON.stringify(res, null, 2));
         setDetailTab("versions");
-        toast(`Activate version: ${JSON.stringify(res.result ?? "ok")}`);
-        setLastAction("Version activated");
+        const jobId = extractJobId(res);
+        if (jobId && isQueuedResponse(res)) {
+          setLastAction("Activate version requested");
+          toast("Activate queued — waiting for module_runtime");
+          setPendingLifecycle({
+            jobId,
+            action: "activate-version",
+            moduleId: id,
+            acceptedAt: new Date().toISOString(),
+            state: "QUEUED",
+          });
+          const terminal = await awaitJob(jobId, "activate-version");
+          await reconcileAfterTerminal(id);
+          if (terminal.ok) {
+            setLastAction("Version activated");
+            toast("Version activated");
+          } else {
+            toast(terminal.message || "Activate failed");
+            setLastAction(terminal.message || "Activate failed");
+          }
+        } else {
+          toast(`Activate version: ${JSON.stringify((res as Record<string, unknown>).result ?? "ok")}`);
+          setLastAction("Version activated");
+          await reconcileAfterTerminal(id);
+        }
       } else if (action === "rollback") {
         const res = await api.rollbackModuleVersion(id, versionId.trim() || undefined);
         setPanelJson(JSON.stringify(res, null, 2));
         setDetailTab("versions");
-        toast(`Rollback: ${JSON.stringify(res.result ?? "ok")}`);
-        setLastAction("Rollback completed");
+        const jobId = extractJobId(res);
+        if (jobId && isQueuedResponse(res)) {
+          setLastAction("Rollback requested");
+          toast("Rollback queued — waiting for module_runtime");
+          setPendingLifecycle({
+            jobId,
+            action: "rollback",
+            moduleId: id,
+            acceptedAt: new Date().toISOString(),
+            state: "QUEUED",
+          });
+          const terminal = await awaitJob(jobId, "rollback");
+          await reconcileAfterTerminal(id);
+          if (terminal.ok) {
+            setLastAction("Rollback completed");
+            toast("Rollback completed");
+          } else {
+            toast(terminal.message || "Rollback failed");
+            setLastAction(terminal.message || "Rollback failed");
+          }
+        } else {
+          toast(`Rollback: ${JSON.stringify((res as Record<string, unknown>).result ?? "ok")}`);
+          setLastAction("Rollback completed");
+          await reconcileAfterTerminal(id);
+        }
       } else if (action === "capabilities") {
         const res = await api.moduleCapabilities(id);
         const caps = Array.isArray(res.capabilities) ? res.capabilities : [];
@@ -438,8 +813,6 @@ export function useModulesWorkspace() {
         setDetailTab("logs");
         setLastAction("Logs refreshed");
       }
-      const snap = await api.listModules().catch(() => null);
-      if (snap) applySnapshot(snap);
     } catch (err) {
       const msg = lifecycleFailureText(action, errorMessage(err));
       setLastAction(msg);
@@ -468,10 +841,47 @@ export function useModulesWorkspace() {
     setDetailTab("execute");
     try {
       const res = await api.executeModule(moduleId(selected), resolvedOperation.trim() || op, parsed.value);
-      setLastResult(JSON.stringify(res.result ?? res, null, 2));
-      setLastAction(`Executed ${op}`);
-      const snap = await api.listModules().catch(() => null);
-      if (snap) applySnapshot(snap);
+      const jobId = extractJobId(res);
+      if (jobId && isQueuedResponse(res)) {
+        setLastResult(JSON.stringify({ queued: true, job_id: jobId, state: "QUEUED" }, null, 2));
+        setLastAction(`Execute requested: ${op}`);
+        toast(`Execute queued — waiting for module_runtime`);
+        setPendingLifecycle({
+          jobId,
+          action: `execute:${op}`,
+          moduleId: moduleId(selected),
+          acceptedAt: new Date().toISOString(),
+          state: "QUEUED",
+        });
+        const terminal = await awaitJob(jobId, `execute:${op}`);
+        const jobRes = await api.getJob(jobId).catch(() => null);
+        const job = jobRes?.job as Record<string, unknown> | undefined;
+        setLastResult(
+          JSON.stringify(
+            {
+              state: terminal.state,
+              ok: terminal.ok,
+              error: terminal.message ?? null,
+              result: job?.result ?? job?.output ?? null,
+            },
+            null,
+            2,
+          ),
+        );
+        await reconcileAfterTerminal(moduleId(selected));
+        if (terminal.ok) {
+          setLastAction(`Executed ${op}`);
+          toast(`Executed ${op}`);
+        } else {
+          setLastAction(terminal.message || `Execute failed: ${op}`);
+          toast(terminal.message || `Execute failed: ${op}`);
+        }
+      } else {
+        setLastResult(JSON.stringify((res as Record<string, unknown>).result ?? res, null, 2));
+        setLastAction(`Executed ${op}`);
+        const snap = await api.listModules().catch(() => null);
+        if (snap) applySnapshot(snap);
+      }
     } catch (err) {
       const msg = errorMessage(err);
       setLastResult(msg);
@@ -486,16 +896,26 @@ export function useModulesWorkspace() {
     return capabilitiesFromRow(selected);
   }, [capabilitiesPayload, selected]);
 
+  const realInstalledCount = useMemo(() => {
+    if (isModulesVisualFixtureActive()) {
+      return MODULES_V2_VISUAL_FIXTURE.displayKpis.installedCount;
+    }
+    return counts.installed;
+  }, [counts.installed]);
+
   return {
     snapshot,
     loading,
     discovering,
     loadError,
+    stale,
     managerEnabled,
     modules,
     rows,
     counts,
     kpis,
+    installedCount: realInstalledCount,
+    visualSparklines,
     selected,
     selectedId: effectiveSelectedId,
     query,
@@ -532,7 +952,14 @@ export function useModulesWorkspace() {
     primaryInstallCta: primaryInstallCta(installPlan, installOperation?.status ?? null),
     actions,
     ops,
-    lifecycleBusy,
+    lifecycleBusy: lifecycleBusy || pendingLifecycle != null,
+    pendingLifecycle,
+    cancelPendingJob,
+    workspaceView,
+    setWorkspaceView,
+    newModuleOpen,
+    setNewModuleOpen,
+    activityEvents,
     load,
     onDiscover,
     onLifecycle,

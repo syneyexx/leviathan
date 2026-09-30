@@ -8,6 +8,7 @@ import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, NoReturn
 
@@ -32,6 +33,9 @@ from .types import (
 
 logger = logging.getLogger("leviathan.module_manager")
 
+# Cached snapshot health older than this is projected as STALE (not live-healthy).
+_HEALTH_STALE_SECONDS = 120.0
+
 # Statuses that may accept execute / ensure_ready without re-init.
 _READY_STATUSES = {
     ModuleStatus.READY,
@@ -41,6 +45,43 @@ _READY_STATUSES = {
     ModuleStatus.INSTALLED,
     ModuleStatus.DEGRADED,
 }
+
+_INSTALLED_STATUSES = {
+    ModuleStatus.INSTALLED,
+    ModuleStatus.LOADED,
+    ModuleStatus.INITIALIZED,
+    ModuleStatus.INITIALIZING,
+    ModuleStatus.READY,
+    ModuleStatus.STARTING,
+    ModuleStatus.RUNNING,
+    ModuleStatus.BUSY,
+    ModuleStatus.EXECUTING,
+    ModuleStatus.STOPPING,
+    ModuleStatus.STOPPED,
+    ModuleStatus.DISABLED,
+    ModuleStatus.DEGRADED,
+}
+
+_BUSY_STATUSES = {
+    ModuleStatus.BUSY,
+    ModuleStatus.EXECUTING,
+    ModuleStatus.STARTING,
+    ModuleStatus.STOPPING,
+    ModuleStatus.INITIALIZING,
+}
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _parse_iso(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except Exception:  # noqa: BLE001
+        return None
 
 
 @dataclass
@@ -52,18 +93,216 @@ class ManagedModule:
     last_result: ModuleResult | None = None
     desired_state: str | None = None
     active_jobs: list[str] = field(default_factory=list)
+    # Cached measured health — never refreshed by public_dict / GET /api/modules.
+    last_health: dict[str, Any] | None = None
+    last_health_at: str | None = None
+    last_update_check: dict[str, Any] | None = None
+    last_update_check_at: str | None = None
 
-    def public_dict(self) -> dict[str, Any]:
-        runtime_state = self.status.value
-        adapter = None
+    def _adapter_name(self) -> str | None:
         external = (self.manifest.metadata or {}).get("external")
         if isinstance(external, dict):
             adapter = external.get("adapter")
+            return str(adapter) if adapter else None
+        return None
+
+    def _has_lifecycle_adapter(self) -> bool:
+        return bool(self._adapter_name() or (self.manifest.metadata or {}).get("external"))
+
+    def _health_age_seconds(self) -> float | None:
+        ts = _parse_iso(self.last_health_at)
+        if ts is None:
+            return None
+        return max(0.0, time.time() - ts)
+
+    def _health_freshness(self) -> str:
+        if self.last_health is None:
+            return "UNMEASURED"
+        age = self._health_age_seconds()
+        if age is None:
+            return "UNMEASURED"
+        if age > _HEALTH_STALE_SECONDS:
+            return "STALE"
+        return "FRESH"
+
+    def _cached_health_public(self) -> dict[str, Any] | None:
+        """Return bounded cached health for snapshots — never calls instance.health()."""
+        if self.last_health is None:
+            return None
+        out = dict(self.last_health)
+        freshness = self._health_freshness()
+        out["freshness"] = freshness
+        out.setdefault("checked_at", self.last_health_at)
+        if freshness == "STALE":
+            # Do not present stale measurements as currently healthy.
+            status = str(out.get("status") or "").upper()
+            if status in {"READY", "RUNNING", "INSTALLED", "HEALTHY", "OK"}:
+                out["status"] = "STALE"
+                out["detail"] = out.get("detail") or "Cached health is stale — refresh with Health"
+        return out
+
+    def allowed_actions(self, *, manager_enabled: bool = True) -> dict[str, Any]:
+        """Server-projected lifecycle action availability (canonical over frontend guesses)."""
+        blocked: dict[str, str] = {}
+        actions = {
+            "can_install": False,
+            "can_start": False,
+            "can_stop": False,
+            "can_restart": False,
+            "can_ensure_ready": False,
+            "can_execute": False,
+            "can_check_health": False,
+            "can_check_update": False,
+            "can_install_version": False,
+            "can_activate_version": False,
+            "can_rollback": False,
+            "can_jobs": False,
+            "can_logs": False,
+            "can_capabilities": False,
+            "can_versions": False,
+        }
+
+        def deny(key: str, reason: str) -> None:
+            actions[key] = False
+            blocked[key] = reason
+
+        def allow(key: str) -> None:
+            actions[key] = True
+
+        if not manager_enabled:
+            for key in list(actions):
+                deny(key, "Module manager feature flag OFF")
+            return {"allowed": actions, "blocked_reasons": blocked}
+
+        lifecycle = self._has_lifecycle_adapter()
+        busy = self.status in _BUSY_STATUSES or bool(self.active_jobs)
+        installed = self.status in _INSTALLED_STATUSES
+        not_installed = self.status in {ModuleStatus.DISCOVERED} or (
+            not installed and self.status not in {ModuleStatus.READY}
+        )
+        ready_like = self.status in {
+            ModuleStatus.READY,
+            ModuleStatus.RUNNING,
+            ModuleStatus.BUSY,
+            ModuleStatus.EXECUTING,
+        }
+
+        if not lifecycle:
+            for key in (
+                "can_install",
+                "can_start",
+                "can_stop",
+                "can_restart",
+                "can_ensure_ready",
+                "can_check_health",
+                "can_check_update",
+                "can_install_version",
+                "can_activate_version",
+                "can_rollback",
+                "can_jobs",
+                "can_logs",
+                "can_capabilities",
+                "can_versions",
+            ):
+                deny(key, "No lifecycle adapter")
+        else:
+            if busy:
+                for key in (
+                    "can_install",
+                    "can_start",
+                    "can_stop",
+                    "can_restart",
+                    "can_ensure_ready",
+                    "can_install_version",
+                    "can_activate_version",
+                    "can_rollback",
+                ):
+                    deny(key, "Module is busy")
+            else:
+                if not_installed or self.status in {
+                    ModuleStatus.DISCOVERED,
+                    ModuleStatus.FAILED,
+                    ModuleStatus.ERROR,
+                }:
+                    allow("can_install")
+                else:
+                    deny("can_install", f"Install not available (status: {self.status.value})")
+
+                if self.status in {
+                    ModuleStatus.INSTALLED,
+                    ModuleStatus.STOPPED,
+                    ModuleStatus.READY,
+                    ModuleStatus.DISCOVERED,
+                    ModuleStatus.LOADED,
+                }:
+                    allow("can_start")
+                else:
+                    deny("can_start", f"Start not available (status: {self.status.value})")
+
+                if self.status in {
+                    ModuleStatus.READY,
+                    ModuleStatus.RUNNING,
+                    ModuleStatus.BUSY,
+                    ModuleStatus.INSTALLED,
+                }:
+                    allow("can_stop")
+                else:
+                    deny("can_stop", f"Stop not available (status: {self.status.value})")
+
+                if installed:
+                    allow("can_restart")
+                else:
+                    deny("can_restart", "Module not installed")
+
+                allow("can_ensure_ready")
+                allow("can_install_version")
+                allow("can_activate_version")
+                allow("can_rollback")
+
+            allow("can_check_health")
+            allow("can_check_update")
+            allow("can_jobs")
+            allow("can_logs")
+            allow("can_capabilities")
+            allow("can_versions")
+
+        if ready_like and not busy:
+            allow("can_execute")
+        elif not ready_like:
+            deny("can_execute", f"Requires READY/RUNNING (current: {self.status.value})")
+        else:
+            deny("can_execute", "Module is busy")
+
+        return {"allowed": actions, "blocked_reasons": blocked}
+
+    def public_dict(self) -> dict[str, Any]:
+        runtime_state = self.status.value
+        adapter = self._adapter_name()
         if self.instance is not None and hasattr(self.instance, "runtime_state"):
             try:
                 runtime_state = str(self.instance.runtime_state())
             except Exception:  # noqa: BLE001
                 pass
+        action_state = self.allowed_actions(manager_enabled=True)
+        external = (self.manifest.metadata or {}).get("external")
+        source_type = None
+        source_ref = None
+        resource_class = None
+        isolation = self.manifest.isolation.value if self.manifest.isolation else None
+        if isinstance(external, dict):
+            source = external.get("source")
+            if isinstance(source, dict):
+                source_type = source.get("type") or source.get("kind")
+                source_ref = source.get("ref")
+            source_type = source_type or external.get("source_type")
+            resource_class = external.get("resource_class")
+        side_effects: list[str] = []
+        for effect in self.manifest.side_effects or ():
+            side_effects.append(str(effect))
+        for cap in self.manifest.capabilities or ():
+            for effect in cap.side_effects or ():
+                if str(effect) not in side_effects:
+                    side_effects.append(str(effect))
         return {
             "manifest": self.manifest.public_dict(),
             "status": self.status.value,
@@ -73,20 +312,26 @@ class ManagedModule:
             "error": self.error,
             "active_jobs": list(self.active_jobs),
             "last_result": self.last_result.public_dict() if self.last_result else None,
-            "health": (
-                self.instance.health().public_dict()
-                if self.instance is not None
-                and self.status
-                not in {
-                    ModuleStatus.ERROR,
-                    ModuleStatus.FAILED,
-                    ModuleStatus.SHUTDOWN,
-                }
-                else None
-            ),
+            # Snapshot health is cached only — never fans out to live probes.
+            "health": self._cached_health_public(),
+            "health_freshness": self._health_freshness(),
+            "last_health_at": self.last_health_at,
+            "update_evidence": self.last_update_check,
+            "last_update_check_at": self.last_update_check_at,
+            "allowed_actions": action_state["allowed"],
+            "blocked_reasons": action_state["blocked_reasons"],
+            "source_type": source_type,
+            "source_ref": source_ref,
+            "resource_class": resource_class,
+            "isolation": isolation,
+            "declared_side_effects": side_effects,
             "truth": {
                 "persisted_or_declared_state_is_not_live_health": True,
                 "module_manager_is_lifecycle_owner": True,
+                "snapshot_health_is_cached_not_live": True,
+                "discoverable_is_not_authorized": True,
+                "declared_side_effects_are_not_authorized": True,
+                "allowed_actions_are_server_projected": True,
             },
         }
 
@@ -594,10 +839,44 @@ class ModuleManager:
             )
 
     def health(self, module_id: str) -> ModuleHealth:
+        """Explicit live health measurement — caches result for cheap snapshots."""
         managed = self._ensure_instance(module_id)
         assert managed.instance is not None
         try:
-            return managed.instance.health()
+            measured = managed.instance.health()
+            checked_at = _utc_now()
+            if isinstance(measured, ModuleHealth):
+                payload = measured.public_dict()
+                # Preserve adapter telemetry; stamp measurement time.
+                if not payload.get("checked_at"):
+                    payload = {**payload, "checked_at": checked_at}
+                    measured = ModuleHealth(
+                        module_id=measured.module_id,
+                        status=measured.status,
+                        detail=measured.detail,
+                        telemetry=dict(measured.telemetry or {}),
+                        checked_at=checked_at,
+                    )
+                managed.last_health = payload
+                managed.last_health_at = checked_at
+                return measured
+            # Defensive: adapters should return ModuleHealth.
+            payload = {
+                "module_id": module_id,
+                "status": str(getattr(measured, "status", managed.status.value)),
+                "detail": str(getattr(measured, "detail", "ok")),
+                "telemetry": dict(getattr(measured, "telemetry", {}) or {}),
+                "checked_at": checked_at,
+            }
+            managed.last_health = payload
+            managed.last_health_at = checked_at
+            return ModuleHealth(
+                module_id=module_id,
+                status=managed.status,
+                detail=payload["detail"],
+                telemetry=payload["telemetry"],
+                checked_at=checked_at,
+            )
         except Exception as exc:
             self._fail_lifecycle(
                 managed, exc, module_id=module_id, action="health", previous=managed.status
@@ -629,13 +908,30 @@ class ModuleManager:
         managed.active_jobs = [j for j in managed.active_jobs if j != job_id]
 
     def check_update(self, module_id: str) -> dict[str, Any]:
+        """Local update evidence (store/ref compare). Persists receipt on ManagedModule."""
         managed = self._ensure_instance(module_id)
         assert managed.instance is not None
         previous = managed.status
         try:
             if hasattr(managed.instance, "check_update"):
-                return managed.instance.check_update()
-            return {"module_id": module_id, "update_available": False, "reason": "not_external"}
+                result = managed.instance.check_update()
+            else:
+                result = {"module_id": module_id, "update_available": False, "reason": "not_external"}
+            if not isinstance(result, dict):
+                result = {"module_id": module_id, "update_available": False, "result": result}
+            checked_at = _utc_now()
+            result = {
+                **result,
+                "checked_at": result.get("checked_at") or checked_at,
+                "truth": {
+                    **(result.get("truth") if isinstance(result.get("truth"), dict) else {}),
+                    "update_evidence_persisted_on_manager": True,
+                },
+            }
+            managed.last_update_check = result
+            managed.last_update_check_at = checked_at
+            self._persist_update_evidence(managed, result)
+            return result
         except Exception as exc:
             self._fail_lifecycle(
                 managed, exc, module_id=module_id, action="check_update", previous=previous
@@ -778,17 +1074,83 @@ class ModuleManager:
 
     def public_snapshot(self) -> dict[str, Any]:
         with self._lock:
+            modules_out: list[dict[str, Any]] = []
+            for item in self.list():
+                payload = item.public_dict()
+                # Re-project allowed actions with the live feature flag.
+                action_state = item.allowed_actions(manager_enabled=self.enabled)
+                payload["allowed_actions"] = action_state["allowed"]
+                payload["blocked_reasons"] = action_state["blocked_reasons"]
+                modules_out.append(payload)
             return {
                 "enabled": self.enabled,
-                "modules": [item.public_dict() for item in self.list()],
+                "modules": modules_out,
                 "telemetry": dict(self.telemetry),
                 "discovery_roots": [str(path) for path in self.discovery_roots],
                 "truth": {
                     "module_manager_is_not_execution_gateway": True,
                     "discoverable_is_not_authorized": True,
                     "persisted_running_is_not_live_running": True,
+                    "snapshot_health_is_cached_not_live": True,
+                    "allowed_actions_are_server_projected": True,
                 },
             }
+
+    def _persist_update_evidence(self, managed: ManagedModule, evidence: dict[str, Any]) -> None:
+        """Best-effort persist update-check receipt into external CONTROL store metadata."""
+        try:
+            store = None
+            if managed.instance is not None:
+                store = getattr(managed.instance, "_store", None)
+            if store is None or not hasattr(store, "get_module") or not hasattr(store, "upsert_module"):
+                return
+            module_id = managed.manifest.module_id
+            existing = store.get_module(module_id) or {}
+            metadata = dict(existing.get("metadata") or {})
+            metadata["last_update_check"] = evidence
+            metadata["last_update_check_at"] = evidence.get("checked_at") or _utc_now()
+            store.upsert_module(
+                module_id=module_id,
+                name=str(existing.get("name") or managed.manifest.name),
+                adapter=str(existing.get("adapter") or managed._adapter_name() or "EXTERNAL"),
+                source=existing.get("source") if isinstance(existing.get("source"), dict) else {},
+                desired_state=str(existing.get("desired_state") or managed.desired_state or "STOPPED"),
+                runtime_state=str(existing.get("runtime_state") or managed.status.value),
+                active_version_id=existing.get("active_version_id"),
+                last_error=existing.get("last_error"),
+                capability_count=int(existing.get("capability_count") or len(managed.manifest.capabilities)),
+                metadata=metadata,
+            )
+        except Exception:  # noqa: BLE001 — persistence must not break check_update
+            logger.debug("failed to persist update evidence for %s", managed.manifest.module_id, exc_info=True)
+
+    def hydrate_update_evidence(self, module_id: str) -> dict[str, Any] | None:
+        """Load persisted update evidence from external store into ManagedModule cache."""
+        managed = self.get(module_id)
+        if managed is None:
+            return None
+        if managed.last_update_check is not None:
+            return managed.last_update_check
+        try:
+            store = None
+            if managed.instance is not None:
+                store = getattr(managed.instance, "_store", None)
+            if store is None and hasattr(managed, "manifest"):
+                return None
+            if store is None or not hasattr(store, "get_module"):
+                return None
+            row = store.get_module(module_id) or {}
+            metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+            evidence = metadata.get("last_update_check")
+            if isinstance(evidence, dict):
+                managed.last_update_check = evidence
+                managed.last_update_check_at = (
+                    str(metadata.get("last_update_check_at") or evidence.get("checked_at") or "") or None
+                )
+                return evidence
+        except Exception:  # noqa: BLE001
+            return None
+        return None
 
     def _ensure_instance(self, module_id: str) -> ManagedModule:
         managed = self._require(module_id)

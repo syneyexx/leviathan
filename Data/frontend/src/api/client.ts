@@ -1014,7 +1014,7 @@ export const api = {
 
   moduleInstallPlan(
     moduleId: string,
-    payload: { force?: boolean; ref?: string } = {},
+    payload: { force?: boolean; ref?: string; auto_resolve_dependencies?: boolean } = {},
   ): Promise<Record<string, unknown>> {
     return request(`/api/modules/${encodeURIComponent(moduleId)}/install-plan`, {
       method: "POST",
@@ -1054,8 +1054,40 @@ export const api = {
     return request(`/api/modules/${encodeURIComponent(moduleId)}/capabilities`);
   },
 
-  moduleJobs(moduleId: string): Promise<{ jobs: string[]; count: number }> {
+  moduleJobs(moduleId: string): Promise<{
+    jobs: Array<Record<string, unknown> | string>;
+    active_job_ids?: string[];
+    count: number;
+    truth?: Record<string, boolean>;
+  }> {
     return request(`/api/modules/${encodeURIComponent(moduleId)}/jobs`);
+  },
+
+  moduleActivity(
+    moduleId: string,
+    limit = 20,
+  ): Promise<{
+    module_id: string;
+    events: Array<Record<string, unknown>>;
+    count: number;
+    truth?: Record<string, boolean>;
+  }> {
+    return request(
+      `/api/modules/${encodeURIComponent(moduleId)}/activity?limit=${encodeURIComponent(String(limit))}`,
+    );
+  },
+
+  checkAllModuleUpdates(limit = 50): Promise<{
+    results: Array<Record<string, unknown>>;
+    errors: Array<Record<string, unknown>>;
+    checked: number;
+    error_count: number;
+    snapshot: ModuleSnapshot;
+    truth?: Record<string, boolean>;
+  }> {
+    return request(`/api/modules/check-updates?limit=${encodeURIComponent(String(limit))}`, {
+      method: "POST",
+    });
   },
 
   moduleVersions(moduleId: string): Promise<{ versions: Array<Record<string, unknown>>; count: number }> {

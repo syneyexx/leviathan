@@ -3306,7 +3306,18 @@ export type ModuleSnapshot = {
     error?: string | null;
     active_jobs?: string[];
     health?: Record<string, unknown> | null;
+    health_freshness?: string | null;
+    last_health_at?: string | null;
     last_result?: Record<string, unknown> | null;
+    update_evidence?: Record<string, unknown> | null;
+    last_update_check_at?: string | null;
+    allowed_actions?: Record<string, boolean> | null;
+    blocked_reasons?: Record<string, string> | null;
+    source_type?: string | null;
+    source_ref?: string | null;
+    resource_class?: string | null;
+    isolation?: string | null;
+    declared_side_effects?: string[];
     truth?: Record<string, boolean>;
   }>;
   telemetry?: Record<string, number>;

@@ -7,7 +7,7 @@
  *
  * Exact left-nav groups (nothing else between):
  * Dashboard · LLM · Media Control · Trading Center · Onderzoek & Kennis ·
- * Plugins & Runtime · Instellingen
+ * Runtime & Tools · Instellingen
  */
 
 import { MAIN_MENU, normalizePath, type SubMenuItem } from "./menu";
