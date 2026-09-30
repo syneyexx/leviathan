@@ -43,7 +43,7 @@ export function detailMessage(data: ApiErrorBody | null, status: number): string
     if (body.code === "MODEL_NOT_CHAT_CAPABLE") {
       return "Dit model kan geen chat-antwoorden genereren. Kies een chatmodel of gebruik Auto.";
     }
-    if body.code === "NO_CHAT_MODEL_AVAILABLE" || body.code === "NO_MODEL_ASSIGNED") {
+    if (body.code === "NO_CHAT_MODEL_AVAILABLE" || body.code === "NO_MODEL_ASSIGNED") {
       return "No model is assigned for this request. Configure an active model, role override, or fallback under Models — discovery order is not used.";
     }
     return body.code ? `${body.code}: ${body.message ?? ""}` : String(body.message ?? `Request failed (${status})`);
