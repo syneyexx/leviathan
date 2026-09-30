@@ -1,3 +1,4 @@
+import { DatasetActivityConsole } from "../../pages/datasets/DatasetActivityConsole";
 import type { DatasetsWorkspace } from "../../pages/datasets/useDatasetsWorkspace";
 
 type Props = {
@@ -6,6 +7,84 @@ type Props = {
 
 export function DatasetsModals({ ws }: Props) {
   if (!ws.modal) return null;
+
+  if (ws.modal === "activity") {
+    return (
+      <div
+        className="lv-v2-ds-modal-backdrop"
+        role="presentation"
+        onClick={() => ws.setModal(null)}
+      >
+        <div
+          className="lv-v2-ds-modal lv-v2-ds-modal--wide"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="lv-v2-ds-modal-title"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <h2 id="lv-v2-ds-modal-title">Dataset Activiteit</h2>
+          <DatasetActivityConsole
+            jobs={ws.jobs}
+            entries={ws.activityEntries}
+            preferredJobId={ws.preferredJobId}
+            onPreferredJobIdChange={ws.setPreferredJobId}
+            apiError={ws.jobsError}
+            live={ws.live}
+            busy={ws.busy}
+            onCancelJob={ws.onCancelDatasetJob}
+            onClearView={ws.clearActivityView}
+          />
+          <div className="lv-v2-ds-modal__actions">
+            <button type="button" className="lv-v2-button lv-v2-button--ghost" onClick={() => ws.setModal(null)}>
+              Sluiten
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (ws.modal === "health") {
+    return (
+      <div
+        className="lv-v2-ds-modal-backdrop"
+        role="presentation"
+        onClick={() => ws.setModal(null)}
+      >
+        <div
+          className="lv-v2-ds-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="lv-v2-ds-modal-title"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <h2 id="lv-v2-ds-modal-title">Dataset Health</h2>
+          <p className="lv-v2-muted">
+            Health blijft beschikbaar als secondary surface — niet als vijfde bottom card.
+          </p>
+          <ul className="lv-v2-ds-health">
+            {ws.healthItems.map((item) => (
+              <li key={item.id}>
+                <span className="lv-v2-ds-health__label">{item.label}</span>
+                <span className={`lv-v2-ds-health__pct is-${item.tone}`}>
+                  {item.pct == null ? "UNMEASURED" : `${item.pct}%`}
+                </span>
+                {item.hint ? <span className="lv-v2-ds-health__hint">{item.hint}</span> : null}
+                <div className={`lv-v2-ds-health__bar is-${item.tone}`}>
+                  <i style={{ width: `${item.pct ?? 0}%` }} />
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="lv-v2-ds-modal__actions">
+            <button type="button" className="lv-v2-button lv-v2-button--ghost" onClick={() => ws.setModal(null)}>
+              Sluiten
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -22,11 +101,11 @@ export function DatasetsModals({ ws }: Props) {
       >
         {ws.modal === "create" ? (
           <>
-            <h2 id="lv-v2-ds-modal-title">Create Dataset</h2>
-            <p>Register an empty dataset shell in LEVIATHAN.</p>
+            <h2 id="lv-v2-ds-modal-title">Nieuwe dataset</h2>
+            <p>Registreer een lege dataset shell in LEVIATHAN.</p>
             <div className="lv-v2-ds-form">
               <label>
-                Name
+                Naam
                 <input
                   value={ws.createName}
                   onChange={(e) => ws.setCreateName(e.target.value)}
@@ -35,12 +114,12 @@ export function DatasetsModals({ ws }: Props) {
                 />
               </label>
               <label>
-                Description
+                Beschrijving
                 <textarea value={ws.createDesc} onChange={(e) => ws.setCreateDesc(e.target.value)} />
               </label>
               <div className="lv-v2-ds-modal__actions">
                 <button type="button" className="lv-v2-button lv-v2-button--ghost" disabled={ws.busy} onClick={() => ws.setModal(null)}>
-                  Cancel
+                  Annuleren
                 </button>
                 <button
                   type="button"
@@ -48,7 +127,7 @@ export function DatasetsModals({ ws }: Props) {
                   disabled={ws.busy}
                   onClick={() => void ws.onCreate()}
                 >
-                  Create
+                  Aanmaken
                 </button>
               </div>
             </div>
@@ -57,18 +136,18 @@ export function DatasetsModals({ ws }: Props) {
 
         {ws.modal === "import" ? (
           <>
-            <h2 id="lv-v2-ds-modal-title">Import Dataset</h2>
-            <p>Upload a file or import from a local absolute path (Windows first-class).</p>
+            <h2 id="lv-v2-ds-modal-title">Importeren</h2>
+            <p>Upload een bestand of importeer vanaf een lokaal absoluut pad (Windows first-class).</p>
             <div className="lv-v2-ds-form">
               <label>
-                Upload file
+                Upload bestand
                 <input
                   type="file"
                   onChange={(e) => ws.setUploadFile(e.target.files?.[0] ?? null)}
                 />
               </label>
               <label>
-                Optional name
+                Optionele naam
                 <input value={ws.createName} onChange={(e) => ws.setCreateName(e.target.value)} />
               </label>
               <div className="lv-v2-ds-modal__actions">
@@ -78,12 +157,12 @@ export function DatasetsModals({ ws }: Props) {
                   disabled={ws.busy || !ws.uploadFile}
                   onClick={() => void ws.onUpload()}
                 >
-                  Upload
+                  Uploaden
                 </button>
               </div>
               <hr />
               <label>
-                Local absolute path
+                Lokaal absoluut pad
                 <input
                   value={ws.localPath}
                   onChange={(e) => ws.setLocalPath(e.target.value)}
@@ -91,12 +170,12 @@ export function DatasetsModals({ ws }: Props) {
                 />
               </label>
               <label>
-                Optional name
+                Optionele naam
                 <input value={ws.localName} onChange={(e) => ws.setLocalName(e.target.value)} />
               </label>
               <div className="lv-v2-ds-modal__actions">
                 <button type="button" className="lv-v2-button lv-v2-button--ghost" disabled={ws.busy} onClick={() => ws.setModal(null)}>
-                  Cancel
+                  Annuleren
                 </button>
                 <button
                   type="button"
@@ -104,7 +183,7 @@ export function DatasetsModals({ ws }: Props) {
                   disabled={ws.busy}
                   onClick={() => void ws.onImportLocal()}
                 >
-                  Import path
+                  Pad importeren
                 </button>
               </div>
             </div>
@@ -113,8 +192,8 @@ export function DatasetsModals({ ws }: Props) {
 
         {ws.modal === "hf" ? (
           <>
-            <h2 id="lv-v2-ds-modal-title">Connect Hugging Face</h2>
-            <p>Queue a Hugging Face repository import through DatasetService. Token is never logged.</p>
+            <h2 id="lv-v2-ds-modal-title">Externe bron — Hugging Face</h2>
+            <p>Queue een Hugging Face repository import via DatasetService. Token wordt nooit gelogd.</p>
             <div className="lv-v2-ds-form">
               <label>
                 Repository id
@@ -130,7 +209,7 @@ export function DatasetsModals({ ws }: Props) {
                 <input value={ws.hfRevision} onChange={(e) => ws.setHfRevision(e.target.value)} />
               </label>
               <label>
-                Access token (optional)
+                Access token (optioneel)
                 <input
                   type="password"
                   autoComplete="off"
@@ -140,7 +219,7 @@ export function DatasetsModals({ ws }: Props) {
               </label>
               <div className="lv-v2-ds-modal__actions">
                 <button type="button" className="lv-v2-button lv-v2-button--ghost" disabled={ws.busy} onClick={() => ws.setModal(null)}>
-                  Cancel
+                  Annuleren
                 </button>
                 <button
                   type="button"
@@ -148,7 +227,7 @@ export function DatasetsModals({ ws }: Props) {
                   disabled={ws.busy}
                   onClick={() => void ws.onImportHf()}
                 >
-                  Import
+                  Importeren
                 </button>
               </div>
             </div>

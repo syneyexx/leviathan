@@ -152,6 +152,8 @@ class DatasetStore:
         result = self.query_datasets(limit=limit, offset=0)
         return result["items"]
 
+    _LOCAL_SOURCE_TYPES = ("local", "upload", "path", "file", "local_upload")
+
     def query_datasets(
         self,
         *,
@@ -160,6 +162,8 @@ class DatasetStore:
         q: str | None = None,
         status: str | None = None,
         source_type: str | None = None,
+        source_scope: str | None = None,
+        indexed: bool | None = None,
         detected_format: str | None = None,
         category: str | None = None,
         tags: str | None = None,
@@ -200,6 +204,33 @@ class DatasetStore:
         if source_type and str(source_type).strip():
             clauses.append("lower(source_type) = ?")
             params.append(str(source_type).strip().lower())
+
+        scope = (source_scope or "").strip().lower()
+        if scope == "local":
+            placeholders = ", ".join("?" for _ in self._LOCAL_SOURCE_TYPES)
+            clauses.append(f"lower(source_type) IN ({placeholders})")
+            params.extend(self._LOCAL_SOURCE_TYPES)
+        elif scope == "external":
+            placeholders = ", ".join("?" for _ in self._LOCAL_SOURCE_TYPES)
+            clauses.append(f"lower(source_type) NOT IN ({placeholders})")
+            params.extend(self._LOCAL_SOURCE_TYPES)
+
+        if indexed is True:
+            clauses.append(
+                """EXISTS (
+                    SELECT 1 FROM dataset_indexes i
+                    WHERE i.dataset_id = datasets.dataset_id
+                      AND lower(i.status) = 'ready'
+                )"""
+            )
+        elif indexed is False:
+            clauses.append(
+                """NOT EXISTS (
+                    SELECT 1 FROM dataset_indexes i
+                    WHERE i.dataset_id = datasets.dataset_id
+                      AND lower(i.status) = 'ready'
+                )"""
+            )
 
         if detected_format and str(detected_format).strip():
             clauses.append("lower(COALESCE(detected_format, '')) = ?")
@@ -338,6 +369,21 @@ class DatasetStore:
                     DatasetJobStatus.RUNNING.value,
                 ),
             ).fetchall()
+            local_placeholders = ", ".join("?" for _ in self._LOCAL_SOURCE_TYPES)
+            local_count = int(
+                conn.execute(
+                    f"SELECT COUNT(*) FROM datasets WHERE lower(source_type) IN ({local_placeholders})",
+                    self._LOCAL_SOURCE_TYPES,
+                ).fetchone()[0]
+            )
+            indexed_count = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(DISTINCT dataset_id) FROM dataset_indexes
+                    WHERE lower(status) = 'ready'
+                    """
+                ).fetchone()[0]
+            )
 
         row_measured = int(measured_rows["measured"] or 0)
         byte_measured = int(measured_bytes["measured"] or 0)
@@ -385,6 +431,10 @@ class DatasetStore:
             "queuedImports": import_queued,
             "exportVersionCount": export_count,
             "bytesByVersionKind": by_kind,
+            "localDatasets": local_count,
+            "externalDatasets": max(0, total - local_count),
+            "indexedDatasets": indexed_count,
+            "notIndexedDatasets": max(0, total - indexed_count),
         }
 
     def aggregate_tag_counts(self, *, limit: int = 40) -> list[dict[str, Any]]:

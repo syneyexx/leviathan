@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
-import type { DhEmbedding, DhRow } from "../../mocks/datasets-dashboard";
-import { sourceGlyph, statusLabel } from "../../pages/datasets/datasetsMapping";
+import type { DhEmbedding, DhRow } from "../../pages/datasets/constants";
+import { rowStatusLabel, sourceGlyph } from "../../pages/datasets/datasetsMapping";
 import type { DatasetsWorkspace } from "../../pages/datasets/useDatasetsWorkspace";
 import { EmptyState, LoadingState } from "../ui";
 
@@ -8,47 +8,50 @@ type Props = {
   ws: DatasetsWorkspace;
 };
 
-function EmbeddingsCell({ emb }: { emb: DhEmbedding }) {
-  if (emb.kind === "indexed") {
-    return (
-      <span className="lv-v2-ds-embed is-indexed">
-        <i aria-hidden="true" />
-        Indexed
-      </span>
-    );
-  }
+function typeClass(type: string): string {
+  const t = type.toLowerCase();
+  if (t.includes("tabel") || t.includes("struct")) return "structured";
+  if (t.includes("doc")) return "document";
+  if (t.includes("tekst") || t.includes("text")) return "text";
+  if (t.includes("code")) return "code";
+  if (t.includes("json")) return "code";
+  if (t.includes("beeld") || t.includes("image") || t.includes("multi")) return "multimodal";
+  return "text";
+}
+
+function statusClass(row: DhRow): string {
+  if (row.embeddings.kind === "indexed" && row.status === "ready") return "ready";
+  if (row.embeddings.kind === "indexing" || row.embeddings.kind === "queued") return "validating";
+  return row.status;
+}
+
+function EmbeddingsHint({ emb }: { emb: DhEmbedding }) {
   if (emb.kind === "indexing") {
     const known = emb.pct >= 0;
     return (
-      <div
-        className="lv-v2-ds-embed-progress"
-        aria-label={known ? `Indexing ${emb.pct}%` : "Indexing (progress unmeasured)"}
-      >
-        <span>{known ? `Indexing ${emb.pct}%` : "Indexing…"}</span>
-        <div className={`lv-v2-ds-bar${known ? "" : " is-indeterminate"}`}>
-          <i style={known ? { width: `${emb.pct}%` } : undefined} />
-        </div>
-      </div>
+      <span className="lv-sr-only">
+        {known ? `Indexing ${emb.pct}%` : "Indexing (progress unmeasured)"}
+      </span>
     );
   }
-  const label =
-    emb.kind === "not_indexed" ? "Not indexed" : emb.kind === "queued" ? "Queued" : "Pending";
-  return <span className="lv-v2-ds-embed is-muted">{label}</span>;
+  return null;
 }
 
 function RowMenu({ row, ws }: { row: DhRow; ws: DatasetsWorkspace }) {
   if (ws.menuFor !== row.id) return null;
   return (
     <div className="lv-v2-ds-menu" ref={ws.menuRef} role="menu">
-      <button type="button" role="menuitem" onClick={() => void ws.onIndex(row.id)}>
-        Index embeddings
+      <button type="button" role="menuitem" onClick={() => ws.openInAnalyse(row.id)}>
+        Openen in Analyse
       </button>
-      <Link
-        role="menuitem"
-        to="/offline-datasets"
-        onClick={() => ws.setMenuFor(null)}
-      >
-        Open offline view
+      <button type="button" role="menuitem" onClick={() => void ws.onIndex(row.id)}>
+        Indexeren
+      </button>
+      <button type="button" role="menuitem" onClick={() => void ws.onExportDownload(row.id)}>
+        Downloaden / Exporteren
+      </button>
+      <Link role="menuitem" to="/offline-datasets" onClick={() => ws.setMenuFor(null)}>
+        Offline weergave
       </Link>
       <button
         type="button"
@@ -56,7 +59,7 @@ function RowMenu({ row, ws }: { row: DhRow; ws: DatasetsWorkspace }) {
         className="is-danger"
         onClick={() => void ws.onDelete(row.id)}
       >
-        Delete
+        Verwijderen
       </button>
     </div>
   );
@@ -65,11 +68,12 @@ function RowMenu({ row, ws }: { row: DhRow; ws: DatasetsWorkspace }) {
 export function DatasetsInventory({ ws }: Props) {
   const allSelected =
     ws.filteredRows.length > 0 && ws.filteredRows.every((r) => ws.selectedIds.has(r.id));
+  const col = (id: string) => ws.visibleColumns.has(id as never);
 
   if (ws.loading && ws.liveRows.length === 0) {
     return (
       <section className="lv-v2-panel lv-v2-ds-inventory" aria-label="Datasets inventory" data-testid="datasets-inventory">
-        <LoadingState label="Loading datasets…" />
+        <LoadingState label="Datasets laden…" />
       </section>
     );
   }
@@ -78,8 +82,8 @@ export function DatasetsInventory({ ws }: Props) {
     return (
       <section className="lv-v2-panel lv-v2-ds-inventory" aria-label="Datasets inventory" data-testid="datasets-inventory">
         <EmptyState
-          title="No datasets yet"
-          detail="Create, upload, or import a dataset to populate this inventory."
+          title="Nog geen datasets"
+          detail="Maak, upload of importeer een dataset om de inventaris te vullen."
         />
       </section>
     );
@@ -88,7 +92,7 @@ export function DatasetsInventory({ ws }: Props) {
   if (!ws.loading && ws.filteredRows.length === 0) {
     return (
       <section className="lv-v2-panel lv-v2-ds-inventory" aria-label="Datasets inventory" data-testid="datasets-inventory">
-        <EmptyState title="No datasets match these filters." detail="Adjust search, type, or updated filters." />
+        <EmptyState title="Geen datasets matchen deze filters." detail="Pas zoekopdracht, type of periode aan." />
       </section>
     );
   }
@@ -105,7 +109,7 @@ export function DatasetsInventory({ ws }: Props) {
               onClick={() => ws.setActiveId(row.id)}
             >
               <div className="lv-v2-ds-card__top">
-                <span className={`lv-v2-ds-status is-${row.status}`}>{statusLabel(row.status)}</span>
+                <span className={`lv-v2-ds-status is-${statusClass(row)}`}>{rowStatusLabel(row)}</span>
                 <span className="lv-v2-ds-source">
                   <span className={`lv-v2-ds-source-ico is-${row.sourceKind}`}>{sourceGlyph(row.sourceKind)}</span>
                   {row.source}
@@ -117,11 +121,11 @@ export function DatasetsInventory({ ws }: Props) {
                 <span>{row.type}</span>
                 <span>{row.size}</span>
                 <span>{row.records}</span>
-                <EmbeddingsCell emb={row.embeddings} />
               </div>
             </button>
           ))}
         </div>
+        <Pagination ws={ws} />
       </section>
     );
   }
@@ -138,18 +142,17 @@ export function DatasetsInventory({ ws }: Props) {
                   className="lv-v2-ds-check"
                   checked={allSelected}
                   onChange={() => ws.toggleSelectAll()}
-                  aria-label="Select all visible datasets"
+                  aria-label="Selecteer alle zichtbare datasets"
                 />
               </th>
-              <th>Name</th>
-              <th>Source</th>
-              <th>Type</th>
-              <th>Size</th>
-              <th>Records</th>
-              <th>Status</th>
-              <th>Embeddings</th>
-              <th>Last Updated</th>
-              <th>Actions</th>
+              {col("name") ? <th>Naam</th> : null}
+              {col("type") ? <th>Type</th> : null}
+              {col("source") ? <th>Bron</th> : null}
+              {col("size") ? <th>Grootte</th> : null}
+              {col("records") ? <th>Records</th> : null}
+              {col("status") ? <th>Status</th> : null}
+              {col("updated") ? <th>Laatst gewijzigd</th> : null}
+              {col("actions") ? <th>Acties</th> : null}
             </tr>
           </thead>
           <tbody>
@@ -165,55 +168,123 @@ export function DatasetsInventory({ ws }: Props) {
                     className="lv-v2-ds-check"
                     checked={ws.selectedIds.has(row.id)}
                     onChange={() => ws.toggleSelected(row.id)}
-                    aria-label={`Select ${row.name}`}
+                    aria-label={`Selecteer ${row.name}`}
                   />
                 </td>
-                <td>
-                  <div className="lv-v2-ds-name">
-                    <strong>{row.name}</strong>
-                    <span>{row.description}</span>
-                  </div>
-                </td>
-                <td>
-                  <span className="lv-v2-ds-source">
-                    <span className={`lv-v2-ds-source-ico is-${row.sourceKind}`} aria-hidden="true">
-                      {sourceGlyph(row.sourceKind)}
+                {col("name") ? (
+                  <td>
+                    <div className="lv-v2-ds-name">
+                      <strong>{row.name}</strong>
+                      <span>{row.description}</span>
+                    </div>
+                  </td>
+                ) : null}
+                {col("type") ? (
+                  <td>
+                    <span className={`lv-v2-ds-type is-${typeClass(row.type)}`}>{row.type}</span>
+                  </td>
+                ) : null}
+                {col("source") ? (
+                  <td>
+                    <span className="lv-v2-ds-source">
+                      <span className={`lv-v2-ds-source-ico is-${row.sourceKind}`} aria-hidden="true">
+                        {sourceGlyph(row.sourceKind)}
+                      </span>
+                      {row.source}
                     </span>
-                    {row.source}
-                  </span>
-                </td>
-                <td>
-                  <span className={`lv-v2-ds-type is-${row.type.toLowerCase()}`}>{row.type}</span>
-                </td>
-                <td>{row.size}</td>
-                <td>{row.records}</td>
-                <td>
-                  <span className={`lv-v2-ds-status is-${row.status}`}>
-                    <i aria-hidden="true" />
-                    {statusLabel(row.status)}
-                  </span>
-                </td>
-                <td>
-                  <EmbeddingsCell emb={row.embeddings} />
-                </td>
-                <td>{row.updated}</td>
-                <td onClick={(e) => e.stopPropagation()} className="lv-v2-ds-actions-cell">
-                  <button
-                    type="button"
-                    className="lv-v2-ds-more"
-                    aria-label={`Actions for ${row.name}`}
-                    aria-expanded={ws.menuFor === row.id}
-                    onClick={() => ws.setMenuFor(ws.menuFor === row.id ? null : row.id)}
-                  >
-                    ⋯
-                  </button>
-                  <RowMenu row={row} ws={ws} />
-                </td>
+                  </td>
+                ) : null}
+                {col("size") ? <td>{row.size}</td> : null}
+                {col("records") ? <td>{row.records}</td> : null}
+                {col("status") ? (
+                  <td>
+                    <span className={`lv-v2-ds-status is-${statusClass(row)}`}>
+                      <i aria-hidden="true" />
+                      {rowStatusLabel(row)}
+                      <EmbeddingsHint emb={row.embeddings} />
+                    </span>
+                  </td>
+                ) : null}
+                {col("updated") ? <td>{row.updated}</td> : null}
+                {col("actions") ? (
+                  <td onClick={(e) => e.stopPropagation()} className="lv-v2-ds-actions-cell">
+                    <button
+                      type="button"
+                      className="lv-v2-ds-icon-btn"
+                      aria-label={`Open ${row.name}`}
+                      title="Open detail"
+                      onClick={() => ws.setActiveId(row.id)}
+                    >
+                      ⌕
+                    </button>
+                    <button
+                      type="button"
+                      className="lv-v2-ds-icon-btn"
+                      aria-label={`Index ${row.name}`}
+                      title="Indexeren"
+                      onClick={() => void ws.onIndex(row.id)}
+                    >
+                      ◎
+                    </button>
+                    <button
+                      type="button"
+                      className="lv-v2-ds-icon-btn"
+                      aria-label={`Analyse ${row.name}`}
+                      title="Openen in Analyse"
+                      onClick={() => ws.openInAnalyse(row.id)}
+                    >
+                      ⌁
+                    </button>
+                    <button
+                      type="button"
+                      className="lv-v2-ds-more"
+                      aria-label={`Acties voor ${row.name}`}
+                      aria-expanded={ws.menuFor === row.id}
+                      onClick={() => ws.setMenuFor(ws.menuFor === row.id ? null : row.id)}
+                    >
+                      ⋯
+                    </button>
+                    <RowMenu row={row} ws={ws} />
+                  </td>
+                ) : null}
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      <Pagination ws={ws} />
     </section>
+  );
+}
+
+function Pagination({ ws }: { ws: DatasetsWorkspace }) {
+  const total = ws.catalogTotal ?? ws.filteredRows.length;
+  const from = total === 0 ? 0 : ws.offset + 1;
+  const to = Math.min(ws.offset + ws.filteredRows.length, total);
+  return (
+    <div className="lv-v2-ds-pager" aria-label="Inventaris paginering">
+      <span>
+        {from}–{to} van {total}
+        {ws.hasMore || ws.offset > 0 ? " (pagina)" : ""}
+      </span>
+      <div>
+        <button
+          type="button"
+          className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm"
+          disabled={ws.offset <= 0 || ws.busy}
+          onClick={() => ws.goPage(Math.max(0, ws.offset - ws.pageSize))}
+        >
+          Vorige
+        </button>
+        <button
+          type="button"
+          className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm"
+          disabled={!ws.hasMore || ws.busy}
+          onClick={() => ws.goPage(ws.offset + ws.pageSize)}
+        >
+          Volgende
+        </button>
+      </div>
+    </div>
   );
 }

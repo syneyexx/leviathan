@@ -1865,6 +1865,8 @@ export const api = {
       status?: string;
       source?: string;
       sourceType?: string;
+      sourceScope?: "local" | "external";
+      indexed?: boolean;
       type?: string;
       detectedFormat?: string;
       category?: string;
@@ -1891,6 +1893,8 @@ export const api = {
     if (params?.status) sp.set("status", params.status);
     if (params?.source) sp.set("source", params.source);
     if (params?.sourceType) sp.set("sourceType", params.sourceType);
+    if (params?.sourceScope) sp.set("sourceScope", params.sourceScope);
+    if (params?.indexed != null) sp.set("indexed", params.indexed ? "true" : "false");
     if (params?.type) sp.set("type", params.type);
     if (params?.detectedFormat) sp.set("detectedFormat", params.detectedFormat);
     if (params?.category) sp.set("category", params.category);
@@ -1900,6 +1904,25 @@ export const api = {
     if (params?.includeBrain === false) sp.set("includeBrain", "false");
     if (params?.includeQuality === false) sp.set("includeQuality", "false");
     return request(`/api/datasets?${sp.toString()}`);
+  },
+
+  bulkIndexDatasets(payload: {
+    datasetIds: string[];
+    rebuild?: boolean;
+  }): Promise<import("../types/api").DatasetBulkResult> {
+    return request("/api/datasets/bulk/index", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  bulkMaterializeDatasets(payload: {
+    datasetIds: string[];
+  }): Promise<import("../types/api").DatasetBulkResult> {
+    return request("/api/datasets/bulk/materialize", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   },
 
   getDatasetsOverview(): Promise<{ overview: DatasetOverview }> {

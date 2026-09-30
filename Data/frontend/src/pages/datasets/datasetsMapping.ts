@@ -8,7 +8,7 @@ import type {
   DhRow,
   DhSourceKind,
   DhStatus,
-} from "../../mocks/datasets-dashboard";
+} from "./constants";
 import type { DatasetJob, DatasetRecord } from "../../types/api";
 
 export function formatBytes(bytes: number | null | undefined): string {
@@ -53,7 +53,7 @@ export function mapSourceKind(sourceType: string): DhSourceKind {
 
 export function mapSourceLabel(sourceType: string, kind: DhSourceKind): string {
   if (kind === "huggingface") return "Hugging Face";
-  if (kind === "local") return "Local";
+  if (kind === "local") return "Lokaal";
   if (kind === "curated") return "Curated";
   if (kind === "arxiv") return "arXiv";
   if (kind === "ncbi") return "NCBI";
@@ -97,28 +97,39 @@ export function mapStatus(status: string): DhStatus {
 }
 
 export function statusLabel(status: DhStatus): string {
-  if (status === "ready") return "Ready";
+  if (status === "ready") return "Gereed";
   if (status === "offline") return "Offline";
-  if (status === "validating") return "Validating";
-  if (status === "failed") return "Failed";
-  if (status === "cancelled") return "Cancelled";
+  if (status === "validating") return "Valideren";
+  if (status === "failed") return "Mislukt";
+  if (status === "cancelled") return "Geannuleerd";
   if (status === "unknown") return "UNKNOWN";
-  return "Processing";
+  return "Verwerking";
+}
+
+/** Combined row status chip — prefers index state when that is the operator signal. */
+export function rowStatusLabel(row: DhRow): string {
+  if (row.embeddings.kind === "indexed" && row.status === "ready") return "Geïndexeerd";
+  if (row.embeddings.kind === "indexing") return "Indexeren";
+  if (row.embeddings.kind === "queued") return "Indexeren";
+  return statusLabel(row.status);
 }
 
 export function mapType(ds: DatasetRecord): string {
   const fmt = (ds.detectedFormat ?? "").toLowerCase();
-  if (fmt.includes("csv") || fmt.includes("tsv") || fmt.includes("parquet")) return "Structured";
-  if (fmt.includes("pdf") || fmt.includes("md") || fmt.includes("doc")) return "Document";
+  if (fmt.includes("csv") || fmt.includes("tsv") || fmt.includes("parquet")) return "Tabel";
+  if (fmt.includes("json")) return "JSON";
+  if (fmt.includes("pdf") || fmt.includes("md") || fmt.includes("doc")) return "Documenten";
   if (fmt.includes("code") || fmt.includes("py") || fmt.includes("js")) return "Code";
-  if (fmt.includes("image") || fmt.includes("multi")) return "Multimodal";
-  if (fmt) return "Text";
+  if (fmt.includes("image") || fmt.includes("png") || fmt.includes("jpg")) return "Afbeeldingen";
+  if (fmt.includes("multi")) return "Multimodal";
+  if (fmt) return "Tekst";
   const meta = ds.metadata as Record<string, unknown> | undefined;
   const task = String(meta?.taskType ?? meta?.type ?? "").toLowerCase();
-  if (task.includes("struct")) return "Structured";
+  if (task.includes("struct") || task.includes("table")) return "Tabel";
   if (task.includes("code")) return "Code";
-  if (task.includes("doc")) return "Document";
-  return "Text";
+  if (task.includes("doc")) return "Documenten";
+  if (task.includes("image")) return "Afbeeldingen";
+  return "Tekst";
 }
 
 export function embeddingsForDataset(ds: DatasetRecord, jobs: DatasetJob[]): DhEmbedding {
@@ -300,6 +311,9 @@ export function sourceGlyph(kind: DhSourceKind): string {
 export function filterIcon(icon: string): string {
   if (icon === "grid") return "▦";
   if (icon === "folder") return "▤";
+  if (icon === "external") return "⧉";
+  if (icon === "indexed") return "◎";
+  if (icon === "pending") return "○";
   if (icon === "hf") return "HF";
   if (icon === "shield") return "⛨";
   if (icon === "offline") return "⊘";

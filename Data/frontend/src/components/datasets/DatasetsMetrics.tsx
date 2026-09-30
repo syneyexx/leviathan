@@ -5,10 +5,10 @@ type Props = {
   ws: DatasetsWorkspace;
 };
 
-function MetricBars({ heights, className = "" }: { heights: number[]; className?: string }) {
+function MetricBars({ heights }: { heights: number[] }) {
   const max = Math.max(1, ...heights);
   return (
-    <div className={`lv-v2-metric-card__chart lv-v2-ds-metric-bars ${className}`} aria-hidden="true">
+    <div className="lv-v2-metric-card__chart lv-v2-ds-metric-bars" aria-hidden="true">
       {heights.map((h, i) => (
         <span
           key={i}
@@ -20,7 +20,7 @@ function MetricBars({ heights, className = "" }: { heights: number[]; className?
   );
 }
 
-/** Deterministic spark from a scalar — not decorative fake history. */
+/** Deterministic spark from a scalar — decorative only, not historical truth. */
 function sparkFromValue(n: number): number[] {
   const base = Math.max(0, n);
   return [0.35, 0.45, 0.5, 0.55, 0.65, 0.75, 1].map((f) => Math.max(1, Math.round(base * f)));
@@ -33,45 +33,47 @@ export function DatasetsMetrics({ ws }: Props) {
   const cards = [
     {
       id: "total",
-      label: "Total Datasets",
+      label: "Totaal Datasets",
       value: String(m.total),
-      sublabel: ws.overviewError ? "Overview unavailable" : `${ws.filterCounts.all} in inventory page`,
+      sublabel: ws.overviewError
+        ? "Overview unavailable"
+        : `Pagina ${m.inventoryPageSize} van ${m.catalogTotal}`,
       spark: sparkFromValue(m.total),
       variant: "system" as const,
     },
     {
       id: "local",
-      label: "Local Datasets",
+      label: "Lokale Datasets",
       value: String(m.local),
-      sublabel: m.localPct != null ? `${m.localPct}% of total` : "—",
+      sublabel: m.localPct != null ? `${m.localPct}% van totaal` : "—",
       spark: sparkFromValue(m.local),
       variant: "agents" as const,
     },
     {
       id: "external",
-      label: "External Sources",
+      label: "Externe Bronnen",
       value: String(m.external),
-      sublabel: m.externalPct != null ? `${m.externalPct}% of total` : "—",
+      sublabel: m.externalPct != null ? `${m.externalPct}% van totaal` : "—",
       spark: sparkFromValue(m.external),
       variant: "jobs" as const,
     },
     {
       id: "size",
-      label: "Total Size",
+      label: "Totaal Grootte",
       value: m.sizeLabel,
       sublabel: m.sizeUnmeasured
-        ? "Partial — some datasets unmeasured"
+        ? "Partieel — sommige datasets unmeasured"
         : m.capacityLabel
-          ? `of ${m.capacityLabel}`
-          : "Attributable inventory bytes",
+          ? `van ${m.capacityLabel}`
+          : "Attributabele inventory bytes",
       spark: sparkFromValue(m.total || 1),
       variant: "research" as const,
     },
     {
       id: "indexed",
-      label: "Indexed",
+      label: "Geïndexeerd",
       value: String(m.indexed),
-      sublabel: m.indexedPct != null ? `${m.indexedPct}% of inventory` : "—",
+      sublabel: m.indexedPct != null ? `${m.indexedPct}% van totaal` : "—",
       spark: sparkFromValue(m.indexed),
       variant: "trading" as const,
     },

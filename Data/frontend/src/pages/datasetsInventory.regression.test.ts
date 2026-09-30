@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import type { DhRow } from "../mocks/datasets-dashboard";
+import type { DhRow } from "./datasets/constants";
 import {
   countDatasetsByFilter,
   filterDatasetRows,
@@ -17,7 +17,7 @@ function row(partial: Partial<DhRow> & Pick<DhRow, "id" | "name">): DhRow {
     description: "",
     source: "Local",
     sourceKind: "local",
-    type: "Text",
+    type: "Tekst",
     size: "1 MB",
     records: "10",
     status: "ready",
@@ -28,18 +28,33 @@ function row(partial: Partial<DhRow> & Pick<DhRow, "id" | "name">): DhRow {
   };
 }
 
-/** Seven HF-shaped rows mirroring the reported live inventory size. */
 function sampleInventory(): DhRow[] {
   return [
-    row({ id: "1", name: "allenai/c4", sourceKind: "huggingface", source: "Hugging Face", type: "Text", updatedAt: "2026-09-30T12:00:00Z" }),
-    row({ id: "2", name: "wikitext", sourceKind: "huggingface", source: "Hugging Face", type: "Text", updatedAt: "2026-09-29T12:00:00Z" }),
+    row({
+      id: "1",
+      name: "allenai/c4",
+      sourceKind: "huggingface",
+      source: "Hugging Face",
+      type: "Tekst",
+      embeddings: { kind: "indexed" },
+      updatedAt: "2026-09-30T12:00:00Z",
+    }),
+    row({
+      id: "2",
+      name: "wikitext",
+      sourceKind: "huggingface",
+      source: "Hugging Face",
+      type: "Tekst",
+      embeddings: { kind: "indexed" },
+      updatedAt: "2026-09-29T12:00:00Z",
+    }),
     row({
       id: "3",
       name: "local-corpus",
       sourceKind: "local",
       source: "Local",
       status: "offline",
-      type: "Document",
+      type: "Documenten",
       updatedAt: "2026-09-01T12:00:00Z",
     }),
     row({
@@ -47,7 +62,8 @@ function sampleInventory(): DhRow[] {
       name: "curated-bench",
       sourceKind: "curated",
       source: "Curated",
-      type: "Structured",
+      type: "Tabel",
+      embeddings: { kind: "indexed" },
       updatedAt: "2026-09-28T12:00:00Z",
     }),
     row({
@@ -64,7 +80,7 @@ function sampleInventory(): DhRow[] {
       name: "hf-docs",
       sourceKind: "huggingface",
       source: "Hugging Face",
-      type: "Document",
+      type: "Documenten",
       status: "validating",
       updatedAt: "2026-09-20T12:00:00Z",
     }),
@@ -86,21 +102,21 @@ describe("datasets inventory filters (live rows)", () => {
     expect(filtered).toHaveLength(7);
   });
 
-  it("Hugging Face filter keeps only HF sourceKind rows", () => {
-    const filtered = filterDatasetRows(sampleInventory(), { filter: "huggingface" });
-    expect(filtered).toHaveLength(5);
-    expect(filtered.every((r) => r.sourceKind === "huggingface")).toBe(true);
+  it("External filter keeps non-local sourceKind rows", () => {
+    const filtered = filterDatasetRows(sampleInventory(), { filter: "external" });
+    expect(filtered).toHaveLength(6);
+    expect(filtered.every((r) => r.sourceKind !== "local")).toBe(true);
   });
 
-  it("Local / Curated / Offline / Processing filters work", () => {
+  it("Local / Indexed / Not indexed filters work", () => {
     const rows = sampleInventory();
     expect(filterDatasetRows(rows, { filter: "local" }).map((r) => r.id)).toEqual(["3"]);
-    expect(filterDatasetRows(rows, { filter: "curated" }).map((r) => r.id)).toEqual(["4"]);
-    expect(filterDatasetRows(rows, { filter: "offline" }).map((r) => r.id)).toEqual(["3"]);
-    expect(filterDatasetRows(rows, { filter: "processing" }).map((r) => r.id).sort()).toEqual([
-      "5",
-      "6",
+    expect(filterDatasetRows(rows, { filter: "indexed" }).map((r) => r.id).sort()).toEqual([
+      "1",
+      "2",
+      "4",
     ]);
+    expect(filterDatasetRows(rows, { filter: "not_indexed" })).toHaveLength(4);
   });
 
   it("search filters visible datasets by name without inventing names", () => {
@@ -108,14 +124,13 @@ describe("datasets inventory filters (live rows)", () => {
     expect(filtered.map((r) => r.name)).toEqual(["wikitext"]);
   });
 
-  it("pill counts match live row kinds/statuses", () => {
+  it("pill counts match live row kinds/index state", () => {
     const counts = countDatasetsByFilter(sampleInventory());
     expect(counts.all).toBe(7);
-    expect(counts.huggingface).toBe(5);
     expect(counts.local).toBe(1);
-    expect(counts.curated).toBe(1);
-    expect(counts.offline).toBe(1);
-    expect(counts.processing).toBe(2);
+    expect(counts.external).toBe(6);
+    expect(counts.indexed).toBe(3);
+    expect(counts.not_indexed).toBe(4);
   });
 
   it("matchesDatasetFilter treats all as pass-through", () => {
@@ -129,7 +144,7 @@ describe("datasets inventory filters (live rows)", () => {
       filterDatasetRows(rows, { filter: "all", updatedFilter: "Last 24 hours", nowMs }).map((r) => r.id).sort(),
     ).toEqual(["1", "5"]);
     expect(
-      filterDatasetRows(rows, { filter: "all", updatedFilter: "Last 7 days", nowMs }).map((r) => r.id).sort(),
+      filterDatasetRows(rows, { filter: "all", updatedFilter: "Laatste 7 dagen", nowMs }).map((r) => r.id).sort(),
     ).toEqual(["1", "2", "4", "5"]);
     expect(
       filterDatasetRows(rows, { filter: "all", updatedFilter: "Last 30 days", nowMs }).map((r) => r.id).sort(),
@@ -137,7 +152,7 @@ describe("datasets inventory filters (live rows)", () => {
   });
 
   it("Oldest first sorts ascending by updatedAt", () => {
-    const filtered = filterDatasetRows(sampleInventory(), { filter: "all", updatedFilter: "Oldest first" });
+    const filtered = filterDatasetRows(sampleInventory(), { filter: "all", updatedFilter: "Oudste eerst" });
     expect(filtered[0]?.id).toBe("7");
     expect(filtered[filtered.length - 1]?.id).toBe("1");
   });
@@ -158,16 +173,18 @@ describe("datasets inventory + activity co-existence regression", () => {
     expect(pageSrc).toContain("useDatasetsWorkspace");
     expect(pageSrc).toContain("DatasetsInventory");
     expect(inventorySrc).toContain('data-testid="datasets-inventory"');
-    expect(pageSrc).toContain("variant=\"v2\"");
+    expect(pageSrc).toContain('variant="v2"');
   });
 
-  it("renders Dataset Activity as a complementary section after inventory", () => {
-    expect(pageSrc).toContain("<DatasetActivityConsole");
-    const inventoryAt = pageSrc.indexOf("<DatasetsInventory");
-    const activityAt = pageSrc.indexOf("<DatasetActivityConsole");
-    expect(inventoryAt).toBeGreaterThan(-1);
-    expect(activityAt).toBeGreaterThan(-1);
-    expect(inventoryAt).toBeLessThan(activityAt);
+  it("does not render standalone hero in primary composition", () => {
+    expect(pageSrc).not.toContain("<DatasetsHero");
+  });
+
+  it("keeps activity available via bottom widget / modal (not a fifth primary block)", () => {
+    expect(pageSrc).toContain("DatasetsBottomWidgets");
+    expect(pageSrc).not.toMatch(/<div className="lv-v2-ds-activity">[\s\S]*<DatasetActivityConsole/);
+    const modalsSrc = readFileSync(join(here, "../components/datasets/DatasetsModals.tsx"), "utf8");
+    expect(modalsSrc).toContain("DatasetActivityConsole");
   });
 
   it("does not introduce a DatasetListV2 replacement", () => {
@@ -175,7 +192,13 @@ describe("datasets inventory + activity co-existence regression", () => {
     expect(pageSrc).not.toMatch(/mockDatasets|DH_DEMO_ROWS/);
   });
 
-  it("V2 CSS keeps inventory / workspace / activity under datasets page namespace", () => {
+  it("production workspace does not import mocks/datasets-dashboard", () => {
+    const wsSrc = readFileSync(join(here, "datasets/useDatasetsWorkspace.ts"), "utf8");
+    expect(wsSrc).not.toMatch(/mocks\/datasets-dashboard/);
+    expect(wsSrc).toContain("from \"./constants\"");
+  });
+
+  it("V2 CSS keeps inventory / workspace under datasets page namespace", () => {
     expect(cssSrc).toMatch(/\.lv-v2-page--datasets/);
     expect(cssSrc).toMatch(/\.lv-v2-ds-workspace/);
     expect(cssSrc).toMatch(/\.lv-v2-ds-inventory/);
@@ -192,6 +215,6 @@ describe("datasets inventory + activity co-existence regression", () => {
     expect(wsSrc).toContain("countDatasetsByFilter");
     expect(wsSrc).toContain("api.listDatasets");
     expect(wsSrc).toContain("/settings?section=opslag");
-    expect(widgetsSrc).toContain("Manage Storage");
+    expect(widgetsSrc).toContain("Dataset Activiteit");
   });
 });

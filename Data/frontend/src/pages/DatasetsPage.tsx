@@ -4,16 +4,16 @@
  * No page-local CSS — styles live in leviathan-v2.css under .lv-v2-page--datasets.
  */
 
+import { useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { DatasetsBottomWidgets } from "../components/datasets/DatasetsBottomWidgets";
 import { DatasetsDetailPanel } from "../components/datasets/DatasetsDetailPanel";
-import { DatasetsHero } from "../components/datasets/DatasetsHero";
 import { DatasetsInventory } from "../components/datasets/DatasetsInventory";
 import { DatasetsMetrics } from "../components/datasets/DatasetsMetrics";
 import { DatasetsModals } from "../components/datasets/DatasetsModals";
 import { DatasetsToolbar } from "../components/datasets/DatasetsToolbar";
 import { ErrorState } from "../components/ui";
 import { AppShell } from "../layouts/AppShell";
-import { DatasetActivityConsole } from "./datasets/DatasetActivityConsole";
 import { useDatasetsWorkspace } from "./datasets/useDatasetsWorkspace";
 
 function visualFixtureNow(): Date | undefined {
@@ -27,12 +27,18 @@ function visualFixtureNow(): Date | undefined {
 export function DatasetsPage() {
   const ws = useDatasetsWorkspace();
   const frozen = visualFixtureNow();
+  const [params] = useSearchParams();
+
+  useEffect(() => {
+    const deep = params.get("dataset");
+    if (deep) ws.setActiveId(deep);
+  }, [params]); // eslint-disable-line react-hooks/exhaustive-deps -- deep-link once per param
 
   return (
     <AppShell
       variant="v2"
-      v2Title="Onderzoek & Kennis / Datasets"
-      v2Subtitle="Beheer, importeer, indexeer en analyseer datasets voor onderzoek, agents en training."
+      v2Title="Kennis & Onderzoek / Datasets"
+      v2Subtitle="Beheer, importeer en analyseer alle datasets voor je onderzoek en AI agents."
       v2Online={ws.online}
       v2Refreshing={ws.refreshing}
       onV2Refresh={() => {
@@ -44,8 +50,8 @@ export function DatasetsPage() {
       <main className="lv-v2-page lv-v2-page--datasets">
         {ws.stale ? (
           <p className="lv-v2-warn" role="status">
-            STALE — last successful update {ws.lastUpdated ? new Date(ws.lastUpdated).toLocaleString() : "—"}.
-            Showing retained inventory after refresh failure.
+            STALE — laatste succesvolle update {ws.lastUpdated ? new Date(ws.lastUpdated).toLocaleString() : "—"}.
+            Behouden inventaris na refresh-fout.
           </p>
         ) : null}
 
@@ -55,14 +61,13 @@ export function DatasetsPage() {
             <button
               type="button"
               className="lv-v2-button lv-v2-button--primary lv-v2-button--sm"
-              onClick={() => void ws.loadDatasets()}
+              onClick={() => void ws.loadDatasets({ offset: 0 })}
             >
-              Retry
+              Opnieuw proberen
             </button>
           </div>
         ) : null}
 
-        <DatasetsHero />
         <DatasetsMetrics ws={ws} />
         <DatasetsToolbar ws={ws} />
 
@@ -72,21 +77,6 @@ export function DatasetsPage() {
         </section>
 
         <DatasetsBottomWidgets ws={ws} />
-
-        <div className="lv-v2-ds-activity">
-          <DatasetActivityConsole
-            jobs={ws.jobs}
-            entries={ws.activityEntries}
-            preferredJobId={ws.preferredJobId}
-            onPreferredJobIdChange={ws.setPreferredJobId}
-            apiError={ws.jobsError}
-            live={ws.live}
-            busy={ws.busy}
-            onCancelJob={ws.onCancelDatasetJob}
-            onClearView={ws.clearActivityView}
-          />
-        </div>
-
         <DatasetsModals ws={ws} />
       </main>
     </AppShell>

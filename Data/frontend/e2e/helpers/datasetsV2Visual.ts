@@ -57,18 +57,36 @@ export async function installDatasetsV2VisualFixture(page: Page): Promise<void> 
     if (path === "/api/datasets" && method === "GET") {
       return json(route, {
         datasets,
-        total: datasets.length,
-        limit: 200,
+        total: 2134,
+        limit: 50,
         offset: 0,
-        hasMore: false,
-        nextOffset: null,
+        hasMore: true,
+        nextOffset: 50,
       });
     }
     if (path === "/api/datasets/jobs" && method === "GET") {
       return json(route, { jobs });
     }
+    if (path.includes("/preview") && method === "GET") {
+      return json(route, { rows: f.previewRows, limit: 20 });
+    }
+    if (/^\/api\/datasets\/versions\/[^/]+$/.test(path) && method === "GET") {
+      const versionId = decodeURIComponent(path.split("/").pop() || "");
+      const version = f.versions.find((v) => v.versionId === versionId) ?? f.versions[0];
+      return json(route, { version });
+    }
+    if (path.endsWith("/cancel") && method === "POST") {
+      const parts = path.split("/");
+      const jobId = parts[parts.indexOf("jobs") + 1];
+      const job = jobs.find((j) => j.jobId === jobId);
+      if (job) job.status = "cancelled";
+      return json(route, { job });
+    }
     if (path.startsWith("/api/datasets/") && method === "GET") {
       const id = decodeURIComponent(path.replace("/api/datasets/", "").split("/")[0] || "");
+      if (["overview", "jobs", "bulk", "upload", "import", "huggingface"].includes(id)) {
+        return json(route, { ok: true });
+      }
       const dataset = datasets.find((d) => d.datasetId === id) ?? datasets[0];
       const versions = f.versions.filter((v) => v.datasetId === dataset?.datasetId);
       return json(route, {
@@ -77,15 +95,6 @@ export async function installDatasetsV2VisualFixture(page: Page): Promise<void> 
         files: [],
         indexes: [],
       });
-    }
-    if (path.includes("/preview") && method === "GET") {
-      return json(route, { rows: f.previewRows, limit: 20 });
-    }
-    if (path.endsWith("/cancel") && method === "POST") {
-      const jobId = path.split("/")[4];
-      const job = jobs.find((j) => j.jobId === jobId);
-      if (job) job.status = "cancelled";
-      return json(route, { job });
     }
     return json(route, { ok: true });
   });

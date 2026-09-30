@@ -374,6 +374,8 @@ class DatasetService:
         q: str | None = None,
         status: str | None = None,
         source_type: str | None = None,
+        source_scope: str | None = None,
+        indexed: bool | None = None,
         detected_format: str | None = None,
         category: str | None = None,
         tags: str | None = None,
@@ -391,6 +393,8 @@ class DatasetService:
             q=q,
             status=status,
             source_type=source_type,
+            source_scope=source_scope,
+            indexed=indexed,
             detected_format=detected_format,
             category=category,
             tags=tags,
@@ -523,6 +527,10 @@ class DatasetService:
             "exportVersionCount": stats["exportVersionCount"],
             "byStatus": stats["byStatus"],
             "bySourceType": stats["bySourceType"],
+            "localDatasets": stats.get("localDatasets", 0),
+            "externalDatasets": stats.get("externalDatasets", 0),
+            "indexedDatasets": stats.get("indexedDatasets", 0),
+            "notIndexedDatasets": stats.get("notIndexedDatasets", 0),
             "tagCounts": tags,
             "storageBreakdown": storage_breakdown,
             "catalogStatus": {
@@ -1065,6 +1073,150 @@ class DatasetService:
                 "resolvedVersionId": resolved.version_id,
             },
         )
+
+    def bulk_enqueue_index(
+        self,
+        dataset_ids: list[str],
+        *,
+        rebuild: bool = False,
+        max_items: int = 25,
+    ) -> dict[str, Any]:
+        """Bounded multi-dataset index enqueue with per-id partial failure reporting."""
+        ids = [str(x).strip() for x in (dataset_ids or []) if str(x).strip()]
+        if len(ids) > max_items:
+            raise DatasetError(
+                f"Bulk index limited to {max_items} datasets per request",
+                code="bulk_limit_exceeded",
+                http_status=400,
+            )
+        results: list[dict[str, Any]] = []
+        succeeded = 0
+        failed = 0
+        for dataset_id in ids:
+            try:
+                versions = self.store.list_versions(dataset_id)
+                version = next(
+                    (
+                        v
+                        for v in versions
+                        if getattr(v.status, "value", str(v.status)).lower() == "ready"
+                    ),
+                    None,
+                )
+                if version is None and versions:
+                    version = versions[0]
+                if version is None:
+                    raise DatasetError(
+                        "No version available to index",
+                        code="no_usable_version",
+                        http_status=404,
+                    )
+                job = self.enqueue_index(dataset_id, version.version_id, rebuild=rebuild)
+                results.append(
+                    {
+                        "datasetId": dataset_id,
+                        "ok": True,
+                        "jobId": job.job_id,
+                        "job": job.public_dict(),
+                    }
+                )
+                succeeded += 1
+            except DatasetError as exc:
+                failed += 1
+                results.append(
+                    {
+                        "datasetId": dataset_id,
+                        "ok": False,
+                        "error": exc.public_dict(),
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                failed += 1
+                results.append(
+                    {
+                        "datasetId": dataset_id,
+                        "ok": False,
+                        "error": {
+                            "code": "bulk_index_failed",
+                            "message": redact_secrets(str(exc))[:240],
+                        },
+                    }
+                )
+        return {
+            "action": "index",
+            "requested": len(ids),
+            "succeeded": succeeded,
+            "failed": failed,
+            "results": results,
+            "truth": {
+                "partialFailureReported": True,
+                "boundedBulk": True,
+                "maxItems": max_items,
+            },
+        }
+
+    def bulk_enqueue_materialize(
+        self,
+        dataset_ids: list[str],
+        *,
+        max_items: int = 25,
+    ) -> dict[str, Any]:
+        """Bounded multi-dataset materialize enqueue with per-id partial failure reporting."""
+        ids = [str(x).strip() for x in (dataset_ids or []) if str(x).strip()]
+        if len(ids) > max_items:
+            raise DatasetError(
+                f"Bulk materialize limited to {max_items} datasets per request",
+                code="bulk_limit_exceeded",
+                http_status=400,
+            )
+        results: list[dict[str, Any]] = []
+        succeeded = 0
+        failed = 0
+        for dataset_id in ids:
+            try:
+                job = self.enqueue_materialize(dataset_id)
+                results.append(
+                    {
+                        "datasetId": dataset_id,
+                        "ok": True,
+                        "jobId": job.job_id,
+                        "job": job.public_dict(),
+                    }
+                )
+                succeeded += 1
+            except DatasetError as exc:
+                failed += 1
+                results.append(
+                    {
+                        "datasetId": dataset_id,
+                        "ok": False,
+                        "error": exc.public_dict(),
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                failed += 1
+                results.append(
+                    {
+                        "datasetId": dataset_id,
+                        "ok": False,
+                        "error": {
+                            "code": "bulk_materialize_failed",
+                            "message": redact_secrets(str(exc))[:240],
+                        },
+                    }
+                )
+        return {
+            "action": "materialize",
+            "requested": len(ids),
+            "succeeded": succeeded,
+            "failed": failed,
+            "results": results,
+            "truth": {
+                "partialFailureReported": True,
+                "boundedBulk": True,
+                "maxItems": max_items,
+            },
+        }
 
     def _data_root(self) -> Path:
         return Path(self.settings.knowledge.data_root)
