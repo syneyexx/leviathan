@@ -101,6 +101,36 @@ def coerce_value(definition: SettingDefinition, raw: Any) -> Any:
                 raise SettingsError("INVALID_PATH", f"{definition.key} contains NUL", http_status=422)
             # Soft normalization for relative paths — absolute resolution is config-owned.
             _ = Path(text)
+        if definition.key == "ui.app_display_name":
+            if not text:
+                raise SettingsError(
+                    "INVALID_VALUE",
+                    "ui.app_display_name cannot be empty",
+                    http_status=422,
+                )
+            if len(text) > 120:
+                raise SettingsError(
+                    "INVALID_VALUE",
+                    "ui.app_display_name must be <= 120 characters",
+                    http_status=422,
+                )
+            if "<" in text or ">" in text or "\x00" in text:
+                raise SettingsError(
+                    "INVALID_VALUE",
+                    "ui.app_display_name must be plain text (no HTML)",
+                    http_status=422,
+                )
+        if definition.key == "ui.timezone" and text:
+            try:
+                from zoneinfo import ZoneInfo
+
+                ZoneInfo(text)
+            except Exception as exc:  # noqa: BLE001 — invalid tz → 422
+                raise SettingsError(
+                    "INVALID_TIMEZONE",
+                    f"ui.timezone must be a valid IANA timezone id (got {text!r})",
+                    http_status=422,
+                ) from exc
         if definition.value_type != SettingType.SECRET and text == "" and definition.default is None:
             return None
         return text

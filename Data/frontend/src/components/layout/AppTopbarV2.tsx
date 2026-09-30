@@ -32,7 +32,7 @@ export function AppTopbarV2({
   onMenuClick,
   now,
   onThemeToggle,
-  themeToggleTitle = "Appearance (display only — no theme contract connected)",
+  themeToggleTitle = "Appearance — theme follows Settings → Algemeen (ui.theme)",
   actions,
   hideRefresh = false,
 }: AppTopbarV2Props) {

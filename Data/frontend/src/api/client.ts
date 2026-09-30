@@ -3402,6 +3402,22 @@ export const api = {
     });
   },
 
+  getStartupRegistration(): Promise<{
+    startup: {
+      platform: string;
+      supported: boolean;
+      desired: boolean;
+      registered: boolean | null;
+      status: string;
+      detail: string;
+      launch_command?: string | null;
+    };
+    setting_key: string;
+    truth?: Record<string, boolean>;
+  }> {
+    return request("/api/settings/startup-registration");
+  },
+
   getBehaviorProfile(): Promise<{
     profile: Record<string, unknown>;
     truth?: Record<string, unknown>;

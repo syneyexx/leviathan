@@ -135,6 +135,36 @@ class ResourceManager:
     def device_policy_public(self) -> dict[str, Any]:
         return dict(self._device_policy)
 
+    def set_gpu_memory_limit_pct(self, pct: float) -> None:
+        """Soft VRAM ceiling as percent of measured total (10–100).
+
+        When total VRAM is known, converts to ``min_vram_reserve_bytes`` headroom
+        so admission/planning honors the operator ceiling. Requested pct is always
+        retained for truthful requested-vs-effective reporting.
+        """
+        clamped = max(10.0, min(100.0, float(pct)))
+        self._gpu_memory_limit_pct = clamped
+        sample = self.system_telemetry()
+        total = sample.get("vramTotalBytes") or sample.get("vram_total_bytes")
+        if total is None:
+            gpus = sample.get("gpus") or []
+            if isinstance(gpus, list):
+                summed = 0
+                for gpu in gpus:
+                    if isinstance(gpu, dict):
+                        raw = gpu.get("memoryTotalBytes") or gpu.get("vramTotalBytes")
+                        if raw is not None:
+                            summed += int(raw)
+                total = summed or None
+        if total is not None and int(total) > 0:
+            usable = int(int(total) * (clamped / 100.0))
+            reserve = max(0, int(total) - usable)
+            self.min_vram_reserve_bytes = reserve
+            self._sync_planner_headroom()
+
+    def gpu_memory_limit_pct(self) -> float | None:
+        return getattr(self, "_gpu_memory_limit_pct", None)
+
     def system_telemetry(self) -> dict[str, Any]:
         """Best-effort host telemetry. Omit fields that cannot be measured."""
         if self._telemetry_provider is not None:

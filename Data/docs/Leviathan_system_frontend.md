@@ -770,18 +770,23 @@ MCP tool invocation is not a direct browser-to-MCP channel; backend gateway/appr
 
 # 30. Settings UI
 
-Route `/settings`; `src/pages/SettingsPage.tsx` plus `src/pages/settings/`:
+Route `/settings`; `src/pages/SettingsPage.tsx` plus `src/pages/settings/` and V2 composition under `src/components/settings/`:
 
-- `SettingsNavigation.tsx` — sections;
-- `SettingField.tsx` — typed field editor;
+- V2 shell via `AppShell variant="v2"` + `useSettingsWorkspace`;
+- `SettingsCategoryNav` / `SettingsGeneralPanel` / providers & system config panels;
+- `SettingField.tsx` — typed field editor (catalog);
 - `RestartRequiredBadge.tsx` — apply-mode truth;
 - `settingsPage.test.ts` — contracts.
 
-Current settings sections include General, LLM behavior, LLM Studio, Rights & Security, Model Benchmarks, MediaCenter, Storage, Python & Runtime, Console, Logs, Knowledge & RAG, Cognition & Neuro, Agents & Coding, Tools & MCP, Market Simulation and Data & Research.
+Canonical docs: `Data/docs/frontend/settings-v2.md`. Reference: `docs/ui_reference/settings-v2-reference.jpg`.
+
+Current settings sections are catalog-driven (Algemeen UI prefs, LLM behavior, LLM Studio, Rights & Security, Model Benchmarks, MediaCenter, Storage, Python & Runtime, Console, Logs, Knowledge & RAG, Cognition & Neuro, Agents & Coding, Tools & MCP, Market Simulation and Data & Research).
 
 Settings are catalog-driven from the backend. Type/range/enum/secret/restart semantics should not be redefined page-locally.
 
 Native compute, worker, market and research controls appear only if present in the backend Settings catalog.
+
+Provider rows on Algemeen are Model Control Plane projections — credentials never round-trip to the browser.
 
 ---
 

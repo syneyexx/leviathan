@@ -292,4 +292,20 @@ def build_behavior_router(behavior_store: Any, observability: Any | None = None)
             },
         }
 
+    @router.get("/api/settings/startup-registration")
+    def startup_registration_status() -> dict:
+        """Measured OS startup registration vs desired ``ui.start_with_system``."""
+        from Data.modules.settings.startup_registration import measure_registration
+
+        desired = bool(plane.desired.ui.start_with_system)
+        state = measure_registration(desired=desired)
+        return {
+            "startup": state.public_dict(),
+            "setting_key": "ui.start_with_system",
+            "truth": {
+                "desired_is_not_registered": True,
+                "windows_first": True,
+            },
+        }
+
     return router
