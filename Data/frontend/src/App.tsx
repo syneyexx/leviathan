@@ -21,8 +21,12 @@ import { FacebookPage } from "./pages/media/FacebookPage";
 import { InstagramPage } from "./pages/media/InstagramPage";
 import { MediaCalendarPage } from "./pages/media/MediaCalendarPage";
 import { MediaControlPage } from "./pages/media/MediaControlPage";
+import { MediaDistributionPage } from "./pages/media/MediaDistributionPage";
+import { MediaEditPage } from "./pages/media/MediaEditPage";
+import { MediaGeneratePage } from "./pages/media/MediaGeneratePage";
 import { MediaLibraryPage } from "./pages/media/MediaLibraryPage";
 import { MediaPersonasPage } from "./pages/media/MediaPersonasPage";
+import { MediaPlanningPage } from "./pages/media/MediaPlanningPage";
 import { MediaQueuePage } from "./pages/media/MediaQueuePage";
 import { MediaViralPage } from "./pages/media/MediaViralPage";
 import { TikTokPage } from "./pages/media/TikTokPage";
@@ -99,6 +103,11 @@ export default function App() {
       <Route path="/analytics" element={<AnalyticsPage />} />
 
       <Route path="/media" element={<MediaControlPage />} />
+      <Route path="/media/library" element={<MediaLibraryPage />} />
+      <Route path="/media/genereren" element={<MediaGeneratePage />} />
+      <Route path="/media/bewerken" element={<MediaEditPage />} />
+      <Route path="/media/planning" element={<MediaPlanningPage />} />
+      <Route path="/media/distributie" element={<MediaDistributionPage />} />
       <Route path="/media/youtube" element={<YouTubePage />} />
       <Route path="/media/tiktok" element={<TikTokPage />} />
       <Route path="/media/instagram" element={<InstagramPage />} />
@@ -107,7 +116,6 @@ export default function App() {
       <Route path="/media/viral" element={<MediaViralPage />} />
       <Route path="/media/calendar" element={<MediaCalendarPage />} />
       <Route path="/media/analytics" element={<SectionPage title="Media Analytics" />} />
-      <Route path="/media/library" element={<MediaLibraryPage />} />
       <Route path="/media/personas" element={<MediaPersonasPage />} />
 
       <Route path="/trading" element={<Navigate to="/trading/simulatie" replace />} />
