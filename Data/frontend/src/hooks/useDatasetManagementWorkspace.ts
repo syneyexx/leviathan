@@ -172,6 +172,12 @@ export function useDatasetManagementWorkspace() {
       setOverview(DATASET_MGMT_V2_VISUAL_FIXTURE.overview as unknown as DatasetOverview);
       setCatalogOk(DATASET_MGMT_V2_VISUAL_FIXTURE.overview.catalogStatus.state === "HEALTHY");
       setHealthOk(true);
+      const artifact = (
+        DATASET_MGMT_V2_VISUAL_FIXTURE as {
+          exportArtifact?: { datasetId: string; versionId: string; jobId: string };
+        }
+      ).exportArtifact;
+      if (artifact) setExportArtifact(artifact);
       return;
     }
     try {
@@ -468,6 +474,17 @@ export function useDatasetManagementWorkspace() {
   }
 
   const activeJobs = useMemo(() => jobs.filter(isActiveJob), [jobs]);
+
+  const exportDownloadCount = useMemo(() => {
+    if (isDatasetManagementVisualFixtureActive()) {
+      return (
+        DATASET_MGMT_V2_VISUAL_FIXTURE.jobs.filter(
+          (j) => j.jobType === "export" && j.status === "completed",
+        ).length || (exportArtifact ? 1 : 0)
+      );
+    }
+    return jobs.filter((j) => j.jobType === "export" && isCompletedJob(j)).length || (exportArtifact ? 1 : 0);
+  }, [jobs, exportArtifact]);
 
   const tagCloud = useMemo(() => {
     if (overview?.tagCounts && Object.keys(overview.tagCounts).length) {
@@ -1193,6 +1210,7 @@ export function useDatasetManagementWorkspace() {
     setHfToken,
 
     exportArtifact,
+    exportDownloadCount,
     jobs,
     jobsError,
     activityEntries,

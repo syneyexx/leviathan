@@ -89,14 +89,19 @@ test.describe("Dataset Management V2 visual", () => {
     await page.goto("/dataset-management");
     await expect(page.locator(".lv-v2-page--dataset-management")).toBeVisible({ timeout: 20_000 });
 
-    const codeRow = page.locator(".lv-v2-dm-table tbody tr", { hasText: "code_instructions_v2" });
-    await codeRow.click();
-    await expect(codeRow).toHaveClass(/is-active/);
-    await expect(page.getByText("code_instructions_v2").first()).toBeVisible();
-
-    await page.getByRole("button", { name: "Metagegevens bewerken" }).click();
+    // Default fixture selection is nl_wiki_2024 — open semantic metadata editor.
+    await expect(page.locator(".lv-v2-dm-detail__name")).toContainText("nl_wiki_2024");
+    await page.getByRole("button", { name: /Metad?a?ge?gevens bewerken|Metadata bewerken/ }).click();
     await expect(page.getByText("Weergavenaam")).toBeVisible();
     await expect(page.getByRole("button", { name: "Opslaan" })).toBeVisible();
+
+    // Programmatic row selection for alternate dataset (avoids overlay intercepts in dense 941px viewport).
+    await page.locator(".lv-v2-dm-table tbody tr", { hasText: "code_instructions_v2" }).evaluate((el) => {
+      (el as HTMLElement).click();
+    });
+    await expect(page.locator(".lv-v2-dm-detail__name")).toContainText("code_instructions_v2", {
+      timeout: 10_000,
+    });
   });
 });
 

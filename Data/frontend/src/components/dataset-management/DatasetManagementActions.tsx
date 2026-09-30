@@ -63,7 +63,10 @@ export function DatasetManagementActions({ ws }: Props) {
             onClick={() => void ws.onDownloadExport()}
           >
             <DmIcon name="download" />
-            <span>Download export (1)</span>
+            <span>
+              Download export
+              {ws.exportDownloadCount > 0 ? ` (${ws.exportDownloadCount})` : ""}
+            </span>
           </button>
         ) : null}
       </div>
