@@ -335,6 +335,17 @@ class VerificationSettings:
 
 
 @dataclass(frozen=True)
+class MemoryProcessingSettings:
+    """Automatic Memory processing policy — Settings Control Plane owned."""
+
+    embeddings_enabled: bool = True
+    summarization_enabled: bool = False
+    entity_extraction_enabled: bool = False
+    brain_projection_enabled: bool = True
+    duplicate_detection_enabled: bool = True
+
+
+@dataclass(frozen=True)
 class FeatureFlags:
     """Experimental switches. Flags must never bypass security policy."""
 
@@ -676,6 +687,7 @@ class Settings:
     knowledge: KnowledgeSettings
     reasoning: ReasoningSettings
     verification: VerificationSettings
+    memory_processing: MemoryProcessingSettings
     features: FeatureFlags
     coding: CodingSettings
     market_sim: MarketSimSettings
@@ -1280,6 +1292,19 @@ class Settings:
                 citation_required=_env_bool("LEVIATHAN_VERIFICATION_CITATION_REQUIRED", False),
                 unmeasured_blocks_completion=_env_bool(
                     "LEVIATHAN_VERIFICATION_UNMEASURED_BLOCKS_COMPLETION", True
+                ),
+            ),
+            memory_processing=MemoryProcessingSettings(
+                embeddings_enabled=_env_bool("LEVIATHAN_MEMORY_PROCESSING_EMBEDDINGS", True),
+                summarization_enabled=_env_bool("LEVIATHAN_MEMORY_PROCESSING_SUMMARIZATION", False),
+                entity_extraction_enabled=_env_bool(
+                    "LEVIATHAN_MEMORY_PROCESSING_ENTITY_EXTRACTION", False
+                ),
+                brain_projection_enabled=_env_bool(
+                    "LEVIATHAN_MEMORY_PROCESSING_BRAIN_PROJECTION", True
+                ),
+                duplicate_detection_enabled=_env_bool(
+                    "LEVIATHAN_MEMORY_PROCESSING_DUPLICATE_DETECTION", True
                 ),
             ),
             features=FeatureFlags(

@@ -2610,7 +2610,13 @@ app.include_router(
         version=app.version,
     )
 )
-app.include_router(build_memory_router(memory_store=memory_store, job_runtime=job_runtime))
+app.include_router(
+    build_memory_router(
+        memory_store=memory_store,
+        job_runtime=job_runtime,
+        settings_service=settings_plane,
+    )
+)
 app.include_router(build_evidence_router(evidence_service=evidence_service))
 app.include_router(
     build_capabilities_router(
