@@ -2085,6 +2085,16 @@ export type MemoryRecord = {
   supersedes_id?: string | null;
   source_refs?: string[];
   truth?: Record<string, boolean>;
+  source_normalized?: string;
+  actor?: string | null;
+  pinned?: boolean;
+  scores?: {
+    lexical_score?: number | null;
+    semantic_score?: number | null;
+    combined_score?: number | null;
+    relevance_pct?: number | null;
+  };
+  semantic_index?: Record<string, unknown> | null;
 };
 
 export type MemoryCreatePayload = {
@@ -2099,6 +2109,127 @@ export type MemoryCreatePayload = {
   project_id?: string | null;
   workspace_id?: string | null;
   user_id?: string | null;
+  priority?: number | null;
+  metadata?: Record<string, unknown>;
+};
+
+export type MemoryListResponse = {
+  memory: MemoryRecord[];
+  next_cursor?: string | null;
+  limit?: number;
+  sort?: string;
+  pagination?: { cursor?: boolean; legacy?: boolean };
+};
+
+export type MemoryOverview = {
+  total: number;
+  active: number;
+  archived: number;
+  revoked: number;
+  superseded: number;
+  by_kind: Record<string, number>;
+  by_scope: Record<string, number>;
+  by_trust: Record<string, number>;
+  unique_sources: number;
+  newest_at?: string | null;
+  semantic_index: {
+    indexed_count: number;
+    stale_count: number;
+    provider_id?: string | null;
+    model_id?: string | null;
+    dimensions?: number | null;
+    backend?: string;
+    bytes?: number;
+    bytes_provenance?: string;
+    status?: string;
+    is_semantic?: boolean;
+  };
+  storage: {
+    content_bytes: number;
+    embedding_bytes: number;
+    total_bytes: number;
+    provenance: string;
+    label?: string;
+  };
+  search_count_7d: number;
+  processing?: MemoryProcessingSettings;
+  truth?: Record<string, boolean>;
+};
+
+export type MemoryProcessingSettings = {
+  embeddings_enabled: boolean;
+  summarization_enabled: boolean;
+  entity_extraction_enabled: boolean;
+  brain_projection_enabled: boolean;
+  duplicate_detection_enabled: boolean;
+  source?: string;
+  persisted?: boolean;
+};
+
+export type MemoryAnalytics = {
+  range: string;
+  days: number;
+  series: {
+    new_items: Array<{ date: string; count: number }>;
+    searches: Array<{ date: string; count: number }>;
+    embeddings: Array<{ date: string; count: number }>;
+  };
+  top_sources: Array<{
+    source: string;
+    items: number;
+    bytes: number;
+    bytes_provenance?: string;
+  }>;
+  topics: Array<{
+    topic: string;
+    queries: number;
+    trend_pct?: number | null;
+  }>;
+  by_kind: Record<string, number>;
+  truth?: Record<string, boolean>;
+};
+
+export type MemoryActivityEvent = {
+  event_id: string;
+  event_type: string;
+  memory_id?: string | null;
+  actor?: string | null;
+  detail?: Record<string, unknown>;
+  created_at: string;
+};
+
+export type MemorySemanticIndexStatus = {
+  indexed_count?: number;
+  stale_count?: number;
+  provider_id?: string | null;
+  model_id?: string | null;
+  dimensions?: number | null;
+  backend?: string;
+  bytes?: number | null;
+  bytes_provenance?: string;
+  status?: string;
+  is_semantic?: boolean;
+  provider_status?: Record<string, unknown>;
+  truth?: Record<string, boolean>;
+};
+
+export type MemorySearchResponse = {
+  memory: MemoryRecord[];
+  mode?: string;
+  requested_mode?: string;
+  degraded?: boolean;
+  degrade_reason?: string | null;
+  duration_ms?: number;
+  provider_status?: Record<string, unknown>;
+  truth?: Record<string, boolean>;
+};
+
+export type MemoryPatchPayload = {
+  tags?: string[];
+  priority?: number;
+  valid_until?: string | null;
+  clear_valid_until?: boolean;
+  metadata_patch?: Record<string, unknown>;
 };
 
 /* ---------- Evidence Vault ---------- */

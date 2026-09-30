@@ -133,3 +133,12 @@ Media Control, Plugin & Runtime, Coding Agent, and other deep links remain regis
 - No page-local Training CSS file; layout lives in `leviathan-v2.css` under `.lv-v2-page--training` / `.lv-v2-training-*`.
 - Visual fixture: `src/mocks/trainingV2VisualFixture.ts` + `e2e/helpers/trainingV2Visual.ts` + `e2e/training-v2.visual.spec.ts` (reference: `docs/ui_reference/training-v2-reference.png`). Production never imports the fixture as defaults.
 
+## Memory / Geheugen migration
+
+- `/memory` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "Onderzoek & Kennis / Geheugen").
+- Research group children stay MAIN_MENU-derived — Geheugen selected; do not copy screenshot submenu labels.
+- Composition: `GeheugenPage` + `useMemoryWorkspace` + `src/components/memory/*`.
+- No page-local Memory CSS; layout lives in `leviathan-v2.css` under `.lv-v2-page--memory` / `.lv-v2-memory-*`.
+- KPIs/search/table/analytics/semantic-index/processing are real API-backed; fixture-only Screen 1 numbers live in `src/mocks/memoryV2VisualFixture.ts`.
+- Visual: `e2e/helpers/memoryV2Visual.ts` + `e2e/memory-v2.visual.spec.ts` (reference: `docs/ui_reference/memory-v2-reference.png`).
+- Memory ≠ Knowledge ≠ Brain — document/web actions deep-link to Knowledge/Research authorities.

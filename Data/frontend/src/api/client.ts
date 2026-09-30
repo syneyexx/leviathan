@@ -200,24 +200,85 @@ export const api = {
   listMemory(opts?: {
     status?: string;
     kind?: string;
+    source?: string;
+    trust?: string;
+    tag?: string;
+    pinned?: boolean;
     limit?: number;
+    cursor?: string;
+    sort?: string;
     conversation_id?: string;
     project_id?: string;
     scope?: string;
-  }): Promise<{ memory: MemoryRecord[] }> {
+    created_after?: string;
+    created_before?: string;
+  }): Promise<import("../types/api").MemoryListResponse> {
     const params = new URLSearchParams();
     if (opts?.status) params.set("status", opts.status);
     if (opts?.kind) params.set("kind", opts.kind);
+    if (opts?.source) params.set("source", opts.source);
+    if (opts?.trust) params.set("trust", opts.trust);
+    if (opts?.tag) params.set("tag", opts.tag);
+    if (opts?.pinned != null) params.set("pinned", String(opts.pinned));
     if (opts?.limit != null) params.set("limit", String(opts.limit));
+    if (opts?.cursor) params.set("cursor", opts.cursor);
+    if (opts?.sort) params.set("sort", opts.sort);
     if (opts?.conversation_id) params.set("conversation_id", opts.conversation_id);
     if (opts?.project_id) params.set("project_id", opts.project_id);
     if (opts?.scope) params.set("scope", opts.scope);
+    if (opts?.created_after) params.set("created_after", opts.created_after);
+    if (opts?.created_before) params.set("created_before", opts.created_before);
     const q = params.toString();
-    return request<{ memory: MemoryRecord[] }>(`/api/memory${q ? `?${q}` : ""}`);
+    return request<import("../types/api").MemoryListResponse>(`/api/memory${q ? `?${q}` : ""}`);
   },
 
-  createMemory(payload: MemoryCreatePayload): Promise<{ memory: MemoryRecord }> {
-    return request<{ memory: MemoryRecord }>("/api/memory", {
+  memoryOverview(): Promise<{ overview: import("../types/api").MemoryOverview }> {
+    return request<{ overview: import("../types/api").MemoryOverview }>("/api/memory/overview");
+  },
+
+  memoryAnalytics(range = "7d"): Promise<{ analytics: import("../types/api").MemoryAnalytics }> {
+    return request<{ analytics: import("../types/api").MemoryAnalytics }>(
+      `/api/memory/analytics?range=${encodeURIComponent(range)}`,
+    );
+  },
+
+  memoryActivity(limit = 40): Promise<{ activity: import("../types/api").MemoryActivityEvent[] }> {
+    return request<{ activity: import("../types/api").MemoryActivityEvent[] }>(
+      `/api/memory/activity?limit=${limit}`,
+    );
+  },
+
+  memoryProcessing(): Promise<{ processing: import("../types/api").MemoryProcessingSettings }> {
+    return request<{ processing: import("../types/api").MemoryProcessingSettings }>(
+      "/api/memory/processing",
+    );
+  },
+
+  patchMemoryProcessing(
+    payload: Partial<import("../types/api").MemoryProcessingSettings>,
+  ): Promise<{ processing: import("../types/api").MemoryProcessingSettings }> {
+    return request<{ processing: import("../types/api").MemoryProcessingSettings }>(
+      "/api/memory/processing",
+      { method: "PATCH", body: JSON.stringify(payload) },
+    );
+  },
+
+  memorySemanticIndex(): Promise<{
+    semantic_index: import("../types/api").MemorySemanticIndexStatus;
+  }> {
+    return request<{ semantic_index: import("../types/api").MemorySemanticIndexStatus }>(
+      "/api/memory/semantic-index",
+    );
+  },
+
+  optimizeMemorySemanticIndex(): Promise<Record<string, unknown>> {
+    return request<Record<string, unknown>>("/api/memory/semantic-index/optimize", {
+      method: "POST",
+    });
+  },
+
+  createMemory(payload: MemoryCreatePayload): Promise<{ memory: MemoryRecord; auto_embed?: unknown }> {
+    return request<{ memory: MemoryRecord; auto_embed?: unknown }>("/api/memory", {
       method: "POST",
       body: JSON.stringify(payload),
     });
@@ -226,21 +287,65 @@ export const api = {
   searchMemory(opts: {
     q: string;
     limit?: number;
+    mode?: string;
     conversation_id?: string;
     project_id?: string;
-  }): Promise<{ memory: MemoryRecord[]; truth?: Record<string, boolean> }> {
+    workspace_id?: string;
+    scope?: string;
+    kind?: string;
+    source?: string;
+  }): Promise<import("../types/api").MemorySearchResponse> {
     const params = new URLSearchParams();
     params.set("q", opts.q);
     if (opts.limit != null) params.set("limit", String(opts.limit));
+    if (opts.mode) params.set("mode", opts.mode);
     if (opts.conversation_id) params.set("conversation_id", opts.conversation_id);
     if (opts.project_id) params.set("project_id", opts.project_id);
-    return request<{ memory: MemoryRecord[]; truth?: Record<string, boolean> }>(
+    if (opts.workspace_id) params.set("workspace_id", opts.workspace_id);
+    if (opts.scope) params.set("scope", opts.scope);
+    if (opts.kind) params.set("kind", opts.kind);
+    if (opts.source) params.set("source", opts.source);
+    return request<import("../types/api").MemorySearchResponse>(
       `/api/memory/search?${params.toString()}`,
     );
   },
 
   getMemory(memoryId: string): Promise<{ memory: MemoryRecord }> {
     return request<{ memory: MemoryRecord }>(`/api/memory/${encodeURIComponent(memoryId)}`);
+  },
+
+  patchMemory(
+    memoryId: string,
+    payload: import("../types/api").MemoryPatchPayload,
+  ): Promise<{ memory: MemoryRecord }> {
+    return request<{ memory: MemoryRecord }>(`/api/memory/${encodeURIComponent(memoryId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  pinMemory(memoryId: string): Promise<{ memory: MemoryRecord }> {
+    return request<{ memory: MemoryRecord }>(
+      `/api/memory/${encodeURIComponent(memoryId)}/pin`,
+      { method: "POST" },
+    );
+  },
+
+  unpinMemory(memoryId: string): Promise<{ memory: MemoryRecord }> {
+    return request<{ memory: MemoryRecord }>(
+      `/api/memory/${encodeURIComponent(memoryId)}/unpin`,
+      { method: "POST" },
+    );
+  },
+
+  correctMemory(
+    memoryId: string,
+    payload: { content: string; kind?: string; trust?: string; tags?: string[] },
+  ): Promise<{ memory: MemoryRecord }> {
+    return request<{ memory: MemoryRecord }>(
+      `/api/memory/${encodeURIComponent(memoryId)}/correct`,
+      { method: "POST", body: JSON.stringify(payload) },
+    );
   },
 
   archiveMemory(memoryId: string): Promise<{ memory: MemoryRecord }> {
@@ -250,11 +355,33 @@ export const api = {
     );
   },
 
+  restoreMemory(memoryId: string): Promise<{ memory: MemoryRecord }> {
+    return request<{ memory: MemoryRecord }>(
+      `/api/memory/${encodeURIComponent(memoryId)}/restore`,
+      { method: "POST" },
+    );
+  },
+
   revokeMemory(memoryId: string): Promise<{ memory: MemoryRecord }> {
     return request<{ memory: MemoryRecord }>(
       `/api/memory/${encodeURIComponent(memoryId)}/revoke`,
       { method: "POST" },
     );
+  },
+
+  memoryFromConversation(payload: {
+    conversation_id: string;
+    content: string;
+    kind?: string;
+    trust?: string;
+    tags?: string[];
+    message_ids?: string[];
+    from_assistant?: boolean;
+  }): Promise<{ memory: MemoryRecord }> {
+    return request<{ memory: MemoryRecord }>("/api/memory/from-conversation", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   },
 
   metrics(): Promise<{ metrics: MetricsSnapshot }> {

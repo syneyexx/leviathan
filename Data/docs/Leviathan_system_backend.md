@@ -439,9 +439,13 @@ Heavy ingest/index commits respect worker/DB-commit ownership. Semantic reconcil
 
 ## 9.3 Memory
 
-`Data/modules/memory/store.py`, `types.py`, `consolidation.py` and `worker.py` own durable scoped memory. Trust states distinguish agent proposal, user statement, source-derived, verified, conflicted and revoked memory. Preference corrections supersede earlier scoped preference/fact rows; retrieval stays on current ACTIVE truth.
+`Data/modules/memory/store.py`, `types.py`, `consolidation.py`, `sources.py` and `worker.py` own durable scoped memory. Trust states distinguish agent proposal, user statement, source-derived, verified, conflicted and revoked memory. Preference corrections supersede earlier scoped preference/fact rows; retrieval stays on current ACTIVE truth. Content corrections use `CORRECTION` + `supersedes_id` (never silent in-place content mutation).
 
-Small Memory CRUD/search remains control-plane inline. Batch/heavy consolidation and enrichment execute on the Worker Fabric `memory` pool (`memory.consolidate` / `memory.enrich` / `memory.reconcile`). Consolidation may admit `AGENT_PROPOSED` candidates; **model confidence never becomes VERIFIED truth**.
+Small Memory CRUD/search/overview/analytics remain control-plane inline. Batch/heavy consolidation, enrichment, semantic reindex and index optimize execute on the Worker Fabric `memory` pool (`memory.consolidate` / `memory.enrich` / `memory.reconcile` / index / optimize_index). Consolidation may admit `AGENT_PROPOSED` candidates; **model confidence never becomes VERIFIED truth**.
+
+Semantic indexing persists on the CONTROL database (`memory_embeddings`) — no `memory.db` / ChromaDB / parallel vector runtime. Embedding inference is owned by the existing `embedding` worker (`embedding.batch`). Hash/local providers must not be labeled semantic.
+
+Automatic processing policy lives in Settings Control Plane (`memory.processing.*` → `Settings.memory_processing`). Search telemetry is privacy-conscious (no raw query content by default).
 
 Do not collapse conversation history, cognition WorkingMemory, durable MemoryStore, Knowledge documents, VerifiedExperience and SkillLibrary into one concept.
 
