@@ -13,6 +13,7 @@ import {
   isInstalled,
   lifecycleBadges,
   lifecycleFailureText,
+  localNavItems,
   moduleId,
   parseCapabilities,
   parseInstallPlan,
@@ -161,6 +162,50 @@ describe("Modules view models", () => {
     expect(updateAvailableFromEvidence(null).kind).toBe("not_checked");
     expect(updateAvailableFromEvidence({}).kind).toBe("not_checked");
     expect(updateAvailableFromEvidence({ update_available: true })).toEqual({ kind: "measured", value: true });
+  });
+
+  it("local nav exposes addressable workspace views without dead controls", () => {
+    const items = localNavItems("modules");
+    expect(items.find((i) => i.id === "runtimes")?.disabled).toBeFalsy();
+    expect(items.find((i) => i.id === "installation")?.to).toContain("view=installation");
+    expect(items.find((i) => i.id === "environments")?.to).toContain("view=environments");
+    expect(items.find((i) => i.id === "settings")?.to).toBe("/settings");
+  });
+
+  it("prefers server-projected allowed_actions when present", () => {
+    const row = {
+      manifest: {
+        module_id: "ext",
+        name: "Ext",
+        version: "1",
+        capabilities: [],
+        metadata: { external: { adapter: "CLI" } },
+      },
+      status: "READY",
+      adapter: "CLI",
+      allowed_actions: {
+        can_install: false,
+        can_start: true,
+        can_stop: true,
+        can_restart: true,
+        can_ensure_ready: true,
+        can_execute: true,
+        can_check_health: true,
+        can_check_update: true,
+        can_install_version: true,
+        can_activate_version: true,
+        can_rollback: true,
+        can_jobs: true,
+        can_logs: true,
+        can_capabilities: true,
+        can_versions: true,
+      },
+      blocked_reasons: { can_install: "Already installed" },
+    } as ManagedModuleRow;
+    const a = actionAvailability(row, { managerEnabled: true, lifecycleBusy: false, hasVersionId: true });
+    expect(a.canStart).toBe(true);
+    expect(a.canInstall).toBe(false);
+    expect(a.installReason).toBe("Already installed");
   });
 
   it("feature flag OFF derives OFF KPI", () => {

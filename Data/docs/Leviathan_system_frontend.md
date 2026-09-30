@@ -115,7 +115,7 @@ Tests include `shellStatus.test.ts` / `useShellStatus.test.ts` and page-specific
 | Media Control | Overview, YouTube, TikTok, Instagram, Facebook, Queue, Viral Radar, Calendar, Analytics, Library, Personas |
 | TradingCenter | Simulation, Strategies, Market Data, Portfolio, PAPER, BROKER, Onderzoek, Research Lab, Control Room |
 | Onderzoek & Kennis | Research, Brain, Geheugen, Knowledge, Evidence, Datasets |
-| Plugin & Runtime | Performance, Tools, Modules, Skills, MCP, Workflows, Console |
+| Runtime & Tools | Performance, Tools, Modules, Skills, MCP, Workflows, Console |
 | Settings | General plus behavior, studio, security, benchmarks, media, storage, runtime, logs, RAG, cognition, agents, tools, market-sim and data/research sections |
 
 The “Hades AI” navigation label is UI naming. It does not make `Data/HADES/` the canonical owner of Chat/Coding/Tasks; those routes are backed by LEVIATHAN’s normal backend systems.
@@ -731,18 +731,22 @@ No page should call a tool provider directly to bypass central capability policy
 
 Route `/modules`.
 
-Canonical workspace: `src/pages/plugin-runtime/ModulesPage.tsx` plus `src/pages/plugin-runtime/modules/` (`viewModels.ts`, workspace hook/components) and `src/styles/modules-page.css`. Any top-level compatibility wrapper should delegate to this workspace.
+Canonical workspace: `src/pages/plugin-runtime/ModulesPage.tsx` plus `src/pages/plugin-runtime/modules/` (`viewModels.ts`, `useModulesWorkspace.ts`) and `src/components/modules/*`. Screen 1 layout lives only in global `leviathan-v2.css` under `.lv-v2-page--modules` / `.lv-v2-modules-*` — no `modules-v2.css` and no production dependency on legacy `modules-page.css`.
+
+`AppShell variant="v2"` title: **Runtime & Tools / Modules**. Parent MAIN_MENU label is **Runtime & Tools** (id `runtime` unchanged).
 
 Supported operator functions include:
 
 - discover/refresh;
 - install planning/install;
-- start/stop/restart/ensure-ready;
+- start/stop/restart/ensure-ready with JobRuntime terminal reconciliation (enqueue ≠ success);
 - health/logs/jobs/capabilities;
-- execute;
+- execute (awaits `external.module.invoke` terminal state);
 - sweep idle modules;
 - check update/version list;
-- install version/activate/rollback.
+- install version/activate/rollback (activate/rollback via `module_runtime`);
+- addressable local views: `?view=runtimes|installation|environments` (projections over ModuleManager/JobRuntime — not new subsystems);
+- recent activity from Observability (`GET /api/modules/{id}/activity`).
 
 ## Dependency-aware install UI
 
@@ -752,7 +756,9 @@ Phase state is polled from `/api/modules/{id}/install-state`, e.g. planning → 
 
 Client helpers include `moduleInstallPlan`, `moduleInstallState` and `installModule` on the API facade/domain code. The frontend never treats a click as installation success.
 
-Layout invariant: module header/search/filters are compact; `.lv-mod-rows` owns remaining scroll height. Search/icon styling must remain scoped to the module page.
+Visual fixture (Playwright only): `src/mocks/modulesV2VisualFixture.ts` + `e2e/modules-v2.visual.spec.ts`. Reference: `docs/ui_reference/modules-v2-reference.png` (1672×941). Production never imports fixture defaults.
+
+Layout invariant: module list scroll owns remaining height; detail toolbars wrap at narrower widths.
 
 ---
 

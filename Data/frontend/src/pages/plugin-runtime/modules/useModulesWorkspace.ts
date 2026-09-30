@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../../../api/client";
 import { isTerminalJobStatus } from "../../../lib/jobStatus";
+import {
+  MODULES_V2_VISUAL_FIXTURE,
+  isModulesVisualFixtureActive,
+} from "../../../mocks/modulesV2VisualFixture";
 import { useAppToast } from "../../../state/useAppToast";
 import type { ModuleSnapshot } from "../../../types/api";
 import {
@@ -25,6 +29,7 @@ import {
   type InstallPlanView,
   type ManagedModuleRow,
   type ModuleFilterId,
+  type ModuleKpis,
 } from "./viewModels";
 
 const JOB_POLL_MS = 900;
@@ -120,6 +125,7 @@ export function useModulesWorkspace() {
   const [installPolling, setInstallPolling] = useState(false);
   const [pendingLifecycle, setPendingLifecycle] = useState<PendingLifecycle | null>(null);
   const [newModuleOpen, setNewModuleOpen] = useState(false);
+  const [activityEvents, setActivityEvents] = useState<Array<Record<string, unknown>>>([]);
   const jobPollAbort = useRef(0);
 
   const viewParam = searchParams.get("view");
@@ -151,6 +157,17 @@ export function useModulesWorkspace() {
     setLoading(true);
     setLoadError(null);
     try {
+      if (typeof window !== "undefined") {
+        const flag = (window as Window & { __LV_V2_VISUAL_FIXTURE__?: string }).__LV_V2_VISUAL_FIXTURE__;
+        if (flag === "modules") {
+          const { MODULES_V2_VISUAL_FIXTURE } = await import("../../../mocks/modulesV2VisualFixture");
+          applySnapshot(MODULES_V2_VISUAL_FIXTURE as unknown as ModuleSnapshot);
+          setActivityEvents([...(MODULES_V2_VISUAL_FIXTURE.activity as Array<Record<string, unknown>>)]);
+          setStale(false);
+          setLoading(false);
+          return;
+        }
+      }
       const snap = await api.listModules();
       applySnapshot(snap);
       setStale(false);
@@ -164,8 +181,8 @@ export function useModulesWorkspace() {
   }, [applySnapshot, snapshot]);
 
   useEffect(() => {
-    void load();
     // Initial load only — refresh is explicit.
+    void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -327,15 +344,37 @@ export function useModulesWorkspace() {
     [modules, query, filter, updateEvidenceByModule],
   );
 
-  const counts = useMemo(
-    () => filterCounts(modules, updateEvidenceByModule),
-    [modules, updateEvidenceByModule],
-  );
+  const kpis = useMemo((): ModuleKpis => {
+    if (isModulesVisualFixtureActive()) {
+      const d = MODULES_V2_VISUAL_FIXTURE.displayKpis;
+      return {
+        featureFlag: d.featureFlag,
+        totalModules: d.totalModules,
+        executable: d.executable,
+        healthIssues: d.healthIssues,
+        updateAvailable: d.updateAvailable,
+      };
+    }
+    return deriveKpis(snapshot, updateEvidenceByModule);
+  }, [snapshot, updateEvidenceByModule]);
 
-  const kpis = useMemo(
-    () => deriveKpis(snapshot, updateEvidenceByModule),
-    [snapshot, updateEvidenceByModule],
-  );
+  const counts = useMemo(() => {
+    if (isModulesVisualFixtureActive()) {
+      return MODULES_V2_VISUAL_FIXTURE.displayKpis.filterCounts;
+    }
+    return filterCounts(modules, updateEvidenceByModule);
+  }, [modules, updateEvidenceByModule]);
+
+  const visualSparklines = useMemo(() => {
+    if (!isModulesVisualFixtureActive()) return undefined;
+    return MODULES_V2_VISUAL_FIXTURE.sparklines;
+  }, [snapshot]);
+
+  const visualRecentActivity = useMemo(() => {
+    if (!isModulesVisualFixtureActive()) return undefined;
+    if (effectiveSelectedId !== MODULES_V2_VISUAL_FIXTURE.selectedModuleId) return undefined;
+    return MODULES_V2_VISUAL_FIXTURE.recentActivity;
+  }, [effectiveSelectedId, snapshot]);
 
   const effectiveSelectedId = useMemo(() => {
     if (selectedId && rows.some((row) => moduleId(row) === selectedId)) return selectedId;
@@ -350,6 +389,30 @@ export function useModulesWorkspace() {
     if (!id) return null;
     return modules.find((row) => moduleId(row) === id) ?? null;
   }, [modules, effectiveSelectedId]);
+
+  useEffect(() => {
+    const id = effectiveSelectedId;
+    if (!id) {
+      setActivityEvents([]);
+      return;
+    }
+    if (typeof window !== "undefined") {
+      const flag = (window as Window & { __LV_V2_VISUAL_FIXTURE__?: string }).__LV_V2_VISUAL_FIXTURE__;
+      if (flag === "modules") return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await api.moduleActivity(id, 20);
+        if (!cancelled) setActivityEvents(Array.isArray(res.events) ? res.events : []);
+      } catch {
+        if (!cancelled) setActivityEvents([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveSelectedId]);
 
   useEffect(() => {
     setInstallPlan(null);
@@ -888,6 +951,7 @@ export function useModulesWorkspace() {
     setWorkspaceView,
     newModuleOpen,
     setNewModuleOpen,
+    activityEvents,
     load,
     onDiscover,
     onLifecycle,

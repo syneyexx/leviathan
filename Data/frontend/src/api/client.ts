@@ -1063,6 +1063,33 @@ export const api = {
     return request(`/api/modules/${encodeURIComponent(moduleId)}/jobs`);
   },
 
+  moduleActivity(
+    moduleId: string,
+    limit = 20,
+  ): Promise<{
+    module_id: string;
+    events: Array<Record<string, unknown>>;
+    count: number;
+    truth?: Record<string, boolean>;
+  }> {
+    return request(
+      `/api/modules/${encodeURIComponent(moduleId)}/activity?limit=${encodeURIComponent(String(limit))}`,
+    );
+  },
+
+  checkAllModuleUpdates(limit = 50): Promise<{
+    results: Array<Record<string, unknown>>;
+    errors: Array<Record<string, unknown>>;
+    checked: number;
+    error_count: number;
+    snapshot: ModuleSnapshot;
+    truth?: Record<string, boolean>;
+  }> {
+    return request(`/api/modules/check-updates?limit=${encodeURIComponent(String(limit))}`, {
+      method: "POST",
+    });
+  },
+
   moduleVersions(moduleId: string): Promise<{ versions: Array<Record<string, unknown>>; count: number }> {
     return request(`/api/modules/${encodeURIComponent(moduleId)}/versions`);
   },

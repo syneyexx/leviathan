@@ -316,6 +316,74 @@ def build_modules_router(
             },
         }
 
+    @router.get("/api/modules/{module_id}/activity")
+    def module_activity(module_id: str, limit: int = Query(default=20, ge=1, le=50)) -> dict:
+        """Bounded recent activity from Observability (no second event bus)."""
+        _require_enabled()
+        _require_known(module_id, "activity")
+        events = _project_module_activity(
+            observability=observability,
+            module_id=module_id,
+            limit=limit,
+        )
+        return {
+            "module_id": module_id,
+            "events": events,
+            "count": len(events),
+            "truth": {
+                "observability_is_activity_source": True,
+                "enqueue_is_not_completion": True,
+            },
+        }
+
+    @router.post("/api/modules/check-updates")
+    def check_all_module_updates(
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> dict:
+        """Bounded update checks across eligible modules (local evidence; no remote fanout)."""
+        _require_enabled()
+        results: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+        modules = list(module_manager.list())[:limit]
+        for managed in modules:
+            mid = managed.manifest.module_id
+            if not managed._has_lifecycle_adapter():
+                continue
+            try:
+                result = module_manager.check_update(mid)
+                results.append(result if isinstance(result, dict) else {"module_id": mid, "result": result})
+            except ModuleManagerError as exc:
+                errors.append(
+                    {
+                        "module_id": mid,
+                        "error_code": exc.code,
+                        "detail": scrub_error_text(exc.detail, limit=200),
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                errors.append(
+                    {
+                        "module_id": mid,
+                        "error_code": "CHECK_UPDATE_FAILED",
+                        "detail": scrub_error_text(str(exc), limit=200),
+                    }
+                )
+        _emit(
+            "check_updates_batch",
+            {"checked": len(results), "errors": len(errors)},
+        )
+        return {
+            "results": results,
+            "errors": errors,
+            "checked": len(results),
+            "error_count": len(errors),
+            "snapshot": module_manager.public_snapshot(),
+            "truth": {
+                "check_update_is_local_evidence": True,
+                "no_remote_fanout_in_fastapi": True,
+            },
+        }
+
     @router.get("/api/modules/{module_id}/versions")
     def module_versions(module_id: str) -> dict:
         _require_enabled()
@@ -559,6 +627,101 @@ def _project_module_jobs(
 
     ordered = sorted(by_id.values(), key=_sort_key)
     return ordered[:limit]
+
+
+_ACTIVITY_LABELS = {
+    "start_queued": "Start requested",
+    "start": "Module started",
+    "stop_queued": "Stop requested",
+    "stop": "Module stopped",
+    "restart_queued": "Restart requested",
+    "restart": "Module restarted",
+    "ensure_ready_queued": "Ensure Ready requested",
+    "ensure_ready": "Ensure Ready completed",
+    "execute_queued": "Execute requested",
+    "execute": "Operation executed",
+    "activate_version_queued": "Activate version requested",
+    "activate_version": "Version activated",
+    "rollback_version_queued": "Rollback requested",
+    "rollback_version": "Rollback completed",
+    "discover": "Discover completed",
+    "check_updates_batch": "Update check completed",
+}
+
+
+def _activity_label(name: str) -> str:
+    if name in _ACTIVITY_LABELS:
+        return _ACTIVITY_LABELS[name]
+    if name.endswith("_queued"):
+        base = name[: -len("_queued")].replace("_", " ").strip()
+        return f"{base.capitalize()} requested" if base else "Requested"
+    if name.startswith("module.") and name.endswith(".failed"):
+        return "Lifecycle failed"
+    pretty = name.replace("_", " ").replace(".", " ").strip()
+    return pretty[:1].upper() + pretty[1:] if pretty else name
+
+
+def _project_module_activity(
+    *,
+    observability: Any,
+    module_id: str,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    raw: list[dict[str, Any]] = []
+    if observability is not None and hasattr(observability, "query_history"):
+        try:
+            raw = list(
+                observability.query_history(
+                    limit=max(limit * 3, 60),
+                    category="module_manager",
+                    module_id=module_id,
+                    newest_first=True,
+                )
+                or []
+            )
+        except TypeError:
+            # Older query_history without module_id kwarg — filter client-side.
+            try:
+                raw = list(
+                    observability.query_history(
+                        limit=max(limit * 5, 100),
+                        category="module_manager",
+                        newest_first=True,
+                    )
+                    or []
+                )
+            except Exception:  # noqa: BLE001
+                raw = []
+        except Exception:  # noqa: BLE001
+            raw = []
+    out: list[dict[str, Any]] = []
+    for event in raw:
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        eid_module = event.get("module_id") or payload.get("module_id")
+        if eid_module and str(eid_module) != module_id:
+            continue
+        name = str(event.get("name") or "")
+        status = "OK"
+        if "failed" in name.lower() or event.get("success") is False:
+            status = "FAILED"
+        elif name.endswith("_queued") or "requested" in name.lower():
+            status = "QUEUED"
+        out.append(
+            {
+                "event_id": event.get("event_id"),
+                "name": name,
+                "label": _activity_label(name),
+                "status": status,
+                "created_at_ms": event.get("created_at_ms"),
+                "level": event.get("level"),
+                "message": event.get("message"),
+                "job_id": event.get("job_id") or payload.get("job_id"),
+                "payload": payload,
+            }
+        )
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _safe_payload(payload: dict[str, Any]) -> dict[str, Any]:
