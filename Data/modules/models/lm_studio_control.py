@@ -25,7 +25,22 @@ class CapabilitySupport(str, Enum):
     UNKNOWN = "UNKNOWN"
 
 
-# Official native REST load body fields (LM Studio 0.4.x docs).
+class CapabilityScope(str, Enum):
+    LOAD = "LOAD"
+    INFERENCE = "INFERENCE"
+    PLACEMENT_POLICY = "PLACEMENT_POLICY"
+    RUNTIME_POLICY = "RUNTIME_POLICY"
+
+
+class CapabilityTransport(str, Enum):
+    REST = "REST"
+    CLI = "CLI"
+    SDK = "SDK"
+    LEVIATHAN = "LEVIATHAN"
+    NONE = "NONE"
+
+
+# Official native REST load body fields (LM Studio docs).
 REST_LOAD_FIELDS = frozenset(
     {
         "model",
@@ -64,7 +79,31 @@ LM_STUDIO_LOAD_OPTION_KEYS = (
     "seed",
     "allowMultiGpu",
     "shardingMode",
+    "keepDisplayHeadroom",
+    "tensorParallelSize",
 )
+
+
+@dataclass(frozen=True)
+class CapabilityField:
+    """Authoritative per-control capability descriptor for Models UI / compiler."""
+
+    key: str
+    support: CapabilitySupport
+    scope: CapabilityScope
+    transport: CapabilityTransport
+    reason_code: str | None = None
+    note: str | None = None
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "key": self.key,
+            "support": self.support.value,
+            "scope": self.scope.value,
+            "transport": self.transport.value,
+            "reasonCode": self.reason_code,
+            "note": self.note,
+        }
 
 
 @dataclass(frozen=True)
@@ -95,8 +134,13 @@ class LMStudioControlCapabilities:
     advanced_llama_overrides: CapabilitySupport = CapabilitySupport.UNKNOWN
     context_length: CapabilitySupport = CapabilitySupport.UNKNOWN
     echo_load_config: CapabilitySupport = CapabilitySupport.UNKNOWN
+    seed: CapabilitySupport = CapabilitySupport.UNKNOWN
+    cpu_threads: CapabilitySupport = CapabilitySupport.UNKNOWN
     provider_version: str | None = None
     cli_available: bool = False
+    sdk_available: bool = False
+    sdk_reachable: bool = False
+    sdk_version: str | None = None
     rest_base: str | None = None
     notes: tuple[str, ...] = ()
 
@@ -128,14 +172,20 @@ class LMStudioControlCapabilities:
                 "advancedLlamaOverrides": self.advanced_llama_overrides,
                 "contextLength": self.context_length,
                 "echoLoadConfig": self.echo_load_config,
+                "seed": self.seed,
+                "cpuThreads": self.cpu_threads,
             }.items()
         }
         return {
             **fields,
             "providerVersion": self.provider_version,
             "cliAvailable": self.cli_available,
+            "sdkAvailable": self.sdk_available,
+            "sdkReachable": self.sdk_reachable,
+            "sdkVersion": self.sdk_version,
             "restBase": self.rest_base,
             "notes": list(self.notes),
+            "fields": [f.public_dict() for f in self.field_matrix()],
         }
 
     def field_support(self, field_name: str) -> CapabilitySupport:
@@ -158,12 +208,174 @@ class LMStudioControlCapabilities:
             "speculativeDecoding": self.speculative_decoding,
             "draftModelId": self.draft_model,
             "speculativeTokens": self.speculative_decoding,
-            "cpuThreads": CapabilitySupport.UNSUPPORTED,
-            "seed": CapabilitySupport.UNSUPPORTED,
+            "cpuThreads": self.cpu_threads,
+            "seed": self.seed,
             "allowMultiGpu": self.gpu_split,
             "shardingMode": self.gpu_split,
+            "keepDisplayHeadroom": CapabilitySupport.SUPPORTED,  # Leviathan policy
+            "tensorParallelSize": CapabilitySupport.UNSUPPORTED,
         }
         return mapping.get(field_name, CapabilitySupport.UNKNOWN)
+
+    def field_matrix(self) -> tuple[CapabilityField, ...]:
+        """Authoritative field-by-field capability matrix for the Models page."""
+        S = CapabilitySupport.SUPPORTED
+        U = CapabilitySupport.UNSUPPORTED
+        sdk = self.sdk_available and self.sdk_reachable
+        cli = self.cli_available
+        rest = self.native_rest == S
+
+        def _f(
+            key: str,
+            support: CapabilitySupport,
+            scope: CapabilityScope,
+            transport: CapabilityTransport,
+            reason: str | None = None,
+            note: str | None = None,
+        ) -> CapabilityField:
+            return CapabilityField(key, support, scope, transport, reason, note)
+
+        return (
+            _f("contextLength", self.context_length, CapabilityScope.LOAD,
+               CapabilityTransport.REST if rest else (CapabilityTransport.SDK if sdk else CapabilityTransport.NONE)),
+            _f("evalBatchSize", self.eval_batch, CapabilityScope.LOAD,
+               CapabilityTransport.REST if rest else CapabilityTransport.NONE),
+            _f("flashAttention", self.flash_attention, CapabilityScope.LOAD,
+               CapabilityTransport.REST if rest else CapabilityTransport.NONE),
+            _f("offloadKvCacheToGpu", self.kv_gpu_offload, CapabilityScope.LOAD,
+               CapabilityTransport.REST if rest else CapabilityTransport.NONE),
+            _f("numExperts", self.moe_num_experts, CapabilityScope.LOAD,
+               CapabilityTransport.REST if rest else CapabilityTransport.NONE,
+               note="MoE models only"),
+            _f(
+                "gpuOffloadRatio",
+                self.gpu_ratio,
+                CapabilityScope.LOAD,
+                CapabilityTransport.SDK if sdk else (CapabilityTransport.CLI if cli else CapabilityTransport.NONE),
+                None if self.gpu_ratio == S else ("SDK_OR_CLI_REQUIRED" if not sdk and not cli else None),
+                "Fraction of GPU offload (0–1 / off / max)",
+            ),
+            _f(
+                "seed",
+                self.seed,
+                CapabilityScope.LOAD,
+                CapabilityTransport.SDK if sdk else CapabilityTransport.NONE,
+                None if self.seed == S else "SDK_REQUIRED",
+                "Official SDK LlmLoadModelConfig.seed",
+            ),
+            _f(
+                "cpuThreads",
+                self.cpu_threads,
+                CapabilityScope.INFERENCE,
+                CapabilityTransport.SDK if sdk else CapabilityTransport.NONE,
+                "INFERENCE_ONLY_SETTING" if self.cpu_threads != S else None,
+                "Official SDK prediction config — not a load parameter",
+            ),
+            _f(
+                "gpuSplitMode",
+                self.gpu_split,
+                CapabilityScope.LOAD,
+                CapabilityTransport.SDK if sdk else CapabilityTransport.NONE,
+                None if self.gpu_split == S else "SDK_REQUIRED",
+                "SDK evenly | favorMainGpu strategies",
+            ),
+            _f(
+                "tensorSplit",
+                self.custom_gpu_split,
+                CapabilityScope.LOAD,
+                CapabilityTransport.NONE,
+                "SDK_SPLIT_STRATEGY_ONLY",
+                "Arbitrary per-GPU % not exposed; use Auto / evenly / favorMainGpu",
+            ),
+            _f(
+                "mainGpuOrdinal",
+                self.main_gpu,
+                CapabilityScope.LOAD,
+                CapabilityTransport.SDK if sdk else CapabilityTransport.NONE,
+                None if self.main_gpu == S else "SDK_REQUIRED",
+            ),
+            _f(
+                "excludedDeviceIds",
+                self.disabled_gpus,
+                CapabilityScope.LOAD,
+                CapabilityTransport.SDK if sdk else CapabilityTransport.NONE,
+                None if self.disabled_gpus == S else "SDK_REQUIRED",
+            ),
+            _f(
+                "kvCacheDtype",
+                self.kv_quantization,
+                CapabilityScope.LOAD,
+                CapabilityTransport.SDK if sdk else CapabilityTransport.NONE,
+                None if self.kv_quantization == S else "SDK_REQUIRED",
+            ),
+            _f(
+                "gpuStrictVramCap",
+                self.strict_vram_cap,
+                CapabilityScope.LOAD,
+                CapabilityTransport.SDK if sdk else CapabilityTransport.NONE,
+                None if self.strict_vram_cap == S else "SDK_REQUIRED",
+            ),
+            _f(
+                "speculativeDecoding",
+                self.speculative_decoding,
+                CapabilityScope.INFERENCE,
+                CapabilityTransport.SDK if sdk else CapabilityTransport.NONE,
+                "INFERENCE_ONLY_SETTING",
+                "draftModel applied at prediction time",
+            ),
+            _f(
+                "draftModelId",
+                self.draft_model,
+                CapabilityScope.INFERENCE,
+                CapabilityTransport.SDK if sdk else CapabilityTransport.NONE,
+                "INFERENCE_ONLY_SETTING",
+            ),
+            _f(
+                "speculativeTokens",
+                self.speculative_decoding,
+                CapabilityScope.INFERENCE,
+                CapabilityTransport.SDK if sdk else CapabilityTransport.NONE,
+                "INFERENCE_ONLY_SETTING",
+            ),
+            _f(
+                "continuousBatching",
+                U,
+                CapabilityScope.LOAD,
+                CapabilityTransport.NONE,
+                "PROVIDER_VERSION_UNSUPPORTED",
+                "Not exposed on native REST load; app parallel predictions is separate",
+            ),
+            _f(
+                "prefixCache",
+                U,
+                CapabilityScope.LOAD,
+                CapabilityTransport.NONE,
+                "UNSUPPORTED",
+                "No official LM Studio prefix-cache control verified",
+            ),
+            _f(
+                "tensorParallelSize",
+                U,
+                CapabilityScope.LOAD,
+                CapabilityTransport.NONE,
+                "UNSUPPORTED",
+                "LM Studio does not expose tensor-parallel size",
+            ),
+            _f(
+                "keepDisplayHeadroom",
+                S,
+                CapabilityScope.PLACEMENT_POLICY,
+                CapabilityTransport.LEVIATHAN,
+                note="Affects ResourceManager / placement / VRAM reserves — not sent to LM Studio",
+            ),
+            _f(
+                "shardingMode",
+                self.gpu_split,
+                CapabilityScope.LOAD,
+                CapabilityTransport.SDK if sdk else CapabilityTransport.NONE,
+                None if self.gpu_split == S else "SDK_REQUIRED",
+            ),
+        )
 
 
 @dataclass
@@ -367,93 +579,117 @@ def capabilities_from_probe(
     cli_available: bool,
     rest_base: str | None,
     load_probe_ok: bool | None = None,
+    sdk_available: bool = False,
+    sdk_reachable: bool = False,
+    sdk_version: str | None = None,
 ) -> LMStudioControlCapabilities:
     """Derive field-level capabilities from probe evidence + official docs.
 
     REST (documented): context_length, eval_batch_size, flash_attention,
     num_experts, offload_kv_cache_to_gpu, echo_load_config.
     CLI (documented): --gpu ratio, --estimate-only, --context-length.
-    SDK-only (not exposed via REST/CLI): custom GPU split ratios, strict VRAM
-    cap, KV quantization types, continuous batching, speculative decoding.
-    Those remain UNSUPPORTED unless a typed Engine Protocol bridge exists.
+    SDK (documented 1.5.x): seed, gpu.ratio/mainGpu/splitStrategy/disabledGpus,
+    KV quant types, gpuStrictVramCap; prediction: cpuThreads, draftModel.
     """
     S = CapabilitySupport.SUPPORTED
     U = CapabilitySupport.UNSUPPORTED
     K = CapabilitySupport.UNKNOWN
     notes: list[str] = []
+    sdk_ok = bool(sdk_available and sdk_reachable)
 
-    if not native_rest_ok:
+    if not native_rest_ok and not sdk_ok:
         notes.append("Native REST /api/v1 not reachable")
+        if sdk_available and not sdk_reachable:
+            notes.append("LM Studio SDK installed but not reachable")
+        elif not sdk_available:
+            notes.append("LM Studio SDK not installed")
         return LMStudioControlCapabilities(
             native_rest=U,
             load=U,
             unload=U,
             loaded_instances=U,
             resource_estimate=S if cli_available else U,
-            gpu_ratio=S if cli_available else U,
-            gpu_split=U,
+            gpu_ratio=S if (cli_available or sdk_ok) else U,
+            gpu_split=S if sdk_ok else U,
             custom_gpu_split=U,
-            disabled_gpus=U,
-            main_gpu=U,
-            strict_vram_cap=U,
+            disabled_gpus=S if sdk_ok else U,
+            main_gpu=S if sdk_ok else U,
+            strict_vram_cap=S if sdk_ok else U,
             flash_attention=U,
             kv_gpu_offload=U,
-            kv_quantization=U,
+            kv_quantization=S if sdk_ok else U,
             eval_batch=U,
             moe_num_experts=U,
             mmap=U,
             mlock=U,
             continuous_batching=U,
-            speculative_decoding=U,
-            draft_model=U,
+            speculative_decoding=S if sdk_ok else U,
+            draft_model=S if sdk_ok else U,
             advanced_llama_overrides=U,
-            context_length=U,
+            context_length=S if (cli_available or sdk_ok) else U,
             echo_load_config=U,
+            seed=S if sdk_ok else U,
+            cpu_threads=S if sdk_ok else U,
             provider_version=version,
             cli_available=cli_available,
+            sdk_available=sdk_available,
+            sdk_reachable=sdk_reachable,
+            sdk_version=sdk_version,
             rest_base=rest_base,
             notes=tuple(notes),
         )
 
-    notes.append("Native REST load fields per LM Studio 0.4.x documentation")
+    notes.append("Native REST load fields per LM Studio documentation")
     if cli_available:
         notes.append("lms CLI available for --gpu and --estimate-only")
     else:
-        notes.append("lms CLI not on PATH — GPU ratio / estimate via CLI unavailable")
+        notes.append("lms CLI not on PATH — GPU ratio / estimate via CLI unavailable unless SDK")
+    if sdk_ok:
+        notes.append(
+            "LM Studio SDK reachable — seed, GPU strategy, KV quant, inference cpuThreads/draftModel enabled"
+        )
+    elif sdk_available:
+        notes.append("LM Studio SDK installed but not reachable — SDK-only fields disabled")
+    else:
+        notes.append("LM Studio SDK not installed — seed / multi-GPU strategy / KV quant disabled")
     notes.append(
-        "Custom GPU split / KV quantization / speculative decoding require "
-        "Engine Protocol / SDK — not exposed on REST; controls disabled"
+        "Arbitrary per-GPU % tensor splits are not exposed by LM Studio; use evenly/favorMainGpu"
     )
 
     load_cap = S if load_probe_ok is not False else K
 
     return LMStudioControlCapabilities(
-        native_rest=S,
-        load=load_cap,
-        unload=S,
-        loaded_instances=S,
+        native_rest=S if native_rest_ok else (K if sdk_ok else U),
+        load=load_cap if native_rest_ok else (S if sdk_ok else load_cap),
+        unload=S if native_rest_ok else (S if sdk_ok else U),
+        loaded_instances=S if native_rest_ok else (S if sdk_ok else U),
         resource_estimate=S if cli_available else U,
-        gpu_ratio=S if cli_available else U,
-        gpu_split=U,
-        custom_gpu_split=U,
-        disabled_gpus=U,
-        main_gpu=U,
-        strict_vram_cap=U,
-        flash_attention=S,
-        kv_gpu_offload=S,
-        kv_quantization=U,
-        eval_batch=S,
-        moe_num_experts=S,
+        gpu_ratio=S if (cli_available or sdk_ok) else U,
+        gpu_split=S if sdk_ok else U,
+        custom_gpu_split=U,  # no arbitrary % tensor_split
+        disabled_gpus=S if sdk_ok else U,
+        main_gpu=S if sdk_ok else U,
+        strict_vram_cap=S if sdk_ok else U,
+        flash_attention=S if native_rest_ok or sdk_ok else U,
+        kv_gpu_offload=S if native_rest_ok or sdk_ok else U,
+        kv_quantization=S if sdk_ok else U,
+        eval_batch=S if native_rest_ok or sdk_ok else U,
+        moe_num_experts=S if native_rest_ok or sdk_ok else U,
         mmap=U,
         mlock=U,
         continuous_batching=U,
-        speculative_decoding=U,
-        draft_model=U,
+        speculative_decoding=S if sdk_ok else U,
+        draft_model=S if sdk_ok else U,
         advanced_llama_overrides=U,
-        context_length=S,
-        echo_load_config=S,
+        context_length=S if native_rest_ok or sdk_ok or cli_available else U,
+        echo_load_config=S if native_rest_ok else U,
+        seed=S if sdk_ok else U,
+        cpu_threads=S if sdk_ok else U,
         provider_version=version,
         cli_available=cli_available,
+        sdk_available=sdk_available,
+        sdk_reachable=sdk_reachable,
+        sdk_version=sdk_version,
         rest_base=rest_base,
         notes=tuple(notes),
     )
@@ -576,19 +812,70 @@ def compile_lm_studio_load(
         ("speculativeDecoding", opts.speculative_decoding, capabilities.speculative_decoding),
         ("draftModelId", opts.draft_model_id, capabilities.draft_model),
         ("speculativeTokens", opts.speculative_tokens, capabilities.speculative_decoding),
-        ("cpuThreads", opts.cpu_threads, CapabilitySupport.UNSUPPORTED),
-        ("seed", opts.seed, CapabilitySupport.UNSUPPORTED),
+        ("cpuThreads", opts.cpu_threads, capabilities.cpu_threads),
+        ("seed", opts.seed, capabilities.seed),
+        ("tensorParallelSize", opts.tensor_parallel_size, CapabilitySupport.UNSUPPORTED),
     ):
         if value is not None:
             requested[name] = value
-            if support != CapabilitySupport.SUPPORTED:
+            if name == "cpuThreads":
+                _mark_unsupported(
+                    name,
+                    "INFERENCE_ONLY_SETTING: cpuThreads is prediction config, not load",
+                )
+            elif name in {"speculativeDecoding", "draftModelId", "speculativeTokens"}:
+                _mark_unsupported(
+                    name,
+                    "INFERENCE_ONLY_SETTING: draftModel applied at prediction time",
+                )
+            elif name == "seed" and support == CapabilitySupport.SUPPORTED:
+                # Seed requires SDK transport — mark for SDK path below.
+                pass
+            elif support != CapabilitySupport.SUPPORTED:
                 _mark_unsupported(
                     name,
                     f"Niet ondersteund door LM Studio {capabilities.provider_version or 'via REST/CLI'}",
                 )
 
+    if opts.keep_display_headroom is not None:
+        requested["keepDisplayHeadroom"] = opts.keep_display_headroom
+        warnings.append("keepDisplayHeadroom is Leviathan placement policy (not sent to LM Studio)")
+
+    needs_sdk = False
+    if opts.seed is not None and capabilities.seed == CapabilitySupport.SUPPORTED:
+        needs_sdk = True
+    if opts.kv_cache_dtype and capabilities.kv_quantization == CapabilitySupport.SUPPORTED:
+        needs_sdk = True
+    if opts.main_gpu_ordinal is not None and capabilities.main_gpu == CapabilitySupport.SUPPORTED:
+        needs_sdk = True
+    if opts.gpu_split_mode and capabilities.gpu_split == CapabilitySupport.SUPPORTED:
+        needs_sdk = True
+    if opts.gpu_strict_vram_cap is not None and capabilities.strict_vram_cap == CapabilitySupport.SUPPORTED:
+        needs_sdk = True
+    if (
+        ratio is not None
+        and capabilities.gpu_ratio == CapabilitySupport.SUPPORTED
+        and capabilities.sdk_available
+        and capabilities.sdk_reachable
+        and not capabilities.cli_available
+    ):
+        needs_sdk = True
+
     transport = "rest"
-    if needs_cli_gpu and capabilities.cli_available:
+    if needs_sdk and capabilities.sdk_available and capabilities.sdk_reachable:
+        transport = "sdk"
+        # Build SDK config via dedicated compiler; REST body retained as fallback metadata.
+        from Data.modules.models.lm_studio_sdk import compile_sdk_load_config
+
+        sdk_plan = compile_sdk_load_config(model_key, opts)
+        # Merge requested + deferred from SDK plan (authoritative for SDK fields)
+        requested.update(sdk_plan.requested)
+        deferred.update(sdk_plan.deferred_unsupported)
+        warnings.extend(sdk_plan.warnings)
+        # Stash SDK config on rest_body under a private key for adapter (not sent to REST)
+        rest_body["_sdkConfig"] = sdk_plan.config
+        warnings.append("Load will use LM Studio SDK transport for supported fields")
+    elif needs_cli_gpu and capabilities.cli_available:
         # Hybrid: prefer CLI when GPU ratio must be applied (CLI owns load in that case)
         transport = "cli"
         if opts.context_length is not None and "--context-length" not in cli_args:
@@ -599,6 +886,8 @@ def compile_lm_studio_load(
     elif needs_cli_gpu and not capabilities.cli_available:
         warnings.append("GPU ratio requested but lms CLI unavailable — REST load without GPU ratio")
 
+    # Strip private SDK stash from public REST body copy for deferred inspection —
+    # adapter reads compiled.rest_body.get("_sdkConfig").
     return CompiledLMStudioLoad(
         model_key=model_key,
         rest_body=rest_body,

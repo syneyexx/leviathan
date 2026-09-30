@@ -846,6 +846,20 @@ class ModelControlPlane:
         elif providers:
             runtime_label = providers[0].health.value
         gateway = self.gateway.snapshot()
+        model_runtime = None
+        try:
+            from Data.modules.model_runtime.readiness import model_runtime_readiness_snapshot
+
+            db_path = getattr(self.settings, "database_path", None)
+            model_runtime = model_runtime_readiness_snapshot(db_path)
+        except Exception:  # noqa: BLE001
+            model_runtime = {
+                "pool": "model_runtime",
+                "state": "UNAVAILABLE",
+                "poolState": "UNAVAILABLE",
+                "acceptJobs": False,
+                "reason": "readiness_probe_failed",
+            }
         return {
             "runtime": runtime_label,
             "availableModels": len(models),
@@ -863,6 +877,7 @@ class ModelControlPlane:
             "offlineProviders": [
                 p.public_dict() for p in providers if p.health in {ProviderHealth.OFFLINE, ProviderHealth.TIMEOUT}
             ],
+            "modelRuntime": model_runtime,
         }
 
     def resolve_for_chat(

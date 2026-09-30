@@ -45,7 +45,11 @@ def _caps(**overrides) -> LMStudioControlCapabilities:
         moe_num_experts=CapabilitySupport.SUPPORTED,
         context_length=CapabilitySupport.SUPPORTED,
         echo_load_config=CapabilitySupport.SUPPORTED,
+        seed=CapabilitySupport.UNSUPPORTED,
+        cpu_threads=CapabilitySupport.UNSUPPORTED,
         cli_available=True,
+        sdk_available=False,
+        sdk_reachable=False,
         provider_version="0.4.25",
     )
     return replace(base, **overrides) if overrides else base
@@ -87,11 +91,49 @@ def test_compile_custom_gpu_split_deferred_unsupported():
     assert "gpuSplit" in compiled.deferred_unsupported
 
 
-def test_compile_unsupported_seed_cpu_threads():
-    caps = _caps()
+def test_compile_unsupported_seed_cpu_threads_without_sdk():
+    caps = _caps()  # no sdk
     opts = LoadOptions(seed=42, cpu_threads=8)
     compiled = compile_lm_studio_load("model-a", opts, caps)
     assert "seed" in compiled.deferred_unsupported
+    assert "cpuThreads" in compiled.deferred_unsupported
+    assert "INFERENCE_ONLY" in compiled.deferred_unsupported["cpuThreads"]
+
+
+def test_compile_seed_uses_sdk_when_reachable():
+    caps = _caps(
+        seed=CapabilitySupport.SUPPORTED,
+        sdk_available=True,
+        sdk_reachable=True,
+        sdk_version="1.5.0",
+    )
+    opts = LoadOptions(seed=7, context_length=4096)
+    compiled = compile_lm_studio_load("model-a", opts, caps)
+    assert compiled.transport == "sdk"
+    assert compiled.rest_body.get("_sdkConfig", {}).get("seed") == 7
+    assert "seed" not in compiled.deferred_unsupported or "INFERENCE" not in compiled.deferred_unsupported.get(
+        "seed", ""
+    )
+
+
+def test_capability_field_matrix_scopes():
+    caps = _caps(sdk_available=True, sdk_reachable=True, seed=CapabilitySupport.SUPPORTED, cpu_threads=CapabilitySupport.SUPPORTED)
+    matrix = {f.key: f for f in caps.field_matrix()}
+    assert matrix["seed"].scope.value == "LOAD"
+    assert matrix["cpuThreads"].scope.value == "INFERENCE"
+    assert matrix["keepDisplayHeadroom"].scope.value == "PLACEMENT_POLICY"
+    assert matrix["tensorSplit"].reason_code == "SDK_SPLIT_STRATEGY_ONLY"
+    pub = caps.public_dict()
+    assert "fields" in pub
+    assert any(f["key"] == "seed" for f in pub["fields"])
+
+
+def test_cpu_threads_never_enter_rest_body():
+    caps = _caps(cpu_threads=CapabilitySupport.SUPPORTED, sdk_available=True, sdk_reachable=True)
+    opts = LoadOptions(cpu_threads=8, context_length=2048)
+    compiled = compile_lm_studio_load("model-a", opts, caps)
+    assert "cpu_threads" not in compiled.rest_body
+    assert "cpuThreads" not in compiled.rest_body
     assert "cpuThreads" in compiled.deferred_unsupported
 
 
