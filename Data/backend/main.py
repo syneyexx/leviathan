@@ -90,6 +90,23 @@ from Data.modules.reasoning.mode import (
     to_cognition_depth,
 )
 from Data.modules.run import EventType, RunState, RunStore
+from Data.modules.run.activity import ActivityLifecycle
+from Data.modules.run.chat_activity import (
+    activity_snapshot,
+    create_chat_activity_emitter,
+    emit_cancellation,
+    emit_knowledge_retrieval_completed,
+    emit_knowledge_retrieval_started,
+    emit_model_invocation,
+    emit_operation_terminal,
+    emit_plan_created,
+    emit_request_received,
+    emit_request_understood,
+    emit_synthesis,
+    emit_verification,
+    ingest_cognition_operational_events,
+    ingest_team_activity,
+)
 from Data.modules.verification import (
     VerificationEngine,
     VerificationReportStore,
@@ -3171,6 +3188,26 @@ async def chat(payload: ChatRequest, request: Request):
     run = runs.create_run(user_request=message, conversation_id=conversation_id)
     runs.transition(run.run_id, RunState.PLANNING)
     runs.append_event(run.run_id, EventType.REASONING_STARTED, {})
+    activity = create_chat_activity_emitter(
+        run_id=run.run_id,
+        trace_id=getattr(run, "trace_id", None) or run.run_id,
+        run_store=runs,
+        observability=observability,
+    )
+    emit_request_received(activity)
+    activity_sent_ids: set[str] = set()
+
+    def _drain_activity_sse():
+        """Yield newly published USER_VISIBLE activity events for chat SSE."""
+        frames = []
+        for pub in activity.public_events(for_user=True):
+            eid = str(pub.get("eventId") or "")
+            marker = f"{eid}:{pub.get('lifecycle')}:{pub.get('sequence')}"
+            if not eid or marker in activity_sent_ids:
+                continue
+            activity_sent_ids.add(marker)
+            frames.append(sse_encode("activity", pub))
+        return frames
 
     # Immutable behavior snapshot for this turn (sole identity/language/retrieval authority).
     recent_user_texts = [
@@ -3344,6 +3381,30 @@ async def chat(payload: ChatRequest, request: Request):
                 "task_profile": team_profile.public_dict(),
             },
         )
+        emit_request_understood(
+            activity,
+            intent="team_collaboration",
+            complexity="team",
+            retrieval_reason="team_path",
+        )
+        emit_plan_created(
+            activity,
+            steps=[],
+            reasoning_mode={
+                "requested": payload.reasoning_mode or "auto",
+                "effective": payload.reasoning_mode or "auto",
+                "source": "team_collaboration",
+            },
+        )
+        ingest_team_activity(activity, getattr(team_state, "events", None) or [])
+        if final_run_state == RunState.COMPLETED:
+            emit_operation_terminal(activity, lifecycle=ActivityLifecycle.COMPLETED)
+        elif final_run_state == RunState.CANCELLED:
+            emit_cancellation(activity, stage="cancelled")
+            emit_operation_terminal(activity, lifecycle=ActivityLifecycle.CANCELLED)
+        elif final_run_state == RunState.FAILED:
+            emit_operation_terminal(activity, lifecycle=ActivityLifecycle.FAILED)
+        team_activity = activity_snapshot(activity)
         return {
             "conversation_id": conversation_id,
             "user_message": user_message,
@@ -3370,6 +3431,8 @@ async def chat(payload: ChatRequest, request: Request):
                     "notes": ["collaboration_strategy=team is orthogonal to reasoning depth"],
                 },
             },
+            "activity": team_activity.get("activity"),
+            "activity_events": team_activity.get("events"),
             "truth": {
                 "model_output_is_not_evidence": True,
                 "team_provisional": provisional,
@@ -3475,6 +3538,27 @@ async def chat(payload: ChatRequest, request: Request):
             "turn_id": turn_id,
         },
     )
+    emit_request_understood(
+        activity,
+        intent=str(plan.intent or ""),
+        complexity=str(plan.complexity or ""),
+        retrieval_reason=str(getattr(plan, "retrieval_reason", "") or ""),
+    )
+    emit_plan_created(
+        activity,
+        steps=list(plan.steps or ()),
+        reasoning_mode=reasoning_mode.public_dict(),
+    )
+    # Mark understand_request as completed once the plan exists.
+    activity.emit(
+        category="REQUEST",
+        phase="request_understood",
+        lifecycle=ActivityLifecycle.COMPLETED,
+        title="Request interpreted",
+        stable_id=f"{run.run_id}:step:understand_request",
+        parent_event_id=f"{run.run_id}:plan_created",
+        summary="The request has been classified and the execution path identified.",
+    )
 
     cognition_meta: dict | None = None
     # FAST / greeting: keep cognition shadow so we do not over-orchestrate simple turns.
@@ -3579,6 +3663,11 @@ async def chat(payload: ChatRequest, request: Request):
                     "early_own": True,
                 },
             )
+            emit_knowledge_retrieval_completed(
+                activity,
+                knowledge_count=retrieval_rounds if retrieval_rounds > 0 else None,
+                source="cognition",
+            )
             # Cognition early-own: hit counts alone do not identify Brain nodes.
             from Data.modules.brain.activation_events import emit_knowledge_activation
 
@@ -3600,6 +3689,10 @@ async def chat(payload: ChatRequest, request: Request):
             # All successful retrieval strategies must converge here:
             # RETRIEVAL_STARTED → (deep|staged|hybrid) → RETRIEVAL_COMPLETED → EXECUTING
             runs.append_event(run.run_id, EventType.RETRIEVAL_STARTED, {})
+            emit_knowledge_retrieval_started(
+                activity,
+                mode="deep_recall" if plan.use_deep_recall else "knowledge",
+            )
             from Data.modules.brain.activation_events import emit_knowledge_activation
 
             emit_knowledge_activation(
@@ -3734,6 +3827,12 @@ async def chat(payload: ChatRequest, request: Request):
                         "deep_recall": bool(deep_recall_result and deep_recall_result.available),
                         "source": retrieval_source,
                     },
+                )
+                emit_knowledge_retrieval_completed(
+                    activity,
+                    knowledge_count=len(knowledge_hits),
+                    atlas_count=len(atlas_hits),
+                    source=retrieval_source,
                 )
                 runs.transition(run.run_id, RunState.EXECUTING)
             except HTTPException:
@@ -3941,6 +4040,11 @@ async def chat(payload: ChatRequest, request: Request):
 
     if not cognition_early_own:
         runs.append_event(run.run_id, EventType.MODEL_STARTED, {})
+        emit_model_invocation(
+            activity,
+            lifecycle=ActivityLifecycle.STARTING,
+            requested_model=payload.model_id,
+        )
         try:
             routed = model_plane.resolve_for_chat(
                 explicit_model_id=payload.model_id,
@@ -4211,6 +4315,36 @@ async def chat(payload: ChatRequest, request: Request):
                 "behavior_profile_hash": behavior_snapshot.settings_hash,
             },
         )
+        emit_model_invocation(
+            activity,
+            lifecycle=ActivityLifecycle.COMPLETED,
+            requested_model=payload.model_id,
+            effective_model=model,
+            fallback=bool((route_meta or {}).get("fallback")) if route_meta else None,
+        )
+        emit_synthesis(activity, lifecycle=ActivityLifecycle.COMPLETED)
+        quality_pass = quality.public_dict().get("pass")
+        if quality_pass is True:
+            emit_verification(
+                activity,
+                lifecycle=ActivityLifecycle.COMPLETED,
+                passed=True,
+                mode="response_quality",
+            )
+        elif quality_pass is False:
+            emit_verification(
+                activity,
+                lifecycle=ActivityLifecycle.COMPLETED,
+                passed=False,
+                mode="response_quality",
+            )
+        else:
+            emit_verification(activity, lifecycle=ActivityLifecycle.SKIPPED)
+        if cognition_meta and isinstance(cognition_meta, dict):
+            ingest_cognition_operational_events(
+                activity, cognition_meta.get("events") or []
+            )
+        emit_operation_terminal(activity, lifecycle=ActivityLifecycle.COMPLETED)
         assistant_message = db.add_message(conversation_id, "assistant", answer)
         observability.emit(
             "chat",
@@ -4233,6 +4367,7 @@ async def chat(payload: ChatRequest, request: Request):
             selected_model=model,
             output=answer,
         )
+        snap = activity_snapshot(activity)
         return {
             "conversation_id": conversation_id,
             "run_id": completed.run_id,
@@ -4245,6 +4380,8 @@ async def chat(payload: ChatRequest, request: Request):
                 **plan.public_summary(),
                 "mode": reasoning_mode.public_dict(),
             },
+            "activity": snap.get("activity"),
+            "activity_events": snap.get("events"),
             "behavior": behavior_snapshot.public_dict(include_prompt=False),
             "language": behavior_snapshot.language.public_dict(),
             "quality": quality.public_dict(),
@@ -4312,9 +4449,12 @@ async def chat(payload: ChatRequest, request: Request):
                         "reasoning": plan.public_summary(),
                         "model": model_name,
                         "cognition_owns_final_response": True,
+                        "activity": (result.get("activity") or {}),
                         "truth": result["truth"],
                     },
                 )
+                for frame in _drain_activity_sse():
+                    yield frame
                 # Operational capability status from cognition events (no private CoT).
                 cog_events = []
                 if isinstance(cognition_meta, dict):
@@ -4338,6 +4478,16 @@ async def chat(payload: ChatRequest, request: Request):
                         "capability.discovered",
                     }:
                         yield sse_encode(et, (ev or {}).get("payload") or {})
+                        mapped = ingest_cognition_operational_events(
+                            activity, [ev]
+                        )
+                        for pub in mapped:
+                            marker = f"{pub.get('eventId')}:{pub.get('lifecycle')}:{pub.get('sequence')}"
+                            if marker not in activity_sent_ids:
+                                activity_sent_ids.add(marker)
+                                yield sse_encode("activity", pub)
+                for frame in _drain_activity_sse():
+                    yield frame
                 yield sse_encode("token", {"text": answer, "model": model_name})
                 yield sse_encode("done", result)
 
@@ -4366,6 +4516,7 @@ async def chat(payload: ChatRequest, request: Request):
                     "reasoning": plan.public_summary(),
                     "model": (routed or {}).get("provider_model_id") if routed else None,
                     "streaming_degraded": streaming_degraded,
+                    "activity": activity_snapshot(activity).get("activity"),
                     "truth": chat_truth(
                         streaming_degraded=streaming_degraded,
                         residual_implemented=residual_runtime.supports_residuals(),
@@ -4373,6 +4524,17 @@ async def chat(payload: ChatRequest, request: Request):
                     ),
                 },
             )
+            for frame in _drain_activity_sse():
+                yield frame
+            emit_model_invocation(
+                activity,
+                lifecycle=ActivityLifecycle.RUNNING,
+                requested_model=payload.model_id,
+                effective_model=(routed or {}).get("provider_model_id") if routed else None,
+            )
+            emit_synthesis(activity, lifecycle=ActivityLifecycle.RUNNING)
+            for frame in _drain_activity_sse():
+                yield frame
             parts: list[str] = []
             model_name = "unknown"
             finish_reason = None
@@ -4433,16 +4595,39 @@ async def chat(payload: ChatRequest, request: Request):
                         yield sse_encode("token", {"text": delta, "model": model_name})
                 if cancel.cancelled:
                     await _release_chat_inference()
+                    emit_cancellation(
+                        activity,
+                        stage="requested",
+                        reason=cancel.reason or "client_disconnect",
+                    )
+                    emit_cancellation(
+                        activity,
+                        stage="propagating",
+                        reason=cancel.reason or "client_disconnect",
+                    )
                     try:
                         runs.transition(run.run_id, RunState.CANCELLED, error=cancel.reason)
                     except Exception:  # noqa: BLE001 — some stores use different cancel path
                         runs.transition(run.run_id, RunState.FAILED, error=cancel.reason or "cancelled")
+                    emit_cancellation(
+                        activity,
+                        stage="cancelled",
+                        reason=cancel.reason or "client_disconnect",
+                    )
+                    emit_operation_terminal(
+                        activity,
+                        lifecycle=ActivityLifecycle.CANCELLED,
+                        summary=cancel.reason or "client_disconnect",
+                    )
+                    for frame in _drain_activity_sse():
+                        yield frame
                     yield sse_encode(
                         "cancelled",
                         {
                             "reason": cancel.reason or "client_disconnect",
                             "request_id": request_id,
                             "turn_id": turn_id,
+                            "activity": activity_snapshot(activity).get("activity"),
                             "truth": {
                                 "disconnect_cancels_stream": True,
                                 "gateway_capacity_released": True,
@@ -4467,6 +4652,8 @@ async def chat(payload: ChatRequest, request: Request):
                     "policy_version": getattr(plan, "policy_version", ""),
                 }
                 done_payload["stream_stats"] = stream_stats
+                for frame in _drain_activity_sse():
+                    yield frame
                 yield sse_encode("done", done_payload)
             except LLMUnavailable as stream_exc:
                 # Honest degrade: non-stream completion still via real provider path.
@@ -4502,10 +4689,19 @@ async def chat(payload: ChatRequest, request: Request):
             except Exception as exc:  # noqa: BLE001
                 await _release_chat_inference(error=str(exc))
                 runs.transition(run.run_id, RunState.FAILED, error=str(exc))
+                emit_operation_terminal(
+                    activity,
+                    lifecycle=ActivityLifecycle.FAILED,
+                    summary=str(exc),
+                    error={"code": type(exc).__name__, "message": str(exc)},
+                )
+                for frame in _drain_activity_sse():
+                    yield frame
                 yield sse_encode(
                     "error",
                     {
                         "detail": str(exc),
+                        "activity": activity_snapshot(activity).get("activity"),
                         "truth": chat_truth(streaming_degraded=streaming_degraded),
                     },
                 )
