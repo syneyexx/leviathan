@@ -75,9 +75,9 @@ const RESEARCH_CHILDREN = v2ChildrenFromMainMenu("research");
  * Routes map to existing product surfaces; Prompts / Evaluations are
  * first-class thin V2 pages over real backend capabilities.
  *
- * Top-level Agents owns `/agents` active highlighting so Hades does not
- * create a dual-active parent when visiting Agents from the primary rail.
- * Hades → Agents still links to `/agents`.
+ * MAIN_MENU places Agents under LLM. Hades → Agents still deep-links to
+ * `/agents`, but LM owns active highlighting / auto-expand for that route
+ * so Hades does not stay falsely active after navigation.
  */
 const HADES_CHILDREN: readonly V2NavChild[] = [
   { id: "chat", label: "Chat", to: "/chat", match: ["/chat"] },
@@ -89,15 +89,12 @@ const HADES_CHILDREN: readonly V2NavChild[] = [
 ];
 
 /**
- * LM — Screen 1 submenu, derived from MAIN_MENU("llm") (Modellen / Agents /
+ * LM — expandable group derived from MAIN_MENU("llm") (Modellen / Agents /
  * Training / Dataset Management / Offline Datasets / Statestieken).
  *
- * Route-ownership mirrors Hades: top-level Agents/Training/Data remain the
- * *owners* of `/agents`, `/training`, `/dataset-management`,
- * `/offline-datasets`, `/analytics` active-highlighting — LM's own `match`
- * only claims `/models` so visiting those dedicated top-level destinations
- * does not also light up (or auto-expand) the LM group. LM children still
- * link to those canonical routes.
+ * Canonical ownership for `/agents` is LM → Agents (MAIN_MENU authority).
+ * Training / dataset / analytics routes keep dedicated top-level owners where
+ * those Screen 1 rail items already exist; LM children still deep-link to them.
  */
 const LLM_CHILDREN = v2ChildrenFromMainMenu("llm");
 
@@ -105,6 +102,9 @@ const LLM_CHILDREN = v2ChildrenFromMainMenu("llm");
  * Screen 1 primary rail. Deep-link destinations for Media / Plugin & Runtime /
  * Coding / etc. remain registered in the router and MAIN_MENU; they are not
  * deleted — they stay reachable from those pages' own surfaces.
+ *
+ * Agents is intentionally NOT a standalone top-level owner — MAIN_MENU places
+ * it under LLM, and `/agents` must light LM → Agents only.
  */
 export const V2_PRIMARY_NAV: readonly V2NavItem[] = [
   {
@@ -115,13 +115,6 @@ export const V2_PRIMARY_NAV: readonly V2NavItem[] = [
     expandable: true,
     icon: "dashboard",
     children: DASHBOARD_CHILDREN,
-  },
-  {
-    id: "agents",
-    label: "Agents",
-    to: "/agents",
-    match: ["/agents"],
-    icon: "agents",
   },
   {
     id: "research",
@@ -152,7 +145,7 @@ export const V2_PRIMARY_NAV: readonly V2NavItem[] = [
     id: "lm",
     label: "LM",
     to: "/models",
-    match: ["/models"],
+    match: ["/models", "/agents"],
     expandable: true,
     icon: "lm",
     children: LLM_CHILDREN,
@@ -242,15 +235,12 @@ export function findActiveV2Child(
 export function shouldAutoExpandV2Group(item: V2NavItem, pathname: string): boolean {
   if (!item.expandable) return false;
   // Hades owns Chat/Reasoning/Prompts/Evaluations expansion.
-  // On /agents or /knowledge prefer the dedicated top-level / Research group,
-  // but still open Hades when the active child inside Hades is selected via
-  // findActiveV2Child (Chat, Reasoning, Prompts, Evaluations).
+  // On /agents LM is the owner (MAIN_MENU); Hades must not auto-expand.
+  // On /knowledge Research stays the owner (canonical research IA).
   if (item.id === "hades") {
     return item.match.some((prefix) => pathMatchesPrefix(pathname, prefix));
   }
   if (item.id === "research") {
-    // Knowledge is also a Hades "Bibliotheek" destination — Research stays
-    // the owner for /knowledge expansion (canonical research IA).
     return isV2NavItemActive(item, pathname);
   }
   return isV2NavItemActive(item, pathname);

@@ -99,10 +99,23 @@ Media Control, Plugin & Runtime, Coding Agent, and other deep links remain regis
 - Visual fixture: `src/mocks/researchV2VisualFixture.ts` + `e2e/research-v2.visual.spec.ts` (reference: `docs/ui_reference/research-v2-reference.png`).
 - Trading Research (`/trading/onderzoek`, `/trading/lab`) is untouched.
 
+## Agents migration
+
+- `/agents` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "LLM / Agents").
+- **MAIN_MENU owns Agents under LLM.** The V2 rail has no standalone top-level Agents owner. LM's `match` claims `/models` and `/agents`; on `/agents` LM auto-expands with the Agents child selected. Hades → Agents still deep-links to `/agents` but must not stay active after navigation.
+- Fleet vs Worker distinction is mandatory: Active Agents ≠ Active Workers; missions/jobs/workers remain separate concepts.
+- Agent Architecture on this page is **agent-oriented** (orchestrator / specialists / Worker Fabric / tools / models / knowledge) — not the separate full Leviathan Architecture product.
+- Model assignment uses real `modelRef` → Model Control Plane. GPU split / VRAM reserve / LM Studio load options stay on `/models` (link out via "Open Models").
+- Capabilities / tools remain governed by ExecutionGateway; UI never invents fractional permission counts.
+- Resource meters on the Agents page are host/system telemetry or UNMEASURED — never fake per-agent GPU attribution.
+- Composition: `useAgentsWorkspace` + `src/components/agents/*` + preserved modals under `pages/agents/*` (editor, launch mission, worker scale, core inventory, trade orchestra).
+- No page-local Agents V2 CSS file; layout lives in `leviathan-v2.css` under `.lv-v2-page--agents` / `.lv-v2-agents-*`.
+- Visual fixture: `src/mocks/agentsV2VisualFixture.ts` + `e2e/helpers/agentsV2Visual.ts` + `e2e/agents-v2.visual.spec.ts` (reference: `docs/ui_reference/agents-v2-reference.png`). Production never imports the fixture as defaults.
+
 ## Models migration
 
 - `/models` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "LM / Models").
-- LM is a new expandable nav group, derived from `MAIN_MENU` via `v2ChildrenFromMainMenu("llm")`. Its `match` claims only `/models` — `/agents`, `/training`, `/dataset-management`, `/offline-datasets`, and `/analytics` stay owned by their existing dedicated top-level Dashboard/Training items (route-ownership pattern, same as the Hades AI / Research groups).
+- LM is an expandable nav group, derived from `MAIN_MENU` via `v2ChildrenFromMainMenu("llm")`. Its `match` claims `/models` and `/agents` (Agents V2 — MAIN_MENU authority). Training / dataset-management / offline-datasets / analytics keep dedicated top-level owners where those rail items already exist; LM children still deep-link to them.
 - `ModelsPage.tsx` composes four card rows (Runtime Provider / Hardware / VRAM; Model list / Load Config / Multi-GPU / Advanced; wide Optimalisatie; Resource Estimate / Performance / Actions) plus a manage-links footer that opens drawers for the existing `ProviderManager`, `ModelGatewayPanel`, `ModelRouterPanel`, and `ModelResidencyPanel` panels — those advanced surfaces are reused unchanged, not rebuilt.
 - All page composition lives in `src/components/models/*` (11 focused card components + `useModelsWorkspace` for data/mutation orchestration). No page-local CSS file; layout, form controls (select/range/toggle rows, tables, meters) live in `leviathan-v2.css` under `.lv-v2-page--models` / `.lv-v2-models-*`.
 - Capability-gating truth discipline: LM Studio control-plane fields the active provider/version doesn't support render disabled with a visible "Niet ondersteund door LM Studio …" note (`ws.capNote()` / `ws.capSupport()`), instead of silently hiding the control. A small hardcoded set (`seed`, `cpuThreads`, `prefixCache`) is always disabled because LM Studio has no control surface for them at all today.

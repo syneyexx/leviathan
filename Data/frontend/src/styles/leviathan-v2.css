@@ -5185,3 +5185,782 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ==========================================================================
+   Agents V2 — /agents orchestration console (Screen 1)
+   Page-specific layout under .lv-v2-page--agents. No agents-v2.css.
+   ========================================================================== */
+
+.lv-v2-page--agents {
+  gap: 10px;
+  padding-bottom: 12px;
+}
+
+.lv-v2-hero--agents {
+  min-height: 132px;
+  max-height: 152px;
+  grid-template-columns: minmax(0, 1.45fr) minmax(200px, 0.7fr);
+}
+
+.lv-v2-hero--agents .lv-v2-hero__content {
+  gap: 6px;
+  padding: 14px 18px;
+}
+
+.lv-v2-hero--agents .lv-v2-hero__copy {
+  font-size: 11.5px;
+  max-width: 62ch;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.lv-v2-hero--agents .lv-v2-hero__actions {
+  margin-top: 2px;
+}
+
+.lv-v2-hero--agents .lv-v2-hero__quote {
+  position: relative;
+  z-index: 3;
+  font-size: 13.5px;
+}
+
+.lv-v2-hero__shade--agents {
+  background:
+    linear-gradient(90deg, rgba(2, 6, 23, 0.94) 0%, rgba(2, 12, 36, 0.74) 44%, rgba(2, 6, 23, 0.48) 100%),
+    linear-gradient(0deg, rgba(2, 6, 23, 0.58), transparent 52%);
+}
+
+.lv-v2-hero__media--agents img,
+.lv-v2-agents-art {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.lv-v2-metrics--agents {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.lv-v2-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--lv2-panel-radius);
+  border: 1px solid var(--lv2-border);
+  background: var(--lv2-panel-raised);
+  font-size: 12px;
+  color: var(--lv2-text);
+}
+
+.lv-v2-banner.is-warn {
+  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.lv-v2-banner.is-error {
+  border-color: rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.lv-v2-input {
+  height: 30px;
+  border-radius: 7px;
+  border: 1px solid var(--lv2-border);
+  background: rgba(2, 8, 23, 0.55);
+  color: var(--lv2-text);
+  padding: 0 10px;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.lv-v2-input:focus-visible {
+  outline: 2px solid var(--lv2-primary);
+  outline-offset: 1px;
+}
+
+.lv-v2-link-btn {
+  border: 0;
+  background: transparent;
+  color: var(--lv2-cyan);
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  padding: 0 2px;
+}
+
+.lv-v2-link-btn:hover,
+.lv-v2-link-btn:focus-visible {
+  text-decoration-color: currentColor;
+  outline: none;
+}
+
+.lv-v2-select.is-compact {
+  height: 26px;
+  font-size: 11px;
+  padding: 0 6px;
+}
+
+.lv-v2-table-wrap {
+  overflow: auto;
+  max-height: 280px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 8px;
+}
+
+.lv-v2-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+
+.lv-v2-table th,
+.lv-v2-table td {
+  padding: 7px 10px;
+  text-align: left;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+  vertical-align: middle;
+}
+
+.lv-v2-table th {
+  position: sticky;
+  top: 0;
+  background: rgba(2, 10, 28, 0.96);
+  color: var(--lv2-text-muted);
+  font-weight: 600;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  z-index: 1;
+}
+
+.lv-v2-table tbody tr {
+  cursor: pointer;
+}
+
+.lv-v2-table tbody tr:hover,
+.lv-v2-table tbody tr:focus-visible {
+  background: var(--lv2-surface-hover);
+  outline: none;
+}
+
+.lv-v2-table tbody tr.is-selected {
+  background: var(--lv2-surface-selected);
+}
+
+.lv-v2-agents-main {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.95fr) minmax(320px, 1.25fr) minmax(280px, 1fr);
+  gap: 10px;
+  min-height: 320px;
+}
+
+.lv-v2-agents-lower {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.9fr) minmax(320px, 1.25fr) minmax(240px, 0.85fr);
+  gap: 10px;
+  min-height: 210px;
+}
+
+.lv-v2-agents-directory__tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.lv-v2-agents-directory__search {
+  width: 132px;
+}
+
+.lv-v2-agents-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.lv-v2-agents-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.lv-v2-agents-name__glyph {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: inline-grid;
+  place-items: center;
+  background: rgba(56, 189, 248, 0.14);
+  color: var(--lv2-cyan);
+  font-size: 10px;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.lv-v2-agents-name__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.lv-v2-agents-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.lv-v2-agents-desc {
+  color: var(--lv2-text-muted);
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-v2-agents-arch__flow {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.lv-v2-agents-arch__tier h4 {
+  margin: 0 0 6px;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--lv2-text-muted);
+  font-weight: 650;
+}
+
+.lv-v2-agents-arch__nodes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lv-v2-agents-arch__nodes.is-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+  gap: 6px;
+}
+
+.lv-v2-agents-arch__nodes.is-pools {
+  margin-top: 6px;
+}
+
+.lv-v2-agents-arch__pill,
+.lv-v2-agents-arch__node,
+.lv-v2-agents-arch__tile,
+.lv-v2-agents-arch__pool,
+.lv-v2-agents-arch__hub {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(2, 10, 28, 0.55);
+  color: var(--lv2-text);
+  border-radius: 8px;
+  font-size: 11px;
+  font-family: inherit;
+}
+
+.lv-v2-agents-arch__pill {
+  padding: 5px 9px;
+  color: var(--lv2-text-muted);
+}
+
+.lv-v2-agents-arch__pill.is-link {
+  text-decoration: none;
+  color: var(--lv2-cyan);
+}
+
+.lv-v2-agents-arch__pill.is-link:hover {
+  border-color: rgba(56, 189, 248, 0.45);
+}
+
+.lv-v2-agents-arch__hub {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.22), rgba(2, 10, 28, 0.7));
+  border-color: rgba(59, 130, 246, 0.45);
+  cursor: pointer;
+}
+
+.lv-v2-agents-arch__hub strong {
+  display: block;
+  font-size: 13px;
+}
+
+.lv-v2-agents-arch__hub small {
+  color: var(--lv2-text-muted);
+}
+
+.lv-v2-agents-arch__node,
+.lv-v2-agents-arch__tile,
+.lv-v2-agents-arch__pool {
+  cursor: pointer;
+  padding: 7px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lv-v2-agents-arch__tile,
+.lv-v2-agents-arch__pool {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.lv-v2-agents-arch__tile strong,
+.lv-v2-agents-arch__pool strong {
+  font-size: 11.5px;
+}
+
+.lv-v2-agents-arch__tile small,
+.lv-v2-agents-arch__pool small {
+  color: var(--lv2-text-muted);
+  font-size: 10px;
+}
+
+.lv-v2-agents-arch__node.is-selected,
+.lv-v2-agents-arch__tile.is-selected,
+.lv-v2-agents-arch__tile.is-linked {
+  border-color: rgba(56, 189, 248, 0.55);
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.2);
+}
+
+.lv-v2-agents-inspector__profile {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.lv-v2-agents-inspector__id {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.lv-v2-agents-inspector__id strong {
+  font-size: 15px;
+}
+
+.lv-v2-agents-inspector__desc {
+  margin: 0;
+  color: var(--lv2-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.lv-v2-agents-inspector__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.lv-v2-agents-tabs {
+  margin-bottom: 10px;
+}
+
+.lv-v2-agents-inspector__body {
+  max-height: 280px;
+  overflow: auto;
+}
+
+.lv-v2-agents-section-title {
+  margin: 10px 0 6px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--lv2-text-muted);
+}
+
+.lv-v2-agents-kv-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.lv-v2-agents-kv {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 8px;
+  font-size: 11.5px;
+}
+
+.lv-v2-agents-kv span {
+  color: var(--lv2-text-muted);
+}
+
+.lv-v2-agents-kv em {
+  font-style: normal;
+  color: var(--lv2-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lv-v2-agents-mission-card {
+  width: 100%;
+  text-align: left;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(2, 10, 28, 0.45);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: inherit;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.lv-v2-agents-mission-card__bar {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+  margin: 6px 0 4px;
+  font-size: 11px;
+}
+
+.lv-v2-agents-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.lv-v2-agents-chip {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.16);
+  color: #93c5fd;
+  font-size: 10.5px;
+}
+
+.lv-v2-agents-meters {
+  display: grid;
+  gap: 8px;
+}
+
+.lv-v2-agents-muted,
+.lv-v2-agents-hint {
+  color: var(--lv2-text-muted);
+  font-size: 11px;
+  margin: 0;
+}
+
+.lv-v2-agents-inline-link,
+.lv-v2-agents-inline-links a {
+  color: var(--lv2-cyan);
+  font-size: 11px;
+  text-decoration: none;
+}
+
+.lv-v2-agents-inline-links {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.lv-v2-agents-inline-link:hover,
+.lv-v2-agents-inline-links a:hover {
+  text-decoration: underline;
+}
+
+.lv-v2-agents-perm-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 7px;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.lv-v2-agents-perm-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(2, 10, 28, 0.35);
+}
+
+.lv-v2-agents-perm-list strong {
+  display: block;
+  font-size: 12px;
+}
+
+.lv-v2-agents-perm-list small {
+  color: var(--lv2-text-muted);
+  font-size: 10.5px;
+}
+
+.lv-v2-agents-feed__list,
+.lv-v2-agents-mission-list,
+.lv-v2-agents-pipeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 7px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.lv-v2-agents-feed__list li {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+  font-size: 11.5px;
+}
+
+.lv-v2-agents-feed__list time {
+  color: var(--lv2-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.lv-v2-agents-feed__body p {
+  margin: 2px 0 0;
+  color: var(--lv2-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-v2-agents-feed__mission {
+  margin-left: 6px;
+  color: var(--lv2-cyan);
+  font-size: 10.5px;
+}
+
+.lv-v2-agents-missions__grid {
+  display: grid;
+  grid-template-columns: 0.9fr 1.1fr;
+  gap: 12px;
+}
+
+.lv-v2-agents-pipeline li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.lv-v2-agents-pipeline__idx {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(59, 130, 246, 0.2);
+  color: #93c5fd;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.lv-v2-agents-pipeline__body {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11.5px;
+}
+
+.lv-v2-agents-pipeline__body span {
+  color: var(--lv2-text-muted);
+}
+
+.lv-v2-agents-mission-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.lv-v2-agents-mission-list li > button:first-child {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 0;
+  font-family: inherit;
+  cursor: pointer;
+  display: grid;
+  gap: 3px;
+}
+
+.lv-v2-agents-mission-list strong {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-v2-agents-mission-list small {
+  color: var(--lv2-text-muted);
+}
+
+.lv-v2-agents-mission-list__meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10.5px;
+}
+
+.lv-v2-agents-mission-list li.is-selected > button:first-child strong {
+  color: var(--lv2-cyan);
+}
+
+.lv-v2-agents-statusbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(220px, 0.8fr);
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--lv2-panel-radius);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(2, 10, 28, 0.55);
+}
+
+.lv-v2-agents-statusbar h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+.lv-v2-agents-statusbar__meters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.lv-v2-agents-statusbar__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--lv2-text-muted);
+}
+
+.lv-v2-agents-spark {
+  width: 100%;
+  height: 36px;
+  color: var(--lv2-cyan);
+}
+
+.lv-v2-agents-ops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lv-v2-agents-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(2, 6, 23, 0.72);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.lv-v2-agents-overlay__inner {
+  width: min(1100px, 96vw);
+  max-height: 90vh;
+  overflow: auto;
+  background: var(--lv2-panel-bg);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.lv-v2-agents-overlay__inner.is-wide {
+  width: min(1280px, 96vw);
+}
+
+.lv-v2-agents-advanced {
+  display: grid;
+  gap: 12px;
+}
+
+.lv-v2-agents-advanced__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.lv-v2-agents-advanced__head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.lv-v2-agents-advanced__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 1500px) {
+  .lv-v2-agents-main,
+  .lv-v2-agents-lower {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .lv-v2-agents-main > :last-child,
+  .lv-v2-agents-lower > :last-child {
+    grid-column: 1 / -1;
+  }
+
+  .lv-v2-agents-statusbar__meters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1100px) {
+  .lv-v2-metrics--agents {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .lv-v2-agents-main,
+  .lv-v2-agents-lower,
+  .lv-v2-agents-missions__grid,
+  .lv-v2-agents-statusbar,
+  .lv-v2-agents-advanced__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .lv-v2-hero--agents {
+    grid-template-columns: 1fr;
+  }
+
+  .lv-v2-hero--agents .lv-v2-hero__quote {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .lv-v2-metrics--agents {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .lv-v2-agents-statusbar__meters {
+    grid-template-columns: 1fr;
+  }
+}
