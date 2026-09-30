@@ -230,3 +230,14 @@ Media Control, Plugin & Runtime, Coding Agent, and other deep links remain regis
 - Detail primary tabs: Overzicht / Analyse / Voorbeeld / Metadata. Versions + Activity + Health remain via secondary “Meer” / modals. Analyse deep-links to `/research?dataset=…` (no second analysis engine). Charts render only from bounded numeric preview series — never hardcoded BTC.
 - Toolbar: Nieuwe dataset / Importeren / Externe bron (HF) / Verwerken (bulk materialize or process queue) / Indexeren (bulk index). Tags mutate via `PATCH /api/datasets/{id}/semantic`. Download uses export/download DatasetService paths. Delen copies an internal deep link only.
 - Unknown status ≠ Ready. Unmeasured progress ≠ invented %. Capacity unknown ≠ fake 1 TB. Screenshot KPI numbers exist only in test fixtures.
+
+## Knowledge Library migration
+
+- `/knowledge` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "Knowledge Library").
+- **MAIN_MENU owns Knowledge Library under Onderzoek & Kennis.** Research group children stay MAIN_MENU-derived via `v2ChildrenFromMainMenu("research")`.
+- Composition (reference 1664×936): topbar + Ctrl+K search → 5 KPI cards → feature nav → type/tag sidebars + library table + selected source → ingestion progress + recent + related sources.
+- No page-local Knowledge CSS; layout lives in `leviathan-v2.css` under `.lv-v2-page--knowledge` / `.lv-v2-kl-*`.
+- Composition: `KnowledgeLibraryPage` + `useKnowledgeLibraryWorkspace` + `src/components/knowledge/*` + `src/pages/knowledge/`.
+- Library listing/overview/ingestion use additive `/api/knowledge/library*` contracts on KnowledgeStore + SourceIngestionService. Vector Search reuses `/api/knowledge/search`. Graph/Datasets/Notes/Settings navigate to canonical owners.
+- Production never imports `mocks/knowledgeLibraryV2VisualFixture` as defaults. Visual fixture: `src/mocks/knowledgeLibraryV2VisualFixture.ts` + `e2e/helpers/knowledgeLibraryV2Visual.ts` + `e2e/knowledge-v2.visual.spec.ts` (reference: `docs/ui_reference/knowledge-library-v2-reference.png`).
+- Totale Bronnen counts Knowledge documents (not chunks). Totale Grootte is measured-bytes + coverage. Embedding Status uses chunk coverage; NOT CONFIGURED when provider absent. READY ≠ embedded.

@@ -467,7 +467,60 @@ Memory ≠ Knowledge ≠ Brain. Document upload opens Knowledge; web save opens 
 
 ## Knowledge — `/knowledge`
 
-`src/pages/KnowledgeLibraryPage.tsx` presents documents, retrieval/index/ingestion state and related operations.
+`src/pages/KnowledgeLibraryPage.tsx` is the Leviathan V2 Knowledge Library
+operator control plane under **Onderzoek & Kennis → Knowledge Library**.
+
+Composition:
+
+- `AppShell variant="v2"` + shared `AppSidebarV2` / `AppTopbarV2` (title "Knowledge Library");
+- `useKnowledgeLibraryWorkspace` + `src/components/knowledge/*` + `src/pages/knowledge/`;
+- layout styles in global `leviathan-v2.css` under `.lv-v2-page--knowledge` / `.lv-v2-kl-*`
+  (no `knowledge-v2.css`).
+
+### Authorities (no parallel Knowledge app)
+
+| Concern | Owner |
+|---|---|
+| Documents / chunks / ingest states | `KnowledgeStore` |
+| Bounded library list / overview / tags / types | `GET /api/knowledge/library`, `/overview` |
+| Semantic / hybrid retrieval | existing Knowledge `HybridRetriever` (`GET /api/knowledge/search`) |
+| File / archive / ZIP upload | `SourceIngestionService` via `/api/knowledge/library/ingestion/*` |
+| Heavy prepare / embed | JobRuntime → `knowledge_prepare` / `embedding` / `db_commit` |
+| Knowledge graph | Brain (`/brain`) — Library navigates; does not fork graph engines |
+| Datasets | DatasetService (`/datasets`) |
+| Notes / memory | Memory (`/memory`) |
+| Settings | Settings Knowledge & RAG (`/settings?section=knowledge_rag`) |
+
+### Library contracts
+
+- List rows are **summaries only** (no content/chunks/embeddings).
+- Pagination is bounded (`limit` ≤ 100). Filters: `q`, `type`, `tag`, `status`, dates, `sort`.
+- KPIs come from server overview: total sources (= knowledge documents, not chunks),
+  measured bytes + coverage, typed provenance counts, embedding **chunk** coverage,
+  latest ingestion (SourceIngestion when bound).
+- `READY` ≠ embedded. Embedding status uses chunk denominator; `NOT_CONFIGURED` /
+  `UNAVAILABLE` when the provider is absent.
+- Tags live in document `trust_metadata` plus a Knowledge-owned normalized tag index
+  (`knowledge_document_tags`). No `tags.db`.
+- Preview/download stream path-safe artifacts; clients never receive filesystem paths.
+- Production never falls back to the visual fixture (`src/mocks/knowledgeLibraryV2VisualFixture.ts`).
+
+### Ingestion
+
+Library uploads use caller context `knowledge_library` under durable owner project
+`system-knowledge-library` (not a fake Research project per file). Flow:
+
+```text
+multipart upload → SourceIngestionService.accept_knowledge_library_upload
+  → durable source + JobRuntime source_ingestion.process
+  → archive/parse/OCR workers as configured
+  → Knowledge sync with provenance
+```
+
+Do not use `file.text()` for bulk/PDF/ZIP/parquet production ingestion.
+
+Visual regression: `e2e/knowledge-v2.visual.spec.ts` (1664×936), reference
+`docs/ui_reference/knowledge-library-v2-reference.png`.
 
 ## Evidence — `/evidence`
 
