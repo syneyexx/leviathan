@@ -1,7 +1,14 @@
 /** Datasets dashboard — screenshot-matching demo placeholders (UI when API list is empty). */
 
 export type DhSourceKind = "huggingface" | "local" | "curated" | "arxiv" | "ncbi" | "other";
-export type DhStatus = "ready" | "offline" | "validating" | "processing" | "failed" | "cancelled";
+export type DhStatus =
+  | "ready"
+  | "offline"
+  | "validating"
+  | "processing"
+  | "failed"
+  | "cancelled"
+  | "unknown";
 export type DhEmbedding =
   | { kind: "indexed" }
   | { kind: "not_indexed" }
