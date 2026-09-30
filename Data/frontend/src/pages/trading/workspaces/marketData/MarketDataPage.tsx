@@ -1,16 +1,11 @@
 /**
  * Market Data (WAVE 5/6) — native pixel-exact page.
- *
- * Absorbs Marktdata (offline dataset library, scan/register), Providers
- * ("live feeds"), dataset certification, and historical replay into ONE page
- * via progressive disclosure: PRIMARY dashboard (hero/KPIs/library/feed
- * health/coverage/regime/quality/activity/provenance/replay) always visible;
- * ADVANCED capabilities (import, feeds management, certification evaluation,
- * replay controls) live in drawers. NO MarktdataPage embedding.
+ * Absorbs Marktdata library, feeds, certification, replay. NO legacy embeds.
  */
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { AppShell } from "../../../../layouts/AppShell";
 import { TradingContextBar } from "../TradingContextBar";
+import { tradingCenterStatusRows } from "../tradingStatusRows";
 import { useTradingContext } from "../useTradingContext";
 import { CertifyDrawer, FeedsDrawer, ImportDrawer, ReplayDrawer } from "./MarketDataDrawers";
 import { MarketDataView } from "./MarketDataView";
@@ -36,65 +31,59 @@ export function MarketDataPage() {
   }
 
   return (
-    <main className="lv-main lv-tp-main lv-tc-workspace lv-md-page" aria-label="Market Data">
-      <header className="lv-tc-workspace__header">
-        <div>
-          <p className="lv-tc-workspace__crumb">
-            <Link to="/trading/command-hub">Trading Center</Link>
-            <span aria-hidden="true"> / </span>
-            <span>Market Data</span>
+    <AppShell
+      variant="v2"
+      v2Title="Trading Center / Market Data"
+      v2Subtitle="Select, validate and monitor market data for trading research, backtesting and live trading."
+      v2Online={!ctx.loading && !data.loading}
+      v2Refreshing={ctx.loading || data.loading}
+      onV2Refresh={() => void refreshAll()}
+      v2StatusRows={tradingCenterStatusRows(ctx)}
+      pageClass="lv-app--trading-market-data"
+      v2ScrollableMain
+    >
+      <main className="lv-v2-page lv-md-page" aria-label="Market Data">
+        <TradingContextBar ctx={ctx} />
+
+        {data.error ? (
+          <p className="lv-md-error" role="alert">
+            {data.error}
+            <button type="button" className="lv-md-btn" onClick={() => void data.refresh()}>
+              Opnieuw proberen
+            </button>
           </p>
-          <h1 className="lv-tc-workspace__title">Market Data</h1>
-          <p className="lv-tc-workspace__subtitle">
-            Marktdata selecteren, valideren en monitoren voor trading research, backtesting en live trading.
+        ) : null}
+
+        <MarketDataView
+          data={data}
+          onOpenImport={() => setShowImport(true)}
+          onOpenFeeds={() => setShowFeeds(true)}
+          onOpenCertify={(row) => {
+            setCertifyRow(row);
+            setShowCertify(true);
+          }}
+          onOpenReplay={(row) => {
+            setReplayRow(row);
+            setShowReplay(true);
+          }}
+          onSelectRow={setSelectedRow}
+        />
+
+        {selectedRow ? (
+          <p className="lv-md-muted" style={{ marginTop: "-0.4rem" }}>
+            Geselecteerd: <strong>{selectedRow.symbol}</strong> · {selectedRow.timeframe} · {selectedRow.path}
           </p>
-        </div>
-        <div className="lv-tc-workspace__header-actions">
-          <button type="button" className="lv-tc-btn" onClick={() => void refreshAll()} disabled={data.loading || ctx.loading}>
-            Refresh
-          </button>
-          <span className="lv-tc-badge lv-tc-badge--exec" title={`LIVE_TRADING_AVAILABLE=${ctx.liveTrading}`}>
-            {ctx.executionLabel}
-          </span>
-        </div>
-      </header>
+        ) : null}
 
-      <TradingContextBar ctx={ctx} />
-
-      {data.error ? (
-        <p className="lv-md-error" role="alert">
-          {data.error}
-          <button type="button" className="lv-md-btn" onClick={() => void data.refresh()}>
-            Opnieuw proberen
-          </button>
-        </p>
-      ) : null}
-
-      <MarketDataView
-        data={data}
-        onOpenImport={() => setShowImport(true)}
-        onOpenFeeds={() => setShowFeeds(true)}
-        onOpenCertify={(row) => {
-          setCertifyRow(row);
-          setShowCertify(true);
-        }}
-        onOpenReplay={(row) => {
-          setReplayRow(row);
-          setShowReplay(true);
-        }}
-        onSelectRow={setSelectedRow}
-      />
-
-      {selectedRow ? (
-        <p className="lv-md-muted" style={{ marginTop: "-0.4rem" }}>
-          Geselecteerd: <strong>{selectedRow.symbol}</strong> · {selectedRow.timeframe} · {selectedRow.path}
-        </p>
-      ) : null}
-
-      {showImport ? <ImportDrawer data={data} onClose={() => setShowImport(false)} /> : null}
-      {showFeeds ? <FeedsDrawer data={data} onClose={() => setShowFeeds(false)} /> : null}
-      {showCertify ? <CertifyDrawer data={data} initialRow={certifyRow} onClose={() => setShowCertify(false)} /> : null}
-      {showReplay ? <ReplayDrawer data={data} initialRow={replayRow} onClose={() => setShowReplay(false)} /> : null}
-    </main>
+        {showImport ? <ImportDrawer data={data} onClose={() => setShowImport(false)} /> : null}
+        {showFeeds ? <FeedsDrawer data={data} onClose={() => setShowFeeds(false)} /> : null}
+        {showCertify ? (
+          <CertifyDrawer data={data} initialRow={certifyRow} onClose={() => setShowCertify(false)} />
+        ) : null}
+        {showReplay ? (
+          <ReplayDrawer data={data} initialRow={replayRow} onClose={() => setShowReplay(false)} />
+        ) : null}
+      </main>
+    </AppShell>
   );
 }

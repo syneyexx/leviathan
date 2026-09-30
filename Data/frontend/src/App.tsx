@@ -138,16 +138,16 @@ export default function App() {
           </TradingSuspense>
         }
       />
-      {/* Legacy Trading Center routes → four workspaces (WAVE 1 supersets redirects) */}
-      <Route path="/trading/simulatie" element={<Navigate to="/trading/strategy-lab?surface=simulation" replace />} />
-      <Route path="/trading/strategieen" element={<Navigate to="/trading/strategy-lab?surface=strategies" replace />} />
-      <Route path="/trading/lab" element={<Navigate to="/trading/strategy-lab?surface=lab" replace />} />
-      <Route path="/trading/marktdata" element={<Navigate to="/trading/market-data?surface=library" replace />} />
-      <Route path="/trading/portefeuille" element={<Navigate to="/trading/trading-desk?surface=portfolio" replace />} />
-      <Route path="/trading/paper" element={<Navigate to="/trading/trading-desk?surface=paper" replace />} />
-      <Route path="/trading/broker" element={<Navigate to="/trading/trading-desk?surface=broker" replace />} />
-      <Route path="/trading/onderzoek" element={<Navigate to="/trading/command-hub?surface=research-command" replace />} />
-      <Route path="/trading/control-room" element={<Navigate to="/trading/command-hub?surface=control-room" replace />} />
+      {/* Legacy Trading Center routes → four native workspaces (WAVE 5+) */}
+      <Route path="/trading/simulatie" element={<Navigate to="/trading/strategy-lab" replace />} />
+      <Route path="/trading/strategieen" element={<Navigate to="/trading/strategy-lab" replace />} />
+      <Route path="/trading/lab" element={<Navigate to="/trading/strategy-lab" replace />} />
+      <Route path="/trading/marktdata" element={<Navigate to="/trading/market-data" replace />} />
+      <Route path="/trading/portefeuille" element={<Navigate to="/trading/trading-desk" replace />} />
+      <Route path="/trading/paper" element={<Navigate to="/trading/trading-desk" replace />} />
+      <Route path="/trading/broker" element={<Navigate to="/trading/trading-desk" replace />} />
+      <Route path="/trading/onderzoek" element={<Navigate to="/trading/command-hub" replace />} />
+      <Route path="/trading/control-room" element={<Navigate to="/trading/command-hub" replace />} />
 
       <Route path="/research" element={<ResearchPage />} />
       <Route path="/brain" element={<BrainPage />} />

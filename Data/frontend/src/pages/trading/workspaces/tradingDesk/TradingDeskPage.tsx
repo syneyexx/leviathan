@@ -1,18 +1,11 @@
 /**
  * Trading Desk (WAVE 5/6) — native pixel-exact page.
- *
- * Absorbs Paper Trading + Portefeuille + Broker boundary + Wallets + Orchestra
- * fleet into ONE page via progressive disclosure: PRIMARY dashboard (hero /
- * CTAs / KPI strip / chart / wallets / positions+orders / RiskGuard /
- * activity) always visible; ADVANCED capabilities (agent fleet, orchestra
- * config/autonomy, paper deployments, rebalance, broker boundary inspector,
- * execution calibration) live in a drawer. NO PaperTradingPage /
- * PortefeuillePage / BrokerTradingPage embedding. Live trading stays BLOCKED
- * everywhere.
+ * Absorbs Paper + Portefeuille + Broker + Wallets + Orchestra. NO legacy embeds.
  */
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { AppShell } from "../../../../layouts/AppShell";
 import { TradingContextBar } from "../TradingContextBar";
+import { tradingCenterStatusRows } from "../tradingStatusRows";
 import { useTradingContext } from "../useTradingContext";
 import { AdvancedDrawer, CreatePortfolioDrawer, DeployPaperDrawer } from "./TradingDeskDrawers";
 import { TradingDeskView } from "./TradingDeskView";
@@ -33,50 +26,35 @@ export function TradingDeskPage() {
   }
 
   return (
-    <main className="lv-main lv-tp-main lv-tc-workspace lv-td-page" aria-label="Trading Desk">
-      <header className="lv-tc-workspace__header">
-        <div>
-          <p className="lv-tc-workspace__crumb">
-            <Link to="/trading/command-hub">Trading Center</Link>
-            <span aria-hidden="true"> / </span>
-            <span>Trading Desk</span>
-          </p>
-          <h1 className="lv-tc-workspace__title">Trading Desk</h1>
-          <p className="lv-tc-workspace__subtitle">
-            Paper execution, portfolios, wallets, risk, and the live-trading boundary — one operator surface.
-          </p>
-        </div>
-        <div className="lv-tc-workspace__header-actions">
-          <button
-            type="button"
-            className="lv-tc-btn"
-            onClick={() => void refreshAll()}
-            disabled={data.loading || ctx.loading}
-          >
-            Refresh
-          </button>
-          <span className="lv-tc-badge lv-tc-badge--exec" title={`LIVE_TRADING_AVAILABLE=${data.liveTrading}`}>
-            {ctx.executionLabel}
-          </span>
-        </div>
-      </header>
+    <AppShell
+      variant="v2"
+      v2Title="Trading Center / Trading Desk"
+      v2Subtitle="Paper execution, portfolios, wallets, risk, and the live-trading boundary."
+      v2Online={!ctx.loading && !data.loading}
+      v2Refreshing={ctx.loading || data.loading}
+      onV2Refresh={() => void refreshAll()}
+      v2StatusRows={tradingCenterStatusRows(ctx)}
+      pageClass="lv-app--trading-desk"
+      v2ScrollableMain
+    >
+      <main className="lv-v2-page lv-td-page" aria-label="Trading Desk">
+        <TradingContextBar ctx={ctx} />
 
-      <TradingContextBar ctx={ctx} />
+        <TradingDeskView
+          data={data}
+          onOpenCreatePortfolio={() => setShowCreatePortfolio(true)}
+          onOpenDeploy={() => setShowDeploy(true)}
+          onOpenAdvanced={() => setShowAdvanced(true)}
+        />
 
-      <TradingDeskView
-        data={data}
-        onOpenCreatePortfolio={() => setShowCreatePortfolio(true)}
-        onOpenDeploy={() => setShowDeploy(true)}
-        onOpenAdvanced={() => setShowAdvanced(true)}
-      />
+        {showCreatePortfolio ? (
+          <CreatePortfolioDrawer data={data} onClose={() => setShowCreatePortfolio(false)} />
+        ) : null}
 
-      {showCreatePortfolio ? (
-        <CreatePortfolioDrawer data={data} onClose={() => setShowCreatePortfolio(false)} />
-      ) : null}
+        {showDeploy ? <DeployPaperDrawer data={data} onClose={() => setShowDeploy(false)} /> : null}
 
-      {showDeploy ? <DeployPaperDrawer data={data} onClose={() => setShowDeploy(false)} /> : null}
-
-      {showAdvanced ? <AdvancedDrawer data={data} onClose={() => setShowAdvanced(false)} /> : null}
-    </main>
+        {showAdvanced ? <AdvancedDrawer data={data} onClose={() => setShowAdvanced(false)} /> : null}
+      </main>
+    </AppShell>
   );
 }

@@ -2,16 +2,12 @@
  * Strategy Lab (WAVE 5) — native pixel-exact page.
  *
  * Absorbs Research Lab + Strategieën + Simulatie into ONE page via progressive
- * disclosure: PRIMARY dashboard (hero/KPIs/ladder/discovery/pipeline/research
- * sessions/paper snapshot) always visible; ADVANCED capabilities (hypotheses,
- * perception, generations, population, lineage, lessons, validation, cost
- * pack, simulation controls, strategy builder) live in a drawer keyed to the
- * selected strategy / lab run. NO ResearchLabPage / StrategieenPage /
- * SimulatiePage embedding. Live trading stays BLOCKED everywhere.
+ * disclosure. NO legacy page embedding. Live trading stays BLOCKED.
  */
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { AppShell } from "../../../../layouts/AppShell";
 import { TradingContextBar } from "../TradingContextBar";
+import { tradingCenterStatusRows } from "../tradingStatusRows";
 import { useTradingContext } from "../useTradingContext";
 import { CompareDrawer, CreateLabRunDrawer, AdvancedDrawer } from "./StrategyLabDrawers";
 import { StrategyLabView } from "./StrategyLabView";
@@ -61,74 +57,64 @@ export function StrategyLabPage() {
   }
 
   return (
-    <main className="lv-main lv-tp-main lv-tc-workspace lv-sl-page" aria-label="Strategy Lab">
-      <header className="lv-tc-workspace__header">
-        <div>
-          <p className="lv-tc-workspace__crumb">
-            <Link to="/trading/command-hub">Trading Center</Link>
-            <span aria-hidden="true"> / </span>
-            <span>Strategy Lab</span>
+    <AppShell
+      variant="v2"
+      v2Title="Trading Center / Strategy Lab"
+      v2Subtitle="Onderzoek, ontdek en valideer trading strategieën met autonome AI agents."
+      v2Online={!ctx.loading && !data.loading}
+      v2Refreshing={ctx.loading || data.loading}
+      onV2Refresh={() => void refreshAll()}
+      v2StatusRows={tradingCenterStatusRows(ctx)}
+      pageClass="lv-app--trading-strategy-lab"
+      v2ScrollableMain
+    >
+      <main className="lv-v2-page lv-sl-page" aria-label="Strategy Lab">
+        <TradingContextBar ctx={ctx} />
+
+        {data.error ? (
+          <p className="lv-sl-error" role="alert">
+            {data.error}
+            <button type="button" className="lv-tc-btn" onClick={() => void data.refresh()}>
+              Opnieuw proberen
+            </button>
           </p>
-          <h1 className="lv-tc-workspace__title">Strategy Lab</h1>
-          <p className="lv-tc-workspace__subtitle">
-            Onderzoek, ontdek en valideer trading strategieën met autonome AI agents.
-          </p>
-        </div>
-        <div className="lv-tc-workspace__header-actions">
-          <button type="button" className="lv-tc-btn" onClick={() => void refreshAll()} disabled={data.loading || ctx.loading}>
-            Refresh
-          </button>
-          <span className="lv-tc-badge lv-tc-badge--exec" title={`LIVE_TRADING_AVAILABLE=${data.liveTrading}`}>
-            {ctx.executionLabel}
-          </span>
-        </div>
-      </header>
+        ) : null}
 
-      <TradingContextBar ctx={ctx} />
-
-      {data.error ? (
-        <p className="lv-sl-error" role="alert">
-          {data.error}
-          <button type="button" className="lv-tc-btn" onClick={() => void data.refresh()}>
-            Opnieuw proberen
-          </button>
-        </p>
-      ) : null}
-
-      <StrategyLabView
-        data={data}
-        selectedRow={selectedRow}
-        onSelectRow={selectRow}
-        compareIds={compareIds}
-        onToggleCompare={toggleCompare}
-        onOpenCreateRun={() => setShowCreateRun(true)}
-        onOpenCompare={() => setShowCompare(true)}
-        onOpenAdvanced={openAdvanced}
-      />
-
-      {showCreateRun ? (
-        <CreateLabRunDrawer
+        <StrategyLabView
           data={data}
-          onClose={() => setShowCreateRun(false)}
-          onCreated={(labId) => {
-            setAdvancedLabId(labId);
-            setShowAdvanced(true);
-          }}
+          selectedRow={selectedRow}
+          onSelectRow={selectRow}
+          compareIds={compareIds}
+          onToggleCompare={toggleCompare}
+          onOpenCreateRun={() => setShowCreateRun(true)}
+          onOpenCompare={() => setShowCompare(true)}
+          onOpenAdvanced={openAdvanced}
         />
-      ) : null}
 
-      {showCompare && compareRows.length >= 2 ? (
-        <CompareDrawer rows={compareRows} onClose={() => setShowCompare(false)} onClear={() => setCompareIds([])} />
-      ) : null}
+        {showCreateRun ? (
+          <CreateLabRunDrawer
+            data={data}
+            onClose={() => setShowCreateRun(false)}
+            onCreated={(labId) => {
+              setAdvancedLabId(labId);
+              setShowAdvanced(true);
+            }}
+          />
+        ) : null}
 
-      {showAdvanced ? (
-        <AdvancedDrawer
-          data={data}
-          labId={advancedLabId}
-          strategyId={selectedRow?.strategyId ?? null}
-          onClose={() => setShowAdvanced(false)}
-        />
-      ) : null}
-    </main>
+        {showCompare && compareRows.length >= 2 ? (
+          <CompareDrawer rows={compareRows} onClose={() => setShowCompare(false)} onClear={() => setCompareIds([])} />
+        ) : null}
+
+        {showAdvanced ? (
+          <AdvancedDrawer
+            data={data}
+            labId={advancedLabId}
+            strategyId={selectedRow?.strategyId ?? null}
+            onClose={() => setShowAdvanced(false)}
+          />
+        ) : null}
+      </main>
+    </AppShell>
   );
 }

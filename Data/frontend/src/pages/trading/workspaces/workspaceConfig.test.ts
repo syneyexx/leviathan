@@ -46,8 +46,16 @@ describe("Trading Center WAVE 1 workspace config", () => {
     expect(resolveWorkspaceSurface(hub, null).id).toBe("overview");
     const lab = getTradingWorkspace("strategy_lab");
     expect(resolveWorkspaceSurface(lab, null).id).toBe("lab");
-    expect(resolveWorkspaceSurface(lab, "simulation").id).toBe("simulation");
+    // WAVE 5+: unknown surfaces fall back to the single native default.
+    expect(resolveWorkspaceSurface(lab, "simulation").id).toBe("lab");
     expect(resolveWorkspaceSurface(lab, "missing").id).toBe("lab");
+  });
+
+  it("keeps exactly one PRIMARY surface per native workspace", () => {
+    for (const ws of TRADING_WORKSPACES) {
+      expect(ws.surfaces).toHaveLength(1);
+      expect(ws.surfaces[0]?.level).toBe("PRIMARY");
+    }
   });
 
   it("tags surfaces with progressive disclosure levels", () => {
