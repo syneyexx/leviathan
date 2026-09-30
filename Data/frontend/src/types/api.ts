@@ -893,6 +893,140 @@ export type ModelInferenceTestResult = {
   note?: string | null;
 };
 
+/* ---------- Models V2 — control plane (load options, capabilities, estimate, optimizer) ---------- */
+
+/** Mirrors Data/backend/routes/models.py LoadRequest — draft load configuration. */
+export type ModelLoadOptions = {
+  contextLength?: number | null;
+  gpuOffloadLayers?: number | null;
+  gpuMemoryLimitBytes?: number | null;
+  cpuThreads?: number | null;
+  batchSize?: number | null;
+  evalBatchSize?: number | null;
+  flashAttention?: boolean | null;
+  preferredDeviceIds?: string[] | null;
+  pinnedDeviceIds?: string[] | null;
+  excludedDeviceIds?: string[] | null;
+  tensorSplit?: number[] | null;
+  mainGpuOrdinal?: number | null;
+  tensorParallelSize?: number | null;
+  allowMultiGpu?: boolean | null;
+  allowCpuOffload?: boolean | null;
+  shardingMode?: string | null;
+  confirmOom?: boolean;
+  vramOverrideBytes?: number | null;
+  multiGpuCapability?: string | null;
+  prefixCache?: boolean | null;
+  continuousBatching?: boolean | null;
+  kvCacheDtype?: string | null;
+  speculativeDecoding?: boolean | null;
+  draftModelId?: string | null;
+  speculativeTokens?: number | null;
+  offloadKvCacheToGpu?: boolean | null;
+  numExperts?: number | null;
+  gpuOffloadRatio?: number | null;
+  gpuOffloadPercent?: number | null;
+  gpuSplitMode?: string | null;
+  gpuStrictVramCap?: boolean | null;
+  keepDisplayHeadroom?: boolean | null;
+  seed?: number | null;
+};
+
+/** Per-field runtime control support, as reported by the connected provider. */
+export type CapabilitySupportValue = "SUPPORTED" | "UNSUPPORTED" | "UNKNOWN";
+
+/** Mirrors LMStudioControlCapabilities.public_dict() (Data/modules/models/lm_studio_control.py). */
+export type ProviderControlCapabilities = {
+  providerId: string;
+  providerType?: string | null;
+  capabilities: {
+    nativeRest?: CapabilitySupportValue;
+    load?: CapabilitySupportValue;
+    unload?: CapabilitySupportValue;
+    loadedInstances?: CapabilitySupportValue;
+    resourceEstimate?: CapabilitySupportValue;
+    gpuRatio?: CapabilitySupportValue;
+    gpuSplit?: CapabilitySupportValue;
+    customGpuSplit?: CapabilitySupportValue;
+    disabledGpus?: CapabilitySupportValue;
+    mainGpu?: CapabilitySupportValue;
+    strictVramCap?: CapabilitySupportValue;
+    flashAttention?: CapabilitySupportValue;
+    kvGpuOffload?: CapabilitySupportValue;
+    kvQuantization?: CapabilitySupportValue;
+    evalBatch?: CapabilitySupportValue;
+    moeNumExperts?: CapabilitySupportValue;
+    mmap?: CapabilitySupportValue;
+    mlock?: CapabilitySupportValue;
+    continuousBatching?: CapabilitySupportValue;
+    speculativeDecoding?: CapabilitySupportValue;
+    draftModel?: CapabilitySupportValue;
+    advancedLlamaOverrides?: CapabilitySupportValue;
+    contextLength?: CapabilitySupportValue;
+    echoLoadConfig?: CapabilitySupportValue;
+    providerVersion?: string | null;
+    cliAvailable?: boolean;
+    restBase?: string | null;
+    notes?: string[];
+    /** Fallback shape for non-LM Studio providers (RuntimeCapabilities-derived). */
+    loadOptions?: string[];
+  };
+  runtimeCapabilities?: RuntimeCapabilities | null;
+};
+
+/** Mirrors ModelControlPlane.estimate_model_load() response. */
+export type ModelEstimateResult = {
+  modelId: string;
+  leviathanEstimate: (ResourceEstimate & Record<string, unknown>) | Record<string, unknown> | null;
+  providerEstimate: Record<string, unknown> | null;
+  disagreeMaterially: boolean;
+  warnings: string[];
+  timestamp: number;
+};
+
+/** Mirrors optimizer.CandidateResult.public_dict(). */
+export type ModelOptimizationCandidate = {
+  index: number;
+  status: string;
+  score: number | null;
+  context: number | null;
+  gpuOffload: number | null;
+  gpu0: number | null;
+  gpu1: number | null;
+  generationTps: number | null;
+  promptTps: number | null;
+  ttftSeconds: number | null;
+  loadTimeSeconds: number | null;
+  peakVramBytes: number | null;
+  error: string | null;
+  fingerprint: string | null;
+  appliedConfig: Record<string, unknown> | null;
+  warnings: string[];
+  options: Record<string, unknown>;
+};
+
+/** Mirrors optimizer.OptimizationRun.public_dict(). */
+export type ModelOptimizationRun = {
+  runId: string;
+  modelId: string;
+  status: string;
+  objectives: {
+    maxTokensPerSec: boolean;
+    keepDisplayResponsive: boolean;
+    maximizeModelSize: boolean;
+    stableNoOom: boolean;
+    weights: Record<string, number>;
+  };
+  candidates: ModelOptimizationCandidate[];
+  bestIndex: number | null;
+  startedAt: number | null;
+  finishedAt: number | null;
+  cancelRequested: boolean;
+  error: string | null;
+  maxCandidates: number;
+  deadlineSeconds: number;
+};
+
 /* ---------- Datasets ---------- */
 
 export type DatasetBrainStatus = {
