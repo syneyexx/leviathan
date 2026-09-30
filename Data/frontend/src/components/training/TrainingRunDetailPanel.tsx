@@ -37,8 +37,8 @@ function etaFromJob(progress: number | null | undefined, startedAt?: string | nu
   const remaining = elapsed * (1 / pct - 1);
   if (!Number.isFinite(remaining) || remaining < 0) return "—";
   const mins = Math.round(remaining / 60_000);
-  if (mins < 60) return `~ ${mins} minuten`;
-  return `~ ${(mins / 60).toFixed(1)} uur`;
+  if (mins < 60) return `~ ${mins} minuten (geschat)`;
+  return `~ ${(mins / 60).toFixed(1)} uur (geschat)`;
 }
 
 export function TrainingRunDetailPanel({ ws }: Props) {

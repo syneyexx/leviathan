@@ -22,8 +22,13 @@ function isControlPlaneApi(url: URL): boolean {
 export async function installTrainingV2VisualFixture(page: Page): Promise<void> {
   await page.addInitScript(
     ({ frozen }) => {
+      const frozenMs = Date.parse(frozen);
       (window as Window & { __LV_V2_FROZEN_NOW__?: string }).__LV_V2_FROZEN_NOW__ = frozen;
       (window as Window & { __LV_V2_VISUAL_FIXTURE__?: boolean }).__LV_V2_VISUAL_FIXTURE__ = true;
+      // Freeze wall-clock so open-ended job durations/ETAs match Screen 1 fixture time.
+      if (!Number.isNaN(frozenMs)) {
+        Date.now = () => frozenMs;
+      }
     },
     { frozen: TRAINING_V2_VISUAL_FROZEN_ISO },
   );

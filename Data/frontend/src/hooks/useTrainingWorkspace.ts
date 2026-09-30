@@ -167,10 +167,10 @@ export function metricSeries(metrics: TrainingMetric[], names: string[]): number
 }
 
 function durationHours(startedAt?: string | null, finishedAt?: string | null): number | null {
-  if (!startedAt) return null;
+  if (!startedAt || !finishedAt) return null;
   const start = Date.parse(startedAt);
   if (Number.isNaN(start)) return null;
-  const end = finishedAt ? Date.parse(finishedAt) : visualNowMs();
+  const end = Date.parse(finishedAt);
   if (Number.isNaN(end) || end < start) return null;
   return (end - start) / 3_600_000;
 }
