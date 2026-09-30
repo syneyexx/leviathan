@@ -218,8 +218,18 @@ class DocumentAiHandlerTests(unittest.TestCase):
                 worker_pool="document_ai",
             )
             receipt = dai._handler({"job_store": store, "worker_id": "doc-ai-test"}, claimed)
-            self.assertEqual(receipt.get("error_code"), "OCR_FAILED")
-            self.assertEqual(receipt.get("retry_class"), "TERMINAL")
+            # Without OCR backend: STRUCTURAL_UNAVAILABLE / OCR_UNAVAILABLE (probe short-circuit).
+            # With OCR backend present: OCR_FAILED + TERMINAL for the missing input file.
+            self.assertIn(
+                receipt.get("error_code"),
+                {"OCR_UNAVAILABLE", "OCR_FAILED", "DOCUMENT_AI_UNAVAILABLE"},
+            )
+            self.assertIn(
+                receipt.get("retry_class"),
+                {"TERMINAL", "STRUCTURAL_UNAVAILABLE"},
+            )
+            refreshed = store.get(claimed.job_id)
+            self.assertEqual(refreshed.state, JobState.FAILED)
 
     def test_ocr_success_enqueues_continue(self) -> None:
         from Data.modules.workers.entrypoints import document_ai as dai

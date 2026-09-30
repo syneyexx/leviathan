@@ -52,7 +52,9 @@ class ExternalDefaultsTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[3]
         text = (root / ".env.example").read_text(encoding="utf-8")
         self.assertIn("LEVIATHAN_DATASET_JOBS_RUNNER=external", text)
-        self.assertIn("LEVIATHAN_SOURCE_INGESTION_RUNNER=external", text)
+        # Production default is fabric (= Worker Fabric source_ingestion pool).
+        # Legacy aliases external/worker still resolve to fabric at runtime.
+        self.assertIn("LEVIATHAN_SOURCE_INGESTION_RUNNER=fabric", text)
         self.assertIn("LEVIATHAN_WORKERS_EXTERNALIZE_API=true", text)
         self.assertIn("LEVIATHAN_NETWORK_ALLOW_OUTBOUND=true", text)
         self.assertIn("LEVIATHAN_FEATURE_AGENTS=true", text)
