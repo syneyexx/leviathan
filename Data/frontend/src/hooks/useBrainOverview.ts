@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
+import { loadBrainCatalog } from "../pages/brain/brain-catalog";
 import type { SidebarStatusRow } from "../components/layout/AppSidebarV2";
 import type {
   EvidenceRecord,
@@ -247,37 +248,47 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
 
   const refreshLock = useRef(false);
   const graphAbort = useRef<AbortController | null>(null);
+  const catalogCache = useRef<Awaited<ReturnType<typeof loadBrainCatalog>> | null>(null);
+  useEffect(() => () => { graphAbort.current?.abort(); }, []);
   const qRef = useRef(q);
   qRef.current = q;
 
-  const loadGraph = useCallback(async (root?: string) => {
+  const loadGraph = useCallback(async (root?: string, useCache = false) => {
     graphAbort.current?.abort();
     const controller = new AbortController();
     graphAbort.current = controller;
     setGraphLoading(true);
     setGraphError(null);
     try {
-      const data = await api.brainGraph({
-        limit: 250,
-        q: qRef.current.trim() || undefined,
-        root,
-      });
+      const catalog = useCache && catalogCache.current ? catalogCache.current : await loadBrainCatalog((cursor, signal) => api.brainCatalog(cursor, signal), controller.signal,
+        (partialNodes, partialEdges) => {
+          if (controller.signal.aborted) return;
+          setNodes(partialNodes);
+          setEdges(partialEdges);
+          setGraphTruth({ paged_catalog: true, catalog_complete: false, bounded_projection: true });
+        });
       if (controller.signal.aborted) return;
-      setNodes(data.nodes);
-      setEdges(data.edges);
-      setStats({
-        node_count: data.stats.node_count,
-        edge_count: data.stats.edge_count,
-        by_type: data.stats.by_type ?? {},
-        by_relation: data.stats.by_relation ?? {},
-        ...(typeof (data.stats as Record<string, unknown>).cluster_count === "number"
-          ? { cluster_count: (data.stats as Record<string, unknown>).cluster_count as number }
-          : {}),
-        ...(typeof (data.stats as Record<string, unknown>).evidence_count === "number"
-          ? { evidence_count: (data.stats as Record<string, unknown>).evidence_count as number }
-          : {}),
-      });
-      setGraphTruth(data.truth ?? null);
+      catalogCache.current = catalog;
+      const query = qRef.current.trim().toLowerCase();
+      let visibleNodes = catalog.nodes.filter(n => !query || `${n.label} ${n.id} ${n.type}`.toLowerCase().includes(query));
+      if (root) {
+        const neighbors = new Set([root]);
+        for (const e of catalog.edges) {
+          if (e.source === root) neighbors.add(e.target);
+          if (e.target === root) neighbors.add(e.source);
+        }
+        visibleNodes = visibleNodes.filter(n => neighbors.has(n.id));
+      }
+      const ids = new Set(visibleNodes.map(n => n.id));
+      const visibleEdges = catalog.edges.filter(e => ids.has(e.source) && ids.has(e.target));
+      const byType: Record<string, number> = {}, byRelation: Record<string, number> = {};
+      for (const node of visibleNodes) byType[node.type] = (byType[node.type] ?? 0) + 1;
+      for (const edge of visibleEdges) byRelation[edge.relation] = (byRelation[edge.relation] ?? 0) + 1;
+      const data = { nodes: visibleNodes };
+      setNodes(visibleNodes);
+      setEdges(visibleEdges);
+      setStats({ node_count: visibleNodes.length, edge_count: visibleEdges.length, by_type: byType, by_relation: byRelation });
+      setGraphTruth({ paged_catalog: true, catalog_complete: true, bounded_projection: false });
       const chooseInitialSelection = initialGraphSelection.current;
       initialGraphSelection.current = false;
       setSelectedId((previous) => {
@@ -300,12 +311,10 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
     } catch (err) {
       if (controller.signal.aborted) return;
       setGraphError(reasonMessage(err, "Brain graph unavailable"));
-      setNodes([]);
-      setEdges([]);
       setStats(null);
-      setGraphTruth(null);
+      setGraphTruth({ paged_catalog: true, catalog_complete: false, bounded_projection: true });
     } finally {
-      if (!controller.signal.aborted) setGraphLoading(false);
+      if (!controller.signal.aborted) { setGraphLoading(false); graphAbort.current = null; }
     }
   }, []);
 
@@ -383,7 +392,7 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
   useEffect(() => {
     if (!enabled) return;
     const handle = window.setTimeout(() => {
-      void loadGraph();
+      void loadGraph(undefined, true);
     }, 320);
     return () => window.clearTimeout(handle);
   }, [q, enabled, loadGraph]);
@@ -402,7 +411,7 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
   useEffect(() => {
     if (!enabled) return;
     const graphTimer = window.setInterval(() => {
-      if (documentHidden()) return;
+      if (documentHidden() || graphAbort.current) return;
       void loadGraph();
     }, GRAPH_INTERVAL_MS);
     const queueTimer = window.setInterval(() => {

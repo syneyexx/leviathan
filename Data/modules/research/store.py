@@ -516,12 +516,12 @@ class ResearchStore:
             ]
             return project
 
-    def list_projects(self, *, limit: int = 100) -> list[ResearchProject]:
+    def list_projects(self, *, limit: int = 100, offset: int = 0) -> list[ResearchProject]:
         with self.connect() as conn:
             self._ensure_schema(conn)
             rows = conn.execute(
-                "SELECT * FROM research_projects ORDER BY updated_at DESC LIMIT ?",
-                (max(1, min(limit, 500)),),
+                "SELECT * FROM research_projects ORDER BY updated_at DESC, project_id LIMIT ? OFFSET ?",
+                (max(1, min(limit, 500)), max(0, offset)),
             ).fetchall()
             projects = [self._project_from_row(row) for row in rows]
             for project in projects:

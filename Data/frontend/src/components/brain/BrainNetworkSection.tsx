@@ -70,7 +70,7 @@ export function BrainNetworkSection({ overview }: Props) {
         : "—";
 
   const truncated = Boolean(graphTruth?.bounded_projection);
-  const maxNodes = 250;
+  const maxNodes = null;
 
   return (
     <section className="lv-v2-brain-core" aria-label="Kennisnetwerk">

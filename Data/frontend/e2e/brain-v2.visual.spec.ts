@@ -56,7 +56,7 @@ test.describe("Brain V2 visual", () => {
     await expect(page.getByText("System Status", { exact: true })).toBeVisible();
 
     // Fixture KPIs settle (nl-NL grouping)
-    await expect(page.getByText("12.842").or(page.getByText("12,842"))).toBeVisible({
+    await expect(page.getByText("58", {exact:true}).first()).toBeVisible({
       timeout: 15_000,
     });
     await expect(page.getByText("Bitcoin").first()).toBeVisible();

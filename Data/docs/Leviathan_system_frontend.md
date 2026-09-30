@@ -423,7 +423,7 @@ These are intentionally distinct backend concepts.
 - `brain-shared.tsx` — shared contracts/components;
 - explicitly named mock support for tests/reference only.
 
-Current graph views are backed by `/api/brain/graph`; selection/filter state remains under BrainPage / `useBrainOverview` ownership. Hover labels are graph-native (title/type/cluster), not floating marketing chips.
+The default Kennis Netwerk view traverses `/api/brain/catalog` owner pages; the advanced bounded graph still uses `/api/brain/graph`; selection/filter state remains under BrainPage / `useBrainOverview` ownership. Hover labels are graph-native (title/type/cluster), not floating marketing chips.
 
 The Brain main owns vertical scrolling because the legacy shell slot uses `display: contents`. The knowledge section must not flex-shrink: its canvas, activation strip and workbench determine the panel height. The mobile shell column uses `minmax(0, 1fr)` to keep the stage inside the viewport. Canvas backing dimensions track the actual panel size and device pixel ratio.
 
@@ -1065,3 +1065,11 @@ live-money trading remains BLOCKED
 - **Research claim graph** — Research UI may show SUPPORTS/CONTRADICTS/QUALIFIES/BACKGROUND/INSUFFICIENT edges from backend claim graphs; model prose is not relation proof.
 - **Governance** — PRs use `.github/PULL_REQUEST_TEMPLATE.md`; branch protection requirements in `Data/docs/github_branch_protection.md` (operator-applied, not agent-claimed).
 - **Autonomous paper runbook** — backend companion §31.
+
+### Brain catalog growth and motion controls
+
+Kennis Netwerk no longer treats the first 250 nodes as the complete Brain. It traverses bounded `/api/brain/catalog?source=0&offset=0&limit=50` pages across the existing graph owners, merges canonical IDs, retains cross-page relations and prefers authoritative record metadata over reference endpoints. It shows loading/incomplete status until the traversal finishes. Failed pages never turn into a success or mock fallback. Search runs over the complete loaded catalog (cached between search edits); explicit refresh and the existing 60-second timer reload owners. An active traversal is not cancelled by the polling timer and is aborted on unmount or a newer user request.
+
+The canvas renders at most 60 nodes per DNA segment. Previous/next and a segment slider reach the remaining records; the keyboard knowledge index covers all loaded nodes. Selecting an off-segment node navigates to its segment. New records extend the segment count rather than overcrowding a fixed helix. Activation counts describe the current segment, not all loaded nodes. These are graph records from supported Brain owners, not every database row or text chunk in LEVIATHAN. Disabled optional integrations contribute no records. Paging reads live data and is not a transactionally frozen snapshot; concurrent source edits may require another refresh.
+
+Reduced motion controls the initial paused state. The play button stays enabled and explicitly opts into rotation; pause remains available. Starting with speed zero restores the default nonzero speed. The renderer still avoids entrance/focus animations until the user opts in. Backend and frontend must both be updated for the catalog endpoint.

@@ -1613,8 +1613,8 @@ class DatasetService:
             "truth": pub.get("truth") or {},
         }
 
-    def list_library_datasets(self, *, limit: int = 100) -> list[dict[str, Any]]:
-        return [self.brain_library_entry(d) for d in self.store.list_datasets(limit=limit)]
+    def list_library_datasets(self, *, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        return [self.brain_library_entry(d) for d in self.store.query_datasets(limit=limit, offset=offset)["items"]]
 
     def list_learned_datasets(self, *, limit: int = 100) -> list[dict[str, Any]]:
         """Datasets with verified READY Brain indexes (Dataset Offline semantics)."""

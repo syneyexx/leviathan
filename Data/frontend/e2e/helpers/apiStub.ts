@@ -38,7 +38,7 @@ export async function installApiStubs(page: Page): Promise<void> {
         truth: { e2e_stub: true, not_production_health: true },
       });
     }
-    if (path.startsWith("/api/brain/graph")) {
+    if (path.startsWith("/api/brain/graph") || path === "/api/brain/catalog") {
       return json(route, {
         nodes: [
           {
@@ -51,6 +51,7 @@ export async function installApiStubs(page: Page): Promise<void> {
         ],
         edges: [],
         stats: { node_count: 1, edge_count: 0 },
+        page: {complete: true, next_source: 12, next_offset: 0},
         truth: { e2e_stub: true },
       });
     }

@@ -61,9 +61,11 @@ class BrainQueryFacade:
         workflow_list: Callable[[], list[Any]] | None = None,
         atlas_list: Callable[[], list[Any]] | None = None,
         relation_list: Callable[[], list[Any]] | None = None,
+        page_sources: dict[str, Callable[[int, int], list[Any]]] | None = None,
         max_nodes: int = 250,
         max_edges: int = 500,
     ) -> None:
+        self.page_sources = page_sources or {}
         self.knowledge_list = knowledge_list
         self.evidence_list = evidence_list
         self.research_list = research_list
@@ -79,6 +81,47 @@ class BrainQueryFacade:
         self.max_nodes = max(10, min(int(max_nodes), 1000))
         self.max_edges = max(10, min(int(max_edges), 2000))
 
+    CATALOG_SOURCES = (
+        "knowledge_list", "evidence_list", "research_list", "dataset_list",
+        "memory_list", "module_list", "capability_list", "mcp_servers",
+        "mcp_tools", "workflow_list", "atlas_list", "relation_list",
+    )
+
+    def catalog_page(self, *, source: int = 0, offset: int = 0, limit: int = 50) -> dict[str, Any]:
+        """Read one bounded owner page, without the legacy global 250-node cutoff.
+
+        Cross-page edges are retained. Clients join them by canonical ID after loading
+        endpoints. This is a live traversal, not a transactionally frozen snapshot.
+        """
+        if source < 0 or source >= len(self.CATALOG_SOURCES) or offset < 0:
+            raise ValueError("Invalid Brain catalog cursor")
+        size = max(1, min(limit, 50))
+        name = self.CATALOG_SOURCES[source]
+        pager = self.page_sources.get(name)
+        provider = getattr(self, name)
+        rows = pager(offset, size + 1) if pager else (provider() if provider else [])[offset:offset + size + 1]
+        more = len(rows) > size
+        rows = rows[:size]
+        page = BrainQueryFacade(**{name: lambda: rows})
+        graph = page.query(_catalog_page=True)
+        # Source records are authoritative; reference endpoints must not overwrite them.
+        primary_types = {
+            "knowledge_list": {"knowledge.document"}, "evidence_list": {"evidence"},
+            "research_list": {"research.project"}, "dataset_list": {"dataset"},
+            "memory_list": {"memory"}, "module_list": {"module"},
+            "capability_list": {"capability"}, "mcp_servers": {"mcp.server"},
+            "mcp_tools": {"mcp.tool"}, "workflow_list": {"workflow"}, "atlas_list": {"atlas"},
+        }.get(name, {"relation.entity"})
+        for node in graph["nodes"]:
+            node["meta"]["catalog_reference"] = node["type"] not in primary_types
+        next_source = source if more else source + 1
+        graph["page"] = {
+            "source": name, "next_source": next_source, "next_offset": offset + size if more else 0,
+            "complete": next_source >= len(self.CATALOG_SOURCES),
+        }
+        graph["truth"] = {"projection_only": True, "paged_catalog": True, "snapshot_consistent": False}
+        return graph
+
     def query(
         self,
         *,
@@ -86,14 +129,17 @@ class BrainQueryFacade:
         q: str | None = None,
         limit: int | None = None,
         root: str | None = None,
+        _catalog_page: bool = False,
     ) -> dict[str, Any]:
         want = {t.lower() for t in (types or [])} if types else None
         limit_n = max(1, min(int(limit or self.max_nodes), self.max_nodes))
+        # Only the already bounded owner page bypasses the legacy projection cap.
+        row_slice = None if _catalog_page else limit_n
         nodes: dict[str, BrainNode] = {}
         edges: list[BrainEdge] = []
 
         def add_node(node: BrainNode) -> None:
-            if len(nodes) >= limit_n:
+            if not _catalog_page and len(nodes) >= limit_n:
                 return
             if want and node.type not in want and not node.type.startswith(tuple(want)):
                 # Allow prefix match e.g. type filter "knowledge" matches knowledge.document
@@ -106,15 +152,15 @@ class BrainQueryFacade:
             nodes[node.id] = node
 
         def add_edge(edge: BrainEdge) -> None:
-            if len(edges) >= self.max_edges:
+            if not _catalog_page and len(edges) >= self.max_edges:
                 return
-            if edge.source not in nodes or edge.target not in nodes:
+            if not _catalog_page and (edge.source not in nodes or edge.target not in nodes):
                 return
             edges.append(edge)
 
         # Knowledge documents
         if self.knowledge_list:
-            for doc in self.knowledge_list()[:limit_n]:
+            for doc in self.knowledge_list()[:row_slice]:
                 d = doc.public_dict() if hasattr(doc, "public_dict") else dict(doc)
                 nid = f"knowledge:document:{d.get('id')}"
                 trust = d.get("trust_metadata") if isinstance(d.get("trust_metadata"), dict) else {}
@@ -155,7 +201,7 @@ class BrainQueryFacade:
 
         # Evidence
         if self.evidence_list:
-            for ev in self.evidence_list()[:limit_n]:
+            for ev in self.evidence_list()[:row_slice]:
                 e = ev.public_dict() if hasattr(ev, "public_dict") else dict(ev)
                 eid = e.get("evidence_id")
                 nid = f"evidence:{eid}"
@@ -175,7 +221,7 @@ class BrainQueryFacade:
 
         # Research projects
         if self.research_list:
-            for proj in self.research_list()[:limit_n]:
+            for proj in self.research_list()[:row_slice]:
                 p = proj.public_dict() if hasattr(proj, "public_dict") else dict(proj)
                 pid = p.get("project_id")
                 nid = f"research:project:{pid}"
@@ -191,7 +237,7 @@ class BrainQueryFacade:
 
         # Datasets
         if self.dataset_list:
-            for ds in self.dataset_list()[:limit_n]:
+            for ds in self.dataset_list()[:row_slice]:
                 d = ds.public_dict() if hasattr(ds, "public_dict") else dict(ds)
                 did = d.get("dataset_id") or d.get("datasetId") or d.get("id")
                 nid = f"dataset:{did}"
@@ -211,7 +257,7 @@ class BrainQueryFacade:
 
         # Verified relation atoms (bounded) — clickable to source docs when present
         if self.relation_list:
-            for atom in self.relation_list()[: min(limit_n, self.max_edges)]:
+            for atom in self.relation_list()[: None if _catalog_page else min(limit_n, self.max_edges)]:
                 a = atom.public_dict() if hasattr(atom, "public_dict") else dict(atom)
                 subj = str(a.get("subject_ref") or a.get("subjectRef") or "")
                 obj = str(a.get("object_ref") or a.get("objectRef") or "")
@@ -219,7 +265,7 @@ class BrainQueryFacade:
                     continue
                 rel = str(a.get("relation_class") or a.get("relationClass") or "like")
                 conf = a.get("confidence")
-                if conf is not None and float(conf) < 0.55:
+                if not _catalog_page and conf is not None and float(conf) < 0.55:
                     continue
                 for ref, typ in ((subj, "relation.entity"), (obj, "relation.entity")):
                     if ref.startswith("knowledge:document:") or ref.startswith("dataset:"):
@@ -281,7 +327,7 @@ class BrainQueryFacade:
 
         # Controlled memory (Geheugen) — projection only
         if self.memory_list:
-            for mem in self.memory_list()[:limit_n]:
+            for mem in self.memory_list()[:row_slice]:
                 m = mem.public_dict() if hasattr(mem, "public_dict") else dict(mem)
                 mid = m.get("memory_id")
                 if not mid:
@@ -339,7 +385,7 @@ class BrainQueryFacade:
 
         # Modules + capabilities
         if self.module_list:
-            for mod in self.module_list()[:limit_n]:
+            for mod in self.module_list()[:row_slice]:
                 m = mod.public_dict() if hasattr(mod, "public_dict") else dict(mod)
                 manifest = m.get("manifest") or {}
                 mid = manifest.get("module_id") or m.get("module_id")
@@ -378,7 +424,7 @@ class BrainQueryFacade:
                     )
 
         if self.capability_list:
-            for cap in self.capability_list()[:limit_n]:
+            for cap in self.capability_list()[:row_slice]:
                 c = cap.public_dict() if hasattr(cap, "public_dict") else dict(cap)
                 cid = c.get("id")
                 nid = f"capability:{cid}"
@@ -396,7 +442,7 @@ class BrainQueryFacade:
 
         # MCP
         if self.mcp_servers:
-            for srv in self.mcp_servers()[:limit_n]:
+            for srv in self.mcp_servers()[:row_slice]:
                 s = srv if isinstance(srv, dict) else (srv.public_dict() if hasattr(srv, "public_dict") else {})
                 sid = s.get("server_id") or s.get("id")
                 if not sid:
@@ -412,7 +458,7 @@ class BrainQueryFacade:
                 )
 
         if self.mcp_tools:
-            for tool in self.mcp_tools()[:limit_n]:
+            for tool in self.mcp_tools()[:row_slice]:
                 t = tool if isinstance(tool, dict) else (tool.public_dict() if hasattr(tool, "public_dict") else {})
                 tid = t.get("tool_id") or t.get("name")
                 sid = t.get("server_id")
@@ -428,7 +474,7 @@ class BrainQueryFacade:
                 )
                 if sid:
                     snid = f"mcp:server:{sid}"
-                    if snid in nodes:
+                    if _catalog_page or snid in nodes:
                         add_edge(
                             BrainEdge(
                                 id=f"{snid}->{nid}",
@@ -440,7 +486,7 @@ class BrainQueryFacade:
 
         # Workflows
         if self.workflow_list:
-            for wf in self.workflow_list()[:limit_n]:
+            for wf in self.workflow_list()[:row_slice]:
                 w = wf.public_dict() if hasattr(wf, "public_dict") else dict(wf)
                 wid = w.get("workflow_id")
                 nid = f"workflow:{wid}"
@@ -471,7 +517,7 @@ class BrainQueryFacade:
 
         # Atlas (optional)
         if self.atlas_list:
-            for rec in self.atlas_list()[:limit_n]:
+            for rec in self.atlas_list()[:row_slice]:
                 a = rec.public_dict() if hasattr(rec, "public_dict") else dict(rec)
                 aid = a.get("atlas_id")
                 nid = f"atlas:{aid}"
@@ -485,7 +531,7 @@ class BrainQueryFacade:
                 )
                 for ref in a.get("evidence_record_refs") or []:
                     evid = f"evidence:{ref}"
-                    if evid in nodes:
+                    if _catalog_page or evid in nodes:
                         add_edge(
                             BrainEdge(
                                 id=f"{nid}->{evid}",
