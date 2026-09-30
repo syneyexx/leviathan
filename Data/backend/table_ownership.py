@@ -133,6 +133,8 @@ CONTROL_TABLES: frozenset[str] = frozenset(
         "worker_pool_desired",
         "worker_pools",
         "workflows",
+        "workflow_versions",
+        "workflow_executions",
         # Cutover ledger lives only on control.
         "db_cutover_state",
         "db_cutover_table_receipts",

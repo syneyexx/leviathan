@@ -4296,6 +4296,112 @@ def _m59_coding_semantic_map_cache_ext(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE coding_semantic_map_cache ADD COLUMN {name} {decl}")
 
 
+def _m60_workflow_definitions_executions(conn: sqlite3.Connection) -> None:
+    """Separate reusable workflow definitions from version-pinned executions.
+
+    Extends the existing ``workflows`` definition table and adds
+    ``workflow_versions`` / ``workflow_executions``. Legacy one-shot rows are
+    migrated idempotently via WorkflowStore.initialize() on next open; this
+    migration only owns schema DDL + indexes (no second database file).
+    """
+    # Ensure base table exists (migration 9) then add definition columns.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS workflows (
+            workflow_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            state TEXT NOT NULL,
+            steps_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            current_step INTEGER NOT NULL DEFAULT 0,
+            run_id TEXT,
+            step_results_json TEXT NOT NULL DEFAULT '[]',
+            error TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(workflows)").fetchall()}
+    for name, decl in (
+        ("description", "TEXT NOT NULL DEFAULT ''"),
+        ("category", "TEXT NOT NULL DEFAULT ''"),
+        ("tags_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("definition_status", "TEXT"),
+        ("current_version", "INTEGER NOT NULL DEFAULT 1"),
+        ("graph_json", "TEXT NOT NULL DEFAULT '{}'"),
+        ("variables_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("layout_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("config_json", "TEXT NOT NULL DEFAULT '{}'"),
+        ("trigger_bindings_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("revision", "INTEGER NOT NULL DEFAULT 1"),
+        ("record_kind", "TEXT NOT NULL DEFAULT 'legacy'"),
+    ):
+        if name not in cols:
+            conn.execute(f"ALTER TABLE workflows ADD COLUMN {name} {decl}")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS workflow_versions (
+            workflow_id TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            graph_json TEXT NOT NULL,
+            variables_json TEXT NOT NULL,
+            config_json TEXT NOT NULL,
+            layout_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            created_by TEXT,
+            change_summary TEXT NOT NULL DEFAULT '',
+            content_hash TEXT NOT NULL DEFAULT '',
+            validation_json TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (workflow_id, version)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS workflow_executions (
+            execution_id TEXT PRIMARY KEY,
+            workflow_id TEXT NOT NULL,
+            workflow_version INTEGER NOT NULL,
+            state TEXT NOT NULL,
+            trigger_source TEXT NOT NULL DEFAULT 'MANUAL',
+            requested_by TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            started_at TEXT,
+            ended_at TEXT,
+            duration_ms INTEGER,
+            current_node_id TEXT,
+            node_results_json TEXT NOT NULL DEFAULT '[]',
+            error TEXT,
+            root_job_id TEXT,
+            child_job_ids_json TEXT NOT NULL DEFAULT '[]',
+            run_id TEXT,
+            input_snapshot_json TEXT NOT NULL DEFAULT '{}',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            cursor_json TEXT NOT NULL DEFAULT '{}',
+            name_snapshot TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_wf_exec_workflow_created "
+        "ON workflow_executions(workflow_id, created_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_wf_exec_state_created "
+        "ON workflow_executions(state, created_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_wf_exec_created ON workflow_executions(created_at DESC)"
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_wf_def_status ON workflows(definition_status)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_wf_versions_workflow "
+        "ON workflow_versions(workflow_id, version DESC)"
+    )
+
+
 def _m55_institutional_core(conn: sqlite3.Connection) -> None:
     """Institutional core additive tables (instruments, breaks, audit, exceptions)."""
     conn.execute(
@@ -4556,6 +4662,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=59,
         name="coding_semantic_map_cache_ext",
         apply=_m59_coding_semantic_map_cache_ext,
+    ),
+    Migration(
+        version=60,
+        name="workflow_definitions_executions",
+        apply=_m60_workflow_definitions_executions,
     ),
 )
 

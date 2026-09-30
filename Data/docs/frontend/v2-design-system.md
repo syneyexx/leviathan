@@ -179,6 +179,15 @@ Media Control, Plugin & Runtime, Coding Agent, and other deep links remain regis
 - Local views `?view=runtimes|installation|environments` are projections — not new backend systems.
 - Visual fixture: `src/mocks/modulesV2VisualFixture.ts` + `e2e/modules-v2.visual.spec.ts` (reference: `docs/ui_reference/modules-v2-reference.png`, 1672×941). Production never imports fixture defaults.
 
+## Workflows migration
+
+- `/workflows` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "Runtime & Tools / Workflows").
+- MAIN_MENU parent remains **Runtime & Tools**; Workflows child is canonical (`/workflows`).
+- Composition: `WorkflowsPage` + `useWorkflowsWorkspace` + `src/components/workflows/*` (hero, metrics, library, canvas editor, center tabs, detail, bottom analytics, modals).
+- No page-local Workflows CSS; layout lives in `leviathan-v2.css` under `.lv-v2-page--workflows` / `.lv-v2-wf-*`.
+- Backend authority: WorkflowStore definitions/versions/executions + WorkflowRuntime + JobRuntime `workflow` pool + ScheduleRunner + ExecutionGateway. Active/Inactive is definition status, not latest execution state.
+- Visual fixture: `src/mocks/workflowsV2VisualFixture.ts` + `e2e/helpers/workflowsV2Visual.ts` + `e2e/workflows-v2.visual.spec.ts` (reference: `docs/ui_reference/workflows-v2-reference.png`, 1664×936). Production never imports fixture defaults.
+
 ## Dataset Management migration
 
 - `/dataset-management` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "LLM / Dataset Management").
