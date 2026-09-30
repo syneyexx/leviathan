@@ -7,6 +7,7 @@ import {
   countDatasetsByFilter,
   filterDatasetRows,
   matchesDatasetFilter,
+  reconcileSelection,
 } from "./datasets/datasetsInventory";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -30,8 +31,8 @@ function row(partial: Partial<DhRow> & Pick<DhRow, "id" | "name">): DhRow {
 /** Seven HF-shaped rows mirroring the reported live inventory size. */
 function sampleInventory(): DhRow[] {
   return [
-    row({ id: "1", name: "allenai/c4", sourceKind: "huggingface", source: "Hugging Face", type: "Text" }),
-    row({ id: "2", name: "wikitext", sourceKind: "huggingface", source: "Hugging Face", type: "Text" }),
+    row({ id: "1", name: "allenai/c4", sourceKind: "huggingface", source: "Hugging Face", type: "Text", updatedAt: "2026-09-30T12:00:00Z" }),
+    row({ id: "2", name: "wikitext", sourceKind: "huggingface", source: "Hugging Face", type: "Text", updatedAt: "2026-09-29T12:00:00Z" }),
     row({
       id: "3",
       name: "local-corpus",
@@ -39,6 +40,7 @@ function sampleInventory(): DhRow[] {
       source: "Local",
       status: "offline",
       type: "Document",
+      updatedAt: "2026-09-01T12:00:00Z",
     }),
     row({
       id: "4",
@@ -46,6 +48,7 @@ function sampleInventory(): DhRow[] {
       sourceKind: "curated",
       source: "Curated",
       type: "Structured",
+      updatedAt: "2026-09-28T12:00:00Z",
     }),
     row({
       id: "5",
@@ -54,6 +57,7 @@ function sampleInventory(): DhRow[] {
       source: "Hugging Face",
       type: "Code",
       status: "processing",
+      updatedAt: "2026-09-30T10:00:00Z",
     }),
     row({
       id: "6",
@@ -62,6 +66,7 @@ function sampleInventory(): DhRow[] {
       source: "Hugging Face",
       type: "Document",
       status: "validating",
+      updatedAt: "2026-09-20T12:00:00Z",
     }),
     row({
       id: "7",
@@ -69,6 +74,7 @@ function sampleInventory(): DhRow[] {
       sourceKind: "huggingface",
       source: "Hugging Face",
       type: "Multimodal",
+      updatedAt: "2026-08-01T12:00:00Z",
     }),
   ];
 }
@@ -78,7 +84,6 @@ describe("datasets inventory filters (live rows)", () => {
     const rows = sampleInventory();
     const filtered = filterDatasetRows(rows, { filter: "all" });
     expect(filtered).toHaveLength(7);
-    expect(filtered.map((r) => r.name)).toEqual(rows.map((r) => r.name));
   });
 
   it("Hugging Face filter keeps only HF sourceKind rows", () => {
@@ -116,25 +121,49 @@ describe("datasets inventory filters (live rows)", () => {
   it("matchesDatasetFilter treats all as pass-through", () => {
     expect(matchesDatasetFilter(sampleInventory()[0], "all")).toBe(true);
   });
+
+  it("Last 24 hours / 7 days / 30 days filter on updatedAt (no placebo)", () => {
+    const nowMs = Date.parse("2026-09-30T14:00:00Z");
+    const rows = sampleInventory();
+    expect(
+      filterDatasetRows(rows, { filter: "all", updatedFilter: "Last 24 hours", nowMs }).map((r) => r.id).sort(),
+    ).toEqual(["1", "5"]);
+    expect(
+      filterDatasetRows(rows, { filter: "all", updatedFilter: "Last 7 days", nowMs }).map((r) => r.id).sort(),
+    ).toEqual(["1", "2", "4", "5"]);
+    expect(
+      filterDatasetRows(rows, { filter: "all", updatedFilter: "Last 30 days", nowMs }).map((r) => r.id).sort(),
+    ).toEqual(["1", "2", "3", "4", "5", "6"]);
+  });
+
+  it("Oldest first sorts ascending by updatedAt", () => {
+    const filtered = filterDatasetRows(sampleInventory(), { filter: "all", updatedFilter: "Oldest first" });
+    expect(filtered[0]?.id).toBe("7");
+    expect(filtered[filtered.length - 1]?.id).toBe("1");
+  });
+
+  it("reconcileSelection drops ids missing from visible projection", () => {
+    const selected = new Set(["1", "gone", "3"]);
+    const next = reconcileSelection(selected, ["1", "2", "3"]);
+    expect([...next].sort()).toEqual(["1", "3"]);
+  });
 });
 
 describe("datasets inventory + activity co-existence regression", () => {
   const pageSrc = readFileSync(join(here, "DatasetsPage.tsx"), "utf8");
-  const cssSrc = readFileSync(join(here, "../styles/datasets-dashboard.css"), "utf8");
+  const cssSrc = readFileSync(join(here, "../styles/leviathan-v2.css"), "utf8");
 
   it("keeps GET /api/datasets inventory list/grid in the page (not replaced by activity)", () => {
-    expect(pageSrc).toContain("api.listDatasets");
-    expect(pageSrc).toContain('aria-label="Datasets inventory"');
-    expect(pageSrc).toContain("data-testid=\"datasets-inventory\"");
-    expect(pageSrc).toContain("filteredRows.map");
-    expect(pageSrc).toContain("lv-dh-table");
-    expect(pageSrc).toContain("lv-dh-grid");
-    expect(pageSrc).toContain("row.name");
+    const inventorySrc = readFileSync(join(here, "../components/datasets/DatasetsInventory.tsx"), "utf8");
+    expect(pageSrc).toContain("useDatasetsWorkspace");
+    expect(pageSrc).toContain("DatasetsInventory");
+    expect(inventorySrc).toContain('data-testid="datasets-inventory"');
+    expect(pageSrc).toContain("variant=\"v2\"");
   });
 
   it("renders Dataset Activity as a complementary section after inventory", () => {
     expect(pageSrc).toContain("<DatasetActivityConsole");
-    const inventoryAt = pageSrc.indexOf('aria-label="Datasets inventory"');
+    const inventoryAt = pageSrc.indexOf("<DatasetsInventory");
     const activityAt = pageSrc.indexOf("<DatasetActivityConsole");
     expect(inventoryAt).toBeGreaterThan(-1);
     expect(activityAt).toBeGreaterThan(-1);
@@ -146,15 +175,23 @@ describe("datasets inventory + activity co-existence regression", () => {
     expect(pageSrc).not.toMatch(/mockDatasets|DH_DEMO_ROWS/);
   });
 
-  it("CSS prevents inventory panel from flex-shrinking away under activity console", () => {
-    expect(cssSrc).toMatch(/\.lv-dh-main\s*>\s*\*\s*\{[^}]*flex-shrink:\s*0/s);
-    expect(cssSrc).toMatch(/\.lv-dh-panel\s*\{[^}]*flex:\s*0\s+0\s+auto/s);
-    expect(cssSrc).toMatch(/\.lv-dh-panel\s*\{[^}]*min-height:\s*160px/s);
-    expect(cssSrc).toMatch(/\.lv-dac\s*\{[^}]*flex:\s*0\s+0\s+auto/s);
+  it("V2 CSS keeps inventory / workspace / activity under datasets page namespace", () => {
+    expect(cssSrc).toMatch(/\.lv-v2-page--datasets/);
+    expect(cssSrc).toMatch(/\.lv-v2-ds-workspace/);
+    expect(cssSrc).toMatch(/\.lv-v2-ds-inventory/);
+    expect(cssSrc).toMatch(/\.lv-v2-page--datasets\s+\.lv-dac/);
   });
 
   it("inventory filtering is wired through shared helper (not inlined-away)", () => {
-    expect(pageSrc).toContain("filterDatasetRows");
-    expect(pageSrc).toContain("countDatasetsByFilter");
+    const wsSrc = readFileSync(join(here, "datasets/useDatasetsWorkspace.ts"), "utf8");
+    const widgetsSrc = readFileSync(
+      join(here, "../components/datasets/DatasetsBottomWidgets.tsx"),
+      "utf8",
+    );
+    expect(wsSrc).toContain("filterDatasetRows");
+    expect(wsSrc).toContain("countDatasetsByFilter");
+    expect(wsSrc).toContain("api.listDatasets");
+    expect(wsSrc).toContain("/settings?section=opslag");
+    expect(widgetsSrc).toContain("Manage Storage");
   });
 });

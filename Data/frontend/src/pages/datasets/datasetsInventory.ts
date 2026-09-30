@@ -20,16 +20,33 @@ export type DatasetInventoryFilterOpts = {
   query?: string;
   typeFilter?: string;
   updatedFilter?: string;
+  /** Optional clock for deterministic tests; defaults to Date.now(). */
+  nowMs?: number;
 };
+
+const MS_HOUR = 60 * 60 * 1000;
+const MS_DAY = 24 * MS_HOUR;
+
+function updatedAtMs(row: DhRow): number | null {
+  if (!row.updatedAt) return null;
+  const t = Date.parse(row.updatedAt);
+  return Number.isFinite(t) ? t : null;
+}
 
 /**
  * Filter/sort live DhRow[] for the inventory list/grid.
  * Names and metadata must already come from API-mapped rows — never invent them here.
+ *
+ * Updated options (NO PLACEBO):
+ * - Last Updated: newest first (default sort by updatedAt desc when available)
+ * - Last 24 hours / 7 days / 30 days: filter by updatedAt window
+ * - Oldest first: ascending updatedAt
  */
 export function filterDatasetRows(rows: DhRow[], opts: DatasetInventoryFilterOpts): DhRow[] {
   const q = (opts.query ?? "").trim().toLowerCase();
   const typeFilter = opts.typeFilter ?? "All Types";
   const updatedFilter = opts.updatedFilter ?? "Last Updated";
+  const now = opts.nowMs ?? Date.now();
 
   let next = rows.filter((row) => matchesDatasetFilter(row, opts.filter));
   if (typeFilter !== "All Types") {
@@ -44,9 +61,35 @@ export function filterDatasetRows(rows: DhRow[], opts: DatasetInventoryFilterOpt
         (r.tags ?? []).some((t) => t.toLowerCase().includes(q)),
     );
   }
-  if (updatedFilter === "Oldest first") {
-    next = [...next].reverse();
+
+  const windowMs =
+    updatedFilter === "Last 24 hours"
+      ? MS_HOUR * 24
+      : updatedFilter === "Last 7 days"
+        ? MS_DAY * 7
+        : updatedFilter === "Last 30 days"
+          ? MS_DAY * 30
+          : null;
+
+  if (windowMs != null) {
+    const cutoff = now - windowMs;
+    next = next.filter((r) => {
+      const t = updatedAtMs(r);
+      // Rows without a parseable updatedAt cannot satisfy a time window.
+      return t != null && t >= cutoff;
+    });
   }
+
+  const ascending = updatedFilter === "Oldest first";
+  next = [...next].sort((a, b) => {
+    const ta = updatedAtMs(a);
+    const tb = updatedAtMs(b);
+    if (ta == null && tb == null) return 0;
+    if (ta == null) return 1;
+    if (tb == null) return -1;
+    return ascending ? ta - tb : tb - ta;
+  });
+
   return next;
 }
 
@@ -67,4 +110,16 @@ export function countDatasetsByFilter(rows: DhRow[]): Record<DhFilterId, number>
     if (row.status === "processing" || row.status === "validating") counts.processing += 1;
   }
   return counts;
+}
+
+/** Drop selection ids that no longer exist in the current filtered projection. */
+export function reconcileSelection(selectedIds: Set<string>, visibleIds: Iterable<string>): Set<string> {
+  const visible = new Set(visibleIds);
+  let changed = false;
+  const next = new Set<string>();
+  for (const id of selectedIds) {
+    if (visible.has(id)) next.add(id);
+    else changed = true;
+  }
+  return changed ? next : selectedIds;
 }

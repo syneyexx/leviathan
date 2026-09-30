@@ -503,7 +503,7 @@ Evidence=0 alone is not a diagnosis. The UI should display backend reasons such 
 Two related surfaces exist and **must share the same DatasetService / DatasetStore identities**:
 
 - `/dataset-management` → `src/pages/DatasetManagementPage.tsx` + `src/pages/dataset-management/` + `src/components/dataset-management/` — **LLM → Dataset Management** operator control plane (Leviathan V2);
-- `/datasets` → `src/pages/DatasetsPage.tsx` and `src/pages/datasets/` — research/knowledge dataset surface;
+- `/datasets` → `src/pages/DatasetsPage.tsx` + `src/pages/datasets/` + `src/components/datasets/` — **Onderzoek & Kennis → Datasets** research/knowledge surface (Leviathan V2);
 - `/offline-datasets` → `src/pages/pixel/OfflineDatasetsPixelPage.tsx` — offline dataset tooling.
 
 `/dataset-management` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "LLM / Dataset Management"). MAIN_MENU owns the page under LLM (`v2ChildrenFromMainMenu("llm")`); there is no separate Dataset rail owner.
@@ -516,12 +516,23 @@ Catalog listing is **server-side** (`GET /api/datasets` with `q` / filters / `of
 
 Production never imports `mocks/dataset-management` configuration or Screen 1 fixture numbers. Visual fixture: `src/mocks/datasetManagementV2VisualFixture.ts` + `e2e/helpers/datasetManagementV2Visual.ts` + `e2e/dataset-management-v2.visual.spec.ts` (reference: `docs/ui_reference/dataset-management-llm-v2-reference.png`, 1672×941).
 
+`/datasets` uses `AppShell variant="v2"` (title "Onderzoek & Kennis / Datasets"). MAIN_MENU owns the page under Onderzoek & Kennis (`v2ChildrenFromMainMenu("research")`).
+
+Composition: `DatasetsPage` + `useDatasetsWorkspace` + `src/components/datasets/*` (hero, metrics, toolbar, inventory list/grid, detail panel, bottom widgets, modals) + shared `DatasetActivityConsole`.
+
+No page-local Datasets V2 CSS — layout lives in global `leviathan-v2.css` under `.lv-v2-page--datasets` / `.lv-v2-ds-*`. Legacy `datasets-dashboard.css` remains for shared `.lv-dac` activity console primitives.
+
+Inventory remains the dominant surface (`GET /api/datasets` → `DhRow`). Overview KPIs/storage/services prefer `GET /api/datasets/overview`. Updated-date filters (`Last 24 hours` / `7 days` / `30 days` / `Oldest first`) operate on real `updatedAt`. Unknown backend status renders as UNKNOWN (never Ready). Unmeasured job progress is indeterminate / UNMEASURED — never an invented percentage. Schema Validation stays UNMEASURED without a global probe score. Manage Storage navigates to Settings → Opslag.
+
+Production never falls back to `DH_DEMO_*` inventory rows as live truth.
+
 Supporting shared dataset code includes:
 
 - `DatasetActivityConsole.tsx`;
 - `datasetActivity.ts`;
 - `useDatasetActivity.ts`;
 - `datasetsInventory.ts`;
+- `datasetsMapping.ts`;
 - `datasetLearningState.ts`;
 - dataset activity/management tests.
 
