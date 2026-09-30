@@ -319,6 +319,80 @@ def build_knowledge_router(
             return {"health": knowledge.index_health()}
         return {"health": {"available": False}}
 
+    @router.get("/api/knowledge/library/overview")
+    def knowledge_library_overview() -> dict:
+        """Bounded Library KPIs — totals/types/tags/embedding coverage/latest ingest."""
+        if not hasattr(knowledge, "library_overview"):
+            raise HTTPException(status_code=501, detail="Library overview unavailable")
+        # Opportunistic idempotent backfill for legacy rows (bounded, cheap).
+        if hasattr(knowledge, "backfill_library_metadata"):
+            try:
+                knowledge.backfill_library_metadata(limit=500)
+            except Exception:  # noqa: BLE001
+                pass
+        return {"overview": knowledge.library_overview()}
+
+    @router.get("/api/knowledge/library")
+    def knowledge_library_list(
+        q: Annotated[str, Query(max_length=4000)] = "",
+        type: Annotated[str, Query(max_length=64)] = "",
+        tag: Annotated[str, Query(max_length=64)] = "",
+        status: Annotated[str, Query(max_length=32)] = "",
+        date_from: Annotated[str, Query(max_length=64)] = "",
+        date_to: Annotated[str, Query(max_length=64)] = "",
+        sort: Annotated[str, Query(max_length=32)] = "",
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+        offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
+        cursor: Annotated[str, Query(max_length=64)] = "",
+    ) -> dict:
+        """Bounded Knowledge Library query — summary rows only."""
+        if not hasattr(knowledge, "query_library"):
+            raise HTTPException(status_code=501, detail="Library query unavailable")
+        try:
+            result = knowledge.query_library(
+                q=q or None,
+                library_type=type or None,
+                tag=tag or None,
+                status=status or None,
+                date_from=date_from or None,
+                date_to=date_to or None,
+                sort=sort or None,
+                limit=limit,
+                offset=offset,
+                cursor=cursor or None,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return result
+
+    @router.get("/api/knowledge/library/{document_id}")
+    def knowledge_library_document(document_id: str) -> dict:
+        """Library summary for one document (no content/chunks)."""
+        if not hasattr(knowledge, "get_library_document_summary"):
+            raise HTTPException(status_code=501, detail="Library summary unavailable")
+        summary = knowledge.get_library_document_summary(document_id)
+        if summary is None:
+            raise HTTPException(status_code=404, detail="Knowledge document not found")
+        return {"document": summary}
+
+    @router.post("/api/knowledge/library/{document_id}/tags")
+    def knowledge_library_set_tags(document_id: str, payload: dict[str, Any]) -> dict:
+        """Replace or append document tags via canonical Knowledge metadata."""
+        if not hasattr(knowledge, "set_document_tags"):
+            raise HTTPException(status_code=501, detail="Library tags unavailable")
+        tags_raw = payload.get("tags")
+        if not isinstance(tags_raw, list):
+            raise HTTPException(status_code=422, detail="tags must be a list of strings")
+        mode = str(payload.get("mode") or "replace").strip().lower()
+        try:
+            if mode == "add" and hasattr(knowledge, "add_document_tags"):
+                tags = knowledge.add_document_tags(document_id, [str(t) for t in tags_raw])
+            else:
+                tags = knowledge.set_document_tags(document_id, [str(t) for t in tags_raw])
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Knowledge document not found") from exc
+        return {"document_id": document_id, "tags": tags, "mode": mode}
+
     @router.get("/api/knowledge/{document_id}")
     def get_knowledge_document(document_id: str) -> dict:
         document = knowledge.get_document(document_id)

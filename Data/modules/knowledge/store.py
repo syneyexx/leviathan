@@ -297,7 +297,20 @@ class KnowledgeStore:
         document_id = document_id or str(uuid.uuid4())
         now = utc_now()
         digest = content_sha256(content)
-        trust = trust_metadata or {"trust": "manual"}
+        trust = dict(trust_metadata or {"trust": "manual"})
+        from .library import extract_tags, infer_library_type
+
+        mime_hint = trust.get("mime_type") if isinstance(trust.get("mime_type"), str) else None
+        library_type = infer_library_type(
+            explicit=trust.get("library_type") if isinstance(trust.get("library_type"), str) else None,
+            source=source,
+            parser=parser,
+            mime_type=mime_hint,
+            trust_metadata=trust,
+        )
+        if "library_type" not in trust:
+            trust = {**trust, "library_type": library_type}
+        tags = extract_tags(trust)
         with self.connect() as conn:
             self._ensure_schema(conn)
             existing = conn.execute(
@@ -310,8 +323,9 @@ class KnowledgeStore:
                 INSERT INTO knowledge_documents(
                     id, title, content, source, created_at, updated_at,
                     status, content_hash, original_path, source_mtime, size_bytes,
-                    parser, parser_version, ingest_version, trust_metadata_json, error
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                    parser, parser_version, ingest_version, trust_metadata_json, error,
+                    library_type
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     title = excluded.title,
                     content = excluded.content,
@@ -326,7 +340,8 @@ class KnowledgeStore:
                     parser_version = excluded.parser_version,
                     ingest_version = excluded.ingest_version,
                     trust_metadata_json = excluded.trust_metadata_json,
-                    error = NULL
+                    error = NULL,
+                    library_type = excluded.library_type
                 """,
                 (
                     document_id,
@@ -344,8 +359,10 @@ class KnowledgeStore:
                     PARSER_VERSION,
                     INGEST_VERSION,
                     json.dumps(trust),
+                    library_type,
                 ),
             )
+            self._replace_document_tags(conn, document_id, tags, now=now)
         record = self.get_document(document_id)
         assert record is not None
         return record
@@ -458,10 +475,37 @@ class KnowledgeStore:
             "ingest_version": "INTEGER NOT NULL DEFAULT 1",
             "trust_metadata_json": "TEXT NOT NULL DEFAULT '{}'",
             "error": "TEXT",
+            # Library V2 — normalized type for bounded filters (not a second DB).
+            "library_type": "TEXT NOT NULL DEFAULT 'other'",
         }
         for name, ddl in alterations.items():
             if name not in columns:
                 conn.execute(f"ALTER TABLE knowledge_documents ADD COLUMN {name} {ddl}")
+
+        # Normalized tag index for bounded Library tag filters/counts (Knowledge-owned).
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS knowledge_document_tags (
+                document_id TEXT NOT NULL,
+                tag TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (document_id, tag),
+                FOREIGN KEY(document_id) REFERENCES knowledge_documents(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_document_tags_tag "
+            "ON knowledge_document_tags(tag, document_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_documents_library_type "
+            "ON knowledge_documents(library_type, updated_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_documents_status_updated "
+            "ON knowledge_documents(status, updated_at)"
+        )
 
         conn.execute(
             """
@@ -607,6 +651,21 @@ class KnowledgeStore:
         elif base_provenance:
             trust = {**trust, "provenance": base_provenance}
 
+        from .library import extract_tags, infer_library_type
+
+        mime_hint = trust.get("mime_type") if isinstance(trust.get("mime_type"), str) else None
+        library_type = infer_library_type(
+            explicit=trust.get("library_type") if isinstance(trust.get("library_type"), str) else None,
+            source=source,
+            parser=parser,
+            mime_type=mime_hint,
+            trust_metadata=trust,
+            chunk_source_type=source_type,
+        )
+        if "library_type" not in trust:
+            trust = {**trust, "library_type": library_type}
+        tags = extract_tags(trust)
+
         with self.connect() as conn:
             self._ensure_schema(conn)
             existing = conn.execute(
@@ -620,8 +679,9 @@ class KnowledgeStore:
                 INSERT INTO knowledge_documents(
                     id, title, content, source, created_at, updated_at,
                     status, content_hash, original_path, source_mtime, size_bytes,
-                    parser, parser_version, ingest_version, trust_metadata_json, error
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                    parser, parser_version, ingest_version, trust_metadata_json, error,
+                    library_type
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     title = excluded.title,
                     content = excluded.content,
@@ -636,7 +696,8 @@ class KnowledgeStore:
                     parser_version = excluded.parser_version,
                     ingest_version = excluded.ingest_version,
                     trust_metadata_json = excluded.trust_metadata_json,
-                    error = NULL
+                    error = NULL,
+                    library_type = excluded.library_type
                 """,
                 (
                     document_id,
@@ -654,8 +715,10 @@ class KnowledgeStore:
                     PARSER_VERSION,
                     INGEST_VERSION,
                     json.dumps(trust),
+                    library_type,
                 ),
             )
+            self._replace_document_tags(conn, document_id, tags, now=now)
 
             try:
                 self._replace_chunks(
@@ -1164,6 +1227,528 @@ class KnowledgeStore:
                     (status.value, limit, max(0, offset)),
                 ).fetchall()
         return [self._row_to_document(row) for row in rows]
+
+    @staticmethod
+    def _replace_document_tags(
+        conn: sqlite3.Connection,
+        document_id: str,
+        tags: list[str],
+        *,
+        now: str | None = None,
+    ) -> None:
+        """Replace normalized tag rows for a document (transactional)."""
+        from .library import normalize_tag
+
+        stamp = now or utc_now()
+        conn.execute("DELETE FROM knowledge_document_tags WHERE document_id = ?", (document_id,))
+        for raw in tags:
+            tag = normalize_tag(raw)
+            if not tag:
+                continue
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO knowledge_document_tags(document_id, tag, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (document_id, tag, stamp),
+            )
+
+    def set_document_tags(self, document_id: str, tags: list[str]) -> list[str]:
+        """Replace document tags in trust_metadata + normalized index."""
+        from .library import extract_tags, normalize_tag
+
+        cleaned = [t for t in (normalize_tag(x) for x in tags) if t]
+        # de-dupe preserving order
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for t in cleaned:
+            if t not in seen:
+                seen.add(t)
+                ordered.append(t)
+        now = utc_now()
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                "SELECT trust_metadata_json FROM knowledge_documents WHERE id = ?",
+                (document_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(document_id)
+            try:
+                trust = json.loads(row["trust_metadata_json"] or "{}")
+            except Exception:  # noqa: BLE001
+                trust = {}
+            if not isinstance(trust, dict):
+                trust = {}
+            trust["tags"] = ordered
+            conn.execute(
+                "UPDATE knowledge_documents SET trust_metadata_json = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(trust), now, document_id),
+            )
+            self._replace_document_tags(conn, document_id, ordered, now=now)
+        return ordered
+
+    def add_document_tags(self, document_id: str, tags: list[str]) -> list[str]:
+        """Append tags to an existing document (idempotent)."""
+        doc = self.get_document(document_id)
+        if doc is None:
+            raise KeyError(document_id)
+        from .library import extract_tags, normalize_tag
+
+        current = extract_tags(doc.trust_metadata)
+        for t in tags:
+            nt = normalize_tag(t)
+            if nt and nt not in current:
+                current.append(nt)
+        return self.set_document_tags(document_id, current)
+
+    def backfill_library_metadata(self, *, limit: int = 5000) -> dict[str, Any]:
+        """Idempotent backfill of library_type + tag index from existing trust_metadata.
+
+        Does not invent types/tags — only normalizes provenance already present.
+        """
+        from .library import extract_tags, infer_library_type
+
+        scanned = 0
+        updated = 0
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            rows = conn.execute(
+                """
+                SELECT id, source, parser, trust_metadata_json, library_type
+                FROM knowledge_documents
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (max(1, min(int(limit), 50_000)),),
+            ).fetchall()
+            for row in rows:
+                scanned += 1
+                try:
+                    trust = json.loads(row["trust_metadata_json"] or "{}")
+                except Exception:  # noqa: BLE001
+                    trust = {}
+                if not isinstance(trust, dict):
+                    trust = {}
+                mime = trust.get("mime_type") if isinstance(trust.get("mime_type"), str) else None
+                inferred = infer_library_type(
+                    explicit=row["library_type"] if "library_type" in row.keys() else None,
+                    source=row["source"],
+                    parser=row["parser"],
+                    mime_type=mime,
+                    trust_metadata=trust,
+                )
+                tags = extract_tags(trust)
+                current_type = row["library_type"] if "library_type" in row.keys() else None
+                needs_type = (not current_type) or current_type == "other" and inferred != "other"
+                # Always ensure tag index matches trust_metadata.tags
+                if needs_type or tags:
+                    if needs_type:
+                        trust = {**trust, "library_type": inferred}
+                        conn.execute(
+                            """
+                            UPDATE knowledge_documents
+                            SET library_type = ?, trust_metadata_json = ?
+                            WHERE id = ?
+                            """,
+                            (inferred, json.dumps(trust), row["id"]),
+                        )
+                    self._replace_document_tags(conn, row["id"], tags)
+                    updated += 1
+        return {
+            "scanned": scanned,
+            "updated": updated,
+            "truth": {"backfill_does_not_invent_tags_or_types": True},
+        }
+
+    def query_library(
+        self,
+        *,
+        q: str | None = None,
+        library_type: str | None = None,
+        tag: str | None = None,
+        status: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        sort: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        """Bounded Knowledge Library list — summary rows only (no content/chunks)."""
+        from .library import (
+            LIBRARY_TYPE_LABELS,
+            clamp_library_limit,
+            document_summary_dict,
+            extract_tags,
+            normalize_library_type,
+            normalize_tag,
+            validate_library_sort,
+        )
+
+        query = (q or "").strip()
+        has_query = bool(query)
+        try:
+            sort_key = validate_library_sort(sort, has_query=has_query)
+        except ValueError:
+            raise
+        safe_limit = clamp_library_limit(limit)
+        safe_offset = max(0, int(offset or 0))
+        if cursor:
+            # Cursor is opaque base offset for stable pagination.
+            try:
+                safe_offset = max(0, int(cursor))
+            except ValueError as exc:
+                raise ValueError("Invalid library cursor") from exc
+
+        type_filter = normalize_library_type(library_type) if library_type else None
+        if library_type and library_type.strip().lower() in {"all", "alle", "*"}:
+            type_filter = None
+        tag_filter = normalize_tag(tag) if tag else None
+        status_filter = None
+        if status and status.strip().upper() not in {"", "ALL", "ALLE"}:
+            try:
+                status_filter = IngestStatus(status.strip().upper()).value
+            except ValueError as exc:
+                raise ValueError(f"Invalid library status: {status}") from exc
+
+        where: list[str] = ["d.status != ?"]
+        params: list[Any] = [IngestStatus.DELETED.value]
+        if type_filter:
+            where.append("d.library_type = ?")
+            params.append(type_filter)
+        if status_filter:
+            where.append("d.status = ?")
+            params.append(status_filter)
+        if date_from:
+            where.append("d.updated_at >= ?")
+            params.append(date_from.strip())
+        if date_to:
+            where.append("d.updated_at <= ?")
+            params.append(date_to.strip())
+        if tag_filter:
+            where.append(
+                "EXISTS (SELECT 1 FROM knowledge_document_tags t "
+                "WHERE t.document_id = d.id AND t.tag = ?)"
+            )
+            params.append(tag_filter)
+        if has_query:
+            # Metadata/title/source library search — not vector retrieval.
+            like = f"%{query}%"
+            where.append("(d.title LIKE ? OR d.source LIKE ? OR d.id LIKE ?)")
+            params.extend([like, like, like])
+
+        where_sql = " AND ".join(where)
+        order_sql = {
+            "updated_desc": "d.updated_at DESC, d.id DESC",
+            "updated_asc": "d.updated_at ASC, d.id ASC",
+            "created_desc": "d.created_at DESC, d.id DESC",
+            "created_asc": "d.created_at ASC, d.id ASC",
+            "title_asc": "d.title COLLATE NOCASE ASC, d.id ASC",
+            "title_desc": "d.title COLLATE NOCASE DESC, d.id DESC",
+            "size_desc": "d.size_bytes IS NULL, d.size_bytes DESC, d.id DESC",
+            "size_asc": "d.size_bytes IS NULL, d.size_bytes ASC, d.id ASC",
+            # Title LIKE relevance: prefer title prefix/contains over source-only.
+            "relevance": (
+                "CASE WHEN d.title LIKE ? THEN 0 WHEN d.title LIKE ? THEN 1 ELSE 2 END, "
+                "d.updated_at DESC, d.id DESC"
+            ),
+        }[sort_key]
+
+        order_params: list[Any] = []
+        if sort_key == "relevance" and has_query:
+            order_params = [f"{query}%", f"%{query}%"]
+
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            total = int(
+                conn.execute(
+                    f"SELECT COUNT(*) AS c FROM knowledge_documents d WHERE {where_sql}",
+                    params,
+                ).fetchone()["c"]
+            )
+            rows = conn.execute(
+                f"""
+                SELECT d.id, d.title, d.source, d.status, d.size_bytes, d.created_at, d.updated_at,
+                       d.parser, d.content_hash, d.trust_metadata_json, d.error, d.library_type
+                FROM knowledge_documents d
+                WHERE {where_sql}
+                ORDER BY {order_sql}
+                LIMIT ? OFFSET ?
+                """,
+                [*params, *order_params, safe_limit, safe_offset],
+            ).fetchall()
+            doc_ids = [row["id"] for row in rows]
+            tags_by_doc: dict[str, list[str]] = {did: [] for did in doc_ids}
+            if doc_ids:
+                placeholders = ",".join("?" for _ in doc_ids)
+                tag_rows = conn.execute(
+                    f"""
+                    SELECT document_id, tag FROM knowledge_document_tags
+                    WHERE document_id IN ({placeholders})
+                    ORDER BY tag ASC
+                    """,
+                    doc_ids,
+                ).fetchall()
+                for tr in tag_rows:
+                    tags_by_doc.setdefault(tr["document_id"], []).append(tr["tag"])
+
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                trust = json.loads(row["trust_metadata_json"] or "{}")
+            except Exception:  # noqa: BLE001
+                trust = {}
+            tags = tags_by_doc.get(row["id"]) or extract_tags(trust if isinstance(trust, dict) else {})
+            items.append(
+                document_summary_dict(
+                    document_id=row["id"],
+                    title=row["title"],
+                    source=row["source"],
+                    status=row["status"],
+                    size_bytes=row["size_bytes"],
+                    created_at=row["created_at"],
+                    updated_at=row["updated_at"],
+                    library_type=row["library_type"] or "other",
+                    tags=tags,
+                    parser=row["parser"],
+                    content_hash=row["content_hash"],
+                    trust_metadata=trust if isinstance(trust, dict) else {},
+                    error=row["error"],
+                )
+            )
+
+        next_offset = safe_offset + len(items)
+        has_more = next_offset < total
+        return {
+            "items": items,
+            "total": total,
+            "limit": safe_limit,
+            "offset": safe_offset,
+            "has_more": has_more,
+            "next_offset": next_offset if has_more else None,
+            "next_cursor": str(next_offset) if has_more else None,
+            "sort": sort_key,
+            "filters": {
+                "q": query or None,
+                "type": type_filter,
+                "tag": tag_filter,
+                "status": status_filter,
+                "date_from": date_from,
+                "date_to": date_to,
+            },
+            "type_labels": dict(LIBRARY_TYPE_LABELS),
+            "truth": {
+                "bounded": True,
+                "max_limit": 100,
+                "excludes_content": True,
+                "library_search_is_not_vector_search": True,
+                "relevance_requires_query": True,
+            },
+        }
+
+    def library_overview(self) -> dict[str, Any]:
+        """Server-side Library KPIs — independent of page size."""
+        from .library import LIBRARY_TYPE_IDS, LIBRARY_TYPE_LABELS, normalize_library_type
+
+        health = self.index_health()
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            total_row = conn.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM knowledge_documents
+                WHERE status != ?
+                """,
+                (IngestStatus.DELETED.value,),
+            ).fetchone()
+            total_sources = int(total_row["total"] or 0)
+            size_row = conn.execute(
+                """
+                SELECT
+                  COUNT(*) AS measured,
+                  COALESCE(SUM(size_bytes), 0) AS measured_bytes
+                FROM knowledge_documents
+                WHERE status != ? AND size_bytes IS NOT NULL
+                """,
+                (IngestStatus.DELETED.value,),
+            ).fetchone()
+            measured_sources = int(size_row["measured"] or 0)
+            measured_bytes = int(size_row["measured_bytes"] or 0)
+            unknown_size_sources = max(0, total_sources - measured_sources)
+            type_rows = conn.execute(
+                """
+                SELECT library_type, COUNT(*) AS n
+                FROM knowledge_documents
+                WHERE status != ?
+                GROUP BY library_type
+                ORDER BY n DESC, library_type ASC
+                """,
+                (IngestStatus.DELETED.value,),
+            ).fetchall()
+            tag_rows = conn.execute(
+                """
+                SELECT tag, COUNT(*) AS n
+                FROM knowledge_document_tags t
+                JOIN knowledge_documents d ON d.id = t.document_id
+                WHERE d.status != ?
+                GROUP BY tag
+                ORDER BY n DESC, tag ASC
+                LIMIT 40
+                """,
+                (IngestStatus.DELETED.value,),
+            ).fetchall()
+            tag_total_row = conn.execute(
+                """
+                SELECT COUNT(DISTINCT tag) AS c
+                FROM knowledge_document_tags t
+                JOIN knowledge_documents d ON d.id = t.document_id
+                WHERE d.status != ?
+                """,
+                (IngestStatus.DELETED.value,),
+            ).fetchone()
+            latest_row = conn.execute(
+                """
+                SELECT id, title, created_at, updated_at, status, source, size_bytes
+                FROM knowledge_documents
+                WHERE status != ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (IngestStatus.DELETED.value,),
+            ).fetchone()
+
+        source_type_counts: list[dict[str, Any]] = []
+        present: set[str] = set()
+        for row in type_rows:
+            tid = normalize_library_type(row["library_type"])
+            present.add(tid)
+            source_type_counts.append(
+                {
+                    "id": tid,
+                    "label": LIBRARY_TYPE_LABELS.get(tid, LIBRARY_TYPE_LABELS["other"]),
+                    "count": int(row["n"] or 0),
+                }
+            )
+        # Include known empty types only as zero when at least one source exists
+        # and we want a stable sidebar — actually: do NOT invent empty fake inventory.
+        # Only return types that have count > 0, plus an "all" aggregate for the UI.
+        source_type_count = len([c for c in source_type_counts if c["count"] > 0])
+
+        chunks_total = int(health.get("chunks_total") or 0)
+        chunks_embedded = int(health.get("chunks_embedded") or 0)
+        provider_ready = bool(health.get("embedding_backend_ready"))
+        provider_id = str(health.get("embedding_provider_id") or "")
+        provider_configured = bool(provider_id) and provider_id not in {"null", "none", "disabled"}
+        if not provider_configured or (not provider_ready and provider_id in {"null", "none", "disabled"}):
+            embedding_status = "NOT_CONFIGURED"
+            embedding_coverage_percent: float | None = None
+        elif not provider_ready:
+            embedding_status = "UNAVAILABLE"
+            embedding_coverage_percent = None
+        elif chunks_total == 0:
+            embedding_status = "NO_CHUNKS"
+            embedding_coverage_percent = None
+        else:
+            embedding_coverage_percent = round(100.0 * chunks_embedded / chunks_total, 2)
+            embedding_status = "OK" if embedding_coverage_percent >= 99.999 else "PARTIAL"
+
+        latest_ingestion = None
+        if latest_row is not None:
+            latest_ingestion = {
+                "document_id": latest_row["id"],
+                "title": latest_row["title"],
+                "created_at": latest_row["created_at"],
+                "updated_at": latest_row["updated_at"],
+                "status": latest_row["status"],
+                "source": latest_row["source"],
+                "size_bytes": latest_row["size_bytes"],
+                "kind": "knowledge_document_created",
+            }
+
+        size_coverage_percent = (
+            round(100.0 * measured_sources / total_sources, 2) if total_sources else None
+        )
+
+        return {
+            "total_sources": total_sources,
+            "measured_bytes": measured_bytes,
+            "measured_sources": measured_sources,
+            "unknown_size_sources": unknown_size_sources,
+            "size_coverage_percent": size_coverage_percent,
+            "source_type_count": source_type_count,
+            "source_type_counts": source_type_counts,
+            "top_tags": [
+                {"tag": row["tag"], "count": int(row["n"] or 0)} for row in tag_rows
+            ],
+            "tag_vocabulary_size": int(tag_total_row["c"] or 0),
+            "embedding": {
+                "status": embedding_status,
+                "coverage_percent": embedding_coverage_percent,
+                "chunks_total": chunks_total,
+                "chunks_embedded": chunks_embedded,
+                "chunks_missing": max(0, chunks_total - chunks_embedded),
+                "provider_id": provider_id if provider_configured else None,
+                "provider_configured": provider_configured,
+                "provider_available": provider_ready and provider_configured,
+            },
+            "latest_ingestion": latest_ingestion,
+            "health": health,
+            "known_library_types": [
+                {"id": tid, "label": LIBRARY_TYPE_LABELS[tid]} for tid in LIBRARY_TYPE_IDS
+            ],
+            "truth": {
+                "total_sources_are_knowledge_documents": True,
+                "does_not_count_chunks_as_sources": True,
+                "unmeasured_size_is_not_zero": True,
+                "embedding_coverage_uses_chunk_denominator": True,
+                "ready_is_not_embedded": True,
+                "latest_ingestion_from_knowledge_created_at": True,
+                "empty_types_not_fabricated": True,
+                "known_type_ids": list(LIBRARY_TYPE_IDS),
+            },
+        }
+
+    def get_library_document_summary(self, document_id: str) -> dict[str, Any] | None:
+        """Single-document library summary (no content blob)."""
+        from .library import document_summary_dict, extract_tags
+
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                """
+                SELECT id, title, source, status, size_bytes, created_at, updated_at,
+                       parser, content_hash, trust_metadata_json, error, library_type
+                FROM knowledge_documents WHERE id = ?
+                """,
+                (document_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            tag_rows = conn.execute(
+                "SELECT tag FROM knowledge_document_tags WHERE document_id = ? ORDER BY tag ASC",
+                (document_id,),
+            ).fetchall()
+        try:
+            trust = json.loads(row["trust_metadata_json"] or "{}")
+        except Exception:  # noqa: BLE001
+            trust = {}
+        tags = [r["tag"] for r in tag_rows] or extract_tags(trust if isinstance(trust, dict) else {})
+        return document_summary_dict(
+            document_id=row["id"],
+            title=row["title"],
+            source=row["source"],
+            status=row["status"],
+            size_bytes=row["size_bytes"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            library_type=row["library_type"] or "other",
+            tags=tags,
+            parser=row["parser"],
+            content_hash=row["content_hash"],
+            trust_metadata=trust if isinstance(trust, dict) else {},
+            error=row["error"],
+        )
 
     def list_chunks(self, document_id: str) -> list[ChunkRecord]:
         with self.connect() as conn:
