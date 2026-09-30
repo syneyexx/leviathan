@@ -14,25 +14,26 @@ test.describe("Knowledge Library V2 visual", () => {
     await expect(page.getByText("Embedding Status")).toBeVisible();
     await expect(page.getByText("Laatste Ingestie")).toBeVisible();
 
-    await expect(page.getByRole("button", { name: "Bibliotheek" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Ingestie" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Bronnen" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Vector Search" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Kennis Grafiek" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Analyses" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Datasets" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Notities" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Instellingen" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Bibliotheek", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Ingestie", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Bronnen", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Vector Search", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Kennis Grafiek", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Analyses", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Datasets", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Notities", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Instellingen", exact: true })).toBeVisible();
 
-    await expect(page.getByText("Tags").first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Bron Types", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Tags/ })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Geselecteerde Bron" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Preview" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Metadata" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Inhoud" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Embeddings" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Relaties" })).toBeVisible();
-    await expect(page.getByText("Ingestie Voortgang")).toBeVisible();
-    await expect(page.getByText("Recente Ingesties")).toBeVisible();
+    await expect(page.getByText("Ingestie Voortgang", { exact: true })).toBeVisible();
+    await expect(page.getByText("Recente Ingesties", { exact: true })).toBeVisible();
     await expect(page.getByText(/Gerelateerde Bronnen/)).toBeVisible();
 
     await expect(page).toHaveScreenshot("knowledge-library-v2-screen1.png", {

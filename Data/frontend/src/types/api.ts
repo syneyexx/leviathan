@@ -2229,6 +2229,11 @@ export type KnowledgeLibraryOverview = {
     progress_pct?: number | null;
     measured?: boolean;
   } | null;
+  /** Optional real history series — omit when unmeasured (never invent). */
+  sparks?: {
+    total_sources?: number[];
+    measured_bytes?: number[];
+  } | null;
   health?: Record<string, unknown>;
   known_library_types?: Array<{ id: string; label: string }>;
   truth?: Record<string, unknown>;

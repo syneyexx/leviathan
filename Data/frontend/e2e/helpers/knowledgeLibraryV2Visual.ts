@@ -68,14 +68,21 @@ export async function installKnowledgeLibraryV2VisualFixture(page: Page): Promis
     if (path.endsWith("/preview") && method === "GET") {
       return json(route, {
         preview: {
-          preview_kind: "text",
-          text: "Options Trading Strategies Handbook\n\nFixture preview page.",
+          preview_kind: "html",
+          html: f.previewHtml,
           truncated: false,
           mime_type: "application/pdf",
           content_url: "/api/knowledge/library/opts-handbook/content",
           download_url: "/api/knowledge/library/opts-handbook/download",
         },
         document: selected,
+      });
+    }
+    if (path.endsWith("/content") && method === "GET") {
+      return route.fulfill({
+        status: 200,
+        contentType: "text/html; charset=utf-8",
+        body: f.previewHtml,
       });
     }
     if (path.endsWith("/embeddings") && method === "GET") {

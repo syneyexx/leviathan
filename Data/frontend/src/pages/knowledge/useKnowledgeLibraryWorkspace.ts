@@ -88,9 +88,21 @@ export function useKnowledgeLibraryWorkspace() {
   const [debouncedQ, setDebouncedQ] = useState(q);
   const [typeFilter, setTypeFilter] = useState(params.get("type") || "");
   const [tagFilter, setTagFilter] = useState(params.get("tag") || "");
+  const [datePreset, setDatePreset] = useState(params.get("date") || "");
   const [statusFilter, setStatusFilter] = useState("");
   const [sort, setSort] = useState(q ? "relevance" : "updated_desc");
   const [tagsExpanded, setTagsExpanded] = useState(false);
+
+  const dateBounds = (() => {
+    if (!datePreset) return { date_from: undefined as string | undefined, date_to: undefined as string | undefined };
+    const end = new Date();
+    const start = new Date(end);
+    if (datePreset === "7d") start.setDate(start.getDate() - 7);
+    else if (datePreset === "30d") start.setDate(start.getDate() - 30);
+    else if (datePreset === "90d") start.setDate(start.getDate() - 90);
+    else return { date_from: undefined, date_to: undefined };
+    return { date_from: start.toISOString(), date_to: end.toISOString() };
+  })();
 
   const [selectedId, setSelectedId] = useState<string | null>(params.get("source"));
   const [selected, setSelected] = useState<KnowledgeLibraryItem | null>(null);
@@ -184,6 +196,8 @@ export function useKnowledgeLibraryWorkspace() {
           type: typeFilter || undefined,
           tag: tagFilter || undefined,
           status: statusFilter || undefined,
+          date_from: dateBounds.date_from,
+          date_to: dateBounds.date_to,
           sort: sortKey,
           limit: KL_PAGE_SIZE,
           offset: off,
@@ -210,7 +224,7 @@ export function useKnowledgeLibraryWorkspace() {
         setLoading(false);
       }
     },
-    [debouncedQ, typeFilter, tagFilter, statusFilter, sort, selectedId, items.length],
+    [debouncedQ, typeFilter, tagFilter, statusFilter, sort, selectedId, items.length, dateBounds.date_from, dateBounds.date_to],
   );
 
   const loadIngestion = useCallback(async () => {
@@ -227,11 +241,18 @@ export function useKnowledgeLibraryWorkspace() {
         setActiveIngestionId(active.source_id);
         try {
           const st = await api.getKnowledgeLibraryIngestionStatus(active.source_id);
-          setActiveProgress(st.progress);
+          setActiveProgress(st.progress as Record<string, unknown>);
         } catch {
-          setActiveProgress(null);
+          setActiveProgress({
+            filename: active.filename,
+            phase: active.phase,
+            status: active.status,
+            progress_pct: active.progress_pct,
+            measured: active.measured,
+          });
         }
-      } else if (!activeIngestionId) {
+      } else {
+        setActiveIngestionId(null);
         setActiveProgress(null);
       }
     } catch (err) {
@@ -253,7 +274,7 @@ export function useKnowledgeLibraryWorkspace() {
   useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedQ, typeFilter, tagFilter, statusFilter, sort]);
+  }, [debouncedQ, typeFilter, tagFilter, statusFilter, sort, datePreset]);
 
   // Polling: active ingestion faster; library slower
   useEffect(() => {
@@ -530,6 +551,8 @@ export function useKnowledgeLibraryWorkspace() {
     setTypeFilter,
     tagFilter,
     setTagFilter,
+    datePreset,
+    setDatePreset,
     statusFilter,
     setStatusFilter,
     sort,

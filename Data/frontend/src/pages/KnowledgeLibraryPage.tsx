@@ -7,19 +7,17 @@
  */
 
 import { useRef } from "react";
-import {
-  KnowledgeIngestionPanels,
-  KnowledgeSelectedPanel,
-} from "../components/knowledge/KnowledgeDetailPanels";
-import {
-  KnowledgeKpis,
-  KnowledgeLibraryTable,
-  KnowledgeNav,
-  KnowledgeTypeSidebar,
-} from "../components/knowledge/KnowledgeLibraryCore";
+import { IngestionProgress } from "../components/knowledge/IngestionProgress";
+import { KnowledgeLibraryKpis } from "../components/knowledge/KnowledgeLibraryKpis";
+import { KnowledgeLibraryNav } from "../components/knowledge/KnowledgeLibraryNav";
+import { LibraryTable } from "../components/knowledge/LibraryTable";
+import { LibraryToolbar } from "../components/knowledge/LibraryToolbar";
+import { RecentIngestions } from "../components/knowledge/RecentIngestions";
+import { SelectedSourcePanel } from "../components/knowledge/SelectedSourcePanel";
+import { SourceTypeSidebar } from "../components/knowledge/SourceTypeSidebar";
+import { TagSidebar } from "../components/knowledge/TagSidebar";
 import { ErrorState } from "../components/ui";
 import { AppShell } from "../layouts/AppShell";
-import { KL_SORT_OPTIONS } from "./knowledge/constants";
 import { useKnowledgeLibraryWorkspace } from "./knowledge/useKnowledgeLibraryWorkspace";
 
 function visualFixtureNow(): Date | undefined {
@@ -78,9 +76,7 @@ export function KnowledgeLibraryPage() {
       }}
       v2StatusRows={ws.sidebarStatus}
       v2Now={frozen ? () => frozen : undefined}
-      v2Actions={
-        <TopbarSearch value={ws.q} onChange={ws.setQ} inputRef={ws.searchInputRef} />
-      }
+      v2Actions={<TopbarSearch value={ws.q} onChange={ws.setQ} inputRef={ws.searchInputRef} />}
     >
       <main className="lv-v2-page lv-v2-page--knowledge">
         {ws.stale ? (
@@ -94,14 +90,18 @@ export function KnowledgeLibraryPage() {
         {ws.error && ws.items.length === 0 ? (
           <div className="lv-v2-kl-error-block">
             <ErrorState title="Knowledge Library unavailable" detail={ws.error} />
-            <button type="button" className="lv-v2-button lv-v2-button--primary lv-v2-button--sm" onClick={() => void ws.refresh()}>
+            <button
+              type="button"
+              className="lv-v2-button lv-v2-button--primary lv-v2-button--sm"
+              onClick={() => void ws.refresh()}
+            >
               Opnieuw proberen
             </button>
           </div>
         ) : null}
 
-        <KnowledgeKpis ws={ws} />
-        <KnowledgeNav ws={ws} />
+        <KnowledgeLibraryKpis ws={ws} />
+        <KnowledgeLibraryNav ws={ws} />
 
         {ws.view === "vector" ? (
           <section className="lv-v2-kl-vector" aria-label="Vector Search">
@@ -160,7 +160,10 @@ export function KnowledgeLibraryPage() {
               Uploads gaan via SourceIngestionService (gestreamd). ZIP/archieven worden door de
               source_ingestion worker verwerkt — niet in de browser.
             </p>
-            <KnowledgeIngestionPanels ws={ws} />
+            <section className="lv-v2-kl-bottom" aria-label="Ingestie">
+              <IngestionProgress ws={ws} />
+              <RecentIngestions ws={ws} />
+            </section>
           </section>
         ) : null}
 
@@ -181,83 +184,21 @@ export function KnowledgeLibraryPage() {
         ) : null}
 
         {ws.view === "bibliotheek" || ws.view === "bronnen" ? (
-          <>
-            <div className="lv-v2-kl-toolbar">
-              <input
-                value={ws.q}
-                onChange={(e) => ws.setQ(e.target.value)}
-                placeholder="Zoek in bronnen..."
-                aria-label="Zoek in bronnen"
-              />
-              <select
-                value={ws.typeFilter}
-                onChange={(e) => ws.setTypeFilter(e.target.value)}
-                aria-label="Alle types"
-              >
-                <option value="">Alle types</option>
-                {(ws.overview?.source_type_counts ?? []).map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={ws.tagFilter}
-                onChange={(e) => ws.setTagFilter(e.target.value)}
-                aria-label="Alle tags"
-              >
-                <option value="">Alle tags</option>
-                {(ws.overview?.top_tags ?? []).map((t) => (
-                  <option key={t.tag} value={t.tag}>
-                    #{t.tag}
-                  </option>
-                ))}
-              </select>
-              <select value={ws.sort} onChange={(e) => ws.setSort(e.target.value)} aria-label="Sortering">
-                {KL_SORT_OPTIONS.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-              <div className="lv-v2-kl-view-toggle">
-                <button
-                  type="button"
-                  className={ws.viewMode === "list" ? "is-active" : undefined}
-                  onClick={() => ws.setViewMode("list")}
-                >
-                  List
-                </button>
-                <button
-                  type="button"
-                  className={ws.viewMode === "grid" ? "is-active" : undefined}
-                  onClick={() => ws.setViewMode("grid")}
-                >
-                  Grid
-                </button>
-              </div>
-              {ws.checked.size ? (
-                <div className="lv-v2-kl-bulk">
-                  <span>{ws.checked.size} geselecteerd</span>
-                  <button type="button" onClick={() => void ws.onBulkTag()}>
-                    Tags toevoegen
-                  </button>
-                  <button type="button" onClick={() => void ws.onBulkDelete()}>
-                    Verwijderen
-                  </button>
-                </div>
-              ) : null}
+          <section className="lv-v2-kl-workspace" aria-label="Knowledge workspace">
+            <aside className="lv-v2-kl-side" aria-label="Bron filters">
+              <SourceTypeSidebar ws={ws} />
+              <TagSidebar ws={ws} />
+            </aside>
+            <div className="lv-v2-kl-center">
+              <LibraryToolbar ws={ws} />
+              <LibraryTable ws={ws} showSource={ws.view === "bronnen"} />
+              <section className="lv-v2-kl-bottom" aria-label="Ingestie">
+                <IngestionProgress ws={ws} />
+                <RecentIngestions ws={ws} />
+              </section>
             </div>
-
-            <section className="lv-v2-kl-workspace" aria-label="Knowledge workspace">
-              <KnowledgeTypeSidebar ws={ws} />
-              <div className="lv-v2-kl-center">
-                <KnowledgeLibraryTable ws={ws} />
-                <KnowledgeIngestionPanels ws={ws} />
-              </div>
-              <KnowledgeSelectedPanel ws={ws} />
-            </section>
-          </>
+            <SelectedSourcePanel ws={ws} />
+          </section>
         ) : null}
       </main>
     </AppShell>
