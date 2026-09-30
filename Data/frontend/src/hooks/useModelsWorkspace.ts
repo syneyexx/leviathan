@@ -400,6 +400,7 @@ export function useModelsWorkspace(): ModelsWorkspace {
       if (gatewayRes) setGateway(gatewayRes.gateway);
       if (routerRes) setRouter(routerRes.router);
       if (!selectedId && list.models.length > 0) {
+        // UI row highlight only — never creates execution/load authority.
         const active = list.models.find((m) => m.active || m.loaded) ?? list.models[0];
         setSelectedId(active.id);
       }

@@ -250,10 +250,25 @@ class ChatModelRoutingTests(unittest.TestCase):
             )
         self.assertEqual(ctx.exception.code, MODEL_NOT_CHAT_CAPABLE)
 
-        decision = router.resolve(
+        # Without an authorized selector, chat-capable registry presence is not enough.
+        with self.assertRaises(ModelControlError) as no_assign:
+            router.resolve(
+                ModelRequest(required_capabilities=("chat",), preferred_role="chat")
+            )
+        self.assertEqual(no_assign.exception.code, "NO_CHAT_MODEL_AVAILABLE")
+
+        class _ActiveStore(_MemStore):
+            def get_active_model_id(self):
+                return "chat-a"
+
+        router_active = ModelRouter(
+            _ActiveStore(), gateway, get_models=lambda: list(models.values())
+        )  # type: ignore[arg-type]
+        decision = router_active.resolve(
             ModelRequest(required_capabilities=("chat",), preferred_role="chat")
         )
         self.assertEqual(decision.model_id, "chat-a")
+        self.assertEqual(decision.reason, "active_default")
 
 
 class ReasoningModeTests(unittest.TestCase):

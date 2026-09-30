@@ -19,6 +19,7 @@ from Data.modules.models.errors import (
     MODEL_NOT_CHAT_CAPABLE,
     MODEL_NOT_FOUND,
     NO_CHAT_MODEL_AVAILABLE,
+    NO_MODEL_ASSIGNED,
     ROUTER_EXHAUSTED,
     ModelControlError,
 )
@@ -29,13 +30,14 @@ from Data.modules.models.store import ModelStore
 class ModelRouter:
     """Resolves which model should serve a request.
 
-    Precedence:
+    Precedence (production inference — fail closed after this list):
       1. Explicit request-specific model
       2. Agent/task model requirement
       3. Role override
       4. Active/default model
       5. Configured local fallback chain
-      6. Optional cloud fallback if explicitly allowed
+      6. Optional cloud fallback if explicitly allowed (deterministic; not registry order)
+      otherwise FAIL CLOSED — never first_eligible / registry[0] / provider[0]
     """
 
     def __init__(
@@ -110,6 +112,7 @@ class ModelRouter:
         requires_chat = any(
             _cap_attr(c) == "chat" for c in (request.required_capabilities or ())
         )
+        active_id = self.store.get_active_model_id()
 
         def eligible(model: ModelDescriptor, *, explicit: bool = False) -> bool:
             if model.lifecycle_state.value in {"error", "offline"}:
@@ -229,7 +232,6 @@ class ModelRouter:
                     return decision
 
         # 4. Active default
-        active_id = self.store.get_active_model_id()
         if active_id:
             decision = try_model(active_id, "active_default")
             if decision:
@@ -242,33 +244,66 @@ class ModelRouter:
                 self.gateway.record_fallback("primary unavailable; configured fallback")
                 return decision
 
-        # 6. Optional cloud — only if allowed and we have an api-source model
+        # 6. Optional cloud — only if allowed. Registry iteration order is NOT policy.
+        # Prefer a single eligible API model; if multiple exist without configured
+        # preference (already exhausted in step 5), fail closed rather than pick by order.
         if config.cloud_fallback_allowed:
-            for model in models.values():
-                if model.source.value == "api" and eligible(model):
-                    decision = try_model(model.id, "fallback:cloud")
-                    if decision:
-                        self.gateway.record_fallback("local exhausted; cloud fallback allowed")
-                        return decision
-
-        # Last resort: first eligible available model
-        for model in models.values():
-            if eligible(model):
-                decision = try_model(model.id, "fallback:first_eligible")
+            cloud_candidates = [
+                model
+                for model in models.values()
+                if model.source.value == "api" and eligible(model)
+            ]
+            if len(cloud_candidates) == 1:
+                decision = try_model(cloud_candidates[0].id, "fallback:cloud")
                 if decision:
-                    self.gateway.record_fallback("no active/default; first eligible")
+                    self.gateway.record_fallback("local exhausted; cloud fallback allowed")
                     return decision
+            elif len(cloud_candidates) > 1:
+                # Do not use display_name / registry order as a tie-breaker.
+                raise ModelControlError(
+                    code=NO_MODEL_ASSIGNED if not tried else ROUTER_EXHAUSTED,
+                    message=(
+                        "Multiple cloud models are eligible but none is uniquely configured; "
+                        "set fallbackOrder or a role override — registry order is not selection policy"
+                    ),
+                    retryable=False,
+                    http_status=503,
+                    details=_exhaustion_details(
+                        request=request,
+                        tried=tried,
+                        active_id=active_id,
+                        config=config,
+                        requires_chat=requires_chat,
+                        reason="CLOUD_FALLBACK_AMBIGUOUS",
+                        extra={
+                            "cloudCandidateIds": sorted(m.id for m in cloud_candidates),
+                            "cloudCandidateCount": len(cloud_candidates),
+                        },
+                    ),
+                )
 
+        # FAIL CLOSED — never first_eligible / models[0] / alphabetically first.
+        code = NO_CHAT_MODEL_AVAILABLE if requires_chat else (
+            NO_MODEL_ASSIGNED if not tried else ROUTER_EXHAUSTED
+        )
         raise ModelControlError(
-            code=NO_CHAT_MODEL_AVAILABLE if requires_chat else ROUTER_EXHAUSTED,
+            code=code,
             message=(
-                "No chat-capable generative model is available"
+                "No chat-capable generative model is assigned"
                 if requires_chat
-                else "No eligible models available for request"
+                else "No model is assigned for this request (no explicit/agent/role/active/fallback authority)"
             ),
             retryable=True,
             http_status=503,
-            details={"tried": tried, "requiredCapabilities": list(request.required_capabilities)},
+            details=_exhaustion_details(
+                request=request,
+                tried=tried,
+                active_id=active_id,
+                config=config,
+                requires_chat=requires_chat,
+                reason="NO_MODEL_ASSIGNED",
+                extra={"traceId": trace_id},
+            ),
         )
 
     def find_compatible(self, *, required_capabilities: list[str], locality: str = "any") -> list[str]:
@@ -292,6 +327,39 @@ class ModelRouter:
             if ok:
                 out.append(model.id)
         return out
+
+
+def _exhaustion_details(
+    *,
+    request: ModelRequest,
+    tried: list[str],
+    active_id: str | None,
+    config: RouterConfig,
+    requires_chat: bool,
+    reason: str,
+    extra: dict | None = None,
+) -> dict:
+    details = {
+        "reason": reason,
+        "tried": list(tried),
+        "candidatesTried": list(tried),
+        "requiredCapabilities": list(request.required_capabilities),
+        "preferredRole": request.preferred_role,
+        "activeModelId": active_id,
+        "configuredFallbackOrder": list(config.fallback_order),
+        "cloudFallbackAllowed": bool(config.cloud_fallback_allowed),
+        "requiresChat": requires_chat,
+        "explicitModelId": request.explicit_model_id,
+        "agentModelId": request.agent_model_id,
+        "truth": {
+            "discovery_is_not_execution_authority": True,
+            "registry_order_is_not_selection_policy": True,
+            "first_eligible_removed": True,
+        },
+    }
+    if extra:
+        details.update(extra)
+    return details
 
 
 def _cap_attr(name: str) -> str:

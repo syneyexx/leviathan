@@ -917,6 +917,7 @@ class ModelControlPlane:
             if prefer_reasoning and role == "reasoning" and exc.code in {
                 "ROUTER_EXHAUSTED",
                 "NO_CHAT_MODEL_AVAILABLE",
+                "NO_MODEL_ASSIGNED",
                 "MODEL_NOT_FOUND",
             }:
                 target = self.resolve_target(
@@ -1086,9 +1087,22 @@ class ModelControlPlane:
         api_key = (provider.get("api_key_ciphertext") if provider else None) or self.settings.llm_api_key
         provider_model_id = str(model.metadata.get("provider_model_id") or model.display_name)
         binding = self.get_runtime_binding(model.id)
-        self._emit("model.router.selected", decision.public_dict())
+        selection_payload = {
+            **decision.public_dict(),
+            "requestedModelId": explicit_model_id,
+            "resolvedModelId": model.id,
+            "backendModelId": provider_model_id,
+            "providerId": model.provider_id,
+            "preferredRole": role,
+            "requiredCapabilities": list(required_capabilities or ()),
+            "activeModelId": self.store.get_active_model_id(),
+            "explicitSelection": bool(explicit_model_id),
+            "runtimeKind": binding.runtime_kind if binding else (model.runtime_id or "unknown"),
+            "managed": bool(binding.managed) if binding else False,
+        }
+        self._emit("model.router.selected", selection_payload)
         if decision.fallback_used:
-            self._emit("model.router.fallback", decision.public_dict())
+            self._emit("model.router.fallback", selection_payload)
         return ResolvedModelTarget(
             model=model,
             route=decision,

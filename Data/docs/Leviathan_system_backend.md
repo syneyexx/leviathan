@@ -511,6 +511,49 @@ Leviathan placement policy — not an LM Studio field.
 
 A configured/listed model is not automatically resident, healthy or tool/vision/reasoning capable. Capability probes and runtime evidence determine support.
 
+### 10.1.1 Model selection authority (production inference)
+
+The Model Control Plane router (`router.py`) is the sole production selection authority.
+Discovery, registry listing order, and provider `/v1/models` order **never** grant execution
+authority.
+
+**Authorized selection precedence (fail closed):**
+
+1. Explicit request model (`explicit` / `explicit_model_id`)
+2. Agent/task model requirement (`agent_requirement`)
+3. Role override (`role:<role>` from router config `role_overrides`)
+4. Canonical active/default model (`active_default`)
+5. Operator-configured fallback chain (`fallback:configured` / `fallback_order`)
+6. Explicitly permitted cloud policy (`fallback:cloud` when `cloud_fallback_allowed=True`
+   and exactly one eligible API model remains — multiple cloud candidates without a
+   configured preference fail closed; registry order is not a tie-breaker)
+7. Explicit settings compatibility fallback (`legacy_settings_fallback`) only when both
+   `LEVIATHAN_LLM_BASE_URL` and a concrete `LEVIATHAN_LLM_MODEL` are configured
+
+**Otherwise: FAIL CLOSED** with `NO_MODEL_ASSIGNED` / `NO_CHAT_MODEL_AVAILABLE` /
+`ROUTER_EXHAUSTED` — never `fallback:first_eligible`, never `models[0]`, never
+alphabetically-first registry entry.
+
+State distinctions (these are not interchangeable):
+
+```
+DISCOVERED ≠ SELECTED ≠ AUTHORIZED ≠ LOADED ≠ RESIDENT ≠ INFERENCE TARGET
+REGISTERED ≠ AUTHORIZED
+AVAILABLE ≠ SELECTED
+```
+
+`RouteDecision` / `ResolvedModelTarget` expose machine-readable provenance
+(`reason`, `selectionSource`, `authorized` / `selection_is_authorized`).
+`inference_session` refuses targets that lack authorized selection provenance
+(defense-in-depth). LM Studio (or any JIT provider) may lazy-load an **already
+authorized** inference target; discovery/health/status/page-open must not cause
+inference or load. Capability probes that run inference are explicit operator/API
+actions (`POST .../probe`), never passive `GET` listing.
+
+The OpenAI-compatible transport (`model_runtime/openai_compatible.py`) executes only —
+`resolve_model()` uses a concrete configured/`model_id` identity and never picks
+`models[0]` from provider discovery.
+
 Do not abbreviate Model Control Plane as MCP: in this repository **MCP means Model Context Protocol**.
 
 ## 10.2 Model runtime — `Data/modules/model_runtime/`

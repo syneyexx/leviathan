@@ -90,6 +90,8 @@ Models are shared infrastructure. Chat, cognition, coding, research and trading 
 
 Model registration is not proof of capability. Residency, tool use, vision, reasoning and other properties must be represented by measured runtime truth where required.
 
+**Selection authority:** production inference may only use a model with a valid Model Control Plane provenance (explicit request, agent requirement, role override, canonical active/default, configured fallback chain, or explicitly permitted cloud/settings policy). Discovery, registry sort order, and provider `/v1/models` list order are never execution policy. When no authority exists, routing fails closed — it does not pick the first eligible or first discovered model.
+
 ### Agent Fleet
 
 LEVIATHAN has one canonical Agent Fleet and orchestration fabric. Trading specialists belong on that existing fabric rather than creating a second independent agent universe.
