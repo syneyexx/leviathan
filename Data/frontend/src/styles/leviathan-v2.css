@@ -10917,14 +10917,29 @@
   max-height: 128px;
 }
 
+.lv-v2-hero--media .lv-v2-hero__quote {
+  color: rgba(226, 232, 240, 0.9);
+  text-shadow: 0 1px 12px rgba(2, 6, 23, 0.65);
+}
+
 .lv-v2-hero__shade--media {
   background:
-    linear-gradient(90deg, rgba(2, 6, 23, 0.9) 0%, rgba(2, 6, 23, 0.58) 48%, rgba(2, 6, 23, 0.42) 100%),
-    linear-gradient(0deg, rgba(2, 6, 23, 0.5), transparent 50%);
+    linear-gradient(90deg, rgba(2, 6, 23, 0.92) 0%, rgba(2, 6, 23, 0.55) 42%, rgba(2, 6, 23, 0.28) 68%, rgba(2, 6, 23, 0.55) 100%),
+    linear-gradient(0deg, rgba(2, 6, 23, 0.45), transparent 55%);
 }
 
 .lv-v2-hero__media--media img {
   object-position: center 35%;
+}
+
+.lv-v2-media-statusline {
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  border-radius: var(--lv2-panel-radius);
+  background: rgba(127, 29, 29, 0.18);
+  color: #fca5a5;
+  font-size: 11.5px;
 }
 
 .lv-v2-metrics--media .lv-v2-metric-card--media-total .lv-v2-metric-card__chart { color: #22c55e; }

@@ -4,7 +4,6 @@ import { MediaMetrics } from "../../components/media/MediaMetrics";
 import { MediaMidGrid } from "../../components/media/MediaMidGrid";
 import { MediaOpsGrid } from "../../components/media/MediaOpsGrid";
 import { MediaTruthBanner } from "../../components/media/MediaTruthBanner";
-import { ErrorState } from "../../components/ui";
 import { useMediaOverview } from "../../hooks/useMediaOverview";
 import { AppShell } from "../../layouts/AppShell";
 
@@ -45,10 +44,9 @@ export function MediaControlPage() {
         <MediaMetrics overview={overview} />
 
         {hardError ? (
-          <ErrorState
-            title="Media Control laden mislukt"
-            detail="Media status, workers en jobs zijn allemaal unavailable."
-          />
+          <p className="lv-v2-media-statusline" role="status" data-truth="unavailable">
+            Media status, workers en jobs zijn unavailable — panels tonen empty/UNMEASURED states.
+          </p>
         ) : null}
 
         <MediaOpsGrid overview={overview} />

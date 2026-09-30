@@ -7,11 +7,11 @@ type Props = {
 
 function MetricBars({ heights }: { heights: number[] }) {
   return (
-    <div className="lv-v2-metric-card__chart" aria-hidden="true">
+    <>
       {heights.map((h, i) => (
-        <span key={i} className="lv-v2-metric-card__bar" style={{ height: `${h}%` }} />
+        <span key={i} className="lv-v2-metric-card__bar" style={{ height: `${h}%` }} aria-hidden="true" />
       ))}
-    </div>
+    </>
   );
 }
 
@@ -36,9 +36,7 @@ export function MediaMetrics({ overview }: Props) {
           value={kpi.value}
           sublabel={kpi.sublabel}
           className={KIND_CLASS[kpi.kind] ?? ""}
-          chart={
-            kpi.available ? <MetricBars heights={kpi.barHeights} /> : <MetricBars heights={kpi.barHeights} />
-          }
+          chart={<MetricBars heights={kpi.barHeights} />}
         />
       ))}
     </section>
