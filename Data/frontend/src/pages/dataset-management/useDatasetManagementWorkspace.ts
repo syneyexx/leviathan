@@ -40,8 +40,9 @@ import {
   fileSuffix,
   mapTypeLabel,
   pickUsableVersion,
+  previewSampleTable,
+  previewSampleText,
   sourceMatchesFilter,
-  splitLabelFromVersion,
   tagsForDataset,
   triggerBlobDownload,
 } from "./viewModels";
@@ -491,7 +492,9 @@ export function useDatasetManagementWorkspace() {
   async function onRescanLibrary() {
     await withBusy(async () => {
       const res = await api.refreshDatasetLibrary();
-      setDatasets(res.datasets);
+      // Refresh is a catalog reconcile — reload the current server page + overview.
+      // Do not treat the refresh payload list as the full catalog truth.
+      await loadPage({ quiet: true, offset: 0 });
       await loadOverview({ quiet: true });
       toast(
         `Scan klaar: ${res.created} nieuw, ${res.updated} bijgewerkt, ${res.discovered} bronnen`,
@@ -584,6 +587,100 @@ export function useDatasetManagementWorkspace() {
       setDetailEpoch((n) => n + 1);
       await loadPage({ quiet: true, preferId: selectedId });
     }, "Semantische analyse voltooid");
+  }
+
+  async function onAdvancedAction(actionId: string) {
+    if (!selectedId) {
+      toast("Selecteer eerst een dataset");
+      return;
+    }
+    if (actionId === "materialize") {
+      await withBusy(async () => {
+        const res = await api.materializeDataset(selectedId);
+        await trackJob(res.job, "Materialisatie in wachtrij");
+      });
+      return;
+    }
+    if (!selectedVersionId) {
+      toast("Selecteer eerst een datasetversie");
+      return;
+    }
+    const dsId = selectedId;
+    const verId = selectedVersionId;
+    switch (actionId) {
+      case "dedupe":
+        await runVersionJob(() => api.dedupeDatasetVersion(dsId, verId), "Deduplicatie");
+        return;
+      case "transform":
+        // Empty transform list = no-op identity path accepted by API; operator
+        // uses dedicated typed transforms from Training/advanced tooling.
+        await runVersionJob(
+          () => api.transformDatasetVersion(dsId, verId, []),
+          "Transform",
+        );
+        return;
+      case "split":
+        await runVersionJob(
+          () =>
+            api.splitDatasetVersion(dsId, verId, {
+              seed: 42,
+              trainRatio: 0.8,
+              valRatio: 0.1,
+              testRatio: 0.1,
+            }),
+          "Split",
+        );
+        return;
+      case "tokenize":
+        await runVersionJob(() => api.tokenizeStatsDatasetVersion(dsId, verId), "Tokenize stats");
+        return;
+      case "pii":
+        await withBusy(async () => {
+          const res = await api.scanDatasetPii(verId);
+          const findings = res.pii;
+          const count =
+            typeof findings?.findingCount === "number"
+              ? findings.findingCount
+              : Array.isArray(findings?.findings)
+                ? findings.findings.length
+                : null;
+          toast(
+            count == null
+              ? "PII-scan voltooid (samenvatting beschikbaar)"
+              : `PII-scan: ${count} bevinding(en) — gevoelige matches niet in UI getoond`,
+          );
+          setDetailEpoch((n) => n + 1);
+        });
+        return;
+      case "contamination":
+        await runVersionJob(
+          () => api.contaminationScanDatasetVersion(dsId, verId, { sealedCases: [] }),
+          "Contaminatiescan",
+        );
+        return;
+      default:
+        toast(`Onbekende actie: ${actionId}`);
+    }
+  }
+
+  function applyTagFilter(tag: string) {
+    setQueryInput(tag);
+    setQuery(tag);
+  }
+
+  async function copyPreview() {
+    const text = (() => {
+      if (samplePreview) return samplePreview;
+      if (sampleTab === "JSON") return JSON.stringify(preview, null, 2);
+      if (sampleTab === "Tekst") return previewSampleText(preview);
+      return previewSampleTable(preview);
+    })();
+    try {
+      await navigator.clipboard.writeText(text);
+      toast("Voorbeeld gekopieerd");
+    } catch {
+      toast("Kopiëren mislukt");
+    }
   }
 
   async function onSidebarAction(actionId: string) {
@@ -760,11 +857,16 @@ export function useDatasetManagementWorkspace() {
     onDownloadExport,
     onSaveSemantic,
     onAnalyzeSemantic,
+    onAdvancedAction,
+    applyTagFilter,
+    copyPreview,
     onSidebarAction,
     onFooterAction,
     onCancelDatasetJob,
     loadPage,
     loadOverview,
+    refreshJobs: loadJobs,
+    exportVersionCount: overview?.exportVersionCount ?? 0,
   };
 }
 

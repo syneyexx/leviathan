@@ -152,7 +152,7 @@ export function DatasetMgmtLibrary({
                 <th>Bron</th>
                 <th>Split</th>
                 <th>Grootte</th>
-                <th>Tokens</th>
+                <th>Samples</th>
                 <th>Status</th>
                 <th>Kwaliteit</th>
                 <th>Tags</th>
@@ -171,15 +171,17 @@ export function DatasetMgmtLibrary({
                   row.datasetId === selectedId && selectedVersion
                     ? splitLabelFromVersion(selectedVersion)
                     : "—";
-                const tokenHint =
-                  row.datasetId === selectedId && selectedVersion?.tokenStats
-                    ? formatCompactCount(
-                        Number(
-                          (selectedVersion.tokenStats as Record<string, unknown>).total_tokens ??
-                            (selectedVersion.tokenStats as Record<string, unknown>).token_count,
-                        ) || null,
-                      )
-                    : formatCompactCount(row.rowCount);
+                // Prefer measured token stats when present; otherwise show samples (rowCount).
+                // Never label sample counts as tokens.
+                const hasTokenStats =
+                  row.datasetId === selectedId &&
+                  selectedVersion?.tokenStats &&
+                  (selectedVersion.tokenStats as Record<string, unknown>).total_tokens != null;
+                const sampleOrTokens = hasTokenStats
+                  ? formatCompactCount(
+                      Number((selectedVersion!.tokenStats as Record<string, unknown>).total_tokens),
+                    )
+                  : formatCompactCount(row.rowCount);
                 const tags = tagsForDataset(row);
                 return (
                   <tr
@@ -195,7 +197,7 @@ export function DatasetMgmtLibrary({
                     <td>{mapSourceLabel(row.sourceType)}</td>
                     <td>{split}</td>
                     <td>{formatBytes(row.byteSize)}</td>
-                    <td>{tokenHint}</td>
+                    <td title={hasTokenStats ? "Tokens (gemeten)" : "Samples"}>{sampleOrTokens}</td>
                     <td>
                       <span className={`lv-v2-dm-pill is-${toneForDatasetStatus(statusNl)}`}>{statusNl}</span>
                     </td>

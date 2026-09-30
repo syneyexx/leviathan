@@ -5,6 +5,7 @@ type Props = {
   selectedCount: number;
   busy: boolean;
   exportReady: boolean;
+  exportCount: number;
   actionDisabledReason: (id: string) => string | null;
   onAction: (id: string) => void;
   onDownloadExport: () => void;
@@ -14,6 +15,7 @@ export function DatasetMgmtActions({
   selectedCount,
   busy,
   exportReady,
+  exportCount,
   actionDisabledReason,
   onAction,
   onDownloadExport,
@@ -42,16 +44,15 @@ export function DatasetMgmtActions({
           );
         })}
       </div>
-      {exportReady ? (
-        <button
-          type="button"
-          className="lv-v2-button lv-v2-button--primary lv-v2-dm-export-btn"
-          disabled={busy}
-          onClick={onDownloadExport}
-        >
-          Download export
-        </button>
-      ) : null}
+      <button
+        type="button"
+        className="lv-v2-button lv-v2-button--primary lv-v2-dm-export-btn"
+        disabled={busy || !exportReady}
+        title={exportReady ? "Download voltooide export" : "Geen voltooide export beschikbaar"}
+        onClick={onDownloadExport}
+      >
+        Download export{exportReady ? " (1)" : exportCount > 0 ? ` (${exportCount})` : ""}
+      </button>
     </section>
   );
 }

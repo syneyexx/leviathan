@@ -178,3 +178,13 @@ Media Control, Plugin & Runtime, Coding Agent, and other deep links remain regis
 - Lifecycle enqueue awaits JobRuntime terminal state; Feature Flag / KPIs / filters / update evidence are API-backed.
 - Local views `?view=runtimes|installation|environments` are projections — not new backend systems.
 - Visual fixture: `src/mocks/modulesV2VisualFixture.ts` + `e2e/modules-v2.visual.spec.ts` (reference: `docs/ui_reference/modules-v2-reference.png`, 1672×941). Production never imports fixture defaults.
+
+## Dataset Management migration
+
+- `/dataset-management` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "LLM / Dataset Management").
+- **MAIN_MENU owns Dataset Manager under LLM.** On `/dataset-management` LM auto-expands with the Dataset Manager child selected. Do not move this page to Onderzoek & Kennis in this migration.
+- Separate Research surface `/datasets` remains; both reuse the same DatasetService / DatasetStore / versions / jobs.
+- Composition: `DatasetManagementPage` + `useDatasetManagementWorkspace` + `src/components/dataset-management/*` + shared `DatasetActivityConsole`.
+- No page-local Dataset Management CSS; layout lives in `leviathan-v2.css` under `.lv-v2-page--dataset-mgmt` / `.lv-v2-dm-*`.
+- Catalog query is server-backed (`q`, source/category/split filters, offset pagination, `total`). Overview KPIs / storage / services / tags from `GET /api/datasets/overview`. Quality from persisted validation only.
+- Production never imports `mocks/dataset-management` or Screen 1 fixture numbers. Visual fixture: `src/mocks/datasetManagementV2VisualFixture.ts` + `e2e/helpers/datasetManagementV2Visual.ts` + `e2e/dataset-management-v2.visual.spec.ts` (reference: `docs/ui_reference/dataset-management-llm-v2-reference.png`, 1672×941).

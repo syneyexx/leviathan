@@ -7,10 +7,8 @@ import { ChatPage } from "./pages/ChatPage";
 import { CodingPage } from "./pages/CodingPage";
 import { CognitionPage } from "./pages/CognitionPage";
 import { CommandPage } from "./pages/CommandPage";
-import {
-  DatasetManagementPixelPage,
-  OfflineDatasetsPixelPage,
-} from "./pages/pixel";
+import { OfflineDatasetsPixelPage } from "./pages/pixel";
+import { DatasetManagementPage } from "./pages/DatasetManagementPage";
 import { DatasetsPage } from "./pages/DatasetsPage";
 import { ModelsPage } from "./pages/ModelsPage";
 import { TrainingPage } from "./pages/TrainingPage";
@@ -95,7 +93,7 @@ export default function App() {
 
       <Route path="/models" element={<ModelsPage />} />
       <Route path="/training" element={<TrainingPage />} />
-      <Route path="/dataset-management" element={<DatasetManagementPixelPage />} />
+      <Route path="/dataset-management" element={<DatasetManagementPage />} />
       <Route path="/offline-datasets" element={<OfflineDatasetsPixelPage />} />
       <Route path="/agents" element={<AgentsPage />} />
       <Route path="/analytics" element={<AnalyticsPage />} />

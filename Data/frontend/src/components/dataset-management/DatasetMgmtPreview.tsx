@@ -31,6 +31,13 @@ export function DatasetMgmtPreview({ ws }: Props) {
               {tab}
             </button>
           ))}
+          <button
+            type="button"
+            className="lv-v2-button lv-v2-button--secondary lv-v2-button--sm"
+            onClick={() => void ws.copyPreview()}
+          >
+            Kopieer
+          </button>
         </div>
       </div>
       <pre className="lv-v2-dm-code">{content}</pre>

@@ -2001,6 +2001,23 @@ export const api = {
     );
   },
 
+  contaminationScanDatasetVersion(
+    datasetId: string,
+    versionId: string,
+    payload: { sealedCases?: unknown[]; threshold?: number } = {},
+  ): Promise<{ job: DatasetJob }> {
+    return request(
+      `/api/datasets/${encodeURIComponent(datasetId)}/versions/${encodeURIComponent(versionId)}/contamination-scan`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          sealedCases: payload.sealedCases ?? [],
+          threshold: payload.threshold ?? 0.35,
+        }),
+      },
+    );
+  },
+
   exportDatasetVersion(
     datasetId: string,
     versionId: string,

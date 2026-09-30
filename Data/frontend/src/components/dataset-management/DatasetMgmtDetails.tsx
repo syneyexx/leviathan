@@ -202,22 +202,36 @@ export function DatasetMgmtDetails({ ws }: Props) {
       >
         <summary>Geavanceerde bewerkingen</summary>
         <div className="lv-v2-dm-advanced-grid">
-          {DM_ADVANCED_ACTIONS.map((action) => (
-            <button
-              key={action.id}
-              type="button"
-              className="lv-v2-dm-action-btn"
-              disabled
-              title="Nog niet aangesloten op een backend-endpoint"
-            >
-              <PxIcon name={action.icon} />
-              <span>{action.label}</span>
-            </button>
-          ))}
+          {DM_ADVANCED_ACTIONS.map((action) => {
+            const needsVersion = action.id !== "materialize";
+            const disabled =
+              ws.busy ||
+              !ws.selectedId ||
+              (needsVersion && !ws.selectedVersionId);
+            return (
+              <button
+                key={action.id}
+                type="button"
+                className="lv-v2-dm-action-btn"
+                disabled={disabled}
+                title={
+                  disabled
+                    ? needsVersion && !ws.selectedVersionId
+                      ? "Selecteer eerst een datasetversie"
+                      : "Selecteer eerst een dataset"
+                    : undefined
+                }
+                onClick={() => void ws.onAdvancedAction(action.id)}
+              >
+                <PxIcon name={action.icon} />
+                <span>{action.label}</span>
+              </button>
+            );
+          })}
         </div>
         <p className="lv-v2-dm-muted">
-          Geavanceerde datasetbewerkingen (dedupliceren, transformeren, splits genereren, tokenizen,
-          PII-scan, contaminatiecheck, materialiseren) hebben nog geen dedicated DatasetService-endpoint.
+          Geavanceerde jobs draaien via DatasetService → JobRuntime → dataset worker.
+          Enqueue ≠ voltooid. Deduplicatie/transform creëert nieuwe versies (niet stil destructief).
         </p>
       </details>
     </section>
