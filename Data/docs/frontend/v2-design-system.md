@@ -188,3 +188,13 @@ Media Control, Plugin & Runtime, Coding Agent, and other deep links remain regis
 - No page-local Dataset Management CSS; layout lives in `leviathan-v2.css` under `.lv-v2-page--dataset-mgmt` / `.lv-v2-dm-*`.
 - Catalog query is server-backed (`q`, source/category/split filters, offset pagination, `total`). Overview KPIs / storage / services / tags from `GET /api/datasets/overview`. Quality from persisted validation only.
 - Production never imports `mocks/dataset-management` or Screen 1 fixture numbers. Visual fixture: `src/mocks/datasetManagementV2VisualFixture.ts` + `e2e/helpers/datasetManagementV2Visual.ts` + `e2e/dataset-management-v2.visual.spec.ts` (reference: `docs/ui_reference/dataset-management-llm-v2-reference.png`, 1672×941).
+
+## Datasets (Onderzoek & Kennis) migration
+
+- `/datasets` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "Onderzoek & Kennis / Datasets").
+- **MAIN_MENU owns Datasets under Onderzoek & Kennis.** Research group children stay MAIN_MENU-derived via `v2ChildrenFromMainMenu("research")`.
+- Composition: `DatasetsPage` + `useDatasetsWorkspace` + `src/components/datasets/*` + shared `DatasetActivityConsole`.
+- No page-local Datasets V2 CSS; layout lives in `leviathan-v2.css` under `.lv-v2-page--datasets` / `.lv-v2-ds-*`. Legacy `datasets-dashboard.css` remains only for shared `.lv-dac` activity console base styles.
+- Inventory remains `GET /api/datasets` → `DhRow` projection; KPIs/storage/services prefer `GET /api/datasets/overview`. Updated-date filters operate on real `updatedAt`. Unknown status ≠ Ready. Unmeasured progress ≠ invented %.
+- Detail panel is a projection of selected dataset (Overview / Preview / Versions / Metadata / Activity) — no fabricated Analyse authority.
+- Production never falls back to `DH_DEMO_*` inventory rows.
