@@ -1,6 +1,7 @@
 /**
- * Trading Center four-workspace architecture (WAVE 1).
+ * Trading Center four-workspace architecture.
  * Nav and routes must stay at exactly these four workspaces.
+ * WAVE 5+: each workspace is a full native page (no legacy surface-tab embeds).
  */
 
 export type TradingWorkspaceId =
@@ -14,9 +15,7 @@ export type TradingContextMode = "offline" | "live" | "hybrid";
 export type TradingWorkspaceSurface = {
   id: string;
   label: string;
-  /** progressive disclosure level */
   level: "PRIMARY" | "SECONDARY" | "ADVANCED";
-  /** legacy route this surface preserves (if any) */
   legacyPath?: string;
 };
 
@@ -39,12 +38,6 @@ export const TRADING_WORKSPACES: readonly TradingWorkspaceDefinition[] = [
     subtitle:
       "Central overview and control for autonomous trading research, simulation, and paper trading.",
     defaultSurface: "overview",
-    /**
-     * WAVE 5 — Command Hub is a full native page with no legacy surface tabs.
-     * A single "overview" surface remains so redirects and progressive-disclosure
-     * checks stay meaningful; Research Command / Control Room are reached via
-     * in-page drawers and CTAs instead of tab embeds.
-     */
     surfaces: [{ id: "overview", label: "Overview", level: "PRIMARY" }],
   },
   {
@@ -54,21 +47,7 @@ export const TRADING_WORKSPACES: readonly TradingWorkspaceDefinition[] = [
     title: "Strategy Lab",
     subtitle: "Strategy discovery, validation, qualification ladder, and historical simulation.",
     defaultSurface: "lab",
-    surfaces: [
-      { id: "lab", label: "Research Lab", level: "PRIMARY", legacyPath: "/trading/lab" },
-      {
-        id: "strategies",
-        label: "Strategieën",
-        level: "PRIMARY",
-        legacyPath: "/trading/strategieen",
-      },
-      {
-        id: "simulation",
-        label: "Simulatie",
-        level: "SECONDARY",
-        legacyPath: "/trading/simulatie",
-      },
-    ],
+    surfaces: [{ id: "lab", label: "Strategy Lab", level: "PRIMARY", legacyPath: "/trading/lab" }],
   },
   {
     id: "trading_desk",
@@ -77,21 +56,7 @@ export const TRADING_WORKSPACES: readonly TradingWorkspaceDefinition[] = [
     title: "Trading Desk",
     subtitle: "Paper execution, portfolios, wallets, risk, and live-trading boundary.",
     defaultSurface: "paper",
-    surfaces: [
-      { id: "paper", label: "Paper", level: "PRIMARY", legacyPath: "/trading/paper" },
-      {
-        id: "portfolio",
-        label: "Portefeuille",
-        level: "PRIMARY",
-        legacyPath: "/trading/portefeuille",
-      },
-      {
-        id: "broker",
-        label: "Broker boundary",
-        level: "ADVANCED",
-        legacyPath: "/trading/broker",
-      },
-    ],
+    surfaces: [{ id: "paper", label: "Trading Desk", level: "PRIMARY", legacyPath: "/trading/paper" }],
   },
   {
     id: "market_data",
@@ -101,26 +66,21 @@ export const TRADING_WORKSPACES: readonly TradingWorkspaceDefinition[] = [
     subtitle: "Select, validate and monitor market data for research and paper execution.",
     defaultSurface: "library",
     surfaces: [
-      {
-        id: "library",
-        label: "Dataset library",
-        level: "PRIMARY",
-        legacyPath: "/trading/marktdata",
-      },
+      { id: "library", label: "Market Data", level: "PRIMARY", legacyPath: "/trading/marktdata" },
     ],
   },
 ] as const;
 
 export const TRADING_LEGACY_REDIRECTS: Readonly<Record<string, string>> = {
-  "/trading/onderzoek": "/trading/command-hub?surface=research-command",
-  "/trading/control-room": "/trading/command-hub?surface=control-room",
-  "/trading/lab": "/trading/strategy-lab?surface=lab",
-  "/trading/strategieen": "/trading/strategy-lab?surface=strategies",
-  "/trading/simulatie": "/trading/strategy-lab?surface=simulation",
-  "/trading/paper": "/trading/trading-desk?surface=paper",
-  "/trading/portefeuille": "/trading/trading-desk?surface=portfolio",
-  "/trading/broker": "/trading/trading-desk?surface=broker",
-  "/trading/marktdata": "/trading/market-data?surface=library",
+  "/trading/onderzoek": "/trading/command-hub",
+  "/trading/control-room": "/trading/command-hub",
+  "/trading/lab": "/trading/strategy-lab",
+  "/trading/strategieen": "/trading/strategy-lab",
+  "/trading/simulatie": "/trading/strategy-lab",
+  "/trading/paper": "/trading/trading-desk",
+  "/trading/portefeuille": "/trading/trading-desk",
+  "/trading/broker": "/trading/trading-desk",
+  "/trading/marktdata": "/trading/market-data",
 };
 
 export function getTradingWorkspace(id: TradingWorkspaceId): TradingWorkspaceDefinition {
