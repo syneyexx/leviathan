@@ -12,7 +12,7 @@ import {
   DM_STATUS_FILTERS,
   DM_TYPE_FILTERS,
   type DatasetSampleTab,
-} from "../../mocks/dataset-management";
+} from "../datasets/datasetManagementConstants";
 import { useAppToast } from "../../state/useAppToast";
 import type {
   DatasetJob,
@@ -886,7 +886,24 @@ export function DatasetManagementPixelPage() {
       return;
     }
     if (id === "save") {
-      toast("Metagegevens opslaan is nog niet beschikbaar via de API.");
+      if (!selectedId) {
+        toast("Selecteer eerst een dataset");
+        return;
+      }
+      await withBusy(async () => {
+        await api.patchDatasetSemantic(selectedId, {
+          displayName: editDisplayName.trim() || undefined,
+          primaryCategory: editCategory || undefined,
+          tags: editTags
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean),
+          versionId: selectedVersionId,
+        });
+        setSemanticEditing(false);
+        setDetailEpoch((n) => n + 1);
+        await loadDatasets({ quiet: true, preferId: selectedId });
+      }, "Metagegevens opgeslagen");
     }
   }
 

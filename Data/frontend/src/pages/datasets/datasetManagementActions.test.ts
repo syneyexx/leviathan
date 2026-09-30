@@ -14,12 +14,22 @@ import {
 import type { DatasetActivityEntry, DatasetJob } from "../../types/api";
 
 const PAGE = resolve(__dirname, "../pixel/DatasetManagementPixelPage.tsx");
+const V2_PAGE = resolve(__dirname, "../DatasetManagementPage.tsx");
+const V2_HOOK = resolve(__dirname, "../../hooks/useDatasetManagementWorkspace.ts");
 const OFFLINE = resolve(__dirname, "../pixel/OfflineDatasetsPixelPage.tsx");
 const HOOK = resolve(__dirname, "./useDatasetActivity.ts");
 const CLIENT = resolve(__dirname, "../../api/client.ts");
 
 function pageSource(): string {
   return readFileSync(PAGE, "utf8");
+}
+
+function v2PageSource(): string {
+  return readFileSync(V2_PAGE, "utf8");
+}
+
+function v2HookSource(): string {
+  return readFileSync(V2_HOOK, "utf8");
 }
 
 function offlineSource(): string {
@@ -122,6 +132,52 @@ describe("DatasetManagementPixelPage action wiring", () => {
     expect(src).toContain("rebuild: true");
     expect(src).toContain("onLearnToBrain({ rebuild: true })");
   });
+
+  it("footer save calls patchDatasetSemantic (no stub toast)", () => {
+    expect(src).toContain("patchDatasetSemantic");
+    expect(src).not.toContain("Metagegevens opslaan is nog niet beschikbaar via de API");
+  });
+});
+
+describe("DatasetManagementPage V2 foundation", () => {
+  const page = v2PageSource();
+  const hook = v2HookSource();
+
+  it("uses AppShell v2, workspace hook, and activity console", () => {
+    expect(page).toContain('variant="v2"');
+    expect(page).toContain("useDatasetManagementWorkspace");
+    expect(page).toContain("DatasetActivityConsole");
+    expect(page).toContain("lv-v2-page--dataset-management");
+  });
+
+  it("wires real actions and patchDatasetSemantic metadata save", () => {
+    for (const id of [
+      "upload",
+      "hf",
+      "local",
+      "create",
+      "rescan",
+      "delete",
+      "learn",
+      "dup",
+      "index",
+      "validate",
+      "export",
+    ]) {
+      expect(hook).toContain(`case "${id}"`);
+    }
+    expect(hook).toContain("patchDatasetSemantic");
+    expect(hook).toContain("getDatasetsOverview");
+    expect(hook).toContain("listDatasets({");
+    expect(hook).toContain("datasetId");
+    expect(hook).toContain("datasetVersionId");
+    expect(hook).not.toContain("Metagegevens opslaan is nog niet beschikbaar via de API");
+  });
+
+  it("gates visual fixture behind explicit flag", () => {
+    expect(hook).toContain("isDatasetManagementVisualFixtureActive");
+    expect(hook).toContain("DATASET_MGMT_V2_VISUAL_FIXTURE");
+  });
 });
 
 describe("OfflineDatasetsPixelPage Brain-learned semantics", () => {
@@ -158,6 +214,12 @@ describe("API client dataset action additions", () => {
     expect(src).toContain("listLearnedDatasets(");
     expect(src).toContain("/learn");
     expect(src).toContain("/library/refresh");
+  });
+
+  it("listDatasets accepts query object and exposes getDatasetsOverview", () => {
+    expect(src).toContain("listDatasets(limitOrQuery");
+    expect(src).toContain("getDatasetsOverview(");
+    expect(src).toContain("/api/datasets/overview");
   });
 
   it("passes rebuild on indexDatasetVersion", () => {

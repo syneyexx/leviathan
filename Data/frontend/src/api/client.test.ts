@@ -38,6 +38,32 @@ describe("api client — datasets / training / research / model test", () => {
     expect(res.datasets).toEqual([]);
   });
 
+  it("listDatasets(number) keeps backward-compatible limit URL", async () => {
+    const capture: { url?: string } = {};
+    mockFetch(200, { datasets: [], total: 0 }, capture);
+    await api.listDatasets(200);
+    expect(capture.url).toBe("/api/datasets?limit=200");
+  });
+
+  it("listDatasets(query) encodes server-side filters", async () => {
+    const capture: { url?: string } = {};
+    mockFetch(200, { datasets: [], total: 3, hasMore: false }, capture);
+    await api.listDatasets({ q: "wiki", type: "Tekst", offset: 50, sort: "name" });
+    expect(capture.url).toContain("/api/datasets?");
+    expect(capture.url).toContain("q=wiki");
+    expect(capture.url).toContain("type=Tekst");
+    expect(capture.url).toContain("offset=50");
+    expect(capture.url).toContain("sort=name");
+  });
+
+  it("getDatasetsOverview hits /api/datasets/overview", async () => {
+    const capture: { url?: string } = {};
+    mockFetch(200, { overview: { totalDatasets: 1, totalSamples: 0 } }, capture);
+    const res = await api.getDatasetsOverview();
+    expect(capture.url).toBe("/api/datasets/overview");
+    expect(res.overview.totalDatasets).toBe(1);
+  });
+
   it("uploadDataset omits Content-Type for FormData", async () => {
     const capture: { init?: RequestInit; url?: string } = {};
     mockFetch(200, { job: { jobId: "j1" }, bytes: 10, filename: "a.jsonl" }, capture);
