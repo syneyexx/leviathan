@@ -166,6 +166,17 @@ export function executionStateLabelNl(state: string | undefined | null): string 
   return s || "—";
 }
 
+function initialNowMs(): number {
+  if (typeof window !== "undefined") {
+    const frozen = (window as Window & { __LV_V2_FROZEN_NOW__?: string }).__LV_V2_FROZEN_NOW__;
+    if (frozen) {
+      const t = Date.parse(frozen);
+      if (!Number.isNaN(t)) return t;
+    }
+  }
+  return Date.now();
+}
+
 export function useWorkflowsWorkspace() {
   const toast = useAppToast();
 
@@ -203,7 +214,7 @@ export function useWorkflowsWorkspace() {
   const [createDesc, setCreateDesc] = useState("");
   const [createFromTemplateId, setCreateFromTemplateId] = useState<string | null>(null);
   const [pendingSelectId, setPendingSelectId] = useState<string | null>(null);
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [nowMs, setNowMs] = useState(initialNowMs);
 
   const pollInflight = useRef(false);
   const loadGen = useRef(0);
