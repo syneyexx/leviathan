@@ -66,18 +66,13 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
   {
     id: "trading",
     label: "Trading Center",
-    to: "/trading/simulatie",
+    to: "/trading/command-hub",
     match: ["/trading"],
     submenu: [
-      { id: "simulatie", label: "Markt Simulatie", to: "/trading/simulatie" },
-      { id: "strategieen", label: "Strategieen", to: "/trading/strategieen" },
-      { id: "marktdata", label: "Marktdata", to: "/trading/marktdata" },
-      { id: "portefeuille", label: "Portefeuille", to: "/trading/portefeuille" },
-      { id: "paper", label: "PAPER Trading", to: "/trading/paper" },
-      { id: "broker", label: "BROKER Trading", to: "/trading/broker" },
-      { id: "onderzoek", label: "Onderzoek", to: "/trading/onderzoek" },
-      { id: "lab", label: "Research Lab", to: "/trading/lab" },
-      { id: "control-room", label: "Control Room", to: "/trading/control-room" },
+      { id: "command-hub", label: "Command Hub", to: "/trading/command-hub" },
+      { id: "strategy-lab", label: "Strategy Lab", to: "/trading/strategy-lab" },
+      { id: "trading-desk", label: "Trading Desk", to: "/trading/trading-desk" },
+      { id: "market-data", label: "Market Data", to: "/trading/market-data" },
     ],
   },
   {

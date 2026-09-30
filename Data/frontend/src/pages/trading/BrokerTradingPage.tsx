@@ -4,8 +4,9 @@ import { tradingHeroes } from "../../assets/tradingAssets";
 import { api } from "../../api/client";
 import { AppShell } from "../../layouts/AppShell";
 import { Panel, TradingHero } from "./shared";
+import type { TradingEmbeddedProps } from "./tradingEmbedded";
 
-export function BrokerTradingPage() {
+export function BrokerTradingPage({ embedded = false }: TradingEmbeddedProps = {}) {
   const [status, setStatus] = useState<Record<string, unknown> | null>(null);
 
   useEffect(() => {
@@ -17,8 +18,8 @@ export function BrokerTradingPage() {
     });
   }, []);
 
-  return (
-    <AppShell layout="wide" pageClass="lv-app--trading">
+  const body = (
+    <>
       <TradingHero title="Broker / Live" image={tradingHeroes.broker} />
       <div className="lv-tp-wrap">
         <Panel title="Live trading status">
@@ -38,12 +39,19 @@ export function BrokerTradingPage() {
             POST /api/trading/order.
           </p>
           <p>
-            <Link to="/trading/paper">Paper trading</Link>
+            <Link to="/trading/trading-desk?surface=paper">Paper trading</Link>
             {" · "}
-            <Link to="/trading/simulatie">Simulation</Link>
+            <Link to="/trading/strategy-lab?surface=simulation">Simulation</Link>
           </p>
         </Panel>
       </div>
+    </>
+  );
+
+  if (embedded) return body;
+  return (
+    <AppShell layout="wide" pageClass="lv-app--trading">
+      {body}
     </AppShell>
   );
 }

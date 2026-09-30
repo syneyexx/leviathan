@@ -7,7 +7,7 @@ import type { MarketDataSource, MarketSimStatusResponse } from "../../types/api"
 import { Panel, TradingHero, hashShort } from "./shared";
 import { InstitutionalStrip } from "./InstitutionalStrip";
 
-export function MarktdataPage() {
+export function MarktdataPage({ embedded = false }: { embedded?: boolean } = {}) {
   const toast = useAppToast();
   const [status, setStatus] = useState<MarketSimStatusResponse | null>(null);
   const [sources, setSources] = useState<MarketDataSource[]>([]);
@@ -85,19 +85,8 @@ export function MarktdataPage() {
     return meta?.qualityVerdict || meta?.quality?.qualityVerdict || "UNMEASURED";
   }
 
-  return (
-    <AppShell
-      activeMode="explore"
-      modeLabel="Trading Mode"
-      searchPlaceholder="Search symbols, markets, data sources, or instruments..."
-      systemItems={[
-        status?.enabled ? "MARKET SIM ON" : "MARKET SIM OFF",
-        `${ready} READY`,
-        status?.health.exists ? "ROOT EXISTS" : "ROOT MISSING",
-      ]}
-      layout="wide"
-      pageClass="lv-app--trading"
-    >
+  const body = (
+    <>
       <main className="lv-main lv-tp-main">
         <TradingHero
           title="MARKTDATA"
@@ -275,6 +264,24 @@ export function MarktdataPage() {
           “Better data. Clearer markets. A more intelligent tomorrow.” — LEVIATHAN
         </p>
       </main>
+        </>
+  );
+
+  if (embedded) return body;
+  return (
+    <AppShell
+      activeMode="explore"
+      modeLabel="Trading Mode"
+      searchPlaceholder="Search symbols, markets, data sources, or instruments..."
+      systemItems={[
+        status?.enabled ? "MARKET SIM ON" : "MARKET SIM OFF",
+        `${ready} READY`,
+        status?.health.exists ? "ROOT EXISTS" : "ROOT MISSING",
+      ]}
+      layout="wide"
+      pageClass="lv-app--trading"
+    >
+      {body}
     </AppShell>
   );
 }

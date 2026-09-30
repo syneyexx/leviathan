@@ -1,0 +1,332 @@
+/* Trading Center WAVE 1 — four-workspace shared chrome */
+
+.lv-tc-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 0.85rem 1rem 1.5rem;
+}
+
+.lv-tc-workspace__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.lv-tc-workspace__crumb {
+  margin: 0 0 0.25rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.9);
+}
+
+.lv-tc-workspace__crumb a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.lv-tc-workspace__crumb a:hover {
+  color: #e2e8f0;
+}
+
+.lv-tc-workspace__title {
+  margin: 0;
+  font-size: 1.55rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  color: #f8fafc;
+}
+
+.lv-tc-workspace__subtitle {
+  margin: 0.35rem 0 0;
+  max-width: 52rem;
+  color: rgba(203, 213, 225, 0.88);
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.lv-tc-workspace__header-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.lv-tc-btn {
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.65);
+  color: #e2e8f0;
+  border-radius: 0.4rem;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.lv-tc-btn:hover:not(:disabled) {
+  border-color: rgba(96, 165, 250, 0.55);
+  color: #fff;
+}
+
+.lv-tc-btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.lv-tc-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem 0.85rem;
+  align-items: end;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid rgba(71, 85, 105, 0.55);
+  border-radius: 0.55rem;
+  background:
+    linear-gradient(180deg, rgba(30, 41, 59, 0.92), rgba(15, 23, 42, 0.92));
+}
+
+.lv-tc-context__group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  min-width: 6.5rem;
+}
+
+.lv-tc-context__group--wide {
+  min-width: 14rem;
+  flex: 1 1 14rem;
+}
+
+.lv-tc-context__label {
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.95);
+}
+
+.lv-tc-context__modes {
+  display: inline-flex;
+  border: 1px solid rgba(71, 85, 105, 0.7);
+  border-radius: 0.4rem;
+  overflow: hidden;
+}
+
+.lv-tc-context__mode {
+  border: 0;
+  background: transparent;
+  color: #cbd5e1;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.lv-tc-context__mode.is-active {
+  background: rgba(59, 130, 246, 0.28);
+  color: #eff6ff;
+}
+
+.lv-tc-context__select,
+.lv-tc-context__value {
+  border: 1px solid rgba(71, 85, 105, 0.7);
+  background: rgba(2, 6, 23, 0.55);
+  color: #f1f5f9;
+  border-radius: 0.35rem;
+  padding: 0.35rem 0.55rem;
+  font-size: 0.82rem;
+  min-height: 2rem;
+}
+
+.lv-tc-context__value {
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lv-tc-context__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-left: auto;
+  align-items: center;
+}
+
+.lv-tc-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.28rem 0.65rem;
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  border: 1px solid transparent;
+}
+
+.lv-tc-badge--regime {
+  color: #bbf7d0;
+  background: rgba(22, 101, 52, 0.35);
+  border-color: rgba(74, 222, 128, 0.35);
+}
+
+.lv-tc-badge--vol {
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.35);
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
+.lv-tc-badge--exec {
+  color: #e9d5ff;
+  background: rgba(88, 28, 135, 0.45);
+  border-color: rgba(192, 132, 252, 0.45);
+}
+
+.lv-tc-status {
+  border: 1px solid rgba(71, 85, 105, 0.45);
+  border-radius: 0.5rem;
+  padding: 0.55rem 0.75rem;
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.lv-tc-status__title {
+  margin: 0 0 0.4rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.95);
+}
+
+.lv-tc-status__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 1.1rem;
+}
+
+.lv-tc-status__list li {
+  display: flex;
+  gap: 0.45rem;
+  align-items: baseline;
+  font-size: 0.8rem;
+  color: #cbd5e1;
+}
+
+.lv-tc-status__list strong.is-good {
+  color: #4ade80;
+}
+
+.lv-tc-status__list strong.is-bad {
+  color: #f87171;
+}
+
+.lv-tc-status__list strong.is-warn {
+  color: #fbbf24;
+}
+
+.lv-tc-surfaces {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.lv-tc-surfaces__btn {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  border: 1px solid rgba(71, 85, 105, 0.55);
+  background: rgba(15, 23, 42, 0.55);
+  color: #e2e8f0;
+  border-radius: 0.45rem;
+  padding: 0.45rem 0.75rem;
+  cursor: pointer;
+  min-width: 7.5rem;
+}
+
+.lv-tc-surfaces__btn small {
+  color: rgba(148, 163, 184, 0.9);
+  font-size: 0.65rem;
+  letter-spacing: 0.05em;
+}
+
+.lv-tc-surfaces__btn.is-active {
+  border-color: rgba(96, 165, 250, 0.65);
+  background: rgba(30, 58, 138, 0.35);
+}
+
+.lv-tc-surfaces__btn[data-level="ADVANCED"] small {
+  color: #c4b5fd;
+}
+
+.lv-tc-surface-body {
+  min-height: 20rem;
+}
+
+/* Embedded legacy pages keep their own <main>; flatten chrome nesting. */
+.lv-tc-surface-body > main.lv-main {
+  display: contents;
+}
+
+.lv-tc-surface-body .lv-tp-hero.is-image-only,
+.lv-tc-surface-body .lv-paper-hero,
+.lv-tc-surface-body .lv-rc-banner {
+  /* Keep legacy heroes inside workspace; slightly tighter */
+  margin-top: 0.25rem;
+}
+
+.lv-tc-overview {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr));
+  gap: 0.55rem;
+}
+
+.lv-tc-overview__card {
+  border: 1px solid rgba(71, 85, 105, 0.5);
+  border-radius: 0.5rem;
+  padding: 0.65rem 0.75rem;
+  background: rgba(15, 23, 42, 0.62);
+}
+
+.lv-tc-overview__card h3 {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.95);
+  font-weight: 600;
+}
+
+.lv-tc-overview__card p {
+  margin: 0.35rem 0 0;
+  font-size: 1.25rem;
+  color: #f8fafc;
+  font-weight: 650;
+}
+
+.lv-tc-overview__card span {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.72rem;
+  color: #86efac;
+}
+
+.lv-tc-overview__note {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 0.8rem;
+  color: rgba(203, 213, 225, 0.85);
+}
+
+@media (max-width: 720px) {
+  .lv-tc-context__badges {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .lv-tc-workspace__title {
+    font-size: 1.3rem;
+  }
+}

@@ -14,14 +14,15 @@ import {
   WatchCard,
 } from "./ResearchCommandPanels";
 import { useResearchCommand } from "./useResearchCommand";
+import type { TradingEmbeddedProps } from "../tradingEmbedded";
 
-export function ResearchCommandPage() {
+export function ResearchCommandPage({ embedded = false }: TradingEmbeddedProps = {}) {
   const model = useResearchCommand();
   const snap = model.snapshot;
   const actions = snap?.actions;
 
-  return (
-    <AppShell layout="wide" pageClass="lv-app--trading">
+  const body = (
+    <>
       <main className="lv-main lv-tp-main lv-rc-page">
         <header className="lv-rc-banner">
           <div className="lv-rc-mark" aria-hidden="true">
@@ -166,6 +167,13 @@ export function ResearchCommandPage() {
           onConfirm={() => void model.confirmFlatten()}
         />
       </main>
+        </>
+  );
+
+  if (embedded) return body;
+  return (
+    <AppShell layout="wide" pageClass="lv-app--trading">
+      {body}
     </AppShell>
   );
 }
