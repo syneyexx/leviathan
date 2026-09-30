@@ -148,12 +148,306 @@ class DatasetStore:
         return self._dataset_from_row(row) if row else None
 
     def list_datasets(self, *, limit: int = 100) -> list[DatasetRecord]:
+        """Backward-compatible bounded list (newest first). Prefer ``query_datasets``."""
+        page = self.query_datasets(limit=limit, offset=0)
+        return list(page["datasets"])
+
+    def query_datasets(
+        self,
+        *,
+        q: str | None = None,
+        status: str | None = None,
+        source_type: str | None = None,
+        category: str | None = None,
+        split: str | None = None,
+        tag: str | None = None,
+        detected_format: str | None = None,
+        ui_type: str | None = None,
+        sort: str = "newest",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Server-side catalog query with filters, offset pagination, and total count.
+
+        Search ``q`` matches name, description, original filename/uri, and JSON
+        metadata (displayName / semanticProfile tags / category / summary).
+        Never loads the full catalog into the caller — bounded page + SQL COUNT.
+        """
+        limit_n = max(1, min(int(limit), 500))
+        offset_n = max(0, int(offset))
+        clauses: list[str] = []
+        params: list[Any] = []
+
+        needle = (q or "").strip()
+        if needle:
+            like = f"%{needle.lower()}%"
+            clauses.append(
+                "("
+                "LOWER(name) LIKE ? OR "
+                "LOWER(COALESCE(description, '')) LIKE ? OR "
+                "LOWER(COALESCE(original_filename, '')) LIKE ? OR "
+                "LOWER(COALESCE(original_uri, '')) LIKE ? OR "
+                "LOWER(COALESCE(metadata_json, '')) LIKE ?"
+                ")"
+            )
+            params.extend([like, like, like, like, like])
+
+        if status:
+            clauses.append("LOWER(status) = LOWER(?)")
+            params.append(status.strip())
+
+        if source_type:
+            clauses.append("LOWER(source_type) = LOWER(?)")
+            params.append(source_type.strip())
+
+        if detected_format:
+            clauses.append("LOWER(COALESCE(detected_format, '')) = LOWER(?)")
+            params.append(detected_format.strip())
+
+        if ui_type:
+            # Soft match Screen 1 type labels against format + task metadata.
+            label = ui_type.strip().lower()
+            type_needles = {
+                "tekst": ["text", "txt", "jsonl", "json", "csv", "tsv", "md", "markdown", "tekst"],
+                "text": ["text", "txt", "jsonl", "json", "csv", "tsv", "md", "markdown", "tekst"],
+                "code": ["code", "python", "javascript", "program"],
+                "chat": ["chat", "dialog", "conversation", "messages"],
+                "pdf": ["pdf"],
+                "logs": ["log", "logs"],
+            }.get(label, [label])
+            type_parts: list[str] = []
+            for n in type_needles:
+                type_parts.append(
+                    "(LOWER(COALESCE(detected_format, '')) LIKE ? OR "
+                    "LOWER(COALESCE(metadata_json, '')) LIKE ?)"
+                )
+                params.extend([f"%{n}%", f"%{n}%"])
+            clauses.append("(" + " OR ".join(type_parts) + ")")
+
+        if category:
+            cat = category.strip()
+            if cat and not cat.lower().startswith("alle "):
+                # Semantic category lives in metadata_json (primaryCategory / semanticProfile).
+                clauses.append("LOWER(COALESCE(metadata_json, '')) LIKE ?")
+                params.append(f"%{cat.lower()}%")
+
+        if tag:
+            t = tag.strip()
+            if t:
+                clauses.append("LOWER(COALESCE(metadata_json, '')) LIKE ?")
+                params.append(f"%{t.lower()}%")
+
+        if split:
+            split_v = split.strip()
+            if split_v and not split_v.lower().startswith("alle "):
+                # Split assignments live on versions; filter via EXISTS.
+                clauses.append(
+                    "EXISTS ("
+                    "SELECT 1 FROM dataset_versions v "
+                    "WHERE v.dataset_id = datasets.dataset_id "
+                    "AND LOWER(COALESCE(v.split_json, '')) LIKE ?"
+                    ")"
+                )
+                params.append(f"%{split_v.lower()}%")
+
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        order = {
+            "newest": "created_at DESC, dataset_id DESC",
+            "oldest": "created_at ASC, dataset_id ASC",
+            "name": "LOWER(name) ASC, dataset_id ASC",
+            "updated": "updated_at DESC, dataset_id DESC",
+            "size": "COALESCE(byte_size, -1) DESC, dataset_id DESC",
+            "samples": "COALESCE(row_count, -1) DESC, dataset_id DESC",
+        }.get(sort, "created_at DESC, dataset_id DESC")
+
         with self.connect() as conn:
+            total = int(
+                conn.execute(
+                    f"SELECT COUNT(*) AS c FROM datasets {where}",
+                    params,
+                ).fetchone()[0]
+            )
             rows = conn.execute(
-                "SELECT * FROM datasets ORDER BY created_at DESC LIMIT ?",
-                (max(1, min(limit, 500)),),
+                f"SELECT * FROM datasets {where} ORDER BY {order} LIMIT ? OFFSET ?",
+                [*params, limit_n, offset_n],
             ).fetchall()
-        return [self._dataset_from_row(r) for r in rows]
+
+        datasets = [self._dataset_from_row(r) for r in rows]
+        return {
+            "datasets": datasets,
+            "total": total,
+            "limit": limit_n,
+            "offset": offset_n,
+            "sort": sort if sort in {"newest", "oldest", "name", "updated", "size", "samples"} else "newest",
+            "hasMore": offset_n + len(datasets) < total,
+        }
+
+    def overview_aggregates(self) -> dict[str, Any]:
+        """SQL aggregates for Dataset Management KPIs — no full-table Python scan."""
+        with self.connect() as conn:
+            total = int(conn.execute("SELECT COUNT(*) AS c FROM datasets").fetchone()[0])
+            by_status: dict[str, int] = {}
+            for row in conn.execute(
+                "SELECT status, COUNT(*) AS c FROM datasets GROUP BY status"
+            ):
+                by_status[str(row["status"])] = int(row["c"])
+            by_source: dict[str, int] = {}
+            for row in conn.execute(
+                "SELECT source_type, COUNT(*) AS c FROM datasets GROUP BY source_type"
+            ):
+                by_source[str(row["source_type"])] = int(row["c"])
+
+            measured_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS c FROM datasets WHERE row_count IS NOT NULL"
+                ).fetchone()[0]
+            )
+            unmeasured_count = total - measured_count
+            total_samples = int(
+                conn.execute(
+                    "SELECT COALESCE(SUM(row_count), 0) AS s FROM datasets "
+                    "WHERE row_count IS NOT NULL"
+                ).fetchone()[0]
+            )
+
+            byte_measured = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS c FROM datasets WHERE byte_size IS NOT NULL"
+                ).fetchone()[0]
+            )
+            total_bytes = int(
+                conn.execute(
+                    "SELECT COALESCE(SUM(byte_size), 0) AS s FROM datasets "
+                    "WHERE byte_size IS NOT NULL"
+                ).fetchone()[0]
+            )
+            version_bytes = int(
+                conn.execute(
+                    "SELECT COALESCE(SUM(byte_size), 0) AS s FROM dataset_versions "
+                    "WHERE byte_size IS NOT NULL"
+                ).fetchone()[0]
+            )
+            export_bytes = int(
+                conn.execute(
+                    """
+                    SELECT COALESCE(SUM(byte_size), 0) AS s FROM dataset_versions
+                    WHERE kind = ? AND byte_size IS NOT NULL
+                    """,
+                    (VersionKind.EXPORT.value,),
+                ).fetchone()[0]
+            )
+
+            # Validation issue aggregates from latest non-empty validation_json per dataset.
+            # Prefer version validation; fall back to empty when never validated.
+            validation_rows = conn.execute(
+                """
+                SELECT dataset_id, validation_json, updated_at
+                FROM dataset_versions
+                WHERE validation_json IS NOT NULL
+                  AND validation_json != ''
+                  AND validation_json != '{}'
+                ORDER BY updated_at DESC
+                """
+            ).fetchall()
+
+            # Active import jobs
+            import_types = (
+                DatasetJobType.IMPORT_LOCAL.value,
+                DatasetJobType.IMPORT_HF.value,
+            )
+            active_import_running = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*) AS c FROM dataset_jobs
+                    WHERE status = ? AND job_type IN (?, ?)
+                    """,
+                    (DatasetJobStatus.RUNNING.value, *import_types),
+                ).fetchone()[0]
+            )
+            active_import_queued = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*) AS c FROM dataset_jobs
+                    WHERE status = ? AND job_type IN (?, ?)
+                    """,
+                    (DatasetJobStatus.QUEUED.value, *import_types),
+                ).fetchone()[0]
+            )
+
+            # Tag frequencies from metadata_json (bounded scan of tag-bearing rows).
+            tag_rows = conn.execute(
+                """
+                SELECT metadata_json FROM datasets
+                WHERE metadata_json IS NOT NULL AND metadata_json != '' AND metadata_json != '{}'
+                LIMIT 5000
+                """
+            ).fetchall()
+
+        # Process validation (Python — JSON structure varies; keep bounded).
+        seen_ds: set[str] = set()
+        datasets_with_validation = 0
+        total_errors = 0
+        total_warnings = 0
+        critical_issues = 0
+        for row in validation_rows:
+            ds_id = str(row["dataset_id"])
+            if ds_id in seen_ds:
+                continue
+            seen_ds.add(ds_id)
+            payload = _loads(row["validation_json"], {})
+            if not isinstance(payload, dict) or not payload:
+                continue
+            datasets_with_validation += 1
+            err = int(payload.get("errorCount") or payload.get("error_count") or 0)
+            warn = int(payload.get("warningCount") or payload.get("warning_count") or 0)
+            total_errors += max(0, err)
+            total_warnings += max(0, warn)
+            # Critical = errors (schema/integrity failures), not job failures.
+            critical_issues += max(0, err)
+
+        tag_counts: dict[str, int] = {}
+        for row in tag_rows:
+            meta = _loads(row["metadata_json"], {})
+            if not isinstance(meta, dict):
+                continue
+            semantic = meta.get("semanticProfile") if isinstance(meta.get("semanticProfile"), dict) else {}
+            tags = semantic.get("tags") or meta.get("semanticTags") or meta.get("tags") or []
+            if not isinstance(tags, list):
+                continue
+            for raw in tags:
+                t = str(raw or "").strip().lower()
+                if not t or len(t) > 64:
+                    continue
+                tag_counts[t] = tag_counts.get(t, 0) + 1
+
+        top_tags = sorted(tag_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:40]
+
+        return {
+            "totalDatasets": total,
+            "byStatus": by_status,
+            "bySource": by_source,
+            "totalSamples": total_samples,
+            "samplesMeasuredDatasets": measured_count,
+            "samplesUnmeasuredDatasets": unmeasured_count,
+            "samplesMeasurementComplete": unmeasured_count == 0 and total > 0,
+            "totalKnownBytes": total_bytes,
+            "bytesMeasuredDatasets": byte_measured,
+            "bytesUnmeasuredDatasets": total - byte_measured,
+            "versionBytes": version_bytes,
+            "exportBytes": export_bytes,
+            "activeImportsRunning": active_import_running,
+            "activeImportsQueued": active_import_queued,
+            "activeImports": active_import_running + active_import_queued,
+            "validation": {
+                "datasetsWithValidation": datasets_with_validation,
+                "datasetsWithoutValidation": max(0, total - datasets_with_validation),
+                "totalErrors": total_errors,
+                "totalWarnings": total_warnings,
+                "criticalIssues": critical_issues,
+                "validationIssues": total_errors + total_warnings,
+            },
+            "tagCounts": [{"tag": t, "count": c} for t, c in top_tags],
+        }
 
     def update_dataset(self, dataset_id: str, **fields: Any) -> DatasetRecord:
         allowed = {

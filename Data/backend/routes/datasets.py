@@ -47,6 +47,7 @@ DATASETS_STATIC_SEGMENTS = frozenset(
         "sidecars",
         "catalog",
         "semantic",
+        "overview",
     }
 )
 
@@ -200,6 +201,85 @@ class HfListBody(BaseModel):
     token: str | None = None
 
 
+def _normalize_source_filter(value: str | None) -> str | None:
+    """Map UI source labels to SourceType values; pass through raw enums."""
+    if not value:
+        return None
+    raw = value.strip()
+    if not raw or raw.lower().startswith("alle "):
+        return None
+    key = raw.lower().replace(" ", "").replace("_", "")
+    mapping = {
+        "huggingface": "huggingface",
+        "hugging face": "huggingface",
+        "hf": "huggingface",
+        "local": "local",
+        "lokaal": "local",
+        "upload": "upload",
+        "derived": "derived",
+        "afgeleid": "derived",
+        "synthetic": "derived",
+        "opendata": "local",
+        "open data": "local",
+    }
+    return mapping.get(key) or mapping.get(raw.lower()) or raw.lower()
+
+
+def _normalize_status_filter(value: str | None) -> str | None:
+    if not value:
+        return None
+    raw = value.strip()
+    if not raw or raw.lower().startswith("alle "):
+        return None
+    key = raw.lower()
+    mapping = {
+        "klaar": "ready",
+        "ready": "ready",
+        "verwerkt": "ready",
+        "bezig": "importing",
+        "importing": "importing",
+        "materializing": "materializing",
+        "wachtrij": "created",
+        "created": "created",
+        "raw": "raw",
+        "fout": "failed",
+        "failed": "failed",
+        "archived": "archived",
+        "waarschuwing": "failed",
+        "onbekend": None,
+    }
+    if key in mapping:
+        return mapping[key]
+    return raw.lower()
+
+
+def _normalize_type_filter(value: str | None) -> str | None:
+    """Return raw detected_format values only; UI labels are handled separately."""
+    if not value:
+        return None
+    raw = value.strip()
+    if not raw or raw.lower().startswith("alle "):
+        return None
+    key = raw.lower()
+    formats = {"jsonl", "json", "csv", "tsv", "txt", "md", "markdown", "parquet", "unknown"}
+    if key in formats:
+        return "md" if key == "markdown" else key
+    return None
+
+
+def _normalize_ui_type_label(value: str | None) -> str | None:
+    """Preserve Screen 1 type labels (Tekst/Code/Chat/…) for soft metadata matching."""
+    if not value:
+        return None
+    raw = value.strip()
+    if not raw or raw.lower().startswith("alle "):
+        return None
+    key = raw.lower()
+    if key in {"jsonl", "json", "csv", "tsv", "txt", "md", "markdown", "parquet", "unknown"}:
+        return None
+    return raw
+
+
 def build_datasets_router(service: DatasetService) -> APIRouter:
     """Build the datasets router with static routes before ``{dataset_id}``."""
     router = APIRouter(tags=["datasets"])
@@ -208,11 +288,98 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
     # Collection + upload (no path params)
     # ------------------------------------------------------------------
     @router.get("/api/datasets")
-    def list_datasets(limit: int = 100, includeBrain: bool = True) -> dict:
+    def list_datasets(
+        limit: int = 100,
+        offset: int = 0,
+        q: str | None = None,
+        status: str | None = None,
+        source: str | None = None,
+        sourceType: str | None = None,
+        category: str | None = None,
+        split: str | None = None,
+        tag: str | None = None,
+        tags: str | None = None,
+        type: str | None = None,
+        sort: str = "newest",
+        includeBrain: bool = True,
+        includeQuality: bool = True,
+    ) -> dict:
+        """List datasets with optional server-side search/filter/pagination.
+
+        Backward compatible: callers that only pass ``limit`` still receive
+        ``{datasets:[…]}``. When any catalog-query param is present (or offset>0),
+        the response also includes ``total`` / ``offset`` / ``hasMore``.
+        """
+        source_type = (sourceType or source or None)
+        tag_value = (tag or tags or None)
+        # Normalize UI labels → store values where needed.
+        normalized_source = _normalize_source_filter(source_type)
+        normalized_status = _normalize_status_filter(status)
+        normalized_type = _normalize_type_filter(type)
+        ui_type = _normalize_ui_type_label(type)
+
+        use_query = any(
+            [
+                (q or "").strip(),
+                normalized_status,
+                normalized_source,
+                (category or "").strip(),
+                (split or "").strip(),
+                (tag_value or "").strip(),
+                normalized_type,
+                ui_type,
+                offset > 0,
+                sort not in {"", "newest"},
+            ]
+        )
+
+        if use_query or offset > 0 or limit != 100:
+            page = service.query_datasets(
+                q=q,
+                status=normalized_status,
+                source_type=normalized_source,
+                category=category,
+                split=split,
+                tag=tag_value,
+                detected_format=normalized_type,
+                ui_type=ui_type,
+                sort=sort or "newest",
+                limit=limit,
+                offset=offset,
+                include_brain=includeBrain,
+                include_quality=includeQuality,
+            )
+            return page
+
+        # Legacy default path — identical shape to pre-pagination callers.
         if includeBrain:
-            return {"datasets": service.list_library_datasets(limit=limit)}
-        items = service.list_datasets(limit=limit)
-        return {"datasets": [service.public_dataset(d) for d in items]}
+            datasets = service.list_library_datasets(limit=limit)
+        else:
+            datasets = [service.public_dataset(d) for d in service.list_datasets(limit=limit)]
+        if includeQuality:
+            for entry in datasets:
+                ds_id = str(entry.get("datasetId") or "")
+                if ds_id:
+                    entry["quality"] = service.quality_projection_for_dataset(ds_id)
+        # Still expose total for honest KPIs even on the legacy path.
+        total = service.store.query_datasets(limit=1, offset=0)["total"]
+        return {
+            "datasets": datasets,
+            "total": total,
+            "limit": max(1, min(int(limit), 500)),
+            "offset": 0,
+            "sort": "newest",
+            "hasMore": total > len(datasets),
+            "truth": {
+                "total_is_catalog_count_not_page_length": True,
+                "legacy_limit_default_preserved": True,
+            },
+        }
+
+    @router.get("/api/datasets/overview")
+    def datasets_overview() -> dict:
+        """Bounded aggregate KPIs for Dataset Management (not page-length truth)."""
+        return {"overview": service.overview()}
 
     @router.post("/api/datasets")
     def create_dataset(body: CreateDatasetBody) -> dict:

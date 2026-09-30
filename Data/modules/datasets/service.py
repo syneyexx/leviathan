@@ -366,6 +366,281 @@ class DatasetService:
     def list_datasets(self, *, limit: int = 100) -> list[DatasetRecord]:
         return self.store.list_datasets(limit=limit)
 
+    def query_datasets(
+        self,
+        *,
+        q: str | None = None,
+        status: str | None = None,
+        source_type: str | None = None,
+        category: str | None = None,
+        split: str | None = None,
+        tag: str | None = None,
+        detected_format: str | None = None,
+        ui_type: str | None = None,
+        sort: str = "newest",
+        limit: int = 100,
+        offset: int = 0,
+        include_brain: bool = True,
+        include_quality: bool = True,
+    ) -> dict[str, Any]:
+        """Bounded catalog query with optional Brain/quality enrichment for the page."""
+        page = self.store.query_datasets(
+            q=q,
+            status=status,
+            source_type=source_type,
+            category=category,
+            split=split,
+            tag=tag,
+            detected_format=detected_format,
+            ui_type=ui_type,
+            sort=sort,
+            limit=limit,
+            offset=offset,
+        )
+        items: list[dict[str, Any]] = []
+        for ds in page["datasets"]:
+            if include_brain:
+                entry = self.brain_library_entry(ds)
+            else:
+                entry = self.public_dataset(ds)
+            if include_quality:
+                entry["quality"] = self.quality_projection_for_dataset(ds.dataset_id)
+            items.append(entry)
+        return {
+            "datasets": items,
+            "total": page["total"],
+            "limit": page["limit"],
+            "offset": page["offset"],
+            "sort": page["sort"],
+            "hasMore": page["hasMore"],
+            "truth": {
+                "total_is_catalog_count_not_page_length": True,
+                "search_is_server_side": True,
+                "filters_are_server_side": True,
+                "page_length_is_not_kpi_truth": True,
+            },
+        }
+
+    def quality_projection_for_dataset(self, dataset_id: str) -> dict[str, Any]:
+        """Evidence-based quality projection. Unknown when never validated.
+
+        Score formula (only when validation evidence exists)::
+
+            score = clamp(100 - 12*errorCount - 3*warningCount, 0, 100)
+                    optionally reduced by contamination/PII flags when present
+
+        Constituent measurements are always exposed; a missing validation run
+        yields ``measured=False`` and ``score=null`` (UI must show "—" / Niet gemeten).
+        """
+        versions = self.store.list_versions(dataset_id)
+        validation: dict[str, Any] = {}
+        version_id: str | None = None
+        for ver in versions:
+            payload = ver.validation if isinstance(ver.validation, dict) else {}
+            if payload:
+                validation = dict(payload)
+                version_id = ver.version_id
+                break
+        if not validation:
+            return {
+                "measured": False,
+                "score": None,
+                "label": "Niet gemeten",
+                "bars": None,
+                "versionId": None,
+                "constituents": {},
+                "truth": {
+                    "unknown_is_not_100": True,
+                    "decorative_bars_forbidden_without_evidence": True,
+                },
+            }
+
+        errors = int(validation.get("errorCount") or validation.get("error_count") or 0)
+        warnings = int(validation.get("warningCount") or validation.get("warning_count") or 0)
+        score = max(0, min(100, 100 - (12 * max(0, errors)) - (3 * max(0, warnings))))
+
+        # Optional evidence from metadata on the same version / dataset.
+        contamination_hits = 0
+        pii_hits = 0
+        duplicate_rate: float | None = None
+        ds = self.store.get_dataset(dataset_id)
+        meta_blobs: list[dict[str, Any]] = []
+        if ds and isinstance(ds.metadata, dict):
+            meta_blobs.append(ds.metadata)
+        for ver in versions[:5]:
+            if isinstance(ver.metadata, dict):
+                meta_blobs.append(ver.metadata)
+            if isinstance(ver.validation, dict) and ver.validation.get("duplicateRate") is not None:
+                try:
+                    duplicate_rate = float(ver.validation["duplicateRate"])
+                except (TypeError, ValueError):
+                    pass
+        for blob in meta_blobs:
+            cont = blob.get("contamination") if isinstance(blob.get("contamination"), dict) else {}
+            if cont:
+                contamination_hits = max(
+                    contamination_hits,
+                    int(cont.get("hitCount") or cont.get("matches") or 0),
+                )
+            pii = blob.get("pii") if isinstance(blob.get("pii"), dict) else {}
+            if pii:
+                pii_hits = max(pii_hits, int(pii.get("findingCount") or pii.get("count") or 0))
+
+        if contamination_hits > 0:
+            score = max(0, score - min(30, contamination_hits * 5))
+        if pii_hits > 0:
+            score = max(0, score - min(20, pii_hits * 2))
+        if duplicate_rate is not None and duplicate_rate > 0.05:
+            score = max(0, score - int(min(25, duplicate_rate * 100)))
+
+        # 5-bar indicator: each bar = 20 points.
+        bars = max(0, min(5, int(round(score / 20))))
+        return {
+            "measured": True,
+            "score": score,
+            "label": f"{score}%",
+            "bars": bars,
+            "versionId": version_id,
+            "constituents": {
+                "errorCount": errors,
+                "warningCount": warnings,
+                "contaminationHits": contamination_hits,
+                "piiFindings": pii_hits,
+                "duplicateRate": duplicate_rate,
+            },
+            "formula": "clamp(100 - 12*errors - 3*warnings - contamination/pii/dup penalties, 0, 100)",
+            "truth": {
+                "unknown_is_not_100": True,
+                "score_is_heuristic_not_absolute_truth": True,
+                "constituents_exposed": True,
+            },
+        }
+
+    def overview(self) -> dict[str, Any]:
+        """Bounded aggregate truth for Dataset Management KPIs and side panels."""
+        agg = self.store.overview_aggregates()
+        catalog = self.catalog_status()
+        catalog_healthy = bool(catalog.get("valid"))
+        catalog_doc = catalog.get("catalog") if isinstance(catalog.get("catalog"), dict) else {}
+        last_reconcile = (
+            catalog_doc.get("generatedAt")
+            or catalog_doc.get("updatedAt")
+            or catalog.get("updatedAt")
+            or catalog.get("generatedAt")
+            or catalog.get("lastReconciledAt")
+            or catalog.get("writtenAt")
+        )
+
+        # Disk capacity from corpus root filesystem (real measured denominator).
+        capacity_bytes: int | None = None
+        free_bytes: int | None = None
+        try:
+            usage = shutil.disk_usage(str(self.corpus.root))
+            capacity_bytes = int(usage.total)
+            free_bytes = int(usage.free)
+        except OSError:
+            capacity_bytes = None
+            free_bytes = None
+
+        known_bytes = int(agg.get("totalKnownBytes") or 0)
+        version_bytes = int(agg.get("versionBytes") or 0)
+        export_bytes = int(agg.get("exportBytes") or 0)
+        # Prefer version bytes as corpus attribution when available; else dataset byte_size.
+        datasets_bytes = version_bytes if version_bytes > 0 else known_bytes
+        # Indexes / cache / scratch are not fully attributed in DatasetStore —
+        # report only measurable categories and mark the rest UNMEASURED.
+        storage_breakdown = [
+            {
+                "id": "datasets",
+                "label": "Datasets",
+                "bytes": datasets_bytes,
+                "provenance": "MEASURED" if (agg.get("bytesMeasuredDatasets") or 0) > 0 else "UNMEASURED",
+            },
+            {
+                "id": "exports",
+                "label": "Exports",
+                "bytes": export_bytes,
+                "provenance": "MEASURED",
+            },
+            {
+                "id": "indexes",
+                "label": "Indexen",
+                "bytes": None,
+                "provenance": "UNMEASURED",
+            },
+            {
+                "id": "cache",
+                "label": "Cache",
+                "bytes": None,
+                "provenance": "UNMEASURED",
+            },
+        ]
+
+        used_pct: float | None = None
+        if capacity_bytes and capacity_bytes > 0 and known_bytes >= 0:
+            used_pct = round(100.0 * known_bytes / capacity_bytes, 2)
+
+        validation = dict(agg.get("validation") or {})
+        return {
+            "totalDatasets": agg["totalDatasets"],
+            "totalSamples": agg["totalSamples"],
+            "samplesMeasuredDatasets": agg["samplesMeasuredDatasets"],
+            "samplesUnmeasuredDatasets": agg["samplesUnmeasuredDatasets"],
+            "samplesMeasurementComplete": agg["samplesMeasurementComplete"],
+            "samplesMeasurementStatus": (
+                "COMPLETE"
+                if agg["samplesMeasurementComplete"]
+                else ("PARTIAL" if agg["samplesMeasuredDatasets"] > 0 else "UNMEASURED")
+            ),
+            "totalKnownBytes": known_bytes,
+            "bytesMeasuredDatasets": agg["bytesMeasuredDatasets"],
+            "bytesUnmeasuredDatasets": agg["bytesUnmeasuredDatasets"],
+            "storage": {
+                "usedBytes": known_bytes,
+                "capacityBytes": capacity_bytes,
+                "freeBytes": free_bytes,
+                "usedPercent": used_pct,
+                "breakdown": storage_breakdown,
+                "measurementStatus": (
+                    "PARTIAL"
+                    if agg["bytesUnmeasuredDatasets"] > 0
+                    else ("MEASURED" if known_bytes > 0 or agg["totalDatasets"] == 0 else "UNMEASURED")
+                ),
+                "truth": {
+                    "capacity_is_filesystem_disk_usage": capacity_bytes is not None,
+                    "used_is_sum_of_known_dataset_byte_size": True,
+                    "null_byte_size_is_not_zero": True,
+                    "scratch_not_reported_as_durable_dataset_storage": True,
+                },
+            },
+            "activeImports": agg["activeImports"],
+            "activeImportsRunning": agg["activeImportsRunning"],
+            "activeImportsQueued": agg["activeImportsQueued"],
+            "validationIssues": int(validation.get("validationIssues") or 0),
+            "criticalValidationIssues": int(validation.get("criticalIssues") or 0),
+            "validationWarnings": int(validation.get("totalWarnings") or 0),
+            "validationErrors": int(validation.get("totalErrors") or 0),
+            "datasetsWithValidation": int(validation.get("datasetsWithValidation") or 0),
+            "datasetsWithoutValidation": int(validation.get("datasetsWithoutValidation") or 0),
+            "catalogStatus": {
+                "label": "Gezond" if catalog_healthy else "Onbekend",
+                "state": "HEALTHY" if catalog_healthy else "UNMEASURED",
+                "lastReconcileAt": last_reconcile,
+                "entryCount": catalog_doc.get("entryCount"),
+                "detail": catalog,
+            },
+            "byStatus": agg["byStatus"],
+            "bySource": agg["bySource"],
+            "tagCounts": agg["tagCounts"],
+            "truth": {
+                "kpis_are_not_page_length": True,
+                "null_row_count_is_not_zero_samples": True,
+                "failed_jobs_are_not_validation_issues": True,
+                "catalog_status_is_not_page_refresh": True,
+                "no_hardcoded_screen1_metrics": True,
+            },
+        }
+
     def get_dataset(self, dataset_id: str) -> DatasetRecord:
         ds = self.store.get_dataset(dataset_id)
         if ds is None:
