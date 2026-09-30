@@ -297,6 +297,18 @@ class TaskSummary:
     completed_previous_period: int | None = None
     column_counts: dict[str, int] = field(default_factory=dict)
     timezone: str = "UTC"
+    # Taken V2 KPI projections (additive; derived from the same task scan).
+    total: int = 0
+    running: int = 0
+    waiting: int = 0
+    completed_last_7_days: int = 0
+    failed: int = 0
+    type_counts: dict[str, int] = field(default_factory=dict)
+    sparkline_total: list[int] = field(default_factory=list)
+    sparkline_running: list[int] = field(default_factory=list)
+    sparkline_waiting: list[int] = field(default_factory=list)
+    sparkline_completed: list[int] = field(default_factory=list)
+    sparkline_failed: list[int] = field(default_factory=list)
 
     def public_dict(self) -> dict[str, Any]:
         delta: str | None = None
@@ -317,6 +329,19 @@ class TaskSummary:
             "completedTodayDelta": delta,
             "columnCounts": dict(self.column_counts),
             "timezone": self.timezone,
+            "total": self.total,
+            "running": self.running,
+            "waiting": self.waiting,
+            "completedLast7Days": self.completed_last_7_days,
+            "failed": self.failed,
+            "typeCounts": dict(self.type_counts),
+            "sparklines": {
+                "total": list(self.sparkline_total),
+                "running": list(self.sparkline_running),
+                "waiting": list(self.sparkline_waiting),
+                "completed": list(self.sparkline_completed),
+                "failed": list(self.sparkline_failed),
+            },
         }
 
 

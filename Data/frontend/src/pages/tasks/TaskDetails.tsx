@@ -289,9 +289,9 @@ export function TaskDetails({
               <div className="lv-tasks-field-value">
                 <div className="lv-tasks-progress-row">
                   <div className="lv-tasks-progress-bar">
-                    <div className="lv-tasks-progress-fill" style={{ width: `${pct}%` }} />
+                    <div className="lv-tasks-progress-fill" style={{ width: `${pct ?? 0}%` }} />
                   </div>
-                  <span className="lv-tasks-progress-pct">{pct}%</span>
+                  <span className="lv-tasks-progress-pct">{pct == null ? "—" : `${pct}%`}</span>
                 </div>
               </div>
             </div>

@@ -592,6 +592,10 @@ export const api = {
     return request<{ jobs: JobRecord[] }>("/api/jobs");
   },
 
+  getJob(jobId: string): Promise<{ job: JobRecord }> {
+    return request<{ job: JobRecord }>(`/api/jobs/${encodeURIComponent(jobId)}`);
+  },
+
   releaseGates(): Promise<{ report: ReleaseGateReport }> {
     return request<{ report: ReleaseGateReport }>("/api/release/gates");
   },
@@ -3727,6 +3731,8 @@ export const api = {
     if (filters?.dueFrom) params.set("dueFrom", filters.dueFrom);
     if (filters?.dueTo) params.set("dueTo", filters.dueTo);
     if (filters?.project) params.set("project", filters.project);
+    if (filters?.taskType) params.set("taskType", filters.taskType);
+    if (filters?.operationalStatus) params.set("operationalStatus", filters.operationalStatus);
     if (filters?.archived != null) params.set("archived", String(filters.archived));
     if (filters?.datePreset) params.set("datePreset", filters.datePreset);
     if (filters?.timezone) params.set("timezone", filters.timezone);

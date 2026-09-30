@@ -217,21 +217,24 @@ export function ColumnIcon({ type }: { type: "clipboard" | "layers" | "shield" |
   }
 }
 
-export function ProgressRing({ value }: { value: number }) {
+export function ProgressRing({ value }: { value: number | null }) {
   const r = 7.2;
   const c = 2 * Math.PI * r;
-  const offset = c - (Math.max(0, Math.min(100, value)) / 100) * c;
+  const measured = value == null ? 0 : Math.max(0, Math.min(100, value));
+  const offset = value == null ? c : c - (measured / 100) * c;
   return (
-    <svg className="lv-tasks-ring" viewBox="0 0 20 20" aria-hidden="true">
+    <svg className={`lv-tasks-ring${value == null ? " is-unknown" : ""}`} viewBox="0 0 20 20" aria-hidden="true">
       <circle className="lv-tasks-ring-track" cx="10" cy="10" r={r} />
-      <circle
-        className={`lv-tasks-ring-value${value >= 100 ? " is-done" : ""}`}
-        cx="10"
-        cy="10"
-        r={r}
-        strokeDasharray={c}
-        strokeDashoffset={offset}
-      />
+      {value != null ? (
+        <circle
+          className={`lv-tasks-ring-value${measured >= 100 ? " is-done" : ""}`}
+          cx="10"
+          cy="10"
+          r={r}
+          strokeDasharray={c}
+          strokeDashoffset={offset}
+        />
+      ) : null}
     </svg>
   );
 }

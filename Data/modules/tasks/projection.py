@@ -162,3 +162,106 @@ def compute_display_progress(task: TaskRecord, *, subtask_completed: int = 0, su
     if task.progress is not None:
         return float(task.progress)
     return None
+
+
+# Domain labels exposed to the Taken UI. Derived — never a second type authority.
+_KNOWN_TASK_TYPES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("research", ("research", "onderzoek", "web.research", "web_research")),
+    ("trading", ("trading", "trade", "market", "marketsim", "paper")),
+    ("data", ("data", "dataset", "ingest", "etl", "parquet", "csv")),
+    ("training", ("training", "finetune", "fine-tune", "model.train", "train")),
+    ("analysis", ("analysis", "analyse", "analytics", "evaluate_market")),
+    ("system", ("system", "maintenance", "host", "backup", "runtime")),
+    ("browser", ("browser", "scrape", "playwright", "selenium")),
+    ("tool", ("tool", "capability", "function")),
+    ("development", ("development", "coding", "code", "dev", "patch")),
+    ("evaluation", ("evaluation", "eval", "benchmark", "qa")),
+    ("knowledge", ("knowledge", "memory", "brain", "rag", "document")),
+)
+
+_RUNNING_EXEC = frozenset({"RUNNING", "running", "starting", "cancelling", "CANCEL_REQUESTED"})
+_WAITING_EXEC = frozenset(
+    {
+        "CREATED",
+        "QUEUED",
+        "RETRY_WAIT",
+        "queued",
+        "created",
+        "retry_wait",
+        "cancel_requested",
+    }
+)
+_FAILED_EXEC = frozenset({"FAILED", "failed", "interrupted"})
+_DONE_EXEC = frozenset({"COMPLETED", "completed"})
+_CANCELLED_EXEC = frozenset({"CANCELLED", "cancelled"})
+
+
+def _haystack(task: TaskRecord) -> str:
+    parts = [
+        " ".join(task.tags or []),
+        task.project or "",
+        task.capability_id or "",
+        task.source_type.value if task.source_type else "",
+        task.execution_binding.value if task.execution_binding else "",
+        task.title or "",
+    ]
+    return " ".join(parts).lower()
+
+
+def derive_task_type(task: TaskRecord) -> str:
+    """Classify a task into a UI domain type from existing fields only."""
+    for tag in task.tags or []:
+        raw = str(tag or "").strip().lower()
+        if raw.startswith("type:"):
+            value = raw.split(":", 1)[1].strip()
+            if value:
+                return value
+        for type_id, keywords in _KNOWN_TASK_TYPES:
+            if raw == type_id or raw in keywords:
+                return type_id
+
+    hay = _haystack(task)
+    for type_id, keywords in _KNOWN_TASK_TYPES:
+        for kw in keywords:
+            if kw in hay:
+                return type_id
+
+    binding = task.execution_binding.value if task.execution_binding else "manual"
+    if binding == "capability_job":
+        return "tool"
+    if binding == "agent_mission":
+        return "system"
+    if binding == "workflow":
+        return "system"
+    if task.schedule_id or (task.source_type and task.source_type.value == "schedule"):
+        return "system"
+    if task.source_type and task.source_type.value == "cognition":
+        return "knowledge"
+    return "general"
+
+
+def derive_operational_status(task: TaskRecord) -> str:
+    """Map board + execution into Taken UI status: running|waiting|completed|failed|cancelled."""
+    state = (task.execution_state or "").strip()
+    if state in _FAILED_EXEC or (
+        task.blocked
+        and task.blocked_reason_code == BlockReasonCode.EXECUTION_FAILED.value
+    ):
+        return "failed"
+    if state in _CANCELLED_EXEC:
+        return "cancelled"
+    if state in _DONE_EXEC or task.board_column == BoardColumn.DONE or task.completed_at:
+        return "completed"
+    if state in _RUNNING_EXEC or task.board_column == BoardColumn.IN_PROGRESS:
+        return "running"
+    if state in _WAITING_EXEC or task.board_column in {BoardColumn.BACKLOG, BoardColumn.REVIEW} or task.blocked:
+        return "waiting"
+    return "waiting"
+
+
+def short_display_id(task_id: str) -> str:
+    """Presentation-only short id derived from the canonical UUID (not a second authority)."""
+    compact = (task_id or "").replace("-", "")
+    if len(compact) >= 4:
+        return compact[-4:].upper()
+    return (task_id or "?")[:4].upper()
