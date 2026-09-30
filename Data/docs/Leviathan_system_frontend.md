@@ -366,7 +366,27 @@ It operates on real CodingControlPlane sessions/actions. File/test claims must c
 
 Route `/tasks`; `src/pages/TasksPage.tsx`.
 
-The page projects TaskService/JobRuntime/workflow state. `/status` redirects here in current routing. `StatusPage.tsx` may remain in the source tree but does not own the active `/status` route.
+**Dashboard / Taken** is a V2 AppShell projection of TaskService + JobRuntime (not a second task runtime).
+
+Composition:
+
+- `hooks/useTasksWorkspace.ts` — bounded `/api/tasks*` polling (~5.5s, visibility-aware, no overlapping loads), filters, selection via `?task=`, stale/error flags, system telemetry for Resource Gebruik / sidebar meters;
+- `components/tasks/TasksHero.tsx` / `TasksMetrics.tsx` / `TasksOverviewTable.tsx` / `TasksDetailPanel.tsx` / `TasksBottomGrid.tsx`;
+- `pages/tasks/TaskCreateDialog.tsx` — canonical create path (`POST /api/tasks`);
+- styles under `.lv-v2-page--tasks` in `leviathan-v2.css` (no page-local Taken CSS import).
+
+Truth rules:
+
+- KPI totals/running/waiting/completedLast7Days/failed/typeCounts/sparklines come from `GET /api/tasks/summary`;
+- table rows are real `TaskRecord` enrichments (`taskType`, `operationalStatus`, `displayId`, `progressKnown`, `controls`);
+- progress unknown stays unknown (never silent `0%`);
+- Pauzeren is disabled — JobRuntime has no pause; Stop/cancel/duplicate/priority use TaskService;
+- Results tab reads linked `GET /api/jobs/{jobId}` when present; logs are bounded task events; config arguments are redacted server-side;
+- Resource meters use `useSystemTelemetry` (`UNAVAILABLE` when unmeasured).
+
+Navigation: MAIN_MENU Dashboard child **Taken** → `/tasks`. `/status` redirects here. Kanban helpers under `pages/tasks/TaskBoard.tsx` remain in-tree but are not the active Taken surface.
+
+Reference: `Data/docs/ui_reference/taken-v2-reference.png` (design authority; not production data).
 
 ---
 

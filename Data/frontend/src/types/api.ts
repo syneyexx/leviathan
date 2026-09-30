@@ -4251,6 +4251,18 @@ export type TaskRecord = {
   completedAt?: string | null;
   progress?: number | null;
   displayProgress?: number | null;
+  progressKnown?: boolean;
+  taskType?: string;
+  operationalStatus?: string;
+  displayId?: string;
+  controls?: {
+    canPause?: boolean;
+    pauseReason?: string | null;
+    canCancel?: boolean;
+    canRetry?: boolean;
+    canDuplicate?: boolean;
+    canChangePriority?: boolean;
+  };
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
@@ -4292,6 +4304,19 @@ export type TaskSummary = {
   completedTodayDelta?: string | null;
   columnCounts: Record<string, number>;
   timezone: string;
+  total?: number;
+  running?: number;
+  waiting?: number;
+  completedLast7Days?: number;
+  failed?: number;
+  typeCounts?: Record<string, number>;
+  sparklines?: {
+    total?: number[];
+    running?: number[];
+    waiting?: number[];
+    completed?: number[];
+    failed?: number[];
+  };
 };
 
 export type TaskEvent = {
@@ -4460,6 +4485,8 @@ export type TaskListFilters = {
   dueFrom?: string;
   dueTo?: string;
   project?: string;
+  taskType?: string;
+  operationalStatus?: string;
   archived?: boolean;
   datePreset?: string;
   timezone?: string;

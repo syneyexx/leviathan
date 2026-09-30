@@ -1,6 +1,12 @@
 """Tasks planning / Mission Control domain."""
 
 from .planner import TaskPlannerAdapter
+from .projection import (
+    compute_display_progress,
+    derive_operational_status,
+    derive_task_type,
+    short_display_id,
+)
 from .service import TaskService
 from .store import TaskStore, utc_now
 from .types import (
@@ -44,5 +50,9 @@ __all__ = [
     "TaskSummary",
     "TaskTimelineItem",
     "TaskWorkloadEntry",
+    "compute_display_progress",
+    "derive_operational_status",
+    "derive_task_type",
+    "short_display_id",
     "utc_now",
 ]

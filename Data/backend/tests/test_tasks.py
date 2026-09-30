@@ -259,6 +259,46 @@ class TaskSummaryTests(unittest.TestCase):
         self.assertGreaterEqual(summary.blocked, 1)
         self.assertGreaterEqual(summary.overdue, 1)
         self.assertGreaterEqual(summary.completed_today, 1)
+        self.assertGreaterEqual(summary.total, 5)
+        self.assertGreaterEqual(summary.running, 1)
+        self.assertGreaterEqual(summary.waiting, 1)
+        self.assertGreaterEqual(summary.completed_last_7_days, 1)
+        self.assertIn("general", summary.type_counts)
+        self.assertEqual(len(summary.sparkline_total), 7)
+        payload = summary.public_dict()
+        self.assertIn("sparklines", payload)
+        self.assertEqual(payload["total"], summary.total)
+
+    def test_type_filter_and_enrichment(self) -> None:
+        research = self.service.create(title="Market research", tags=["research"])
+        trading = self.service.create(title="Trade signal", tags=["trading"])
+        listed = self.service.list(task_type="research")
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(listed[0].task_id, research.task_id)
+        enriched = self.service.enrich_task(research)
+        self.assertEqual(enriched["taskType"], "research")
+        self.assertEqual(enriched["operationalStatus"], "waiting")
+        self.assertTrue(enriched["displayId"])
+        self.assertFalse(enriched["controls"]["canPause"])
+        trading_enriched = self.service.enrich_task(trading)
+        self.assertEqual(trading_enriched["taskType"], "trading")
+
+    def test_capability_arguments_redacted(self) -> None:
+        t = self.service.create(
+            title="Secret task",
+            capability_id="artifact.create_text",
+            capability_arguments={"api_key": "sk-abcdefghijklmnopqrstuvwxyz", "note": "ok"},
+            execution_binding="capability_job",
+        )
+        # create may reject without gateway — fall back to update metadata path via store
+        record = self.service.get(t.task_id, sync=False)
+        record.capability_arguments = {"api_key": "sk-abcdefghijklmnopqrstuvwxyz", "note": "ok"}
+        self.service.store.update_task(record)
+        enriched = self.service.enrich_task(self.service.get(t.task_id, sync=False))
+        args = enriched["capabilityArguments"]
+        dumped = str(args)
+        self.assertNotIn("sk-abcdefghijklmnopqrstuvwxyz", dumped)
+        self.assertIn("note", args)
 
 
 class TaskAutoPlanTests(unittest.TestCase):

@@ -133,6 +133,15 @@ Media Control, Plugin & Runtime, Coding Agent, and other deep links remain regis
 - No page-local Training CSS file; layout lives in `leviathan-v2.css` under `.lv-v2-page--training` / `.lv-v2-training-*`.
 - Visual fixture: `src/mocks/trainingV2VisualFixture.ts` + `e2e/helpers/trainingV2Visual.ts` + `e2e/training-v2.visual.spec.ts` (reference: `docs/ui_reference/training-v2-reference.png`). Production never imports the fixture as defaults.
 
+## Taken migration
+
+- `/tasks` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "Dashboard / Taken").
+- **MAIN_MENU owns Taken under Dashboard** (`/` + `/chat` + `/tasks`). V2 rail expands Dashboard with Taken selected on `/tasks`.
+- Composition: `TasksPage` + `useTasksWorkspace` + `src/components/tasks/*` (hero, metrics, overview table, detail panel, bottom telemetry grid) + preserved `TaskCreateDialog`.
+- No page-local Taken CSS import; layout lives in `leviathan-v2.css` under `.lv-v2-page--tasks` / `.lv-v2-tasks-*`. Legacy `tasks-reference.css` is unused by the production page.
+- Production never ships screenshot mock rows; KPIs/table/activity/resources come from TaskService + system telemetry. Unknown progress/resources stay unknown/`UNAVAILABLE`.
+- Reference: `docs/ui_reference/taken-v2-reference.png`.
+
 ## Memory / Geheugen migration
 
 - `/memory` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "Onderzoek & Kennis / Geheugen").

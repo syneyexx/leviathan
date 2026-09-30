@@ -155,12 +155,12 @@ export function TaskCreateDialog({
         className="lv-tasks-modal"
         role="dialog"
         aria-modal="true"
-        aria-label="New Task"
+        aria-label="Nieuwe Taak"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="lv-tasks-modal-head">
-          <h2>New Task</h2>
-          <button type="button" className="lv-tasks-icon-btn" aria-label="Close" disabled={disabled} onClick={onClose}>
+          <h2>Nieuwe Taak</h2>
+          <button type="button" className="lv-tasks-icon-btn" aria-label="Sluiten" disabled={disabled} onClick={onClose}>
             <IconClose />
           </button>
         </header>
@@ -336,10 +336,10 @@ export function TaskCreateDialog({
         </div>
         <footer className="lv-tasks-modal-foot">
           <button type="button" className="lv-tasks-btn lv-tasks-btn--outline" disabled={disabled} onClick={onClose}>
-            Cancel
+            Annuleren
           </button>
           <button type="button" className="lv-tasks-btn lv-tasks-btn--gold" disabled={disabled} onClick={() => void submit()}>
-            {busy ? "Creating…" : "Create Task"}
+            {busy ? "Aanmaken…" : "Taak aanmaken"}
           </button>
         </footer>
       </div>

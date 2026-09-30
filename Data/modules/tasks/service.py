@@ -13,6 +13,9 @@ from .projection import (
     apply_mission_projection,
     apply_workflow_projection,
     compute_display_progress,
+    derive_operational_status,
+    derive_task_type,
+    short_display_id,
 )
 from .store import TaskStore, utc_now
 from .types import (
@@ -233,6 +236,8 @@ class TaskService:
         due_from: str | None = None,
         due_to: str | None = None,
         project: str | None = None,
+        task_type: str | None = None,
+        operational_status: str | None = None,
         archived: bool = False,
         date_preset: str | None = None,
         timezone_name: str | None = None,
@@ -247,6 +252,12 @@ class TaskService:
         if priority:
             _parse_enum(TaskPriority, priority, field_name="priority")
 
+        # When derived filters are active, over-fetch then filter/slice so type/status
+        # semantics stay projection-owned (no parallel type column).
+        derived = bool(task_type) or bool(operational_status)
+        fetch_limit = 1000 if derived else limit
+        fetch_offset = 0 if derived else offset
+
         tasks = self.store.list_tasks(
             search=search,
             board_column=board_column,
@@ -259,8 +270,8 @@ class TaskService:
             due_to=due_to,
             project=project,
             archived=archived,
-            limit=limit,
-            offset=offset,
+            limit=fetch_limit,
+            offset=fetch_offset,
         )
         if sync:
             synced: list[TaskRecord] = []
@@ -270,6 +281,15 @@ class TaskService:
                 except TaskError:
                     synced.append(t)
             tasks = [self.recompute_blocking(t.task_id) for t in synced]
+
+        if task_type:
+            wanted = task_type.strip().lower()
+            tasks = [t for t in tasks if derive_task_type(t) == wanted]
+        if operational_status:
+            wanted_status = operational_status.strip().lower()
+            tasks = [t for t in tasks if derive_operational_status(t) == wanted_status]
+        if derived:
+            tasks = tasks[max(0, offset) : max(0, offset) + max(1, min(int(limit), 1000))]
         return tasks
 
     def update(
@@ -1093,6 +1113,8 @@ class TaskService:
         today_start, today_end = _day_bounds(tz)
         yday = datetime.now(timezone.utc).astimezone(tz) - timedelta(days=1)
         y_start, y_end = _day_bounds(tz, day=yday)
+        week_start_local = datetime.now(timezone.utc).astimezone(tz) - timedelta(days=6)
+        week_start, _ = _day_bounds(tz, day=week_start_local)
         now = utc_now()
 
         tasks = self.store.list_all_active(limit=5000)
@@ -1110,8 +1132,13 @@ class TaskService:
         blocked = 0
         completed_today = 0
         completed_yesterday = 0
+        completed_last_7 = 0
         overdue = 0
         agent_ids: set[str] = set()
+        running = 0
+        waiting = 0
+        failed = 0
+        type_counts: dict[str, int] = {}
 
         def _completed_stamp(t: TaskRecord) -> str | None:
             if t.completed_at:
@@ -1138,6 +1165,17 @@ class TaskService:
             if t.assignee_type == AssigneeType.AGENT and t.assignee_id and t.board_column != BoardColumn.DONE:
                 agent_ids.add(t.assignee_id)
 
+            status = derive_operational_status(t)
+            if status == "running":
+                running += 1
+            elif status == "waiting":
+                waiting += 1
+            elif status == "failed":
+                failed += 1
+
+            ttype = derive_task_type(t)
+            type_counts[ttype] = type_counts.get(ttype, 0) + 1
+
         for t in list(tasks) + list(archived):
             stamp = _completed_stamp(t)
             if not stamp:
@@ -1146,6 +1184,10 @@ class TaskService:
                 completed_today += 1
             if y_start <= stamp < y_end:
                 completed_yesterday += 1
+            if week_start <= stamp:
+                completed_last_7 += 1
+
+        sparklines = self._sparkline_buckets(timezone_name=timezone_name, days=7)
 
         return TaskSummary(
             active=active,
@@ -1157,7 +1199,61 @@ class TaskService:
             completed_previous_period=completed_yesterday,
             column_counts=column_counts,
             timezone=str(tz),
+            total=len(tasks),
+            running=running,
+            waiting=waiting,
+            completed_last_7_days=completed_last_7,
+            failed=failed,
+            type_counts=type_counts,
+            sparkline_total=sparklines["total"],
+            sparkline_running=sparklines["running"],
+            sparkline_waiting=sparklines["waiting"],
+            sparkline_completed=sparklines["completed"],
+            sparkline_failed=sparklines["failed"],
         )
+
+    def _sparkline_buckets(self, *, timezone_name: str | None, days: int = 7) -> dict[str, list[int]]:
+        """Bucket task events into local-day series for KPI sparklines (no new persistence)."""
+        tz = _zone(timezone_name)
+        days = max(1, min(int(days), 31))
+        now_local = datetime.now(timezone.utc).astimezone(tz)
+        start_local = (now_local - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        since = start_local.astimezone(timezone.utc).isoformat(timespec="seconds")
+
+        totals = [0] * days
+        running = [0] * days
+        waiting = [0] * days
+        completed = [0] * days
+        failed = [0] * days
+
+        events = self.store.list_events(since=since, limit=500)
+        for ev in events:
+            try:
+                created = datetime.fromisoformat(ev.created_at.replace("Z", "+00:00"))
+            except Exception:  # noqa: BLE001
+                continue
+            local = created.astimezone(tz)
+            idx = (local.date() - start_local.date()).days
+            if idx < 0 or idx >= days:
+                continue
+            totals[idx] += 1
+            et = (ev.event_type or "").lower()
+            if "fail" in et or "block" in et:
+                failed[idx] += 1
+            elif "complete" in et:
+                completed[idx] += 1
+            elif "start" in et:
+                running[idx] += 1
+            elif "creat" in et or "assign" in et or "moved" in et:
+                waiting[idx] += 1
+
+        return {
+            "total": totals,
+            "running": running,
+            "waiting": waiting,
+            "completed": completed,
+            "failed": failed,
+        }
 
     def activity(self, *, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
         events = self.store.list_events(limit=limit, offset=offset)
@@ -1353,13 +1449,32 @@ class TaskService:
         return out[: max(1, min(limit, 100))]
 
     def enrich_task(self, task: TaskRecord) -> dict[str, Any]:
+        from Data.modules.observability.redaction import redact_payload
+
         subs = self.store.list_subtasks(task.task_id)
         done = sum(1 for s in subs if s.completed)
         progress = compute_display_progress(task, subtask_completed=done, subtask_total=len(subs))
         payload = task.public_dict()
         payload["displayProgress"] = progress
+        payload["progressKnown"] = progress is not None
         payload["subtaskCount"] = len(subs)
         payload["subtaskCompleted"] = done
+        payload["taskType"] = derive_task_type(task)
+        payload["operationalStatus"] = derive_operational_status(task)
+        payload["displayId"] = short_display_id(task.task_id)
+        payload["capabilityArguments"] = redact_payload(dict(task.capability_arguments or {}))
+        payload["metadata"] = redact_payload(dict(task.metadata or {}))
+        # Pause is not a JobRuntime capability — surface honestly for UI gating.
+        payload["controls"] = {
+            "canPause": False,
+            "pauseReason": "JobRuntime ondersteunt geen pauze",
+            "canCancel": bool(task.job_id or task.mission_id or task.workflow_id)
+            and derive_operational_status(task) in {"running", "waiting"},
+            "canRetry": derive_operational_status(task) in {"failed", "cancelled"}
+            and task.execution_binding != ExecutionBinding.MANUAL,
+            "canDuplicate": True,
+            "canChangePriority": task.archived_at is None and derive_operational_status(task) != "completed",
+        }
         blockers = self._unresolved_hard_dependencies(task.task_id)
         payload["blockingDependencies"] = [
             {"taskId": b.task_id, "title": b.title, "boardColumn": b.board_column.value, "executionState": b.execution_state}
