@@ -188,6 +188,16 @@ Media Control, Plugin & Runtime, Coding Agent, and other deep links remain regis
 - Backend authority: WorkflowStore definitions/versions/executions + WorkflowRuntime + JobRuntime `workflow` pool + ScheduleRunner + ExecutionGateway. Active/Inactive is definition status, not latest execution state.
 - Visual fixture: `src/mocks/workflowsV2VisualFixture.ts` + `e2e/helpers/workflowsV2Visual.ts` + `e2e/workflows-v2.visual.spec.ts` (reference: `docs/ui_reference/workflows-v2-reference.png`, 1664×936). Production never imports fixture defaults.
 
+## Analytics / Statistieken migration
+
+- `/analytics` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "LLM / Statistieken").
+- **MAIN_MENU owns Statistieken under LLM** (label corrected from typo `Statestieken`). On `/analytics` LM auto-expands with Statistieken selected.
+- Composition: `AnalyticsPage` + `useAnalyticsWorkspace` + `src/components/analytics/*` (hero, six KPIs, growth/activity charts, donut distributions, rankings, resources/processing/activity).
+- Reuses `.lv-an-*` in `analytics.css`; page shell/hero under `.lv-v2-page--analytics` in `leviathan-v2.css`.
+- Backend: extended `AnalyticsService` multi-DB read model (`GET /api/analytics/dashboard`). Legacy analytics routes remain. No analytics database. Knowledge/Dataset/Research/Agent/Job/telemetry remain canonical owners.
+- Search focuses dashboard panels (Ctrl+K). Refresh is bounded/non-overlapping; partial/stale/UNMEASURED stay honest.
+- Visual fixture: `src/mocks/analyticsV2VisualFixture.ts` + `e2e/helpers/analyticsV2Visual.ts` + `e2e/analytics-v2.visual.spec.ts` (reference: `docs/ui_reference/analytics-v2-reference.png`, 1664×936). Production never imports fixture defaults.
+
 ## Dataset Management migration
 
 - `/dataset-management` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "LLM / Dataset Management").

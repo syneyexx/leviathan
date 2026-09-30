@@ -22,6 +22,7 @@ import type {
   WorkerFabricPool,
   WorkerFabricWorker,
   AnalyticsAgentsResponse,
+  AnalyticsDashboard,
   AnalyticsDatasetsResponse,
   AnalyticsOverview,
   AnalyticsToolsResponse,
@@ -4108,6 +4109,22 @@ export const api = {
 
   analyticsTools(rangeKey = "7d"): Promise<{ tools: AnalyticsToolsResponse }> {
     return request(`/api/analytics/tools?rangeKey=${encodeURIComponent(rangeKey)}`);
+  },
+
+  analyticsDashboard(opts?: {
+    chartRange?: string;
+    rankingRange?: string;
+    activityLimit?: number;
+  }): Promise<{ dashboard: AnalyticsDashboard }> {
+    const chartRange = opts?.chartRange ?? "30d";
+    const rankingRange = opts?.rankingRange ?? "7d";
+    const activityLimit = opts?.activityLimit ?? 10;
+    const q = new URLSearchParams({
+      chartRange,
+      rankingRange,
+      activityLimit: String(activityLimit),
+    });
+    return request(`/api/analytics/dashboard?${q.toString()}`);
   },
 
   /* ---------- Tasks / Taken ---------- */

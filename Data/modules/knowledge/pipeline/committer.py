@@ -199,14 +199,26 @@ class KnowledgeCommitter:
                         receipt.dedupe_skips.append(str(existing_id))
                         receipt.updated_documents.append(str(existing_id))
                     elif hasattr(self.knowledge, "upsert_document"):
+                        prov = dict(artifact.provenance or {})
+                        # Surface agent attribution for Statistieken Top Agents.
+                        agent_id = (
+                            prov.get("agent_id")
+                            or prov.get("agentId")
+                            or prov.get("source_actor")
+                            or prov.get("sourceActor")
+                        )
+                        if agent_id and "agent_id" not in prov:
+                            prov["agent_id"] = str(agent_id)
                         doc_id = self.knowledge.upsert_document(
                             title=artifact.title,
                             content=artifact.content_inline,
                             source=artifact.source_ref or artifact.producer,
-                            metadata={
+                            trust_metadata={
                                 "artifact_id": artifact.artifact_id,
-                                "provenance": artifact.provenance,
+                                "provenance": prov,
+                                "tags": list(getattr(artifact, "tags", None) or []),
                             },
+                            provenance=prov,
                         )
                         receipt.created_documents.append(str(doc_id))
                     elif hasattr(self.knowledge, "add_document"):

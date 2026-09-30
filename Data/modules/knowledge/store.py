@@ -591,12 +591,21 @@ class KnowledgeStore:
         source_type: str = "document",
         confidence: float = 1.0,
         uncertainty_notes: str = "",
+        provenance: dict[str, Any] | None = None,
     ) -> DocumentRecord:
         """Ingest text atomically: INDEXING → chunks → READY, or FAILED."""
         document_id = document_id or str(uuid.uuid4())
         now = utc_now()
         digest = content_sha256(content)
-        trust = trust_metadata or {"trust": "manual"}
+        trust = dict(trust_metadata or {"trust": "manual"})
+        base_provenance = dict(provenance or {})
+        # Preserve agent attribution for analytics Top Agents when provided.
+        if "provenance" in trust and isinstance(trust.get("provenance"), dict):
+            merged = {**dict(trust["provenance"]), **base_provenance}
+            base_provenance = merged
+            trust = {**trust, "provenance": merged}
+        elif base_provenance:
+            trust = {**trust, "provenance": base_provenance}
 
         with self.connect() as conn:
             self._ensure_schema(conn)
@@ -661,6 +670,7 @@ class KnowledgeStore:
                     source_type=source_type,
                     confidence=confidence,
                     uncertainty_notes=uncertainty_notes,
+                    provenance=base_provenance,
                     # Compat for fused research/dataset/test callers. Production
                     # knowledge_prepare + apply_replace_chunks never embed here.
                     include_embeddings=self.embedding_provider.available(),
@@ -702,6 +712,7 @@ class KnowledgeStore:
         source_type: str = "document",
         confidence: float = 1.0,
         uncertainty_notes: str = "",
+        provenance: dict[str, Any] | None = None,
         include_embeddings: bool = False,
         prepared_chunks: list[dict[str, Any]] | None = None,
     ) -> list[ChunkRecord]:
@@ -711,6 +722,7 @@ class KnowledgeStore:
         ``knowledge.upsert_chunk_embeddings``. ``include_embeddings=True`` remains
         only for explicit legacy/test callers and must never run in FastAPI.
         """
+        base_provenance = dict(provenance or {})
         conn.execute("DELETE FROM knowledge_chunks WHERE document_id = ?", (document_id,))
         try:
             conn.execute("DELETE FROM knowledge_chunk_fts WHERE document_id = ?", (document_id,))
@@ -760,7 +772,7 @@ class KnowledgeStore:
             conf = float(item.get("confidence") if item.get("confidence") is not None else confidence)
             notes = str(item.get("uncertainty_notes") or uncertainty_notes)
             stype = str(item.get("source_type") or source_type)
-            provenance = dict(item.get("provenance") or {})
+            provenance = {**base_provenance, **dict(item.get("provenance") or {})}
             metadata = dict(item.get("metadata") or {"title": title})
             conn.execute(
                 """

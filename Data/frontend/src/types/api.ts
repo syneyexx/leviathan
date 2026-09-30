@@ -4546,6 +4546,172 @@ export type AnalyticsToolsResponse = {
   truth?: Record<string, boolean>;
 };
 
+/** GET /api/analytics/dashboard — Statistieken V2 control-plane projection. */
+export type AnalyticsKpiMetric = {
+  value: number | null;
+  measured: boolean;
+  deltaPercent: number | null;
+  deltaDirection: "improved" | "regressed" | "flat" | null;
+  lowerIsBetter?: boolean;
+  previousValue?: number | null;
+  spark: number[];
+  status: "OK" | "UNMEASURED" | "ERROR" | "EMPTY" | string;
+};
+
+export type AnalyticsDistributionSegment = {
+  key: string;
+  label: string;
+  count: number;
+  percent: number;
+};
+
+export type AnalyticsDashboard = {
+  collectedAt: string;
+  chartRange: string;
+  rankingRange: string;
+  activityLimit: number;
+  kpis: {
+    knowledgeItems: AnalyticsKpiMetric;
+    datasets: AnalyticsKpiMetric;
+    documents: AnalyticsKpiMetric;
+    researchJobs: AnalyticsKpiMetric;
+    avgProcessingSeconds: AnalyticsKpiMetric;
+    systemUsagePercent: AnalyticsKpiMetric;
+  };
+  knowledgeGrowth: {
+    range: string;
+    from?: string;
+    to?: string;
+    points: Array<{ t: string; value: number | null; known?: boolean }>;
+    subtitle?: string;
+    baseline?: number;
+    error?: string;
+  };
+  datasetGrowth: {
+    range: string;
+    from?: string;
+    to?: string;
+    points: Array<{ t: string; count: number | null; sizeGb: number | null; known?: boolean }>;
+    sizeSemantics?: string;
+    coverage?: {
+      measuredCount: number;
+      unknownCount: number;
+      totalCount: number;
+      coveragePercent: number | null;
+    };
+    subtitle?: string;
+    error?: string;
+  };
+  researchActivity: {
+    range: string;
+    from?: string;
+    to?: string;
+    series: Array<{
+      key: string;
+      label: string;
+      points: Array<{ t: string; value: number }>;
+    }>;
+    otherCount?: number;
+    error?: string;
+  };
+  distributions: {
+    itemTypes?: { total: number; segments: AnalyticsDistributionSegment[] };
+    datasetTypes?: { total: number; segments: AnalyticsDistributionSegment[] };
+    sources?: {
+      total: number;
+      segments: AnalyticsDistributionSegment[];
+      truth?: Record<string, boolean>;
+    };
+    error?: string;
+  };
+  rankings: {
+    range: string;
+    from?: string;
+    to?: string;
+    topAgents: Array<{
+      rank: number;
+      agentId: string;
+      name: string;
+      items: number;
+      sizeGb: number | null;
+      sizeStatus: string;
+      successRatePercent: number | null;
+      successStatus: string;
+    }>;
+    topSources: Array<{
+      rank: number;
+      key: string;
+      name: string;
+      items: number;
+      sizeGb: number | null;
+      sizeStatus: string;
+      percent: number;
+    }>;
+    popularTags: Array<{
+      rank: number;
+      tag: string;
+      count: number;
+      trendPercent: number | null;
+    }>;
+    error?: string;
+  };
+  processing: {
+    range: string;
+    from?: string;
+    to?: string;
+    tasks: Array<{
+      key: string;
+      label: string;
+      avgSeconds: number | null;
+      minSeconds: number | null;
+      maxSeconds: number | null;
+      count: number;
+      status: string;
+    }>;
+    durationRule?: string;
+    excludesNonTerminal?: boolean;
+    error?: string;
+  };
+  activity: {
+    limit: number;
+    items: Array<{
+      t: string;
+      kind: string;
+      event: string;
+      details: string;
+    }>;
+    error?: string;
+  };
+  resources: {
+    collectedAt?: string | null;
+    cpu: { pct: number | null; status: string };
+    ram: {
+      pct: number | null;
+      usedBytes: number | null;
+      totalBytes: number | null;
+      status: string;
+    };
+    gpu: {
+      pct: number | null;
+      status: string;
+      devices: Array<Record<string, unknown>>;
+      aggregate?: string;
+    };
+    disk: {
+      pct: number | null;
+      usedBytes: number | null;
+      totalBytes: number | null;
+      status: string;
+      metric?: string | null;
+    };
+    truth?: Record<string, boolean>;
+  };
+  sourceStatus: Record<string, string>;
+  partial: boolean;
+  metricDefs?: Record<string, unknown>;
+  truth?: Record<string, boolean>;
+};
+
 /* ---------- Tasks / Taken ---------- */
 
 export type TaskBoardColumn = "backlog" | "in_progress" | "review" | "done";

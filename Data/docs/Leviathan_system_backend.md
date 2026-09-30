@@ -1649,7 +1649,13 @@ Rules:
 - `Data/modules/observability/` — event hub, operator registry, telemetry/event stream;
 - `Data/modules/observations/` — durable observations;
 - `Data/modules/metrics/` — metric/time-series collection;
-- `Data/modules/analytics/` — analytics service;
+- `Data/modules/analytics/` — analytics **read model** (`AnalyticsService` + `dashboard.py` + `contracts.py`);
+  - Owns bounded aggregates for LLM / Statistieken (`GET /api/analytics/dashboard`);
+  - Reads CONTROL (jobs, research_runs, agent_*, observability_events) and KNOWLEDGE (knowledge_documents, datasets) — no analytics DB;
+  - Metric contracts: knowledge items = `knowledge_documents`; documents = item-type class `document`; datasets = `datasets` inventory; research = `research_runs`; avg processing = `finished_at - started_at` for terminal processing capabilities; system usage = resource-pressure % from measured telemetry components (UNMEASURED when none);
+  - Trends: current window vs previous equal window; insufficient previous history → null (`—`); never fabricate history;
+  - Coverage metadata for unmeasured sizes/provenance; unknown ≠ zero; unknown provenance ≠ Manual;
+  - Legacy routes `/api/analytics/{overview,agents,training,datasets,tools}` remain compatible;
 - `Data/modules/host_console/` + `Data/backend/routes/host_console.py` — read-only host projections;
 - `Data/modules/backup/` — database backup/restore with maintenance/recovery fencing;
 - `Data/modules/chaos/` — controlled fault injection;

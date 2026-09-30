@@ -46,7 +46,7 @@ describe("navigation menu", () => {
       "Training",
       "Dataset Manager",
       "Offline Datasets",
-      "Statestieken",
+      "Statistieken",
     ]);
   });
 
