@@ -329,20 +329,21 @@ The page must distinguish registry presence, provider availability, active routi
 
 # 11. Agents and Worker Fabric UI
 
-Route: `/agents`; primary file `src/pages/AgentsPage.tsx`.
+Route: `/agents`; primary file `src/pages/AgentsPage.tsx` (V2 shell).
 
-Supporting code under `src/pages/agents/` includes trading sections/helpers plus the Worker Fabric monitor. `agentsPageContracts.test.ts` protects important source/API contracts.
+`/agents` is owned by **LLM → Agents** in MAIN_MENU / V2 LM group (no standalone top-level Agents rail owner). Workspace orchestration lives in `src/hooks/useAgentsWorkspace.ts`; Screen 1 panels under `src/components/agents/`. Supporting modals/helpers remain under `src/pages/agents/` (editor, launch mission, Worker Fabric, Signal Fabric, trade orchestra). `agentsPageContracts.test.ts` protects important source/API contracts. Visual fixture: `src/mocks/agentsV2VisualFixture.ts` + `e2e/agents-v2.visual.spec.ts`.
 
 The page combines **agent identity** and **execution infrastructure** without confusing them:
 
 - Agent Fleet cards come from backend agent/system inventory.
 - Trading agents are ordinary Fleet-backed roles.
-- Worker Fabric monitor reads `GET /api/workers/dashboard`.
-- “Active Workers” is based on worker processes/READY state, not agent count.
+- Worker Fabric monitor reads `GET /api/workers/dashboard` (advanced drawer + architecture pools).
+- “Active Agents” is fleet health (enabled + known state); Active Workers remain a separate worker-registry concept.
 - STARTING worker is not healthy READY.
-- Native compute status is backend-probed, not mocked.
+- Model assignment uses `modelRef` → Model Control Plane; GPU/VRAM tuning stays on `/models`.
+- Native compute status is backend-probed, not mocked; unmeasured tool-call KPIs read UNMEASURED.
 
-Primary worker panel: `WorkerPoolsPanel` within the Agents supporting component tree.
+Primary worker panel: `WorkerPoolsPanel` within the Agents supporting component tree (advanced surfaces).
 
 ---
 

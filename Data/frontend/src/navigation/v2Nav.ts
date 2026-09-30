@@ -76,13 +76,13 @@ const RESEARCH_CHILDREN = v2ChildrenFromMainMenu("research");
  * first-class thin V2 pages over real backend capabilities.
  *
  * MAIN_MENU places Agents under LLM. Hades → Agents still deep-links to
- * `/agents`, but LM owns active highlighting / auto-expand for that route
- * so Hades does not stay falsely active after navigation.
+ * `/agents`, but intentionally has no `match` so it never steals active
+ * highlighting from LM → Agents.
  */
 const HADES_CHILDREN: readonly V2NavChild[] = [
   { id: "chat", label: "Chat", to: "/chat", match: ["/chat"] },
   { id: "reasoning", label: "Reasoning", to: "/cognition", match: ["/cognition"] },
-  { id: "hades-agents", label: "Agents", to: "/agents", match: ["/agents"] },
+  { id: "hades-agents", label: "Agents", to: "/agents", match: [] },
   { id: "bibliotheek", label: "Bibliotheek", to: "/knowledge", match: ["/knowledge"] },
   { id: "prompts", label: "Prompts", to: "/prompts", match: ["/prompts"] },
   { id: "evaluations", label: "Evaluations", to: "/evaluations", match: ["/evaluations"] },

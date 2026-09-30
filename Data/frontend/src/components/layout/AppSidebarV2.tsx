@@ -150,13 +150,17 @@ function NavGroup({ item, pathname }: { item: V2NavItem; pathname: string }) {
       </button>
       <div className="lv-v2-nav-children" role="group" aria-label={`${item.label} submenu`}>
         {item.children.map((child) => {
-          const childActive = activeChild?.id === child.id;
+          // Only the owning group highlights its active child — deep-link
+          // children in non-owner groups (e.g. Hades → Agents) must not stay
+          // visually active when another group owns the route.
+          const childActive = groupActive && activeChild?.id === child.id;
           return (
             <NavLink
               key={child.id}
               to={child.to}
               end={child.to === "/"}
               className={() => `lv-v2-nav-child${childActive ? " is-active" : ""}`}
+              aria-current={childActive ? "page" : undefined}
             >
               {child.label}
             </NavLink>

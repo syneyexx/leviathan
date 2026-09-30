@@ -5192,13 +5192,13 @@
    ========================================================================== */
 
 .lv-v2-page--agents {
-  gap: 10px;
-  padding-bottom: 12px;
+  gap: 8px;
+  padding-bottom: 8px;
 }
 
 .lv-v2-hero--agents {
-  min-height: 132px;
-  max-height: 152px;
+  min-height: 118px;
+  max-height: 132px;
   grid-template-columns: minmax(0, 1.45fr) minmax(200px, 0.7fr);
 }
 
@@ -5308,7 +5308,7 @@
 
 .lv-v2-table-wrap {
   overflow: auto;
-  max-height: 280px;
+  max-height: 240px;
   border: 1px solid rgba(148, 163, 184, 0.12);
   border-radius: 8px;
 }
@@ -5356,8 +5356,8 @@
 .lv-v2-agents-main {
   display: grid;
   grid-template-columns: minmax(260px, 0.95fr) minmax(320px, 1.25fr) minmax(280px, 1fr);
-  gap: 10px;
-  min-height: 320px;
+  gap: 8px;
+  min-height: 300px;
 }
 
 .lv-v2-agents-lower {
@@ -5578,7 +5578,7 @@
 }
 
 .lv-v2-agents-inspector__body {
-  max-height: 280px;
+  max-height: 240px;
   overflow: auto;
 }
 

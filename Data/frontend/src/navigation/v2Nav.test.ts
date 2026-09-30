@@ -68,6 +68,14 @@ describe("v2Nav Hades AI group", () => {
     expect(isV2NavItemActive(hades, "/agents")).toBe(false);
   });
 
+  it("does not claim Agents child ownership on /agents (LM owns it)", () => {
+    expect(hades).toBeDefined();
+    if (!hades) return;
+    expect(findActiveV2Child(hades, "/agents")).toBeNull();
+    expect(hades.children?.find((c) => c.id === "hades-agents")?.to).toBe("/agents");
+    expect(hades.children?.find((c) => c.id === "hades-agents")?.match).toEqual([]);
+  });
+
   it("auto-expands on /chat and marks Chat child active", () => {
     expect(hades).toBeDefined();
     if (!hades) return;

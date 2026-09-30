@@ -666,9 +666,6 @@ export function useAgentsWorkspace() {
             : "…",
       tone: "muted",
     });
-    if (cpu != null) {
-      rows.push({ id: "cpu", label: "CPU", value: `${Math.round(cpu)}%`, tone: "info" });
-    }
     return rows;
   }, [health, telemetry]);
 

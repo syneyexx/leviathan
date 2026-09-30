@@ -23,15 +23,15 @@ test.describe("Agents V2 visual", () => {
       if (msg.type() === "error") errors.push(msg.text());
     });
 
-    await page.goto("/agents");
+    await page.goto("/agents?agent=agent_trader");
     await expect(page.locator(".lv-v2")).toBeVisible({ timeout: 20_000 });
 
     const nav = page.getByRole("navigation", { name: "Hoofdmenu" });
     await expect(page.locator(".lv-v2-nav-group.is-open .lv-v2-nav-item__label")).toContainText("LM");
-    await expect(page.locator(".lv-v2-nav-child.is-active")).toContainText("Agents");
-    await expect(nav.getByRole("link", { name: "Agents", exact: true })).toBeVisible();
-    // No standalone top-level Agents owner competing with LM.
-    await expect(nav.getByRole("link", { name: "Agents", exact: true })).toHaveCount(1);
+    await expect(page.locator(".lv-v2-nav-group.is-open .lv-v2-nav-child.is-active")).toContainText("Agents");
+    await expect(nav.getByRole("link", { name: "Agents", exact: true }).first()).toBeVisible();
+    // Hades may deep-link to Agents, but there is no standalone top-level owner.
+    await expect(nav.locator("> .lv-v2-nav-item", { hasText: "Agents" })).toHaveCount(0);
 
     await expect(page.getByRole("heading", { name: "LLM / Agents" })).toBeVisible();
     await expect(page.getByText("Autonome agents, samenwerking, missies en uitvoering.")).toBeVisible();
@@ -77,7 +77,7 @@ test.describe("Agents V2 visual", () => {
     await page.goto("/agents");
     await expect(page.locator(".lv-v2")).toBeVisible({ timeout: 20_000 });
     await expect(page.locator(".lv-v2-nav-group.is-open .lv-v2-nav-item__label")).toContainText("LM");
-    await expect(page.locator(".lv-v2-nav-child.is-active")).toContainText("Agents");
+    await expect(page.locator(".lv-v2-nav-group.is-open .lv-v2-nav-child.is-active")).toContainText("Agents");
     await expect(page.locator(".lv-v2-nav-item.is-active .lv-v2-nav-item__label")).not.toContainText("Hades");
   });
 
