@@ -26,6 +26,8 @@ type Props = {
   onSelect: (id: string) => void;
   onDiscover: () => void;
   onRefresh: () => void;
+  onSweepIdle?: () => void;
+  lifecycleBusy?: boolean;
 };
 
 function badgeTone(tone: StatusTone): "success" | "warning" | "danger" | "info" | "muted" | "trading" {
@@ -67,6 +69,8 @@ export function ModulesLibrary({
   onSelect,
   onDiscover,
   onRefresh,
+  onSweepIdle,
+  lifecycleBusy = false,
 }: Props) {
   return (
     <section className="lv-v2-modules-library" aria-label="Module bibliotheek">
@@ -83,6 +87,17 @@ export function ModulesLibrary({
           >
             Discover
           </Button>
+          {onSweepIdle ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!managerEnabled || lifecycleBusy || discovering}
+              title="Stop idle modules (POST /api/modules/sweep-idle)"
+              onClick={onSweepIdle}
+            >
+              Sweep Idle
+            </Button>
+          ) : null}
           <Button
             variant="ghost"
             size="sm"

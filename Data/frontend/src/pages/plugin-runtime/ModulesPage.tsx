@@ -104,6 +104,8 @@ export function ModulesPage() {
                 onSelect={ws.selectModule}
                 onDiscover={() => void ws.onDiscover()}
                 onRefresh={() => void ws.load()}
+                onSweepIdle={() => void ws.onLifecycle("sweep-idle")}
+                lifecycleBusy={ws.lifecycleBusy}
               />
               <ModulesDetail
                 selected={ws.selected}
