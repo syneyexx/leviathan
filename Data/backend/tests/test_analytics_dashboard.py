@@ -189,7 +189,17 @@ class ContractHelpersTests(unittest.TestCase):
     def test_processing_capability(self) -> None:
         self.assertEqual(processing_task_for_capability("embedding.batch"), "embedding_generation")
         self.assertEqual(processing_task_for_capability("dataset.process"), "dataset_processing")
+        self.assertEqual(processing_task_for_capability("document_ai.ocr"), "document_processing")
+        self.assertEqual(processing_task_for_capability("ocr.extract"), "document_processing")
+        self.assertEqual(processing_task_for_capability("web.search"), "web_scraping")
+        self.assertEqual(processing_task_for_capability("web.fetch"), "web_scraping")
+        self.assertEqual(processing_task_for_capability("knowledge.ingest_document"), "document_processing")
+        self.assertEqual(processing_task_for_capability("knowledge.commit"), "document_processing")
+        self.assertEqual(processing_task_for_capability("research.synthesize"), "knowledge_extraction")
+        self.assertEqual(processing_task_for_capability("rerank.batch"), "embedding_generation")
         self.assertIsNone(processing_task_for_capability("models.load"))
+        # Must not substring-match unrelated capabilities.
+        self.assertIsNone(processing_task_for_capability("agent.web_assist"))
 
 
 class AnalyticsDashboardTests(unittest.TestCase):
@@ -372,6 +382,21 @@ class AnalyticsDashboardTests(unittest.TestCase):
         self.assertEqual(agents[0]["agentId"], "agent-1")
         self.assertEqual(agents[0]["items"], 1)
         self.assertEqual(agents[0]["successRatePercent"], 50.0)
+
+    def test_top_agents_signal_fabric_producer(self) -> None:
+        now = _utc(0)
+        self._ins_doc("d2", source="agent", created_at=now)
+        conn = sqlite3.connect(self.knowledge)
+        conn.execute(
+            "UPDATE knowledge_chunks SET provenance_json = ? WHERE document_id = ?",
+            (json.dumps({"producer": "signal_fabric:scout-9"}), "d2"),
+        )
+        conn.commit()
+        conn.close()
+        dash = self.svc.dashboard(ranking_range="7d")
+        agents = dash["rankings"]["topAgents"]
+        self.assertEqual(len(agents), 1)
+        self.assertEqual(agents[0]["agentId"], "scout-9")
 
     def test_tags_from_canonical_metadata(self) -> None:
         now = _utc(0)

@@ -194,28 +194,41 @@ RESEARCH_ACTIVITY_LABELS: Final[dict[str, str]] = {
     "other": "Overig",
 }
 
-# Job capability prefixes → processing task class.
+# Job capability prefixes / exact IDs → processing task class.
+# Mapped from JobRuntime builtins + domain CAPABILITY_* constants
+# (recon: document_ai/ocr/web/knowledge/dataset/embedding catalogs).
 PROCESSING_CAPABILITY_PREFIXES: Final[dict[str, tuple[str, ...]]] = {
     "document_processing": (
         "knowledge.ingest",
         "knowledge.parse",
         "knowledge.process",
         "knowledge.prepare",
+        "knowledge.commit",
+        "knowledge.reconcile",
         "source_ingestion",
+        "document_ai.",
+        "ocr.",
+        "file.parse",
     ),
     "web_scraping": (
         "research.web",
-        "browser.",
         "research.fetch",
+        "browser.",
+        "web.search",
+        "web.fetch",
     ),
     "embedding_generation": (
         "embedding.",
         "knowledge.embed",
+        "rerank.",
     ),
     "knowledge_extraction": (
         "knowledge.extract",
         "research.claim",
         "research.synth",
+        "research.synthesize",
+        "research.verify",
+        "research.retrieve",
         "research.analyze",
     ),
     "dataset_processing": (
@@ -329,11 +342,16 @@ def classify_research_activity(
 
 
 def processing_task_for_capability(capability_id: str | None) -> str | None:
+    """Map a JobRuntime capability_id to a processing panel task class.
+
+    Matching is prefix/exact only (no substring-anywhere) to avoid mis-bucketing.
+    """
     cap = (capability_id or "").strip().lower()
     if not cap:
         return None
     for task, prefixes in PROCESSING_CAPABILITY_PREFIXES.items():
         for prefix in prefixes:
-            if cap.startswith(prefix.lower()) or prefix.lower() in cap:
+            p = prefix.lower()
+            if cap == p.rstrip(".") or cap.startswith(p):
                 return task
     return None

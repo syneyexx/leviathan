@@ -134,6 +134,30 @@ def _coverage(measured: int, total: int) -> dict[str, Any]:
     }
 
 
+def _agent_id_from_provenance(prov: dict[str, Any] | None) -> str | None:
+    """Extract agent attribution from durable provenance / producer fields.
+
+    Supports explicit agent_id keys and producer forms used by SignalFabric:
+    ``signal_fabric:{sender_id}``.
+    """
+    if not isinstance(prov, dict):
+        return None
+    agent_id = (
+        prov.get("agent_id")
+        or prov.get("agentId")
+        or prov.get("source_actor")
+        or prov.get("sourceActor")
+        or (prov.get("actor") if isinstance(prov.get("actor"), str) else None)
+    )
+    if agent_id:
+        return str(agent_id)
+    producer = prov.get("producer") or prov.get("source")
+    if isinstance(producer, str) and producer.startswith("signal_fabric:"):
+        sender = producer.split(":", 1)[1].strip()
+        return sender or None
+    return None
+
+
 class AnalyticsDashboard:
     """Composable read aggregates for GET /api/analytics/dashboard."""
 
@@ -1124,11 +1148,17 @@ class AnalyticsDashboard:
             ):
                 # Join document created_at for period filter.
                 has_docs = _table_exists(conn, "knowledge_documents")
+                doc_cols = _columns(conn, "knowledge_documents") if has_docs else set()
                 if has_docs:
+                    trust_sel = (
+                        ", d.trust_metadata_json"
+                        if "trust_metadata_json" in doc_cols
+                        else ", '{}' AS trust_metadata_json"
+                    )
                     rows = conn.execute(
-                        """
+                        f"""
                         SELECT c.chunk_id, c.provenance_json, c.document_id,
-                               d.created_at, d.size_bytes
+                               d.created_at, d.size_bytes{trust_sel}
                         FROM knowledge_chunks c
                         JOIN knowledge_documents d ON d.id = c.document_id
                         WHERE d.created_at >= ? AND d.created_at <= ?
@@ -1141,17 +1171,18 @@ class AnalyticsDashboard:
                 for row in rows:
                     prov = _loads(row["provenance_json"], {})
                     if not isinstance(prov, dict):
-                        continue
-                    agent_id = (
-                        prov.get("agent_id")
-                        or prov.get("agentId")
-                        or prov.get("source_actor")
-                        or prov.get("sourceActor")
-                        or (prov.get("actor") if isinstance(prov.get("actor"), str) else None)
-                    )
+                        prov = {}
+                    trust = _loads(row["trust_metadata_json"], {}) if "trust_metadata_json" in row.keys() else {}
+                    if isinstance(trust, dict):
+                        nested = trust.get("provenance") if isinstance(trust.get("provenance"), dict) else {}
+                        merged = {**nested, **prov}
+                        if trust.get("producer") and "producer" not in merged:
+                            merged["producer"] = trust.get("producer")
+                    else:
+                        merged = prov
+                    agent_id = _agent_id_from_provenance(merged)
                     if not agent_id:
                         continue
-                    agent_id = str(agent_id)
                     entry = attributions.setdefault(
                         agent_id,
                         {"items": 0, "bytes": 0, "bytesMeasured": 0, "docs": set()},
