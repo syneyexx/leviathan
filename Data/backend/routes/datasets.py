@@ -48,6 +48,7 @@ DATASETS_STATIC_SEGMENTS = frozenset(
         "catalog",
         "semantic",
         "overview",
+        "bulk",
     }
 )
 
@@ -182,6 +183,13 @@ class AnnotationEnqueueBody(BaseModel):
     versionId: str | None = None
 
 
+class BulkDatasetIdsBody(BaseModel):
+    """Bounded multi-dataset operation — max 25 ids, partial failure reported."""
+
+    datasetIds: list[str] = Field(default_factory=list, max_length=25)
+    rebuild: bool = False
+
+
 class PackingSimBody(BaseModel):
     maxSeqLength: int = 512
     scope: str = "dataset"
@@ -216,6 +224,8 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
         status: str | None = None,
         source: str | None = None,
         sourceType: str | None = None,
+        sourceScope: str | None = None,
+        indexed: bool | None = None,
         type: str | None = None,
         detectedFormat: str | None = None,
         category: str | None = None,
@@ -252,6 +262,12 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
             detected_format = detected_format.strip().lower()
         if status:
             status = status.strip().lower()
+        scope = (sourceScope or "").strip().lower() or None
+        if scope and scope not in {"local", "external"}:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_source_scope", "message": "sourceScope must be local|external"},
+            )
 
         page = service.query_datasets(
             limit=limit,
@@ -259,6 +275,8 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
             q=q,
             status=status,
             source_type=source_type,
+            source_scope=scope,
+            indexed=indexed,
             detected_format=detected_format,
             category=category,
             tags=tags,
@@ -282,6 +300,22 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
             }
         )
         return out
+
+    @router.post("/api/datasets/bulk/index")
+    def bulk_index(body: BulkDatasetIdsBody) -> dict:
+        try:
+            return service.bulk_enqueue_index(body.datasetIds, rebuild=body.rebuild)
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+
+    @router.post("/api/datasets/bulk/materialize")
+    def bulk_materialize(body: BulkDatasetIdsBody) -> dict:
+        try:
+            return service.bulk_enqueue_materialize(body.datasetIds)
+        except DatasetError as exc:
+            _raise(exc)
+            raise
 
     @router.get("/api/datasets/overview")
     def datasets_overview() -> dict:

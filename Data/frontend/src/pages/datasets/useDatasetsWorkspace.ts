@@ -2,10 +2,10 @@
  * Onderzoek & Kennis → Datasets workspace orchestration.
  *
  * Canonical authorities:
- * - Inventory: GET /api/datasets via api.listDatasets
+ * - Inventory: GET /api/datasets via api.listDatasets (bounded pagination)
  * - Overview KPIs/storage/services: GET /api/datasets/overview
  * - Jobs/activity: useDatasetActivity → listDatasetJobs (adaptive polling)
- * - Mutations: create/upload/import/delete/index/cancel via DatasetService routes
+ * - Mutations: create/upload/import/delete/index/bulk/cancel via DatasetService routes
  *
  * No page-local queue, scheduler, or fixture production fallback.
  */
@@ -13,12 +13,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "../../api/client";
-import {
-  DH_TYPE_OPTIONS,
-  DH_UPDATED_OPTIONS,
-  type DhFilterId,
-  type DhRow,
-} from "../../mocks/datasets-dashboard";
 import { useAppToast } from "../../state/useAppToast";
 import type {
   DatasetOverview,
@@ -26,6 +20,17 @@ import type {
   DatasetRecord,
   DatasetVersion,
 } from "../../types/api";
+import {
+  DS_BULK_MAX,
+  DS_COLUMNS,
+  DS_PAGE_SIZE,
+  DS_SEARCH_DEBOUNCE_MS,
+  DS_TYPE_OPTIONS,
+  DS_UPDATED_OPTIONS,
+  type DhColumnId,
+  type DhFilterId,
+  type DhRow,
+} from "./constants";
 import {
   countDatasetsByFilter,
   filterDatasetRows,
@@ -42,17 +47,26 @@ import {
 import { useDatasetActivity } from "./useDatasetActivity";
 
 export type ViewMode = "list" | "grid";
-export type ModalKind = "create" | "import" | "hf" | null;
-export type DetailTab = "overview" | "preview" | "versions" | "metadata" | "activity";
+export type ModalKind = "create" | "import" | "hf" | "activity" | "health" | null;
+export type DetailTab = "overview" | "analyse" | "preview" | "metadata" | "versions" | "activity";
+export type ImportMenuKind = "upload" | "path" | null;
 
 function errMsg(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback;
+}
+
+function defaultVisibleColumns(): Set<DhColumnId> {
+  return new Set(DS_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.id));
 }
 
 export function useDatasetsWorkspace() {
   const toast = useAppToast();
   const navigate = useNavigate();
   const menuRef = useRef<HTMLDivElement>(null);
+  const importMenuRef = useRef<HTMLDivElement>(null);
+  const externalMenuRef = useRef<HTMLDivElement>(null);
+  const columnsMenuRef = useRef<HTMLDivElement>(null);
+  const downloadMenuRef = useRef<HTMLDivElement>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -60,12 +74,17 @@ export function useDatasetsWorkspace() {
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [datasets, setDatasets] = useState<DatasetRecord[]>([]);
+  const [catalogTotal, setCatalogTotal] = useState<number | null>(null);
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
 
   const [overview, setOverview] = useState<DatasetOverview | null>(null);
   const [overviewLoading, setOverviewLoading] = useState(true);
   const [overviewError, setOverviewError] = useState<string | null>(null);
 
-  const loadDatasetsRef = useRef<(opts?: { quiet?: boolean }) => Promise<void>>(async () => undefined);
+  const loadDatasetsRef = useRef<(opts?: { quiet?: boolean; offset?: number }) => Promise<void>>(
+    async () => undefined,
+  );
   const loadOverviewRef = useRef<(opts?: { quiet?: boolean }) => Promise<void>>(async () => undefined);
 
   const {
@@ -87,10 +106,17 @@ export function useDatasetsWorkspace() {
   const [filter, setFilter] = useState<DhFilterId>("all");
   const [view, setView] = useState<ViewMode>("list");
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [columnsOpen, setColumnsOpen] = useState(false);
+  const [importMenuOpen, setImportMenuOpen] = useState(false);
+  const [externalMenuOpen, setExternalMenuOpen] = useState(false);
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
+  const [queryInput, setQueryInput] = useState("");
   const [query, setQuery] = useState("");
-  const [typeFilter, setTypeFilter] = useState<(typeof DH_TYPE_OPTIONS)[number]>(DH_TYPE_OPTIONS[0]);
+  const [typeFilter, setTypeFilter] = useState<(typeof DS_TYPE_OPTIONS)[number]>(DS_TYPE_OPTIONS[0]);
   const [updatedFilter, setUpdatedFilter] =
-    useState<(typeof DH_UPDATED_OPTIONS)[number]>(DH_UPDATED_OPTIONS[0]);
+    useState<(typeof DS_UPDATED_OPTIONS)[number]>(DS_UPDATED_OPTIONS[0]);
+  const [visibleColumns, setVisibleColumns] = useState<Set<DhColumnId>>(defaultVisibleColumns);
+  const [activityPeriod, setActivityPeriod] = useState("Laatste 24 uur");
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -102,6 +128,7 @@ export function useDatasetsWorkspace() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [tagDraft, setTagDraft] = useState("");
 
   const [modal, setModal] = useState<ModalKind>(null);
   const [createName, setCreateName] = useState("");
@@ -113,31 +140,46 @@ export function useDatasetsWorkspace() {
   const [hfRevision, setHfRevision] = useState("main");
   const [hfToken, setHfToken] = useState("");
 
+  useEffect(() => {
+    const handle = window.setTimeout(() => setQuery(queryInput.trim()), DS_SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(handle);
+  }, [queryInput]);
+
   const liveRows = useMemo(
     () => datasets.map((ds) => recordToRow(ds, jobs)),
     [datasets, jobs],
   );
 
-  const filterCounts = useMemo(() => countDatasetsByFilter(liveRows), [liveRows]);
+  const filterCounts = useMemo(() => {
+    const pageCounts = countDatasetsByFilter(liveRows);
+    if (!overview) return pageCounts;
+    return {
+      all: overview.totalDatasets ?? pageCounts.all,
+      local: overview.localDatasets ?? pageCounts.local,
+      external: overview.externalDatasets ?? pageCounts.external,
+      indexed: overview.indexedDatasets ?? pageCounts.indexed,
+      not_indexed: overview.notIndexedDatasets ?? pageCounts.not_indexed,
+    };
+  }, [liveRows, overview]);
 
   const filteredRows = useMemo(
     () =>
       filterDatasetRows(liveRows, {
-        filter,
-        query,
+        filter: "all", // server already applied primary filter; keep type/updated/query client-side extras
+        query: "",
         typeFilter,
         updatedFilter,
       }),
-    [liveRows, filter, query, typeFilter, updatedFilter],
+    [liveRows, typeFilter, updatedFilter],
   );
 
   // Reconcile selection + active row against filtered inventory.
   useEffect(() => {
     setSelectedIds((prev) => reconcileSelection(prev, filteredRows.map((r) => r.id)));
-    if (activeId && !filteredRows.some((r) => r.id === activeId)) {
+    if (activeId && !filteredRows.some((r) => r.id === activeId) && !liveRows.some((r) => r.id === activeId)) {
       setActiveId(filteredRows[0]?.id ?? null);
     }
-  }, [filteredRows, activeId]);
+  }, [filteredRows, liveRows, activeId]);
 
   const activeRow: DhRow | null = useMemo(
     () => filteredRows.find((r) => r.id === activeId) ?? liveRows.find((r) => r.id === activeId) ?? null,
@@ -150,20 +192,26 @@ export function useDatasetsWorkspace() {
   );
 
   const metrics = useMemo(() => {
-    const total = overview?.totalDatasets ?? liveRows.length;
+    const total = overview?.totalDatasets ?? catalogTotal ?? liveRows.length;
     const local =
-      overview?.bySourceType
-        ? Object.entries(overview.bySourceType).reduce((sum, [k, v]) => {
-            const kind = k.toLowerCase();
-            if (kind.includes("local") || kind.includes("upload") || kind === "file" || kind === "path") {
-              return sum + v;
-            }
-            return sum;
-          }, 0)
-        : liveRows.filter((r) => r.sourceKind === "local").length;
-    const external = Math.max(0, total - local);
+      overview?.localDatasets != null
+        ? overview.localDatasets
+        : overview?.bySourceType
+          ? Object.entries(overview.bySourceType).reduce((sum, [k, v]) => {
+              const kind = k.toLowerCase();
+              if (kind.includes("local") || kind.includes("upload") || kind === "file" || kind === "path") {
+                return sum + v;
+              }
+              return sum;
+            }, 0)
+          : liveRows.filter((r) => r.sourceKind === "local").length;
+    const external =
+      overview?.externalDatasets != null ? overview.externalDatasets : Math.max(0, total - local);
     const sizeBytes = overview?.attributableBytes ?? liveRows.reduce((s, r) => s + (r.byteSize ?? 0), 0);
-    const indexed = liveRows.filter((r) => r.embeddings.kind === "indexed").length;
+    const indexed =
+      overview?.indexedDatasets != null
+        ? overview.indexedDatasets
+        : liveRows.filter((r) => r.embeddings.kind === "indexed").length;
     const indexedPct = total > 0 ? Math.round((indexed / total) * 100) : null;
     return {
       total,
@@ -175,12 +223,14 @@ export function useDatasetsWorkspace() {
       sizeUnmeasured: overview ? overview.bytesUnmeasuredDatasets > 0 : liveRows.some((r) => r.byteSize == null),
       indexed,
       indexedPct,
-      capacityLabel:
-        overview?.capacityBytes != null ? formatBytes(overview.capacityBytes) : null,
+      capacityLabel: overview?.capacityBytes != null ? formatBytes(overview.capacityBytes) : null,
       usedBytes: overview?.usedBytes ?? null,
       capacityBytes: overview?.capacityBytes ?? null,
+      inventoryPageSize: liveRows.length,
+      catalogTotal: catalogTotal ?? overview?.totalDatasets ?? liveRows.length,
+      hasMore,
     };
-  }, [overview, liveRows]);
+  }, [overview, liveRows, catalogTotal, hasMore]);
 
   const storage = useMemo(() => {
     if (overview?.storageBreakdown?.length) {
@@ -208,7 +258,6 @@ export function useDatasetsWorkspace() {
       };
     }
 
-    // Fallback projection from inventory byteSize only — cache is estimated.
     const totalBytes = liveRows.reduce((sum, r) => sum + (r.byteSize ?? 0), 0);
     const localBytes = liveRows
       .filter((r) => r.sourceKind === "local")
@@ -217,31 +266,23 @@ export function useDatasetsWorkspace() {
       .filter((r) => r.status === "processing" || r.status === "validating")
       .reduce((sum, r) => sum + (r.byteSize ?? 0), 0);
     const other = Math.max(0, totalBytes - localBytes - processingBytes);
-    const cacheEstimate = Math.min(totalBytes * 0.18, totalBytes);
     return {
       usedLabel: formatBytes(totalBytes),
       capacityLabel: null as string | null,
       pct: null as number | null,
       segments: [
-        { id: "local", label: "Local Datasets", bytesLabel: formatBytes(localBytes), pct: 0, color: "#2ec4b6" },
-        {
-          id: "cache",
-          label: "Cache & Indexes (est.)",
-          bytesLabel: formatBytes(cacheEstimate),
-          pct: 0,
-          color: "#4f8cff",
-        },
+        { id: "local", label: "Lokale datasets", bytesLabel: formatBytes(localBytes), pct: 0, color: "#2ec4b6" },
         {
           id: "processing",
-          label: "Processing",
+          label: "Verwerking",
           bytesLabel: formatBytes(processingBytes),
           pct: 0,
           color: "#9b5cff",
         },
-        { id: "other", label: "Other", bytesLabel: formatBytes(other), pct: 0, color: "#6b7280" },
+        { id: "other", label: "Overig", bytesLabel: formatBytes(other), pct: 0, color: "#6b7280" },
       ],
       estimated: true,
-      measurementNote: "Estimated from inventory byteSize — cache not measured",
+      measurementNote: "Geschat uit inventory byteSize — capaciteit UNMEASURED",
     };
   }, [overview, liveRows]);
 
@@ -251,16 +292,17 @@ export function useDatasetsWorkspace() {
         const s = j.status.toLowerCase();
         return s === "running" || s === "queued" || s === "pending";
       })
-      .slice(0, 4);
+      .slice(0, 3);
     if (active.length === 0) {
       return [
         {
           id: "idle",
-          title: "Queue idle",
-          detail: "No active dataset jobs",
+          title: "Wachtrij idle",
+          detail: "Geen actieve dataset jobs",
           pct: null as number | null,
           eta: "—",
           tone: "cyan" as const,
+          jobId: null as string | null,
         },
       ];
     }
@@ -279,9 +321,19 @@ export function useDatasetsWorkspace() {
         pct,
         eta: j.phase ? phaseLabel(j.phase) : relativeTime(j.updatedAt),
         tone: (j.jobType.toLowerCase().includes("index") ? "cyan" : "purple") as "cyan" | "purple",
+        jobId: j.jobId as string | null,
       };
     });
   }, [jobs, datasets]);
+
+  const activeJobCount = useMemo(
+    () =>
+      jobs.filter((j) => {
+        const s = j.status.toLowerCase();
+        return s === "running" || s === "queued" || s === "pending";
+      }).length,
+    [jobs],
+  );
 
   const healthItems = useMemo(() => {
     const total = liveRows.length || 1;
@@ -329,34 +381,81 @@ export function useDatasetsWorkspace() {
     ];
   }, [liveRows]);
 
-  const loadDatasets = useCallback(async (opts?: { quiet?: boolean }) => {
-    if (!opts?.quiet) {
-      setLoading(true);
-      setError(null);
-    }
-    try {
-      const res = await api.listDatasets(200);
-      setDatasets(res.datasets);
-      setStale(false);
-      setLastUpdated(new Date().toISOString());
-      setError(null);
-      setActiveId((prev) => {
-        if (prev && res.datasets.some((d) => d.datasetId === prev)) return prev;
-        return res.datasets[0]?.datasetId ?? null;
-      });
-    } catch (err) {
-      const msg = errMsg(err, "Failed to load datasets");
-      setError(msg);
-      if (opts?.quiet && datasets.length > 0) {
-        setStale(true);
-      } else if (!opts?.quiet) {
-        setDatasets([]);
-        setStale(false);
+  const filteredActivity = useMemo(() => {
+    const now = Date.now();
+    const windowMs =
+      activityPeriod === "Laatste 24 uur"
+        ? 24 * 60 * 60 * 1000
+        : activityPeriod === "Laatste 7 dagen"
+          ? 7 * 24 * 60 * 60 * 1000
+          : activityPeriod === "Laatste 30 dagen"
+            ? 30 * 24 * 60 * 60 * 1000
+            : null;
+    if (windowMs == null) return activityEntries;
+    const cutoff = now - windowMs;
+    return activityEntries.filter((e) => {
+      if (!e.timestamp) return false;
+      const t = Date.parse(e.timestamp);
+      return Number.isFinite(t) && t >= cutoff;
+    });
+  }, [activityEntries, activityPeriod]);
+
+  const listParams = useCallback(() => {
+    const params: {
+      offset?: number;
+      q?: string;
+      sourceScope?: "local" | "external";
+      indexed?: boolean;
+      sort?: string;
+    } = {
+      sort: "updated_at_desc",
+    };
+    if (query) params.q = query;
+    if (filter === "local") params.sourceScope = "local";
+    if (filter === "external") params.sourceScope = "external";
+    if (filter === "indexed") params.indexed = true;
+    if (filter === "not_indexed") params.indexed = false;
+    return params;
+  }, [query, filter]);
+
+  const loadDatasets = useCallback(
+    async (opts?: { quiet?: boolean; offset?: number }) => {
+      const pageOffset = opts?.offset ?? offset;
+      if (!opts?.quiet) {
+        setLoading(true);
+        setError(null);
       }
-    } finally {
-      if (!opts?.quiet) setLoading(false);
-    }
-  }, [datasets.length]);
+      try {
+        const res = await api.listDatasets(DS_PAGE_SIZE, {
+          ...listParams(),
+          offset: pageOffset,
+        });
+        setDatasets(res.datasets);
+        setCatalogTotal(res.total ?? res.datasets.length);
+        setOffset(res.offset ?? pageOffset);
+        setHasMore(Boolean(res.hasMore));
+        setStale(false);
+        setLastUpdated(new Date().toISOString());
+        setError(null);
+        setActiveId((prev) => {
+          if (prev && res.datasets.some((d) => d.datasetId === prev)) return prev;
+          return res.datasets[0]?.datasetId ?? null;
+        });
+      } catch (err) {
+        const msg = errMsg(err, "Datasets laden mislukt");
+        setError(msg);
+        if (opts?.quiet && datasets.length > 0) {
+          setStale(true);
+        } else if (!opts?.quiet) {
+          setDatasets([]);
+          setStale(false);
+        }
+      } finally {
+        if (!opts?.quiet) setLoading(false);
+      }
+    },
+    [datasets.length, listParams, offset],
+  );
 
   const loadOverview = useCallback(async (opts?: { quiet?: boolean }) => {
     if (!opts?.quiet) setOverviewLoading(true);
@@ -365,7 +464,7 @@ export function useDatasetsWorkspace() {
       setOverview(res.overview);
       setOverviewError(null);
     } catch (err) {
-      setOverviewError(errMsg(err, "Failed to load dataset overview"));
+      setOverviewError(errMsg(err, "Overzicht laden mislukt"));
       if (!opts?.quiet) setOverview(null);
     } finally {
       if (!opts?.quiet) setOverviewLoading(false);
@@ -376,14 +475,22 @@ export function useDatasetsWorkspace() {
   loadOverviewRef.current = loadOverview;
 
   useEffect(() => {
-    void loadDatasets();
     void loadOverview();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- initial load
 
   useEffect(() => {
+    setOffset(0);
+    void loadDatasets({ offset: 0 });
+  }, [filter, query]); // eslint-disable-line react-hooks/exhaustive-deps -- refetch on server filters
+
+  useEffect(() => {
     function onDocClick(e: MouseEvent) {
-      if (!menuRef.current) return;
-      if (!menuRef.current.contains(e.target as Node)) setMenuFor(null);
+      const t = e.target as Node;
+      if (menuRef.current && !menuRef.current.contains(t)) setMenuFor(null);
+      if (importMenuRef.current && !importMenuRef.current.contains(t)) setImportMenuOpen(false);
+      if (externalMenuRef.current && !externalMenuRef.current.contains(t)) setExternalMenuOpen(false);
+      if (columnsMenuRef.current && !columnsMenuRef.current.contains(t)) setColumnsOpen(false);
+      if (downloadMenuRef.current && !downloadMenuRef.current.contains(t)) setDownloadMenuOpen(false);
     }
     document.addEventListener("mousedown", onDocClick);
     return () => document.removeEventListener("mousedown", onDocClick);
@@ -417,7 +524,7 @@ export function useDatasetsWorkspace() {
           } catch (err) {
             if (!cancelled) {
               setDetailPreview([]);
-              setPreviewError(errMsg(err, "Preview unavailable"));
+              setPreviewError(errMsg(err, "Voorbeeld niet beschikbaar"));
             }
           }
         } else {
@@ -427,7 +534,7 @@ export function useDatasetsWorkspace() {
         if (!cancelled) {
           setDetailVersions([]);
           setDetailPreview([]);
-          setDetailError(errMsg(err, "Dataset detail unavailable"));
+          setDetailError(errMsg(err, "Dataset detail niet beschikbaar"));
         }
       } finally {
         if (!cancelled) setDetailLoading(false);
@@ -445,7 +552,7 @@ export function useDatasetsWorkspace() {
       await fn();
       if (okMsg) toast(okMsg);
     } catch (err) {
-      toast(errMsg(err, "Action failed"));
+      toast(errMsg(err, "Actie mislukt"));
     } finally {
       setBusy(false);
     }
@@ -468,9 +575,20 @@ export function useDatasetsWorkspace() {
     setSelectedIds(new Set(filteredRows.map((r) => r.id)));
   }
 
+  function toggleColumn(id: DhColumnId) {
+    setVisibleColumns((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        if (id === "name") return prev;
+        next.delete(id);
+      } else next.add(id);
+      return next;
+    });
+  }
+
   async function onCreate() {
     if (!createName.trim()) {
-      toast("Name is required");
+      toast("Naam is verplicht");
       return;
     }
     await withBusy(async () => {
@@ -478,14 +596,14 @@ export function useDatasetsWorkspace() {
       setCreateName("");
       setCreateDesc("");
       setModal(null);
-      await loadDatasets();
+      await loadDatasets({ offset: 0 });
       await loadOverview({ quiet: true });
-    }, "Dataset created");
+    }, "Dataset aangemaakt");
   }
 
   async function onUpload() {
     if (!uploadFile) {
-      toast("Choose a file first");
+      toast("Kies eerst een bestand");
       return;
     }
     await withBusy(async () => {
@@ -498,15 +616,15 @@ export function useDatasetsWorkspace() {
       setPreferredJobId(res.job.jobId);
       setUploadFile(null);
       setModal(null);
-      await loadDatasets({ quiet: true });
+      await loadDatasets({ quiet: true, offset: 0 });
       await loadJobs();
       await loadOverview({ quiet: true });
-    }, "Upload queued");
+    }, "Upload in wachtrij");
   }
 
   async function onImportLocal() {
     if (!localPath.trim()) {
-      toast("Local path is required");
+      toast("Lokaal pad is verplicht");
       return;
     }
     await withBusy(async () => {
@@ -520,14 +638,14 @@ export function useDatasetsWorkspace() {
       setLocalPath("");
       setLocalName("");
       await loadJobs();
-      await loadDatasets({ quiet: true });
+      await loadDatasets({ quiet: true, offset: 0 });
       await loadOverview({ quiet: true });
-    }, "Local import queued");
+    }, "Lokale import in wachtrij");
   }
 
   async function onImportHf() {
     if (!hfRepo.trim()) {
-      toast("Repository id is required");
+      toast("Repository id is verplicht");
       return;
     }
     await withBusy(async () => {
@@ -541,22 +659,22 @@ export function useDatasetsWorkspace() {
       setPreferredJobId(res.job.jobId);
       setModal(null);
       setHfRepo("");
-      setHfToken(""); // never persist token
+      setHfToken("");
       await loadJobs();
-      await loadDatasets({ quiet: true });
+      await loadDatasets({ quiet: true, offset: 0 });
       await loadOverview({ quiet: true });
-    }, "Hugging Face repository import queued");
+    }, "Hugging Face import in wachtrij");
   }
 
   async function onCancelDatasetJob(jobId: string) {
     await withBusy(async () => {
       await api.cancelDatasetJob(jobId);
       await loadJobs();
-    }, "Cancel requested");
+    }, "Annulering aangevraagd");
   }
 
   async function onDelete(id: string) {
-    if (!window.confirm("Delete this dataset?")) return;
+    if (!window.confirm("Deze dataset verwijderen?")) return;
     await withBusy(async () => {
       await api.deleteDataset(id);
       setMenuFor(null);
@@ -566,9 +684,9 @@ export function useDatasetsWorkspace() {
         return next;
       });
       if (activeId === id) setActiveId(null);
-      await loadDatasets();
+      await loadDatasets({ offset: 0 });
       await loadOverview({ quiet: true });
-    }, "Dataset deleted");
+    }, "Dataset verwijderd");
   }
 
   async function onIndex(id: string) {
@@ -577,37 +695,149 @@ export function useDatasetsWorkspace() {
       const version =
         detail.versions.find((v) => v.status === "ready") ?? detail.versions[0] ?? null;
       if (!version) {
-        toast("No version available to index");
+        toast("Geen versie beschikbaar om te indexeren");
         return;
       }
       await api.indexDatasetVersion(id, version.versionId);
       setMenuFor(null);
       await loadJobs();
-    }, "Index queued");
+    }, "Index in wachtrij");
   }
 
   async function onProcessQueue() {
     await withBusy(async () => {
       const res = await api.processDatasetJobs();
-      toast(`Processed ${res.processed.length} job(s)`);
+      toast(`${res.processed.length} job(s) verwerkt`);
       await loadJobs();
     });
+  }
+
+  async function onBulkProcess() {
+    const ids = [...selectedIds].slice(0, DS_BULK_MAX);
+    if (ids.length === 0) {
+      await onProcessQueue();
+      return;
+    }
+    await withBusy(async () => {
+      const res = await api.bulkMaterializeDatasets({ datasetIds: ids });
+      toast(`Verwerken: ${res.succeeded} ok, ${res.failed} mislukt`);
+      if (res.results.find((r) => r.ok && r.jobId)) {
+        setPreferredJobId(res.results.find((r) => r.ok && r.jobId)!.jobId!);
+      }
+      await loadJobs();
+      await loadDatasets({ quiet: true });
+    });
+  }
+
+  async function onBulkIndex() {
+    const ids = selectedIds.size > 0 ? [...selectedIds].slice(0, DS_BULK_MAX) : activeId ? [activeId] : [];
+    if (ids.length === 0) {
+      toast("Selecteer datasets of een actieve rij om te indexeren");
+      return;
+    }
+    await withBusy(async () => {
+      const res = await api.bulkIndexDatasets({ datasetIds: ids });
+      toast(`Indexeren: ${res.succeeded} ok, ${res.failed} mislukt`);
+      if (res.results.find((r) => r.ok && r.jobId)) {
+        setPreferredJobId(res.results.find((r) => r.ok && r.jobId)!.jobId!);
+      }
+      await loadJobs();
+    });
+  }
+
+  async function onExportDownload(id: string) {
+    await withBusy(async () => {
+      const detail = await api.getDataset(id);
+      const ready =
+        detail.versions.find((v) => v.status === "ready" && (v.kind === "export" || v.kind === "materialized")) ??
+        detail.versions.find((v) => v.status === "ready") ??
+        detail.versions[0] ??
+        null;
+      if (!ready) {
+        toast("Geen exporteerbare versie");
+        return;
+      }
+      if (ready.kind !== "export") {
+        const job = await api.exportDatasetVersion(id, ready.versionId);
+        setPreferredJobId(job.job.jobId);
+        toast("Export job gestart — download wanneer klaar");
+        await loadJobs();
+        return;
+      }
+      const blob = await api.downloadDatasetExport(id, ready.versionId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${activeRow?.name || id}.export`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setDownloadMenuOpen(false);
+    }, "Download gestart");
+  }
+
+  async function onShareLink(id: string) {
+    const link = `${window.location.origin}/datasets?dataset=${encodeURIComponent(id)}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      toast("Interne link gekopieerd");
+    } catch {
+      toast("Kopiëren mislukt — link niet gedeeld");
+    }
+  }
+
+  async function onSaveTags() {
+    if (!activeId) return;
+    const tags = tagDraft
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+    await withBusy(async () => {
+      await api.patchDatasetSemantic(activeId, { tags });
+      await loadDatasets({ quiet: true });
+      setTagDraft("");
+    }, "Tags opgeslagen");
+  }
+
+  async function onSemanticAnalyze(id: string) {
+    await withBusy(async () => {
+      const res = await api.analyzeDatasetSemantic(id, { enqueue: true });
+      if (res.job?.jobId) setPreferredJobId(res.job.jobId);
+      await loadJobs();
+      await loadDatasets({ quiet: true });
+    }, "Semantic analyse in wachtrij");
+  }
+
+  function openInAnalyse(id: string) {
+    navigate(`/research?dataset=${encodeURIComponent(id)}`);
   }
 
   function openManageStorage() {
     navigate("/settings?section=opslag");
   }
 
-  async function refresh(opts?: { quiet?: boolean }) {
-    await Promise.all([
-      loadDatasets(opts),
-      loadOverview(opts),
-      loadJobs(),
-    ]);
+  function goPage(nextOffset: number) {
+    void loadDatasets({ offset: Math.max(0, nextOffset) });
   }
 
-  const sidebarStatus = useMemo(
-    () => [
+  async function refresh(opts?: { quiet?: boolean }) {
+    await Promise.all([loadDatasets({ ...opts, offset }), loadOverview(opts), loadJobs()]);
+  }
+
+  const sidebarStatus = useMemo(() => {
+    const indexing = jobs.filter((j) => {
+      const t = j.jobType.toLowerCase();
+      const s = j.status.toLowerCase();
+      return t.includes("index") && (s === "running" || s === "queued" || s === "pending");
+    }).length;
+    const used = overview?.usedBytes;
+    const cap = overview?.capacityBytes;
+    const storageValue =
+      used != null && cap != null
+        ? `${formatBytes(used)} / ${formatBytes(cap)}`
+        : used != null
+          ? `${formatBytes(used)} / UNMEASURED`
+          : "UNMEASURED";
+    return [
       {
         id: "dataset-api",
         label: "Dataset API",
@@ -629,17 +859,21 @@ export function useDatasetsWorkspace() {
           | "muted",
       },
       {
-        id: "dataset-inventory",
-        label: "Inventory",
-        value: String(filterCounts.all),
+        id: "dataset-storage",
+        label: "Storage",
+        value: storageValue,
         tone: "muted" as const,
       },
-    ],
-    [error, stale, loading, jobsError, live, filterCounts.all],
-  );
+      {
+        id: "dataset-indexing",
+        label: "Active Indexing",
+        value: `${indexing} actief`,
+        tone: (indexing > 0 ? "success" : "muted") as "success" | "warning" | "danger" | "muted",
+      },
+    ];
+  }, [error, stale, loading, jobsError, live, jobs, overview]);
 
   return {
-    // shell
     loading,
     error,
     stale,
@@ -650,7 +884,6 @@ export function useDatasetsWorkspace() {
     refreshing: loading || overviewLoading || busy,
     refresh,
 
-    // inventory
     datasets,
     liveRows,
     filteredRows,
@@ -661,6 +894,12 @@ export function useDatasetsWorkspace() {
     setView,
     filtersOpen,
     setFiltersOpen,
+    columnsOpen,
+    setColumnsOpen,
+    visibleColumns,
+    toggleColumn,
+    queryInput,
+    setQueryInput,
     query,
     setQuery,
     typeFilter,
@@ -677,8 +916,17 @@ export function useDatasetsWorkspace() {
     menuFor,
     setMenuFor,
     menuRef,
+    importMenuOpen,
+    setImportMenuOpen,
+    importMenuRef,
+    externalMenuOpen,
+    setExternalMenuOpen,
+    externalMenuRef,
+    columnsMenuRef,
+    downloadMenuOpen,
+    setDownloadMenuOpen,
+    downloadMenuRef,
 
-    // detail
     detailTab,
     setDetailTab,
     detailVersions,
@@ -686,17 +934,28 @@ export function useDatasetsWorkspace() {
     detailError,
     previewError,
     detailLoading,
+    tagDraft,
+    setTagDraft,
+    onSaveTags,
 
-    // overview widgets
     overview,
     overviewLoading,
     overviewError,
     metrics,
     storage,
     pipelineItems,
+    activeJobCount,
     healthItems,
+    filteredActivity,
+    activityPeriod,
+    setActivityPeriod,
 
-    // activity
+    offset,
+    hasMore,
+    catalogTotal,
+    pageSize: DS_PAGE_SIZE,
+    goPage,
+
     jobs,
     jobsError,
     activityEntries,
@@ -706,7 +965,6 @@ export function useDatasetsWorkspace() {
     live,
     onCancelDatasetJob,
 
-    // modals / mutations
     modal,
     setModal,
     createName,
@@ -732,6 +990,12 @@ export function useDatasetsWorkspace() {
     onDelete,
     onIndex,
     onProcessQueue,
+    onBulkProcess,
+    onBulkIndex,
+    onExportDownload,
+    onShareLink,
+    onSemanticAnalyze,
+    openInAnalyse,
     openManageStorage,
     loadDatasets,
   };

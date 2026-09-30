@@ -11395,10 +11395,10 @@
 .lv-v2-page--datasets {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
   min-height: 0;
-  padding: 0 0 10px;
+  padding: 0 0 8px;
 }
 
 .lv-v2-page--datasets > * {
@@ -11499,10 +11499,11 @@
 
 .lv-v2-ds-workspace {
   display: grid;
-  grid-template-columns: minmax(0, 2.2fr) minmax(280px, 0.9fr);
+  grid-template-columns: minmax(0, 2.35fr) minmax(300px, 0.95fr);
   gap: 10px;
-  min-height: 280px;
-  max-height: min(42vh, 420px);
+  min-height: 320px;
+  max-height: min(46vh, 460px);
+  flex: 1 1 auto;
   align-items: stretch;
 }
 
@@ -11543,12 +11544,12 @@
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
-  min-height: 210px;
+  min-height: 200px;
 }
 
 .lv-v2-ds-widget {
-  min-height: 210px;
-  max-height: 240px;
+  min-height: 200px;
+  max-height: 230px;
   overflow: auto;
 }
 
@@ -12053,10 +12054,259 @@
 
 .lv-v2-ds-detail__foot {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-direction: column;
+  gap: 8px;
   padding-top: 10px;
   border-top: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.lv-v2-ds-detail__foot-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lv-v2-ds-dropdown {
+  position: relative;
+  display: inline-flex;
+}
+
+.lv-v2-ds-menu--toolbar {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  min-width: 180px;
+}
+
+.lv-v2-ds-filters-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  min-width: 220px;
+}
+
+.lv-v2-ds-filters-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.72rem;
+  color: #94a3b8;
+}
+
+.lv-v2-ds-col-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  color: #e2e8f0;
+  cursor: pointer;
+}
+
+.lv-v2-ds-icon-btn {
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.55);
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 0.72rem;
+}
+
+.lv-v2-ds-icon-btn:hover {
+  color: #e0f2fe;
+  border-color: rgba(56, 189, 248, 0.45);
+}
+
+.lv-v2-ds-pager {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+  font-size: 0.72rem;
+  color: #94a3b8;
+}
+
+.lv-v2-ds-pager > div {
+  display: flex;
+  gap: 6px;
+}
+
+.lv-v2-ds-detail__title-wrap {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.lv-v2-ds-detail__ico {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: rgba(56, 189, 248, 0.15);
+  color: #7dd3fc;
+  flex-shrink: 0;
+}
+
+.lv-v2-ds-detail__more {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: #94a3b8;
+}
+
+.lv-v2-ds-detail__more summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.lv-v2-ds-detail__more button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: #e2e8f0;
+  padding: 4px 0;
+  cursor: pointer;
+}
+
+.lv-v2-ds-series {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  background: rgba(14, 165, 233, 0.06);
+}
+
+.lv-v2-ds-series__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 0.78rem;
+}
+
+.lv-v2-ds-series__head em.is-up {
+  color: #34d399;
+  font-style: normal;
+}
+
+.lv-v2-ds-series__head em.is-down {
+  color: #f87171;
+  font-style: normal;
+}
+
+.lv-v2-ds-tags-block {
+  margin-top: 10px;
+}
+
+.lv-v2-ds-tags-head {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  margin-bottom: 6px;
+}
+
+.lv-v2-ds-tag-edit {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.lv-v2-ds-tag-edit input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.72);
+  color: #e2e8f0;
+  font-size: 0.78rem;
+}
+
+.lv-v2-ds-widget__badge {
+  font-size: 0.68rem;
+  color: #7dd3fc;
+}
+
+.lv-v2-ds-widget__foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.lv-v2-ds-modal--wide {
+  width: min(920px, 100%);
+}
+
+.lv-v2-select--xs {
+  height: 24px;
+  font-size: 0.68rem;
+  padding: 0 6px;
+}
+
+.lv-v2-ds-analyse {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 0.8rem;
+  color: #cbd5e1;
+}
+
+@media (max-width: 1200px) {
+  .lv-v2-ds-workspace {
+    grid-template-columns: 1fr;
+    max-height: none;
+  }
+
+  .lv-v2-ds-bottom {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .lv-v2-metrics--datasets {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 800px) {
+  .lv-v2-ds-toolbar {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "actions"
+      "search"
+      "pills"
+      "meta";
+  }
+
+  .lv-v2-ds-bottom {
+    grid-template-columns: 1fr;
+  }
+
+  .lv-v2-metrics--datasets {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Legacy activity console host (modal / secondary) */
+.lv-v2-ds-activity {
+  min-width: 0;
+}
+
+.lv-v2-page--datasets .lv-dac {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 12px;
+  background: rgba(8, 15, 30, 0.72);
+  padding: 12px;
 }
 
 .lv-v2-ds-widget__head {

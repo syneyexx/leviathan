@@ -518,13 +518,13 @@ Catalog listing is **server-side** (`GET /api/datasets` with `q` / filters / `of
 
 Production never imports `mocks/dataset-management` configuration or Screen 1 fixture numbers. Visual fixture: `src/mocks/datasetManagementV2VisualFixture.ts` + `e2e/helpers/datasetManagementV2Visual.ts` + `e2e/dataset-management-v2.visual.spec.ts` (reference: `docs/ui_reference/dataset-management-llm-v2-reference.png`, 1672×941).
 
-`/datasets` uses `AppShell variant="v2"` (title "Onderzoek & Kennis / Datasets"). MAIN_MENU owns the page under Onderzoek & Kennis (`v2ChildrenFromMainMenu("research")`).
+`/datasets` uses `AppShell variant="v2"` (title "Kennis & Onderzoek / Datasets"). MAIN_MENU owns the page under Onderzoek & Kennis (`v2ChildrenFromMainMenu("research")`).
 
-Composition: `DatasetsPage` + `useDatasetsWorkspace` + `src/components/datasets/*` (hero, metrics, toolbar, inventory list/grid, detail panel, bottom widgets, modals) + shared `DatasetActivityConsole`.
+Composition (reference 1664×936): topbar → 5 KPIs → action/search toolbar → filter pills + Filters/Kolommen/list-grid → inventory + detail → **4** bottom widgets (Verwerking / Bron Integraties / Opslag / Activiteit). No primary hero. Activity expands via modal; Health is secondary modal. Production contracts: `src/pages/datasets/constants.ts` (never import fixture numbers from `mocks/`).
 
 No page-local Datasets V2 CSS — layout lives in global `leviathan-v2.css` under `.lv-v2-page--datasets` / `.lv-v2-ds-*`. Legacy `datasets-dashboard.css` remains for shared `.lv-dac` activity console primitives.
 
-Inventory remains the dominant surface (`GET /api/datasets` → `DhRow`). Overview KPIs/storage/services prefer `GET /api/datasets/overview`. Updated-date filters (`Last 24 hours` / `7 days` / `30 days` / `Oldest first`) operate on real `updatedAt`. Unknown backend status renders as UNKNOWN (never Ready). Unmeasured job progress is indeterminate / UNMEASURED — never an invented percentage. Schema Validation stays UNMEASURED without a global probe score. Manage Storage navigates to Settings → Opslag.
+Inventory uses bounded server pagination (`GET /api/datasets` with `sourceScope` / `indexed` / `offset` / `total`). Overview KPIs prefer `GET /api/datasets/overview` (incl. local/external/indexed aggregates). Updated-date filters operate on real `updatedAt`. Unknown backend status renders as UNKNOWN (never Ready). Unmeasured job progress is indeterminate / UNMEASURED — never an invented percentage. Capacity unknown ≠ fake 1 TB. Screenshot numbers exist only in `mocks/datasetsV2VisualFixture.ts`. Manage Storage navigates to Settings → Opslag. Analyse deep-links to `/research?dataset=…`. Bulk Verwerken/Indexeren use `POST /api/datasets/bulk/{materialize,index}` (max 25, partial failure).
 
 Production never falls back to `DH_DEMO_*` inventory rows as live truth.
 

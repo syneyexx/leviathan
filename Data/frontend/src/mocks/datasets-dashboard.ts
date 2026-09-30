@@ -1,81 +1,41 @@
-/** Datasets dashboard — screenshot-matching demo placeholders (UI when API list is empty). */
+/**
+ * TEST / DEMO placeholders for Datasets UI.
+ *
+ * Production pages/hooks MUST NOT import fixture numbers or DH_DEMO_* as
+ * runtime fallbacks. Prefer pages/datasets/constants.ts for types & labels.
+ * Visual regression: mocks/datasetsV2VisualFixture.ts
+ */
 
-export type DhSourceKind = "huggingface" | "local" | "curated" | "arxiv" | "ncbi" | "other";
-export type DhStatus =
-  | "ready"
-  | "offline"
-  | "validating"
-  | "processing"
-  | "failed"
-  | "cancelled"
-  | "unknown";
-export type DhEmbedding =
-  | { kind: "indexed" }
-  | { kind: "not_indexed" }
-  | { kind: "pending" }
-  | { kind: "queued" }
-  | { kind: "indexing"; pct: number };
+export type {
+  DhColumnId,
+  DhEmbedding,
+  DhFilterId,
+  DhRow,
+  DhSourceKind,
+  DhStatus,
+} from "../pages/datasets/constants";
 
-export type DhFilterId = "all" | "local" | "huggingface" | "curated" | "offline" | "processing";
+export {
+  DH_FILTER_PILLS,
+  DH_PAGE_COPY,
+  DH_TYPE_OPTIONS,
+  DH_UPDATED_OPTIONS,
+  DS_COLUMNS,
+  DS_FILTER_PILLS,
+  DS_PAGE_COPY,
+  DS_TYPE_OPTIONS,
+  DS_UPDATED_OPTIONS,
+} from "../pages/datasets/constants";
 
-export type DhRow = {
-  id: string;
-  name: string;
-  description: string;
-  source: string;
-  sourceKind: DhSourceKind;
-  type: string;
-  size: string;
-  records: string;
-  status: DhStatus;
-  embeddings: DhEmbedding;
-  updated: string;
-  tags?: string[];
-  /** Present when mapped from live API */
-  live?: boolean;
-  byteSize?: number | null;
-  rowCount?: number | null;
-  updatedAt?: string | null;
-};
+import type { DhFilterId, DhRow } from "../pages/datasets/constants";
 
-export const DH_PAGE_COPY = {
-  title: "DATASETS",
-  subtitle: "Your gateway to a broader world of knowledge.",
-  description:
-    "Discover, manage, and connect datasets from across the web, local sources, and trusted repositories. Power deeper research with high-quality data.",
-  quote: "DATA EXTENDS HUMAN CURIOSITY. — LEVIATHAN",
-} as const;
-
-export const DH_TYPE_OPTIONS = ["All Types", "Text", "Structured", "Document", "Multimodal", "Code"] as const;
-export const DH_UPDATED_OPTIONS = [
-  "Last Updated",
-  "Last 24 hours",
-  "Last 7 days",
-  "Last 30 days",
-  "Oldest first",
-] as const;
-
-export const DH_FILTER_PILLS: Array<{
-  id: DhFilterId;
-  label: string;
-  icon: string;
-}> = [
-  { id: "all", label: "All", icon: "grid" },
-  { id: "local", label: "Local", icon: "folder" },
-  { id: "huggingface", label: "Hugging Face", icon: "hf" },
-  { id: "curated", label: "Curated", icon: "shield" },
-  { id: "offline", label: "Offline", icon: "offline" },
-  { id: "processing", label: "Processing", icon: "pulse" },
-];
-
-/** Fixed pill counts for empty-state visual match (screenshot). */
+/** Fixed pill counts for empty-state visual match (screenshot) — TEST ONLY. */
 export const DH_DEMO_FILTER_COUNTS: Record<DhFilterId, number> = {
   all: 24,
   local: 8,
-  huggingface: 6,
-  curated: 4,
-  offline: 5,
-  processing: 2,
+  external: 16,
+  indexed: 18,
+  not_indexed: 6,
 };
 
 /** DEMO-only decorative rows — must never be rendered as live inventory without DemoBanner. */

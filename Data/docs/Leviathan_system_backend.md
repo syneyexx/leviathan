@@ -995,18 +995,26 @@ HTTP: `Data/backend/routes/datasets.py`. Knowledge ingestion: `Data/backend/rout
 `GET /api/datasets` supports bounded server-side listing (backward compatible with `limit`-only callers):
 
 - `q` — search name / displayName / description / category / tags metadata
-- `source` / `sourceType`, `category`, `split`, `status`, `type` / `detectedFormat`, `tags`
+- `source` / `sourceType`, `sourceScope` (`local`|`external`), `indexed` (bool), `category`, `split`, `status`, `type` / `detectedFormat`, `tags`
 - `sort`, `offset`, `limit` (capped)
 - response includes `datasets`, `total`, `hasMore`, `nextOffset` — **page size never defines catalog totals**
 
-`GET /api/datasets/overview` returns bounded aggregates for the Dataset Management control plane:
+`GET /api/datasets/overview` returns bounded aggregates for the Dataset Management / Onderzoek Datasets control planes:
 
 - totalDatasets / totalSamples (partial measurement when `row_count` is null)
+- localDatasets / externalDatasets / indexedDatasets / notIndexedDatasets (SQL aggregates; indexed = distinct datasets with a READY `dataset_indexes` row)
 - attributableBytes + disk capacity (`shutil.disk_usage` on corpus root) + storageBreakdown
 - active/running/queued import jobs
 - validation issue rollups from persisted `validation_json` (not failed-job counts)
 - catalogStatus from derived catalog reconcile (`generatedAt`) — not remote “Online sync”
 - tagCounts and Dataset Services **status projections** (embedding / dataset / training / knowledge) — no new daemons
+
+Bounded bulk control-plane operations (max 25 ids, partial failure reported per id):
+
+- `POST /api/datasets/bulk/materialize` → enqueue materialize jobs via DatasetService
+- `POST /api/datasets/bulk/index` → enqueue index jobs via DatasetService (resolves a usable version per id)
+
+Heavy work remains JobRuntime / Worker Fabric owned. FastAPI only validates, enqueues, and reports.
 
 Quality presentation (`Data/modules/datasets/quality_signals.py`) is evidence-based from validation only. Unmeasured quality is never shown as 100%. Formula: `clamp(0,100, 100 - 8*errors - 2*warnings - 1*emptyContent)` with constituents exposed.
 

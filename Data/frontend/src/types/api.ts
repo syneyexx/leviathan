@@ -1230,11 +1230,32 @@ export type DatasetOverview = {
   exportVersionCount: number;
   byStatus: Record<string, number>;
   bySourceType: Record<string, number>;
+  localDatasets?: number;
+  externalDatasets?: number;
+  indexedDatasets?: number;
+  notIndexedDatasets?: number;
   tagCounts: { tag: string; count: number }[];
   storageBreakdown: DatasetStorageBreakdownRow[];
   catalogStatus: DatasetCatalogStatus;
   services: DatasetServiceProjection[];
   qualityModel?: Record<string, unknown>;
+  truth?: Record<string, unknown>;
+};
+
+export type DatasetBulkResultItem = {
+  datasetId: string;
+  ok: boolean;
+  jobId?: string;
+  job?: DatasetJob;
+  error?: { code?: string; message?: string };
+};
+
+export type DatasetBulkResult = {
+  action: string;
+  requested: number;
+  succeeded: number;
+  failed: number;
+  results: DatasetBulkResultItem[];
   truth?: Record<string, unknown>;
 };
 
