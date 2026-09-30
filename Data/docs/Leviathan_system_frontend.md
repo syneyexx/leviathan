@@ -749,11 +749,37 @@ Routes are listed in section 5. The Media Analytics route currently uses the gen
 
 # 26. Tools UI
 
-Route `/tools`; `src/pages/ToolsPage.tsx`.
+Route `/tools`; `src/pages/ToolsPage.tsx` plus `src/pages/tools/useToolsWorkspace.ts`
+and `src/components/tools/*`.
 
-Tools represent ExecutionGateway/CapabilityCatalog truth. Availability, risk/approval, last invocation and receipts are backend-owned. Chat capability cards reuse shared execution presentation where possible.
+`AppShell variant="v2"` title: **Runtime & Tools / Tools**. Parent MAIN_MENU label is
+**Runtime & Tools** (id `runtime` unchanged). Children stay MAIN_MENU-derived.
+
+Tools represent ExecutionGateway / CapabilityCatalog truth. Availability, risk/approval,
+last invocation and receipts are backend-owned. Chat capability cards reuse shared
+execution presentation where possible.
+
+Composition (reference application viewport): hero → six KPIs → Tools Bibliotheek +
+Tool Details → MCP Servers / Plugins / Recente Tool Aanroepen.
+
+Server projections:
+
+- `GET /api/capabilities/overview` — KPI aggregates, MCP/plugin panels, recent calls
+- `GET /api/capabilities/library` — bounded searchable library rows with category/source/last-used
+- `GET /api/capabilities/{id}?detail=true` — usage, providers, receipts, dependencies, examples
+- Custom wrappers: `POST/PATCH/DELETE /api/capabilities/custom` (CONTROL SQLite table
+  `custom_capability_definitions`, hydrated into CapabilityCatalog; no separate tools DB)
+
+Test invocation always goes through `POST /api/capabilities/{id}/execute` → ExecutionGateway.
+Destructive side effects (`WRITE`/`EXECUTE`/`DELETE`/`DESTRUCTIVE`/`EXTERNAL_SIDE_EFFECT`)
+are blocked for `tools-ui*` callers without approval.
 
 No page should call a tool provider directly to bypass central capability policy.
+
+Visual fixture (Playwright only): `src/mocks/toolsV2VisualFixture.ts` +
+`e2e/tools-v2.visual.spec.ts`. Reference: `docs/ui_reference/tools-v2-reference.jpg`.
+Production never imports fixture defaults. Layout lives in `leviathan-v2.css` under
+`.lv-v2-page--tools` / `.lv-v2-tools-*` — no `tools-v2.css`.
 
 ---
 

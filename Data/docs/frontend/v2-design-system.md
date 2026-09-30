@@ -179,6 +179,15 @@ Media Control, Plugin & Runtime, Coding Agent, and other deep links remain regis
 - Local views `?view=runtimes|installation|environments` are projections — not new backend systems.
 - Visual fixture: `src/mocks/modulesV2VisualFixture.ts` + `e2e/modules-v2.visual.spec.ts` (reference: `docs/ui_reference/modules-v2-reference.png`, 1672×941). Production never imports fixture defaults.
 
+## Tools migration
+
+- `/tools` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "Runtime & Tools / Tools").
+- Composition: `ToolsPage` + `useToolsWorkspace` + `src/components/tools/*` (hero, six KPIs, library, detail tabs, bottom MCP/plugins/recent, modals).
+- No page-local Tools CSS; layout lives in `leviathan-v2.css` under `.lv-v2-page--tools` / `.lv-v2-tools-*`.
+- KPIs / library / usage / recent calls come from CapabilityCatalog + CapabilityReceiptStore + PluginRegistry + MCP bridge via `/api/capabilities/overview` and `/library`.
+- Test uses ExecutionGateway; custom tools are declarative wrappers only (CONTROL table `custom_capability_definitions`).
+- Visual fixture: `src/mocks/toolsV2VisualFixture.ts` + `e2e/helpers/toolsV2Visual.ts` + `e2e/tools-v2.visual.spec.ts` (reference: `docs/ui_reference/tools-v2-reference.jpg`). Production never imports fixture defaults.
+
 ## Workflows migration
 
 - `/workflows` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "Runtime & Tools / Workflows").

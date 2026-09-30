@@ -120,6 +120,11 @@ import type {
   CodingWorkspaceTreeResponse,
   ChatOptions,
   CapabilityListItem,
+  ToolsOverview,
+  ToolsLibraryItem,
+  ToolsCapabilityDetail,
+  ToolsRecentCall,
+  PluginRecordPublic,
   SystemTelemetryResponse,
   McpCallRecord,
   McpServerPublic,
@@ -2820,13 +2825,125 @@ export const api = {
     return request<{ capabilities: CapabilityListItem[] }>(`/api/capabilities${q ? `?${q}` : ""}`);
   },
 
+  capabilitiesOverview(periodDays = 7): Promise<{ overview: ToolsOverview }> {
+    return request(`/api/capabilities/overview?period_days=${encodeURIComponent(String(periodDays))}`);
+  },
+
+  capabilitiesLibrary(opts?: {
+    q?: string;
+    category?: string;
+    source?: string;
+    sort?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{
+    tools: ToolsLibraryItem[];
+    total: number;
+    limit: number;
+    offset: number;
+    has_more: boolean;
+  }> {
+    const params = new URLSearchParams();
+    if (opts?.q) params.set("q", opts.q);
+    if (opts?.category) params.set("category", opts.category);
+    if (opts?.source) params.set("source", opts.source);
+    if (opts?.sort) params.set("sort", opts.sort);
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    if (opts?.offset != null) params.set("offset", String(opts.offset));
+    const q = params.toString();
+    return request(`/api/capabilities/library${q ? `?${q}` : ""}`);
+  },
+
+  capabilityDetail(
+    capabilityId: string,
+    opts?: { receiptLimit?: number },
+  ): Promise<ToolsCapabilityDetail> {
+    const params = new URLSearchParams({ detail: "true" });
+    if (opts?.receiptLimit != null) params.set("receipt_limit", String(opts.receiptLimit));
+    return request(`/api/capabilities/${encodeURIComponent(capabilityId)}?${params}`);
+  },
+
+  capabilityReceipts(
+    capabilityId: string,
+    limit = 50,
+  ): Promise<{ capability_id: string; receipts: ToolsRecentCall[]; usage?: ToolsCapabilityDetail["usage"] }> {
+    return request(
+      `/api/capabilities/receipts/by-capability/${encodeURIComponent(capabilityId)}?limit=${encodeURIComponent(String(limit))}`,
+    );
+  },
+
+  createCustomCapability(payload: {
+    name: string;
+    description?: string;
+    wraps_capability_id: string;
+    capability_id?: string;
+    version?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<{ custom: Record<string, unknown>; capability: CapabilityListItem | null }> {
+    return request("/api/capabilities/custom", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  updateCustomCapability(
+    capabilityId: string,
+    payload: {
+      name?: string;
+      description?: string;
+      enabled?: boolean;
+      version?: string;
+      metadata?: Record<string, unknown>;
+      expected_revision?: number;
+    },
+  ): Promise<{ custom: Record<string, unknown>; capability: CapabilityListItem | null }> {
+    return request(`/api/capabilities/custom/${encodeURIComponent(capabilityId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  deleteCustomCapability(capabilityId: string): Promise<{ ok: boolean }> {
+    return request(`/api/capabilities/custom/${encodeURIComponent(capabilityId)}`, {
+      method: "DELETE",
+    });
+  },
+
+  listPlugins(): Promise<{ plugins: PluginRecordPublic[] }> {
+    return request("/api/plugins");
+  },
+
+  enablePlugin(pluginId: string): Promise<{ plugin: PluginRecordPublic }> {
+    return request(`/api/plugins/${encodeURIComponent(pluginId)}/enable`, { method: "POST" });
+  },
+
+  disablePlugin(pluginId: string): Promise<{ plugin: PluginRecordPublic }> {
+    return request(`/api/plugins/${encodeURIComponent(pluginId)}/disable`, { method: "POST" });
+  },
+
   executeCapability(
     capabilityId: string,
     arguments_: Record<string, unknown> = {},
+    opts?: {
+      requested_by?: string;
+      approval_id?: string;
+      idempotency_key?: string;
+      run_id?: string;
+      job_id?: string;
+      trace_id?: string;
+    },
   ): Promise<{ result: unknown }> {
     return request(`/api/capabilities/${encodeURIComponent(capabilityId)}/execute`, {
       method: "POST",
-      body: JSON.stringify({ arguments: arguments_, requested_by: "ui" }),
+      body: JSON.stringify({
+        arguments: arguments_,
+        requested_by: opts?.requested_by ?? "ui",
+        approval_id: opts?.approval_id,
+        idempotency_key: opts?.idempotency_key,
+        run_id: opts?.run_id,
+        job_id: opts?.job_id,
+        trace_id: opts?.trace_id,
+      }),
     });
   },
 

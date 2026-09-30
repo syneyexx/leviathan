@@ -2608,7 +2608,170 @@ export type CapabilityListItem = {
   provider_kind?: string;
   provider_ref?: string;
   input_schema?: Record<string, unknown>;
+  output_schema?: Record<string, unknown>;
+  required_permissions?: string[];
+  schema_hash?: string;
+  metadata?: Record<string, unknown>;
+  execution_class?: string;
   [key: string]: unknown;
+};
+
+export type ToolsLibraryItem = {
+  id: string;
+  name: string;
+  description?: string;
+  provider_kind?: string;
+  provider_ref?: string;
+  available?: boolean;
+  enabled?: boolean;
+  availability_reason?: string | null;
+  side_effects?: string[];
+  execution_class?: string | null;
+  category?: string;
+  category_label?: string;
+  origin?: string;
+  source?: string;
+  source_label?: string;
+  status?: string;
+  status_label?: string;
+  version?: string | null;
+  last_used_at?: string | null;
+  tags?: string[];
+  domains?: string[];
+  risk_tier?: string | null;
+};
+
+export type ToolsOverview = {
+  total_capabilities: number;
+  active_capabilities: number;
+  inactive_capabilities: number;
+  unavailable_capabilities: number;
+  category_count: number;
+  categories: Array<{ key: string; label: string }>;
+  plugin_tool_count: number;
+  mcp_tool_count: number;
+  mcp_tools_available?: number;
+  custom_tool_count: number;
+  origin_counts?: Record<string, number>;
+  success_ratio: number | null;
+  success_ratio_pct: number | null;
+  success_ratio_delta_pp: number | null;
+  success_ratio_unmeasured: boolean;
+  spark?: {
+    success?: number[];
+    total_tools?: number[];
+    plugin?: number[];
+    mcp?: number[];
+    custom?: number[];
+    categories?: number[];
+  };
+  mcp_servers: Array<{
+    server_id: string;
+    display_name?: string;
+    enabled?: boolean;
+    transport?: string;
+    connection?: string;
+    tool_count?: number;
+    last_seen_at?: string | null;
+    last_error_message?: string | null;
+    url?: string | null;
+    command?: string | null;
+  }>;
+  plugins: Array<{
+    plugin_id: string;
+    name: string;
+    status?: string;
+    status_label?: string;
+    tool_count?: number;
+    version?: string;
+    kind?: string | null;
+    error?: string | null;
+  }>;
+  recent_calls: ToolsRecentCall[];
+  period_days?: number;
+  coverage?: {
+    mcp_stale?: boolean;
+    mcp_error?: string | null;
+    plugins_stale?: boolean;
+    plugins_error?: string | null;
+    receipts_stale?: boolean;
+    receipts_error?: string | null;
+    registration_history_unmeasured?: boolean;
+  };
+  truth?: Record<string, boolean>;
+};
+
+export type ToolsRecentCall = {
+  receipt_id?: string;
+  request_id?: string;
+  capability_id: string;
+  tool_name?: string;
+  status: string;
+  status_label?: string;
+  latency_ms?: number | null;
+  recorded_at?: string;
+  requested_by?: string | null;
+  provider_kind?: string | null;
+  provider_ref?: string | null;
+  error?: string | null;
+  run_id?: string | null;
+  job_id?: string | null;
+};
+
+export type ToolsCapabilityDetail = {
+  capability: CapabilityListItem;
+  summary: ToolsLibraryItem;
+  usage?: {
+    total_calls?: number;
+    completed?: number;
+    failed?: number;
+    timeout?: number;
+    rejected?: number;
+    cancelled?: number;
+    success_ratio?: number | null;
+    avg_latency_ms?: number | null;
+    providers?: Array<{ provider?: string; calls?: number; completed?: number }>;
+    coverage?: Record<string, boolean>;
+  } | null;
+  providers?: Array<{
+    name?: string;
+    kind?: string;
+    calls?: number | null;
+    completed?: number;
+    state?: string;
+  }>;
+  recent_receipts?: ToolsRecentCall[];
+  dependencies?: { items?: Array<Record<string, unknown>>; side_effects?: string[] };
+  examples?: {
+    source?: string;
+    label?: string;
+    examples?: Array<Record<string, unknown>>;
+  };
+  editability?: {
+    editable?: boolean;
+    mode?: string;
+    reason?: string | null;
+    navigate?: string;
+  };
+  testability?: {
+    allowed?: boolean;
+    mode?: string;
+    reason?: string | null;
+    side_effects?: string[];
+  };
+  truth?: Record<string, boolean>;
+};
+
+export type PluginRecordPublic = {
+  plugin_id: string;
+  name: string;
+  kind?: string;
+  status?: string;
+  version?: string;
+  bindings?: Array<{ external_name?: string; capability_id?: string; description?: string }>;
+  endpoint?: string | null;
+  metadata?: Record<string, unknown>;
+  error?: string | null;
 };
 
 
