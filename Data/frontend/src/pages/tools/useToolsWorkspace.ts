@@ -4,18 +4,18 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, ApiError } from "../../../api/client";
+import { api, ApiError } from "../../api/client";
 import {
   TOOLS_V2_VISUAL_FIXTURE,
   isToolsVisualFixtureActive,
-} from "../../../mocks/toolsV2VisualFixture";
-import { useAppToast } from "../../../state/useAppToast";
+} from "../../mocks/toolsV2VisualFixture";
+import { useAppToast } from "../../state/useAppToast";
 import type {
   ToolsCapabilityDetail,
   ToolsLibraryItem,
   ToolsOverview,
   ToolsRecentCall,
-} from "../../../types/api";
+} from "../../types/api";
 
 export type ToolsDetailTab =
   | "overview"
@@ -116,8 +116,8 @@ export function useToolsWorkspace() {
     if (!mounted.current) return;
     setTools(res.tools ?? []);
     setToolsTotal(res.total ?? 0);
-    setSelectedId((prev) => {
-      const ids = (res.tools ?? []).map((t) => t.id);
+      setSelectedId((prev) => {
+      const ids = (res.tools ?? []).map((t: ToolsLibraryItem) => t.id);
       if (prev && ids.includes(prev)) return prev;
       return ids[0] ?? null;
     });
@@ -168,7 +168,7 @@ export function useToolsWorkspace() {
     if (visual) {
       setOverview(TOOLS_V2_VISUAL_FIXTURE.overview);
       setTools(TOOLS_V2_VISUAL_FIXTURE.tools);
-      setToolsTotal(TOOLS_V2_VISUAL_FIXTURE.tools.length);
+      setToolsTotal(TOOLS_V2_VISUAL_FIXTURE.overview.total_capabilities);
       setRecentCalls(TOOLS_V2_VISUAL_FIXTURE.overview.recent_calls);
       setDetail(TOOLS_V2_VISUAL_FIXTURE.detail);
       setLoading(false);
@@ -293,7 +293,7 @@ export function useToolsWorkspace() {
     } catch (err) {
       const msg = errorMessage(err);
       setTestResult(msg);
-      if (err instanceof ApiError && err.status === 403) {
+      if (err instanceof ApiError && (err as ApiError).status === 403) {
         toast("Goedkeuring vereist of test geblokkeerd");
       } else {
         toast(msg);

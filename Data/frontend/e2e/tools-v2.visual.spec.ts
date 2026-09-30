@@ -38,9 +38,9 @@ test.describe("Tools V2 visual", () => {
     await expect(page.getByRole("tab", { name: "Voorbeeld" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Logs" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Afhankelijkheden" })).toBeVisible();
-    await expect(page.getByText("MCP Servers")).toBeVisible();
-    await expect(page.getByText("Plugins", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("Recente Tool Aanroepen")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "MCP Servers" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Plugins", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Recente Tool Aanroepen" })).toBeVisible();
     await page.waitForTimeout(400);
 
     await expect(page).toHaveScreenshot("tools-v2-screen1.png", {
