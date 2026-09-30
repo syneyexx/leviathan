@@ -4,6 +4,12 @@ import type {
   AssistantTurnTelemetry,
   ReasoningSummary,
 } from "../../types/api";
+import type {
+  ActivityDisplayMode,
+  ActivityProjection,
+  DecisionReceipt,
+} from "../../types/activity";
+import { ActivityTimeline } from "../../components/activity/ActivityTimeline";
 import { formatMessageTime } from "./chatHelpers";
 import { CapabilityResultCards } from "./CapabilityResultCards";
 
@@ -22,6 +28,10 @@ export type MessageListLastTurn = {
   telemetry?: AssistantTurnTelemetry | null;
   /** Optional measured reasoning elapsed (ms) — never invent. */
   reasoningElapsedMs?: number | null;
+  /** Backend-backed activity projection — preferred over legacy steps. */
+  activity?: ActivityProjection | null;
+  activityMode?: ActivityDisplayMode;
+  decisionReceipts?: DecisionReceipt[];
 };
 
 export type MessageListProps = {
@@ -29,16 +39,8 @@ export type MessageListProps = {
   lastTurn?: MessageListLastTurn | null;
   emptyTitle?: string;
   emptyDetail?: string;
+  onActivityModeChange?: (mode: ActivityDisplayMode) => void;
 };
-
-function formatElapsed(ms: number | null | undefined): string | null {
-  if (ms == null || !Number.isFinite(ms) || ms < 0) return null;
-  if (ms >= 1000) {
-    const s = ms / 1000;
-    return `${s >= 10 ? Math.round(s) : s.toFixed(1).replace(/\.0$/, "")} seconden`;
-  }
-  return `${Math.round(ms)} ms`;
-}
 
 /** Minimal safe inline formatting: **bold** + newlines. No HTML injection. */
 function renderPlainContent(content: string): ReactNode {
@@ -64,26 +66,24 @@ function renderPlainContent(content: string): ReactNode {
   });
 }
 
-function ReasoningCard({ lastTurn }: { lastTurn: MessageListLastTurn }) {
+/**
+ * Legacy fallback when the backend has not yet emitted ActivityEvents.
+ * Renders planned step titles only — never invents live lifecycle.
+ */
+function LegacyReasoningFallback({ lastTurn }: { lastTurn: MessageListLastTurn }) {
   const steps = lastTurn.reasoning?.steps?.filter(Boolean) ?? [];
   const [open, setOpen] = useState(steps.length > 0);
-  const summary =
-    lastTurn.cognitionPhase ||
-    (lastTurn.reasoning?.complexity === "deep"
-      ? "Stap-voor-stap analyse"
-      : lastTurn.reasoning?.complexity) ||
-    null;
-  const elapsed = formatElapsed(lastTurn.reasoningElapsedMs ?? null);
   const streaming = lastTurn.streaming === "streaming";
+  if (!steps.length && !streaming) return null;
 
-  const metaParts: string[] = [];
-  if (steps.length > 0) {
-    metaParts.push(`${steps.length} stap${steps.length === 1 ? "" : "pen"}`);
-  }
-  if (elapsed) metaParts.push(elapsed);
-
-  const hasBody = Boolean(summary || steps.length > 0);
-  if (!hasBody && !streaming) return null;
+  const titleMap: Record<string, string> = {
+    understand_request: "Request interpreted",
+    retrieve_atlas_context: "Atlas context retrieval",
+    deep_recall_hydrate: "Deep recall hydration",
+    retrieve_relevant_knowledge: "Knowledge retrieval",
+    structure_response: "Response structure planned",
+    generate_answer: "Answer synthesis",
+  };
 
   return (
     <div className="lv-v2-reason-card">
@@ -97,29 +97,67 @@ function ReasoningCard({ lastTurn }: { lastTurn: MessageListLastTurn }) {
           <path d="M12 3a6 6 0 0 1 4.5 9.8V16a.5.5 0 0 1-.5.5h-8a.5.5 0 0 1-.5-.5v-3.2A6 6 0 0 1 12 3z" />
           <path d="M9 19h6" />
         </svg>
-        {streaming ? "Redeneert…" : "Redenering"}
-        {metaParts.length > 0 ? (
-          <span className="lv-v2-reason-card__meta">{metaParts.join(" • ")}</span>
-        ) : null}
+        {streaming ? "Activity…" : "Planned steps"}
+        <span className="lv-v2-reason-card__meta">compatibility</span>
       </button>
       {open ? (
         <div className="lv-v2-reason-card__body">
-          {summary ? <p style={{ margin: 0 }}>{summary}</p> : null}
-          {steps.length > 0 ? (
-            <ul>
-              {steps.map((step, index) => (
-                <li key={`reason-step-${index}`}>{step}</li>
-              ))}
-            </ul>
-          ) : (
-            <p style={{ margin: "6px 0 0", fontSize: 12, opacity: 0.7 }}>
-              Geen redeneerstappen geleverd door de backend.
-            </p>
-          )}
+          <p style={{ margin: 0 }}>
+            Planned execution path from the reasoning engine. Live lifecycle was not
+            provided for this turn.
+          </p>
+          <ul>
+            {steps.map((step, index) => (
+              <li key={`reason-step-${index}`}>{titleMap[step] || step}</li>
+            ))}
+          </ul>
         </div>
       ) : null}
     </div>
   );
+}
+
+function ActivityOrLegacy({
+  lastTurn,
+  onActivityModeChange,
+}: {
+  lastTurn: MessageListLastTurn;
+  onActivityModeChange?: (mode: ActivityDisplayMode) => void;
+}) {
+  const hasActivity =
+    (lastTurn.activity?.events?.length ?? 0) > 0 ||
+    (lastTurn.activity?.tree?.length ?? 0) > 0 ||
+    lastTurn.streaming === "streaming";
+
+  if (hasActivity && lastTurn.activity) {
+    return (
+      <ActivityTimeline
+        projection={lastTurn.activity}
+        mode={lastTurn.activityMode ?? "detailed"}
+        streaming={lastTurn.streaming === "streaming"}
+        onModeChange={onActivityModeChange}
+        decisionReceipts={lastTurn.decisionReceipts}
+      />
+    );
+  }
+  if (hasActivity && lastTurn.streaming === "streaming") {
+    return (
+      <ActivityTimeline
+        projection={
+          lastTurn.activity ?? {
+            operationId: "",
+            highestSequence: 0,
+            tree: [],
+            events: [],
+          }
+        }
+        mode={lastTurn.activityMode ?? "detailed"}
+        streaming
+        onModeChange={onActivityModeChange}
+      />
+    );
+  }
+  return <LegacyReasoningFallback lastTurn={lastTurn} />;
 }
 
 export function MessageList({
@@ -127,6 +165,7 @@ export function MessageList({
   lastTurn = null,
   emptyTitle = "Hades AI is gereed.",
   emptyDetail = "Start een gesprek. Persistente chat, reasoning en knowledge retrieval zijn gekoppeld aan de backend.",
+  onActivityModeChange,
 }: MessageListProps) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [nearBottom, setNearBottom] = useState(true);
@@ -211,7 +250,12 @@ export function MessageList({
                 {message.role === "assistant" ? (
                   <div className="lv-v2-msg__identity">Hades AI</div>
                 ) : null}
-                {showReasoning && lastTurn ? <ReasoningCard lastTurn={lastTurn} /> : null}
+                {showReasoning && lastTurn ? (
+                  <ActivityOrLegacy
+                    lastTurn={lastTurn}
+                    onActivityModeChange={onActivityModeChange}
+                  />
+                ) : null}
                 <div
                   className={`lv-v2-msg__bubble${message.pending ? " is-pending" : ""}${
                     message.error ? " is-error" : ""
