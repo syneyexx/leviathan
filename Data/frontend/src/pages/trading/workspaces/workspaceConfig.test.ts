@@ -42,6 +42,8 @@ describe("Trading Center WAVE 1 workspace config", () => {
   });
 
   it("resolves surface query with workspace default fallback", () => {
+    const hub = getTradingWorkspace("command_hub");
+    expect(resolveWorkspaceSurface(hub, null).id).toBe("overview");
     const lab = getTradingWorkspace("strategy_lab");
     expect(resolveWorkspaceSurface(lab, null).id).toBe("lab");
     expect(resolveWorkspaceSurface(lab, "simulation").id).toBe("simulation");

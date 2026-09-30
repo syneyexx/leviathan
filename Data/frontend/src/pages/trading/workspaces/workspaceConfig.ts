@@ -38,13 +38,13 @@ export const TRADING_WORKSPACES: readonly TradingWorkspaceDefinition[] = [
     title: "Command Hub",
     subtitle:
       "Central overview and control for autonomous trading research, simulation, and paper trading.",
-    defaultSurface: "research-command",
+    defaultSurface: "overview",
     surfaces: [
       { id: "overview", label: "Overview", level: "PRIMARY" },
       {
         id: "research-command",
         label: "Research Command",
-        level: "PRIMARY",
+        level: "SECONDARY",
         legacyPath: "/trading/onderzoek",
       },
       {

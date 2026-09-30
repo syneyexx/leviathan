@@ -18,12 +18,14 @@ Format per item:
 - **Where:** Strategy Lab → ADVANCED candidate drawer
 - **Status:** COMPLETE
 - **Gap:** Backend route exists; frontend `marketSimLab.ts` does **not** wire explain
+- **WAVE 2:** Wired — `marketSimLabExplainCandidate` + Population panel Explain drawer
 
 ### 2. Agent wallets (first-class)
 - **Found:** `accounting.WalletLedger` with isolated per-agent / shared / paper wallets; exposed indirectly in run live state
 - **Where:** Trading Desk → PRIMARY wallets panel; Command Hub KPI “Wallets (Paper)”
 - **Status:** COMPLETE
 - **Gap:** Gap ledger UI=`ABSENT` for dedicated wallet surface; simulatie observability tab only
+- **WAVE 2:** Wired — `AgentWalletsPanel` on Trading Desk (paper portfolio wallets); Command Hub KPI links to desk
 
 ### 3. Paper deployment lifecycle beyond chart desk
 - **Found:** shadow-observe, promote, autonomous-step, drift-review, kill-switch, execution-calibration APIs (client methods exist)

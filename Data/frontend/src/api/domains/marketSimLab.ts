@@ -110,6 +110,16 @@ export const marketSimLabApi = {
     return request(`/api/market-sim/lab/runs/${encodeURIComponent(labId)}/candidates`);
   },
 
+  /** WAVE 2 — beyond-legacy COMPLETE capability (was unwired in FE). */
+  marketSimLabExplainCandidate(
+    labId: string,
+    candidateId: string,
+  ): Promise<Record<string, unknown>> {
+    return request(
+      `/api/market-sim/lab/runs/${encodeURIComponent(labId)}/candidates/${encodeURIComponent(candidateId)}/explain`,
+    );
+  },
+
   marketSimLabRunTrials(
     labId: string,
     limit = 100,
