@@ -55,7 +55,8 @@ export function TasksBottomGrid({
       ? { background: `conic-gradient(${gradientParts.join(", ")})` }
       : { background: "rgba(100,116,139,0.25)" };
 
-  const maxAgentTasks = Math.max(1, ...agentActivity.map((a) => a.activeTaskCount || 0), 1);
+  const activeAgents = agentActivity.filter((a) => (a.activeTaskCount || 0) > 0);
+  const maxAgentTasks = Math.max(1, ...activeAgents.map((a) => a.activeTaskCount || 0), 1);
 
   const cpu = telemetry?.dashboard.cpuPct ?? null;
   const ramPct = telemetry?.dashboard.ramPct ?? null;
@@ -172,11 +173,11 @@ export function TasksBottomGrid({
           <h3 className="lv-v2-panel__title">Agents Activiteit</h3>
         </header>
         <div className="lv-v2-panel__body">
-          {agentActivity.length === 0 ? (
-            <p className="lv-v2-muted">Geen agentactiviteit</p>
+          {activeAgents.length === 0 ? (
+            <p className="lv-v2-muted">Geen actieve agenttaken</p>
           ) : (
             <ul className="lv-v2-tasks-agents">
-              {agentActivity.slice(0, 8).map((agent) => {
+              {activeAgents.slice(0, 8).map((agent) => {
                 const count = agent.activeTaskCount || 0;
                 const pct = Math.round((count / maxAgentTasks) * 100);
                 return (
@@ -185,7 +186,7 @@ export function TasksBottomGrid({
                       <strong>{agent.name}</strong>
                       <span>{count} taken</span>
                     </div>
-                    <ProgressBar value={pct} label={`${count} van max zichtbaar`} />
+                    <ProgressBar value={pct} label={`${count} actieve taken`} />
                   </li>
                 );
               })}

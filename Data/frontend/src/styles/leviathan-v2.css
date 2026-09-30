@@ -7373,3 +7373,101 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Taken V2 visual polish pass */
+.lv-v2-tasks-metric-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 36px;
+  min-width: 64px;
+}
+
+.lv-v2-tasks-metric-bars .lv-v2-metric-card__bar {
+  flex: 1;
+  min-width: 4px;
+  border-radius: 2px 2px 0 0;
+  background: currentColor;
+  opacity: 0.85;
+}
+
+.lv-v2-tasks-metric-bars--danger {
+  color: #ef4444;
+}
+
+.lv-v2-tasks-status {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.lv-v2-tasks-status--success {
+  background: rgba(52, 211, 153, 0.12);
+}
+.lv-v2-tasks-status--info {
+  background: rgba(56, 189, 248, 0.12);
+}
+.lv-v2-tasks-status--warning {
+  background: rgba(251, 191, 36, 0.12);
+}
+.lv-v2-tasks-status--danger {
+  background: rgba(248, 113, 113, 0.12);
+}
+
+.lv-v2-tasks-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: transparent;
+  color: #e2e8f0;
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.lv-v2-tasks-action-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.lv-v2-tasks-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.lv-v2-tasks-action-btn--pause {
+  border-color: rgba(251, 191, 36, 0.55);
+  color: #fbbf24;
+}
+
+.lv-v2-tasks-action-btn--stop {
+  border-color: rgba(248, 113, 113, 0.55);
+  color: #f87171;
+}
+
+.lv-v2-hero--tasks {
+  min-height: 148px;
+  border: 1px solid rgba(59, 130, 246, 0.22);
+  box-shadow: inset 0 0 40px rgba(14, 165, 233, 0.08);
+}
+
+.lv-v2-hero__media--tasks img {
+  opacity: 0.7;
+  filter: saturate(1.05) brightness(0.82) hue-rotate(-8deg);
+}
+
+.lv-v2-tasks-workspace {
+  min-height: 420px;
+}
+
+.lv-v2-tasks-detail-actions {
+  position: sticky;
+  bottom: 0;
+  padding-top: 10px;
+  background: linear-gradient(180deg, transparent, rgba(7, 15, 29, 0.95) 30%);
+}

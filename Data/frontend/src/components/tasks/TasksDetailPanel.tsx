@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../../api/client";
-import { Badge, Button, EmptyState, ProgressBar } from "../ui";
+import { Badge, EmptyState, ProgressBar } from "../ui";
 import type {
   JobRecord,
   TaskDependency,
@@ -217,32 +217,32 @@ export function TasksDetailPanel({
             ) : null}
 
             <section className="lv-v2-tasks-detail-actions" aria-label="Taakacties">
-              <Button
-                variant="secondary"
-                size="sm"
+              <button
+                type="button"
+                className="lv-v2-tasks-action-btn lv-v2-tasks-action-btn--pause"
                 disabled
                 title={task.controls?.pauseReason || "Pauze niet ondersteund"}
               >
                 Pauzeren
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
+              </button>
+              <button
+                type="button"
+                className="lv-v2-tasks-action-btn lv-v2-tasks-action-btn--stop"
                 disabled={busy || !canCancelTask(task)}
                 title={!canCancelTask(task) ? "Stoppen niet beschikbaar voor deze status" : "Stoppen"}
                 onClick={() => onCancel(task)}
               >
                 Stoppen
-              </Button>
+              </button>
               <div className="lv-v2-tasks-priority-wrap">
-                <Button
-                  variant="secondary"
-                  size="sm"
+                <button
+                  type="button"
+                  className="lv-v2-tasks-action-btn"
                   disabled={busy || task.controls?.canChangePriority === false}
                   onClick={() => setPriorityOpen((v) => !v)}
                 >
                   Prioriteit wijzigen
-                </Button>
+                </button>
                 {priorityOpen ? (
                   <div className="lv-v2-tasks-menu" role="menu">
                     {(["high", "medium", "low"] as const).map((p) => (
@@ -261,14 +261,14 @@ export function TasksDetailPanel({
                   </div>
                 ) : null}
               </div>
-              <Button
-                variant="secondary"
-                size="sm"
+              <button
+                type="button"
+                className="lv-v2-tasks-action-btn"
                 disabled={busy || task.controls?.canDuplicate === false}
                 onClick={() => onDuplicate(task)}
               >
                 Dupliceer
-              </Button>
+              </button>
             </section>
             {!pauseOk ? (
               <p className="lv-v2-muted lv-v2-tasks-pause-note">

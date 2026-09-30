@@ -1,4 +1,4 @@
-import { MetricCard, Sparkline } from "../ui";
+import { MetricCard } from "../ui";
 import type { TaskSummary } from "../../types/api";
 
 type Props = {
@@ -14,6 +14,28 @@ function pctOf(part: number, total: number): string | null {
 function series(summary: TaskSummary | null, key: keyof NonNullable<TaskSummary["sparklines"]>): number[] {
   const values = summary?.sparklines?.[key];
   return Array.isArray(values) ? values : [];
+}
+
+/** Real bucket heights from summary sparklines (not decorative). */
+function MetricBars({
+  heights,
+  className = "",
+}: {
+  heights: number[];
+  className?: string;
+}) {
+  const max = Math.max(1, ...heights);
+  return (
+    <div className={`lv-v2-metric-card__chart lv-v2-tasks-metric-bars ${className}`} aria-hidden="true">
+      {heights.map((h, i) => (
+        <span
+          key={i}
+          className="lv-v2-metric-card__bar"
+          style={{ height: `${Math.max(8, Math.round((h / max) * 100))}%` }}
+        />
+      ))}
+    </div>
+  );
 }
 
 export function TasksMetrics({ summary, loading }: Props) {
@@ -36,7 +58,7 @@ export function TasksMetrics({ summary, loading }: Props) {
             : undefined,
       spark: series(summary, "total"),
       variant: "jobs" as const,
-      stroke: "#3b82f6",
+      chartClass: "",
     },
     {
       id: "running",
@@ -45,7 +67,7 @@ export function TasksMetrics({ summary, loading }: Props) {
       sublabel: total != null && running != null ? pctOf(running, total) ?? "—" : summary ? "—" : undefined,
       spark: series(summary, "running"),
       variant: "agents" as const,
-      stroke: "#22d3ee",
+      chartClass: "lv-v2-metric-card__chart--agents",
     },
     {
       id: "waiting",
@@ -54,7 +76,7 @@ export function TasksMetrics({ summary, loading }: Props) {
       sublabel: waiting != null ? "In wachtrij" : summary ? "—" : undefined,
       spark: series(summary, "waiting"),
       variant: "trading" as const,
-      stroke: "#f59e0b",
+      chartClass: "lv-v2-metric-card__chart--amber",
     },
     {
       id: "completed",
@@ -63,7 +85,7 @@ export function TasksMetrics({ summary, loading }: Props) {
       sublabel: completed != null ? "Afgelopen 7 dagen" : summary ? "—" : undefined,
       spark: series(summary, "completed"),
       variant: "system" as const,
-      stroke: "#34d399",
+      chartClass: "lv-v2-metric-card__chart--success",
     },
     {
       id: "failed",
@@ -72,7 +94,7 @@ export function TasksMetrics({ summary, loading }: Props) {
       sublabel: total != null && failed != null ? pctOf(failed, total) ?? "—" : summary ? "—" : undefined,
       spark: series(summary, "failed"),
       variant: "research" as const,
-      stroke: "#ef4444",
+      chartClass: "lv-v2-tasks-metric-bars--danger",
     },
   ];
 
@@ -88,12 +110,9 @@ export function TasksMetrics({ summary, loading }: Props) {
           variant={card.variant}
           loading={Boolean(loading && !summary)}
           chart={
-            <Sparkline
-              values={card.spark}
-              width={72}
-              height={28}
-              className="lv-v2-tasks-spark"
-              stroke={card.stroke}
+            <MetricBars
+              heights={card.spark.length ? card.spark : [0, 0, 0, 0, 0, 0, 0]}
+              className={card.chartClass}
             />
           }
         />

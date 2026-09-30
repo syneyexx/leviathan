@@ -1,0 +1,52 @@
+{
+  "findings": [
+    {
+      "table": "commit_batches",
+      "found_in": "KNOWLEDGE",
+      "owned_by": "CONTROL",
+      "row_count": 0,
+      "target_row_count": 0,
+      "action": "SKIP_EMPTY",
+      "detail": "source_empty"
+    },
+    {
+      "table": "commit_receipts",
+      "found_in": "KNOWLEDGE",
+      "owned_by": "CONTROL",
+      "row_count": 0,
+      "target_row_count": 0,
+      "action": "SKIP_EMPTY",
+      "detail": "source_empty"
+    },
+    {
+      "table": "commit_batches",
+      "found_in": "MARKET",
+      "owned_by": "CONTROL",
+      "row_count": 0,
+      "target_row_count": 0,
+      "action": "SKIP_EMPTY",
+      "detail": "source_empty"
+    },
+    {
+      "table": "commit_receipts",
+      "found_in": "MARKET",
+      "owned_by": "CONTROL",
+      "row_count": 0,
+      "target_row_count": 0,
+      "action": "SKIP_EMPTY",
+      "detail": "source_empty"
+    }
+  ],
+  "migrated": [],
+  "retired_equivalent": [],
+  "blocked": [],
+  "skipped": [
+    "commit_batches",
+    "commit_receipts",
+    "commit_batches",
+    "commit_receipts"
+  ],
+  "errors": [],
+  "completed": true,
+  "receipt_path": null
+}
