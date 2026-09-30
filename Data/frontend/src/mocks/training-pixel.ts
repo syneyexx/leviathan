@@ -2,13 +2,17 @@
  * FINALBETA Model Training pixel mock (UI fixtures only).
  * Do NOT render TRAINING_DATASET_PREVIEW / TRAINING_SAFETY_* as live operational truth
  * without DEMO/FIXTURE labeling. Prefer live training API or UNAVAILABLE.
+ * Tabs live in `src/training/constants.ts` — re-exported here for pixel-page compat.
  */
 
-export const TRAINING_PIXEL_TABS = ["General", "Model", "Dataset", "Training", "Advanced"] as const;
-export type TrainingPixelTab = (typeof TRAINING_PIXEL_TABS)[number];
-
-export const TRAINING_PIXEL_DATASET_PREVIEW_TABS = ["Voorbeeld", "Statistieken", "Token distributie"] as const;
-export type TrainingDatasetPreviewTab = (typeof TRAINING_PIXEL_DATASET_PREVIEW_TABS)[number];
+export {
+  TRAINING_V2_TABS as TRAINING_PIXEL_TABS,
+  TRAINING_DATASET_PREVIEW_TABS as TRAINING_PIXEL_DATASET_PREVIEW_TABS,
+} from "../training/constants";
+export type {
+  TrainingV2Tab as TrainingPixelTab,
+  TrainingDatasetPreviewTab,
+} from "../training/constants";
 
 export type TrainingStatusCard = {
   id: string;

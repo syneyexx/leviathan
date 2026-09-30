@@ -1384,14 +1384,52 @@ export type PackageAvailability = {
   importError?: string | null;
 };
 
+/** Honest method availability from `/api/training/capabilities`. */
+export type MethodSupportStatus =
+  | "SUPPORTED"
+  | "UNSUPPORTED"
+  | "DEPENDENCY_MISSING"
+  | "HARDWARE_BLOCKED"
+  | "FEATURE_GATED"
+  | string;
+
+export type MethodSupport = {
+  method: string;
+  status: MethodSupportStatus;
+  operational?: boolean;
+  requires?: string[];
+  missingPackages?: string[];
+  optionalMissingPackages?: string[];
+  reasons?: string[];
+};
+
 export type TrainingCapabilities = {
   packages: PackageAvailability[];
   canRunFixture: boolean;
+  canRunSft?: boolean;
   canRunLora: boolean;
   canRunQlora: boolean;
   canRunDpo: boolean;
+  canRunDpoMicro?: boolean;
+  canUseFlashAttention?: boolean;
+  canUse8bitOptimizer?: boolean;
+  cudaAvailable?: boolean | null;
+  canRunRewardModel?: boolean;
+  canRunGrpo?: boolean;
+  canRunRl?: boolean;
+  rewardModelStatus?: string;
+  grpoStatus?: string;
+  rlStatus?: string;
+  dpoHfStatus?: string;
+  methodSupport?: Record<string, MethodSupport>;
+  productionMethods?: string[];
+  deviceStrategies?: string[];
+  multiGpuStatus?: string;
   ready: boolean;
+  missingForSft?: string[];
   missingForLora: string[];
+  missingForQlora?: string[];
+  missingForDpo?: string[];
   notes: string[];
   truth?: Record<string, boolean>;
 };
@@ -1403,6 +1441,13 @@ export type GpuDeviceInfo = {
   freeVramBytes?: number | null;
   usedVramBytes?: number | null;
   computeCapability?: string | null;
+  /** Stable GPU identity for device selection (preferred over ordinal). */
+  stableDeviceId?: string;
+  uuid?: string | null;
+  pciBusId?: string | null;
+  utilizationPct?: number | null;
+  temperatureC?: number | null;
+  probeSource?: string;
 };
 
 export type HardwareSnapshot = {
@@ -1450,6 +1495,14 @@ export type TrainingPlan = {
   warnings: string[];
   estimated: boolean;
   details?: Record<string, unknown>;
+  requestedConfig?: Record<string, unknown>;
+  suggestedConfig?: Record<string, unknown>;
+  effectiveConfig?: Record<string, unknown>;
+  suggestedChanges?: Record<string, unknown>;
+  suggestionsApplied?: boolean;
+  selectedDevice?: Record<string, unknown> | null;
+  memoryEstimate?: Record<string, unknown>;
+  truth?: Record<string, boolean>;
 };
 
 export type TrainingJob = {
@@ -1514,6 +1567,10 @@ export type TrainingLogs = {
   events: Record<string, unknown>[];
 };
 
+/**
+ * Create/preflight payload — snake_case keys match TrainingConfig / FastAPI.
+ * Newer production knobs are optional so the UI builds before the route model merges.
+ */
 export type TrainingJobCreatePayload = {
   name?: string;
   method?: string;
@@ -1533,6 +1590,7 @@ export type TrainingJobCreatePayload = {
   max_seq_length?: number;
   logging_steps?: number;
   save_steps?: number;
+  eval_steps?: number | null;
   precision?: string;
   lora_r?: number;
   lora_alpha?: number;
@@ -1542,6 +1600,24 @@ export type TrainingJobCreatePayload = {
   load_in_4bit?: boolean;
   fixture_steps?: number;
   fixture_sleep_ms?: number;
+  mixture_id?: string | null;
+  mixture_content_hash?: string | null;
+  device_strategy?: string;
+  selected_stable_device_ids?: string[];
+  optimizer?: string;
+  lr_scheduler_type?: string;
+  flash_attention?: boolean;
+  eval_during_training?: boolean;
+  save_total_limit?: number | null;
+  load_best_model_at_end?: boolean;
+  metric_for_best_model?: string;
+  greater_is_better?: boolean;
+  early_stopping_patience?: number | null;
+  bnb_4bit_quant_type?: string;
+  bnb_4bit_use_double_quant?: boolean;
+  bnb_4bit_compute_dtype?: string;
+  dpo_beta?: number;
+  apply_planner_suggestions?: boolean;
   auto_start?: boolean;
 };
 
@@ -1556,13 +1632,25 @@ export type TrainingPreflightPayload = {
   epochs?: number | null;
   max_steps?: number | null;
   train_batch_size?: number;
+  eval_batch_size?: number;
   gradient_accumulation?: number;
   learning_rate?: number;
+  warmup_steps?: number;
+  weight_decay?: number;
   max_seq_length?: number;
   precision?: string;
+  lora_r?: number;
+  lora_alpha?: number;
+  gradient_checkpointing?: boolean;
   load_in_4bit?: boolean;
   fixture_steps?: number;
   fixture_sleep_ms?: number;
+  device_strategy?: string;
+  selected_stable_device_ids?: string[];
+  optimizer?: string;
+  lr_scheduler_type?: string;
+  flash_attention?: boolean;
+  eval_during_training?: boolean;
 };
 
 /* ---------- Research ---------- */
