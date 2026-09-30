@@ -68,6 +68,10 @@ export type ChatResponse = {
   cortex?: unknown;
   cognition?: CognitionRunStatus | { error?: string; truth?: Record<string, boolean> };
   assistant_telemetry?: AssistantTurnTelemetry;
+  /** Structured operational activity projection (preferred over reasoning.steps). */
+  activity?: import("./activity").ActivityProjection | null;
+  activity_events?: import("./activity").ActivityEvent[] | null;
+  decision_receipts?: import("./activity").DecisionReceipt[] | null;
   streamed?: boolean;
   truth?: {
     neural_signal_is_not_authority?: boolean;

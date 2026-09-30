@@ -3131,6 +3131,218 @@
   padding-left: 1.1rem;
 }
 
+/* Institutional activity timeline (extends reason-card visual language) */
+.lv-v2-activity-timeline {
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(15, 23, 42, 0.45);
+  border-radius: 10px;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+.lv-v2-activity-timeline__toolbar {
+  display: flex;
+}
+
+.lv-v2-activity-timeline__toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--lv2-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  text-align: left;
+}
+
+.lv-v2-activity-timeline__headline {
+  color: var(--lv2-text);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-v2-activity-timeline__mode {
+  margin-left: auto;
+  color: var(--lv2-text-muted);
+  font-weight: 500;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.lv-v2-activity-timeline__body {
+  padding: 0 10px 10px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.lv-v2-activity-timeline__compact,
+.lv-v2-activity-timeline__empty,
+.lv-v2-activity-timeline__banner {
+  margin: 0;
+  padding: 0 12px 10px;
+  font-size: 12px;
+  color: var(--lv2-text-secondary);
+}
+
+.lv-v2-activity-timeline__banner {
+  color: #fbbf24;
+}
+
+.lv-v2-activity-timeline__list,
+.lv-v2-activity-node__children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.lv-v2-activity-node {
+  margin: 0 0 6px;
+}
+
+.lv-v2-activity-node__row {
+  display: grid;
+  grid-template-columns: 14px 10px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+}
+
+.lv-v2-activity-node__glyph {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--lv2-text-muted);
+}
+
+.lv-v2-activity-node__title-btn {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.lv-v2-activity-node__title {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--lv2-text);
+}
+
+.lv-v2-activity-node__summary {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--lv2-text-secondary);
+  line-height: 1.4;
+}
+
+.lv-v2-activity-node__error {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: #fecaca;
+}
+
+.lv-v2-activity-node__meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: 10px;
+  color: var(--lv2-text-muted);
+  white-space: nowrap;
+}
+
+.lv-v2-activity-node__status {
+  font-weight: 600;
+}
+
+.lv-v2-activity-node__dev {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  margin: 4px 0 0 32px;
+  font-size: 10px;
+  color: var(--lv2-text-muted);
+}
+
+.lv-v2-activity-node__dev > div {
+  display: contents;
+}
+
+.lv-v2-activity-node__dev dt {
+  font-weight: 600;
+}
+
+.lv-v2-activity-node__dev dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-v2-activity-node__children {
+  margin-top: 4px;
+  padding-left: 8px;
+  border-left: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.lv-v2-decision-receipt {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+}
+
+.lv-v2-decision-receipt__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.lv-v2-decision-receipt__checks {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.lv-v2-decision-receipt__checks li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  padding: 2px 0;
+  color: var(--lv2-text-secondary);
+}
+
+.lv-v2-decision-receipt__checks [data-status="PASS"] {
+  color: #86efac;
+  font-weight: 650;
+}
+
+.lv-v2-decision-receipt__checks [data-status="FAIL"] {
+  color: #fecaca;
+  font-weight: 650;
+}
+
+.lv-v2-decision-receipt__checks [data-status="PENDING"],
+.lv-v2-decision-receipt__checks [data-status="UNMEASURED"],
+.lv-v2-decision-receipt__checks [data-status="UNAVAILABLE"] {
+  color: #fbbf24;
+  font-weight: 650;
+}
+
+.lv-v2-decision-receipt__notes {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--lv2-text-secondary);
+}
+
 .lv-v2-chat-jump {
   position: sticky;
   bottom: 8px;

@@ -18,6 +18,9 @@ class EventType(str, Enum):
     RUN_FAILED = "run_failed"
     RUN_CANCELLED = "run_cancelled"
     STATE_CHANGED = "state_changed"
+    # User-visible operational activity (structured ActivityEvent payload).
+    # Telemetry only — never an execution authority.
+    ACTIVITY = "activity"
     # Wave 0 durable kernel
     LEASE_ACQUIRED = "lease_acquired"
     LEASE_HEARTBEAT = "lease_heartbeat"

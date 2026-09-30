@@ -9,6 +9,7 @@ import { AppShell } from "../layouts/AppShell";
 import { formatBytes, normalizeLmStudioStatus } from "../lib/dashboardNormalize";
 import { partitionChatModels } from "../lib/chatModels";
 import { formatJobStateLabel, normalizeJobStatus } from "../lib/jobStatus";
+import { ActivityClientProjector } from "../lib/activityProjector";
 import { useAppToast } from "../state/useAppToast";
 import type {
   CapabilityListItem,
@@ -18,6 +19,12 @@ import type {
   ModelDescriptor,
   ReasoningSummary,
 } from "../types/api";
+import type {
+  ActivityDisplayMode,
+  ActivityProjection,
+  DecisionReceipt,
+} from "../types/activity";
+import { parseActivityProjection } from "../types/activity";
 import { buildDiagnosticStrip, deriveAssistantTelemetry } from "./chatTelemetry";
 import { ChatComposer } from "./chat/ChatComposer";
 import { ChatInspector } from "./chat/ChatInspector";
@@ -71,6 +78,9 @@ type LastTurnMeta = {
   memoryCount: number;
   verification: string | null;
   telemetry: ReturnType<typeof deriveAssistantTelemetry> | null;
+  activity: ActivityProjection | null;
+  activityMode: ActivityDisplayMode;
+  decisionReceipts: DecisionReceipt[];
 };
 
 const EMPTY_TURN: LastTurnMeta = {
@@ -90,6 +100,9 @@ const EMPTY_TURN: LastTurnMeta = {
   memoryCount: 0,
   verification: null,
   telemetry: null,
+  activity: null,
+  activityMode: "detailed",
+  decisionReceipts: [],
 };
 
 function conversationDeepLink(id: string): string {
@@ -697,7 +710,13 @@ export function ChatPage() {
       { role: "assistant", content: "Thinking…", created_at: null, pending: true },
     ]);
     setBusy(true);
-    setLastTurn((prev) => ({ ...prev, streaming: "streaming" }));
+    const activityProjector = new ActivityClientProjector();
+    setLastTurn((prev) => ({
+      ...prev,
+      streaming: "streaming",
+      activity: activityProjector.project(),
+      decisionReceipts: [],
+    }));
     const abort = new AbortController();
     abortRef.current = abort;
 
@@ -713,6 +732,36 @@ export function ChatPage() {
             collaborationStrategy === "team" ? "team" : null,
         },
         {
+          onMeta: (meta) => {
+            const projection = parseActivityProjection(meta.activity);
+            if (projection) {
+              activityProjector.ingestProjection(projection);
+              setLastTurn((prev) => ({
+                ...prev,
+                activity: activityProjector.project(),
+                streaming: "streaming",
+              }));
+            }
+            if (meta.reasoning && typeof meta.reasoning === "object") {
+              setLastTurn((prev) => ({
+                ...prev,
+                reasoning: meta.reasoning as ReasoningSummary,
+              }));
+            }
+          },
+          onActivity: (payload) => {
+            // Full projection vs single event.
+            if (payload && typeof payload === "object" && Array.isArray((payload as { tree?: unknown }).tree)) {
+              activityProjector.ingestProjection(parseActivityProjection(payload));
+            } else {
+              activityProjector.ingest(payload);
+            }
+            setLastTurn((prev) => ({
+              ...prev,
+              activity: activityProjector.project(),
+              streaming: prev.streaming === "idle" ? "streaming" : prev.streaming,
+            }));
+          },
           onToken: (token) => {
             setMessages((current) => {
               const copy = [...current];
@@ -758,6 +807,7 @@ export function ChatPage() {
                 event.replace(/^job\./, "");
               statusLabel = formatJobStateLabel(normalizeJobStatus(String(raw)));
               const pct = payload.progress ?? payload.percent;
+              // Only show measured job progress when backend reports a finite value.
               if (typeof pct === "number" && Number.isFinite(pct)) {
                 statusLabel = `${statusLabel} · ${Math.round(pct * (pct <= 1 ? 100 : 1))}%`;
               }
@@ -881,6 +931,19 @@ export function ChatPage() {
         memoryCount: telemetry.memory_hits ?? data.memory_sources?.length ?? 0,
         verification: verificationLabel,
         telemetry,
+        activity: (() => {
+          if (data.activity) {
+            activityProjector.ingestProjection(parseActivityProjection(data.activity));
+          }
+          if (Array.isArray(data.activity_events)) {
+            activityProjector.ingestMany(data.activity_events);
+          }
+          return activityProjector.project();
+        })(),
+        activityMode: "detailed",
+        decisionReceipts: Array.isArray(data.decision_receipts)
+          ? (data.decision_receipts as DecisionReceipt[])
+          : [],
       });
       // TEAM state must never linger into a later normal response.
       const teamPayload = data.team;
@@ -894,7 +957,12 @@ export function ChatPage() {
       if (active) setTitle(active.title);
     } catch (error) {
       const detail = error instanceof Error ? error.message : "Request failed";
-      setLastTurn((prev) => ({ ...prev, streaming: "failed" }));
+      activityProjector.markDisconnected();
+      setLastTurn((prev) => ({
+        ...prev,
+        streaming: "failed",
+        activity: activityProjector.project(),
+      }));
       setTeamPanel(null);
       setMessages((current) => {
         const withoutPending = current.filter((item) => !item.pending);
@@ -1111,7 +1179,13 @@ export function ChatPage() {
                     ?.reasoning_elapsed_ms === "number"
                     ? (lastTurn.telemetry as { reasoning_elapsed_ms?: number }).reasoning_elapsed_ms
                     : null,
+                activity: lastTurn.activity,
+                activityMode: lastTurn.activityMode,
+                decisionReceipts: lastTurn.decisionReceipts,
               }}
+              onActivityModeChange={(mode) =>
+                setLastTurn((prev) => ({ ...prev, activityMode: mode }))
+              }
             />
             <ChatComposer
               value={composer}

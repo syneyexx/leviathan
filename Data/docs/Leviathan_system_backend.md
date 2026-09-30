@@ -1498,6 +1498,35 @@ Additive Taken V2 projections (no second store/runtime):
 - `enrich_task` adds `taskType`, `operationalStatus`, `displayId`, `progressKnown`, `controls` (including honest `canPause: false`) and redacts `capabilityArguments` / `metadata` via observability `redact_payload`;
 - Pause/resume is **not** implemented on JobRuntime — UI must not pretend otherwise. Cancel/retry/start/duplicate remain TaskService → linked Job/Mission/Workflow.
 
+## 21.2 Operational activity observability (CURRENT)
+
+Owner: `Data/modules/run/activity.py` + `chat_activity.py` (extends Run / EventEnvelope).  
+Decision projection: `Data/modules/run/decision_receipt.py` (projects MarketSim `DecisionPacket` / risk receipts — **not** a second trading ledger).
+
+Canonical user-visible operational telemetry is the `ActivityEvent` contract (`ACTIVITY_SCHEMA_VERSION`). It distinguishes reportable lifecycle facts from private model cognition. Hidden chain-of-thought is never the product contract.
+
+Emission path for Chat:
+
+```text
+POST /api/chat
+  → ActivityEmitter (operation_id = run_id)
+  → RunStore.append_event(EventType.ACTIVITY, …)   # durable CONTROL run_events
+  → ObservabilityHub.emit(category="activity", …)  # live + observability_events
+  → SSE event "activity" + done.activity projection
+```
+
+Semantics:
+
+- lifecycle / counts / progress originate from real runtime transitions;
+- progress kinds are `unknown | indeterminate | measured | estimated` — no invented percentages for non-deterministic reasoning;
+- visibility classes: `USER_VISIBLE | DEVELOPER | INTERNAL | SENSITIVE` (chat panel receives USER_VISIBLE only);
+- payloads pass through existing `observability.redaction` before fan-out;
+- cancellation stages are `requested → propagating → cancelled` from RunStore truth, not the UI click alone;
+- reconnect/out-of-order/duplicate handling uses stable event IDs + sequence merge in `ActivityProjector`;
+- telemetry never becomes execution authority.
+
+Compatibility: `reasoning.steps` / `ReasoningSummary` remain populated for older clients; the operator UI prefers `activity` / `activity_events` when present.
+
 ---
 
 # 22. Security, isolation, secrets and authority

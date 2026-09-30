@@ -221,9 +221,9 @@ Shared API types are under `src/types/`. Keep these aligned with backend respons
 
 ## 6.2 Streaming/events
 
-`src/hooks/useLiveEvents.ts` and chat streaming helpers consume public operational events. Eligible UI events include cognition state, tool/module/job progress, artifact/source observations and worker status. Private reasoning/chain-of-thought is never a UI event contract.
+`src/hooks/useLiveEvents.ts` and chat streaming helpers consume public operational events. Eligible UI events include cognition state, tool/module/job progress, artifact/source observations, worker status and structured **activity** events (`event: activity`). Private reasoning/chain-of-thought is never a UI event contract.
 
-Chat status helpers under `src/lib/` normalize shared semantics, including `jobStatus.ts` and `executionFabric.ts`.
+Chat status helpers under `src/lib/` normalize shared semantics, including `jobStatus.ts`, `executionFabric.ts` and `activityProjector.ts` (client-side reconciliation mirroring backend `ActivityProjector`).
 
 ## 6.3 Errors
 
@@ -258,6 +258,10 @@ Supporting chat code includes:
 
 - `src/pages/chatTelemetry.ts` — converts real `assistant_telemetry`/cognition fields into display data;
 - `src/pages/chat/CapabilityResultCards.tsx` — backend-backed tool result cards;
+- `src/pages/chat/MessageList.tsx` — messages + institutional activity timeline;
+- `src/components/activity/ActivityTimeline.tsx` — reusable ActivityTimeline / DecisionReceiptView (global V2);
+- `src/types/activity.ts` — ActivityEvent / ActivityProjection / DecisionReceipt contracts;
+- `src/lib/activityProjector.ts` — dedupe/order/stale reconciliation;
 - chat streaming/status helpers and tests near the page/lib directories.
 
 Current Chat surfaces:
@@ -271,14 +275,17 @@ Current Chat surfaces:
 - tool calls with backend status/duration/receipt/result/artifact/source information;
 - specialist/agent delegation;
 - verification/quality/completion state;
-- bounded public operational activity;
-- Stop/abort for in-flight streams.
+- **structured operational activity timeline** (compact / detailed / developer) backed by backend `activity` SSE + `done.activity`;
+- decision receipts when the backend attaches authoritative DecisionPacket/risk projections;
+- Stop/abort for in-flight streams (timeline shows cancellation requested/propagating/cancelled from backend truth).
+
+Legacy `reasoning.steps` (`understand_request`, `generate_answer`) remain a compatibility fallback only when no activity projection is present. The UI never asks a model to invent operational state. Missing/disconnected activity renders STALE/UNKNOWN — never synthetic COMPLETED.
 
 TEAM quality data is backend-owned. Criterion labels/rations come from `/api/chat`/`/api/team`; the UI never invents a “7/10 rounds” target for open-ended TEAM work.
 
 No private chain-of-thought panel exists or should be added. Public plan/event/rationale metadata is acceptable when explicitly emitted by the backend.
 
-Contract tests: `src/pages/chatCodingContracts.test.ts` and chat-specific tests.
+Contract tests: `src/pages/chatCodingContracts.test.ts`, `src/lib/activityProjector.test.ts` and chat-specific tests.
 
 ---
 

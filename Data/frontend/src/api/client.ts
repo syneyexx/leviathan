@@ -340,6 +340,8 @@ export const api = {
       onCancelled?: (data: Record<string, unknown>) => void;
       /** Operational capability/tool status — never private CoT. */
       onCapabilityEvent?: (event: string, data: Record<string, unknown>) => void;
+      /** Structured operational activity — never private CoT. */
+      onActivity?: (data: Record<string, unknown>) => void;
     },
     fetchInit?: { signal?: AbortSignal },
   ): Promise<ChatResponse> {
@@ -468,6 +470,12 @@ export const api = {
       const kind = typeof parsed.kind === "string" ? parsed.kind : eventName;
       if (eventName === "meta") {
         handlers.onMeta?.(parsed);
+        if (parsed.activity && typeof parsed.activity === "object") {
+          // Projection snapshot may accompany meta; still not private CoT.
+          handlers.onActivity?.(parsed.activity as Record<string, unknown>);
+        }
+      } else if (eventName === "activity") {
+        handlers.onActivity?.(parsed);
       } else if (eventName === "token" || eventName === "delta") {
         // Prefer delta events; ignore duplicate token mirrors with same sequence.
         if (text) handlers.onToken?.(text, model, { sequence: seq, kind });
