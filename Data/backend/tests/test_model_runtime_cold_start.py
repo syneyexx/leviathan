@@ -249,18 +249,26 @@ class ModelRuntimeColdStartReadinessTests(unittest.TestCase):
             self.assertIn("supervisor", ctx.exception.message.lower())
 
     def test_scale_to_zero_desired_wakes_on_queued(self) -> None:
+        # Eligible pools still wake on demand; model_runtime is now exempt (warm).
         settings = self._settings()
-        # Idle cold → 0
+        self.assertFalse(settings.is_scale_to_zero_eligible("model_runtime"))
         self.assertEqual(
             settings.scale_to_zero_desired(
                 "model_runtime", queued=0, busy=0, idle_seconds=9999, configured=1
             ),
-            0,
+            1,
         )
-        # Queue demand → 1 (singleton)
+        # Research remains demand-gated.
+        self.assertTrue(settings.is_scale_to_zero_eligible("research"))
         self.assertEqual(
             settings.scale_to_zero_desired(
-                "model_runtime", queued=1, busy=0, idle_seconds=0, configured=1
+                "research", queued=0, busy=0, idle_seconds=9999, configured=1
+            ),
+            0,
+        )
+        self.assertEqual(
+            settings.scale_to_zero_desired(
+                "research", queued=1, busy=0, idle_seconds=0, configured=1
             ),
             1,
         )
@@ -271,6 +279,11 @@ class ModelRuntimeColdStartReadinessTests(unittest.TestCase):
         defn = POOL_CATALOG["model_runtime"]
         self.assertEqual(defn.max_count, 1)
         self.assertEqual(defn.default_count, 1)
+
+    def test_model_runtime_exempt_from_scale_to_zero(self) -> None:
+        settings = self._settings()
+        self.assertIn("model_runtime", settings.scale_to_zero_exempt_pools)
+        self.assertFalse(settings.is_scale_to_zero_eligible("model_runtime"))
 
 
 if __name__ == "__main__":

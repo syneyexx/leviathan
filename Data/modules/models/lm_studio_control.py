@@ -863,8 +863,9 @@ def compile_lm_studio_load(
         and capabilities.gpu_ratio == CapabilitySupport.SUPPORTED
         and capabilities.sdk_available
         and capabilities.sdk_reachable
-        and not capabilities.cli_available
     ):
+        # Prefer SDK over CLI whenever GPU ratio is needed — SDK can also apply
+        # REST-documented fields in one load (avoids CLI-only silent drop).
         needs_sdk = True
 
     transport = "rest"
@@ -882,12 +883,28 @@ def compile_lm_studio_load(
         rest_body["_sdkConfig"] = sdk_plan.config
         warnings.append("Load will use LM Studio SDK transport for supported fields")
     elif needs_cli_gpu and capabilities.cli_available:
-        # Hybrid: prefer CLI when GPU ratio must be applied (CLI owns load in that case)
+        # CLI owns the load when GPU ratio is required and SDK is unavailable.
+        # REST-only body fields would NOT be applied — surface them as deferred.
         transport = "cli"
         if opts.context_length is not None and "--context-length" not in cli_args:
             cli_args.extend(["--context-length", str(int(opts.context_length))])
+        rest_only_applied = {
+            "flashAttention": "flash_attention",
+            "evalBatchSize": "eval_batch_size",
+            "offloadKvCacheToGpu": "offload_kv_cache_to_gpu",
+            "numExperts": "num_experts",
+        }
+        for public_name, rest_key in rest_only_applied.items():
+            if rest_key in rest_body and public_name in requested:
+                _mark_unsupported(
+                    public_name,
+                    "CLI_TRANSPORT_DROPS_REST_FIELD: lms CLI load cannot set this; "
+                    "install/reach LM Studio SDK for combined GPU ratio + REST fields",
+                )
+                rest_body.pop(rest_key, None)
         warnings.append(
-            "GPU offload ratio applied via lms CLI; REST-only fields also sent when using REST fallback"
+            "GPU offload ratio applied via lms CLI; REST-only load fields deferred "
+            "(not silently applied)"
         )
     elif needs_cli_gpu and not capabilities.cli_available:
         warnings.append("GPU ratio requested but lms CLI unavailable — REST load without GPU ratio")

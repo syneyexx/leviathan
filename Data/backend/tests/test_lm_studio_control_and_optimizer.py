@@ -84,6 +84,43 @@ def test_compile_gpu_ratio_uses_cli_when_available():
     assert "0.8" in compiled.cli_args
 
 
+def test_cli_transport_defers_rest_only_fields():
+    caps = _caps(
+        cli_available=True,
+        sdk_available=False,
+        sdk_reachable=False,
+        gpu_ratio=CapabilitySupport.SUPPORTED,
+    )
+    opts = LoadOptions(
+        context_length=4096,
+        gpu_offload_ratio=0.8,
+        flash_attention=True,
+        batch_size=256,
+        offload_kv_cache_to_gpu=True,
+    )
+    compiled = compile_lm_studio_load("model-a", opts, caps)
+    assert compiled.transport == "cli"
+    assert "flashAttention" in compiled.deferred_unsupported
+    assert "CLI_TRANSPORT_DROPS_REST_FIELD" in compiled.deferred_unsupported["flashAttention"]
+    assert "flash_attention" not in compiled.rest_body
+    assert "eval_batch_size" not in compiled.rest_body
+
+
+def test_gpu_ratio_prefers_sdk_over_cli_when_reachable():
+    caps = _caps(
+        cli_available=True,
+        sdk_available=True,
+        sdk_reachable=True,
+        gpu_ratio=CapabilitySupport.SUPPORTED,
+        seed=CapabilitySupport.SUPPORTED,
+    )
+    opts = LoadOptions(context_length=4096, gpu_offload_ratio=0.8, flash_attention=True)
+    compiled = compile_lm_studio_load("model-a", opts, caps)
+    assert compiled.transport == "sdk"
+    assert compiled.rest_body.get("_sdkConfig", {}).get("flashAttention") is True
+    assert "flashAttention" not in compiled.deferred_unsupported
+
+
 def test_compile_custom_gpu_split_deferred_unsupported():
     caps = _caps()
     opts = LoadOptions(tensor_split=(0.9, 0.65), gpu_split_mode="manual", allow_multi_gpu=True)

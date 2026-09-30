@@ -534,12 +534,12 @@ FastAPI Model Control Plane
               = actual local inference compute
 ```
 
-**Cold-start contract (required):** Worker Fabric may scale `model_runtime` to zero when
-idle. `ModelRuntimeClient` must therefore **accept enqueue** when the pool is cold but
-the WorkerSupervisor lease is healthy — queue demand wakes the singleton via existing
-`scale_to_zero_desired(queued>0)`. Requiring READY/BUSY before enqueue creates a
-deadlock (`MODEL_RUNTIME_UNAVAILABLE` with no job demand). Fail truthfully only when
-the supervisor is absent/expired/degraded-unavailable or the pool is disabled.
+**Cold-start contract (required):** `model_runtime` is **scale-to-zero exempt** (singleton
+owns ServingSupervisor children — idle scale-to-zero would kill managed servers). It stays
+warm at configured `desired_count`. Independently, `ModelRuntimeClient` still **accepts
+enqueue** when the pool is momentarily cold/starting but the WorkerSupervisor lease is
+healthy (startup race / first spawn), so queue demand cannot deadlock. Fail truthfully
+when the supervisor is absent/expired/degraded-unavailable or the pool is disabled.
 
 Readiness snapshot (`model_runtime_readiness_snapshot`) exposes separate truths:
 `DISABLED` / `SUPERVISOR_UNAVAILABLE` / `COLD` / `STARTING` / `READY` plus `acceptJobs`.

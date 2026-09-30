@@ -81,7 +81,9 @@ class WorkerSettings:
     # affinity is required — keep at least one warm worker for affinity.
     scale_to_zero_enabled: bool = True
     scale_to_zero_idle_seconds: float = 120.0
-    scale_to_zero_exempt_pools: tuple[str, ...] = ("browser", "playwright")
+    # browser/playwright: sticky session affinity.
+    # model_runtime: singleton owns ServingSupervisor children — do not scale to zero.
+    scale_to_zero_exempt_pools: tuple[str, ...] = ("browser", "playwright", "model_runtime")
 
     pool_counts: dict[str, int] = field(default_factory=default_pool_counts)
 
@@ -199,7 +201,7 @@ def load_worker_settings() -> WorkerSettings:
         ),
         scale_to_zero_exempt_pools=_env_csv_tuple(
             "LEVIATHAN_WORKERS_SCALE_TO_ZERO_EXEMPT_POOLS",
-            ("browser", "playwright"),
+            ("browser", "playwright", "model_runtime"),
         ),
         pool_counts=counts,
     )
