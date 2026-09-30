@@ -81,3 +81,25 @@ test('bounded 250-node API graph supports relation mode and exposes every node t
   await last.press('Enter');
   await expect(page.locator('.lv-v2-brain-selected__identity h4')).toHaveText('Document 249');
 });
+
+test('relation lines default off and can be toggled without removing graph data', async ({page}, testInfo) => {
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await openBrain(page);
+  await expect(page.locator('.lv-v2-dna-a11y-list button')).toHaveCount(58);
+  await page.getByRole('button',{name:'Reset weergave'}).click();
+  const toggle = page.getByRole('button',{name:'Relatielijnen tonen',exact:true});
+  await expect(toggle).toHaveAttribute('aria-pressed','false');
+  await page.waitForTimeout(500);
+  const clean = await pixels(page);
+  await page.locator('.lv-v2-dna__stage').screenshot({path:testInfo.outputPath('dna-reference.png')});
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-pressed','true');
+  await expect.poll(() => pixels(page)).not.toBe(clean);
+  await toggle.click();
+  await expect.poll(() => pixels(page)).toBe(clean);
+  await expect(page.locator('.lv-v2-dna-a11y-list button')).toHaveCount(58);
+  await page.getByRole('button',{name:'Relaties',exact:true}).click();
+  await expect(toggle).toHaveAttribute('aria-pressed','false');
+  await toggle.press('Space');
+  await expect(toggle).toHaveAttribute('aria-pressed','true');
+});

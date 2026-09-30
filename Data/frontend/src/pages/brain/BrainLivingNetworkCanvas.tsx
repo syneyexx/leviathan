@@ -37,6 +37,7 @@ export type BrainLivingNetworkCanvasProps = {
   speed: number;
   twist: number;
   showLabels: boolean;
+  showRelations: boolean;
   reducedMotion?: boolean;
   filterPredicate?: (node: LiveBrainNode) => boolean;
   className?: string;
@@ -57,6 +58,7 @@ type EngineRefs = {
   activeIds: Set<string>;
   gapIds: Set<string>;
   showLabels: boolean;
+  showRelations: boolean;
   reduced: boolean;
   nodes: HelixNode[];
   links: HelixLink[];
@@ -87,6 +89,7 @@ export function BrainLivingNetworkCanvas({
   speed,
   twist,
   showLabels,
+  showRelations,
   reducedMotion = false,
   filterPredicate,
   className = "",
@@ -118,6 +121,7 @@ export function BrainLivingNetworkCanvas({
       activeIds: new Set(activeNodeIds ?? []),
       gapIds: new Set(gapNodeIds ?? []),
       showLabels,
+      showRelations,
       reduced: reducedMotion,
       nodes: [],
       links: [],
@@ -186,7 +190,16 @@ export function BrainLivingNetworkCanvas({
         filter: eng.filter,
       };
 
-      const samples = 120;
+      // Same sparse particle field and three-pass tube lighting as the V3 reference.
+      for (let i = 0; i < 40; i += 1) {
+        const x = ((Math.sin(i * 78.233) * 43758.5453) % 1 + 1) % 1 * w;
+        const y = ((Math.cos(i * 31.13) * 9758.31) % 1 + 1) % 1 * h;
+        ctx.globalAlpha = 0.08 + (i % 5) * 0.025;
+        ctx.fillStyle = "#8edce5";
+        ctx.beginPath(); ctx.arc(x, y, i % 6 === 0 ? 1.2 : 0.6, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      const samples = 170;
       // Bloom
       for (let s = 0; s < 2; s += 1) {
         ctx.beginPath();
@@ -196,7 +209,7 @@ export function BrainLivingNetworkCanvas({
           else ctx.lineTo(p.x, p.y);
         }
         ctx.strokeStyle = s ? "rgba(131,159,237,0.08)" : "rgba(89,231,208,0.1)";
-        ctx.lineWidth = 16 * eng.zoom;
+        ctx.lineWidth = 18 * eng.zoom;
         ctx.globalAlpha = 1 - eng.morph;
         ctx.stroke();
         ctx.globalAlpha = 1;
@@ -215,13 +228,22 @@ export function BrainLivingNetworkCanvas({
             kind: "tube",
             z: (a.z + b.z) / 2,
             draw: () => {
-              ctx.globalAlpha = (0.35 + (a.z + 1) * 0.25) * (1 - eng.morph);
-              ctx.strokeStyle = strand ? "#839fed" : "#59e7d0";
-              ctx.lineWidth = Math.max(1.2, 2.4 * ((a.scale + b.scale) / 2) * (1 - eng.morph * 0.5));
-              ctx.beginPath();
-              ctx.moveTo(a.x, a.y);
-              ctx.lineTo(b.x, b.y);
-              ctx.stroke();
+              const scale = (a.scale + b.scale) / 2;
+              const front = ((a.z + b.z) / 2 + 1) / 2;
+              const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+              const ux = (b.x - a.x) / len * 0.65, uy = (b.y - a.y) / len * 0.65;
+              const ax = a.x - ux, ay = a.y - uy, bx = b.x + ux, by = b.y + uy;
+              ctx.globalAlpha = 1 - eng.morph;
+              ctx.lineCap = "butt";
+              ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
+              ctx.strokeStyle = strand ? `rgb(${23+front*22},${37+front*31},${62+front*44})` : `rgb(${17+front*12},${48+front*38},${57+front*39})`;
+              ctx.lineWidth = 8 * scale; ctx.stroke();
+              ctx.strokeStyle = strand ? `rgb(${44+front*44},${61+front*47},${94+front*65})` : `rgb(${31+front*29},${75+front*69},${82+front*62})`;
+              ctx.lineWidth = 3.3 * scale; ctx.stroke();
+              ctx.beginPath(); ctx.moveTo(ax, ay - 2 * scale); ctx.lineTo(bx, by - 2 * scale);
+              ctx.strokeStyle = strand ? `rgb(${70+front*77},${87+front*74},${123+front*70})` : `rgb(${52+front*82},${105+front*83},${114+front*73})`;
+              ctx.lineWidth = 0.75 * scale; ctx.stroke();
+              ctx.lineCap = "round";
               ctx.globalAlpha = 1;
             },
           });
@@ -232,7 +254,7 @@ export function BrainLivingNetworkCanvas({
       eng.edgeSegments = [];
       const pointMap = new Map(eng.points.map((p) => [p.node.id, p]));
 
-      for (const link of eng.links) {
+      for (const link of eng.showRelations ? eng.links : []) {
         const a = pointMap.get(link.source);
         const b = pointMap.get(link.target);
         if (!a || !b) continue;
@@ -300,7 +322,11 @@ export function BrainLivingNetworkCanvas({
               ctx.stroke();
             }
             ctx.beginPath();
-            ctx.fillStyle = color;
+            const gradient = ctx.createRadialGradient(p.x - r * 0.3, p.y - r * 0.35, 0.1, p.x, p.y, r);
+            gradient.addColorStop(0, "#ecfff8");
+            gradient.addColorStop(0.35, color);
+            gradient.addColorStop(1, p.node.strand ? "#405272" : "#236767");
+            ctx.fillStyle = gradient;
             ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
             ctx.fill();
             if (selected) {
@@ -519,8 +545,10 @@ export function BrainLivingNetworkCanvas({
     eng.speed = speed;
     eng.twist = twist;
     eng.showLabels = showLabels;
+    eng.showRelations = showRelations;
+    if (!showRelations) eng.edgeSegments = [];
     eng.reduced = reducedMotion;
-  }, [speed, twist, showLabels, reducedMotion]);
+  }, [speed, twist, showLabels, showRelations, reducedMotion]);
 
   useEffect(() => {
     const eng = engine.current;

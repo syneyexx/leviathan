@@ -427,6 +427,8 @@ Current graph views are backed by `/api/brain/graph`; selection/filter state rem
 
 The Brain main owns vertical scrolling because the legacy shell slot uses `display: contents`. The knowledge section must not flex-shrink: its canvas, activation strip and workbench determine the panel height. The mobile shell column uses `minmax(0, 1fr)` to keep the stage inside the viewport. Canvas backing dimensions track the actual panel size and device pixel ratio.
 
+Relation lines default to hidden. The independent “Relatielijnen: aan/uit” button toggles rendering and canvas edge hit testing in both layouts without removing backend edges or evidence from the workbench. Layout changes and camera reset preserve this preference for the mounted view. The helix uses the original Research Memory V3 three-pass tube lighting, radial node highlights, particle field and background. Horizontal projection is capped to the reference aspect ratio on ultrawide panels; node identities, colors and relation semantics remain live-data driven, not copied from demo fixtures.
+
 Rotation follows the pause control, including when a node is selected. Reset restores angle, tilt, zoom and display defaults; background graph refreshes preserve an explicitly cleared selection. Labels use bounded collision avoidance, all loaded nodes remain keyboard-selectable, and relation layout is calculated once per frame rather than once per node. Memory mutations refresh the authoritative graph.
 
 ### Chat → Brain knowledge activation

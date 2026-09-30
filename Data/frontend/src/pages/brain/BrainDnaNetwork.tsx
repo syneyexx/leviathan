@@ -79,6 +79,7 @@ export function BrainDnaNetwork({
   const pausePref = useRef(motionOff);
   const [speed, setSpeed] = useState(0.24);
   const [twist, setTwist] = useState(1.6);
+  const [showRelations, setShowRelations] = useState(false);
   const [showLabels, setShowLabels] = useState(true);
   const [scopeFilter, setScopeFilter] = useState<string>("all");
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
@@ -221,6 +222,11 @@ export function BrainDnaNetwork({
             Relaties
           </button>
         </div>
+        <button type="button" className="lv-v2-dna__relations-toggle"
+          aria-pressed={showRelations} aria-label="Relatielijnen tonen"
+          onClick={() => { setShowRelations((value) => !value); setSelectedEdgeId(null); }}>
+          Relatielijnen: {showRelations ? "aan" : "uit"}
+        </button>
         {hasScopeMeta ? (
           <label className="lv-v2-dna__scope">
             Geheugen
@@ -324,6 +330,7 @@ export function BrainDnaNetwork({
           speed={speed}
           twist={twist}
           showLabels={showLabels}
+          showRelations={showRelations}
           reducedMotion={motionOff}
           filterPredicate={(n) => filteredIds.has(n.id)}
         />

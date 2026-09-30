@@ -141,7 +141,9 @@ export function projectHelix(
   const depth = 780 / (780 - z);
   const mid = (range[0] + range[1]) / 2;
   const span = Math.max(1e-6, range[1] - range[0]);
-  const x = ((t - mid) / span) * Math.max(1, w - 80) * 0.82;
+  // Preserve the reference's proportions instead of stretching across ultrawide panels.
+  const displayWidth = Math.min(w, h * (1100 / 485));
+  const x = ((t - mid) / span) * Math.max(1, displayWidth - 80) * 0.82;
   const y = Math.cos(theta) * r;
   return {
     x: w * 0.5 + (x * Math.cos(tilt) - y * Math.sin(tilt)) * depth * zoom,

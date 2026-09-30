@@ -1394,6 +1394,7 @@
 }
 
 .lv-v2-dna__stage {
+  background: radial-gradient(ellipse at 50% 45%, #122a36 0%, #0b1724 44%, #080f1a 83%);
   position: relative;
   flex: 0 0 auto;
   min-height: 320px;
@@ -1634,6 +1635,25 @@
 .lv-v2-dna__display-switch button.is-active {
   background: rgba(34, 211, 238, 0.18);
   color: var(--lv2-text);
+}
+
+.lv-v2-dna__relations-toggle {
+  border: 1px solid var(--lv2-border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: var(--lv2-text-secondary);
+  background: rgba(15, 23, 42, 0.65);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.lv-v2-dna__relations-toggle[aria-pressed="true"] {
+  color: var(--lv2-cyan);
+  border-color: var(--lv2-cyan);
+}
+.lv-v2-dna__relations-toggle:focus-visible {
+  outline: 2px solid var(--lv2-cyan);
+  outline-offset: 3px;
 }
 
 .lv-v2-dna__scope {
