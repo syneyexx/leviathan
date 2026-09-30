@@ -27,6 +27,8 @@ type ShellProps = {
   v2Actions?: ReactNode;
   /** Hide default Refresh when page actions replace it. */
   v2HideRefresh?: boolean;
+  /** Opt into a real V2 main scroll container instead of the legacy display:contents slot. */
+  v2ScrollableMain?: boolean;
   children: ReactNode;
 };
 
@@ -47,6 +49,7 @@ export function AppShell({
   v2Now,
   v2Actions,
   v2HideRefresh = false,
+  v2ScrollableMain = false,
   children,
 }: ShellProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -86,7 +89,16 @@ export function AppShell({
         />
         <div className="lv-body">
           <AppSidebarV2 open={sidebarOpen} statusRows={v2StatusRows} />
-          <div id="main-content" className="lv-main-slot" tabIndex={-1}>
+          <div
+            id="main-content"
+            className="lv-main-slot"
+            tabIndex={-1}
+            style={
+              v2ScrollableMain
+                ? { display: "block", overflow: "auto", minWidth: 0, minHeight: 0 }
+                : undefined
+            }
+          >
             {children}
           </div>
         </div>
