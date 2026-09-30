@@ -17,6 +17,7 @@ from Data.modules.models.contracts import (
     ComputeDevice,
     DeploymentPlan,
     DeviceHealth,
+    DeviceRole,
     HardwareSnapshot,
     HostMemorySnapshot,
     LoadOptions,
@@ -83,9 +84,56 @@ class ResourceManager:
         self._reservation_reader = reader
 
     def set_device_policy(self, policy: dict[str, Any] | None) -> None:
-        self._device_policy = dict(policy or {})
+        incoming = dict(policy or {})
+        # Merge rather than replace so partial PUTs preserve roles/headroom.
+        merged = dict(self._device_policy)
+        for key, value in incoming.items():
+            if value is None:
+                continue
+            if key in {"deviceRoles", "perDeviceHeadroomBytes", "roleHeadroomBytes"} and isinstance(
+                value, dict
+            ):
+                existing = dict(merged.get(key) or {})
+                existing.update({str(k): v for k, v in value.items()})
+                merged[key] = existing
+            else:
+                merged[key] = value
+        self._device_policy = merged
+        self._sync_planner_headroom()
         with self._hw_lock:
             self._hw_cache = None
+
+    def _sync_planner_headroom(self) -> None:
+        policy = self._device_policy
+        per_device = policy.get("perDeviceHeadroomBytes") or {}
+        role_hr = policy.get("roleHeadroomBytes") or {}
+        # Convenience aliases from UI: displayGpuReserve / auxGpuReserve / ramReserve
+        if "displayGpuReserveBytes" in policy and "DISPLAY" not in role_hr:
+            role_hr = dict(role_hr)
+            role_hr["DISPLAY"] = int(policy["displayGpuReserveBytes"])
+        if "auxGpuReserveBytes" in policy and "AUXILIARY" not in role_hr:
+            role_hr = dict(role_hr)
+            role_hr["AUXILIARY"] = int(policy["auxGpuReserveBytes"])
+        if "ramHeadroomBytes" in policy or "headroomRamBytes" in policy:
+            ram = policy.get("ramHeadroomBytes", policy.get("headroomRamBytes"))
+            if ram is not None:
+                self.min_ram_reserve_bytes = int(ram)
+        if "defaultVramHeadroomBytes" in policy or "headroomVramBytes" in policy:
+            vram = policy.get("defaultVramHeadroomBytes", policy.get("headroomVramBytes"))
+            if vram is not None:
+                self.min_vram_reserve_bytes = int(vram)
+        self._planner.set_headroom_policy(
+            default_vram_headroom_bytes=self.min_vram_reserve_bytes,
+            default_ram_headroom_bytes=self.min_ram_reserve_bytes,
+            per_device_headroom_bytes={str(k): int(v) for k, v in dict(per_device).items()},
+            role_headroom_bytes={str(k).upper(): int(v) for k, v in dict(role_hr).items()},
+        )
+
+    def headroom_for_device(self, device: ComputeDevice) -> int:
+        return self._planner.headroom_for_device(device)
+
+    def device_policy_public(self) -> dict[str, Any]:
+        return dict(self._device_policy)
 
     def system_telemetry(self) -> dict[str, Any]:
         """Best-effort host telemetry. Omit fields that cannot be measured."""
@@ -249,6 +297,19 @@ class ResourceManager:
         except ValueError:
             health = DeviceHealth.HEALTHY if total is not None else DeviceHealth.UNKNOWN
 
+        roles = self._device_policy.get("deviceRoles") or {}
+        role = DeviceRole.AUTO
+        raw_role = roles.get(stable) or raw.get("role")
+        if raw_role:
+            try:
+                role = DeviceRole(str(raw_role).upper())
+            except ValueError:
+                role = DeviceRole.AUTO
+
+        headroom = self._planner.headroom_for_device(
+            ComputeDevice(stable_device_id=stable, role=role)
+        )
+
         return ComputeDevice(
             stable_device_id=stable,
             ordinal=int(ordinal) if ordinal is not None else None,
@@ -269,6 +330,8 @@ class ResourceManager:
             enabled_for_new_work=enabled,
             measured_at=raw.get("measuredAt") or _utc_now(),
             provenance=ResourceProvenance.MEASURED,
+            role=role,
+            headroom_bytes=headroom,
         )
 
     def _classify_ram_pressure(
@@ -641,7 +704,7 @@ class ResourceManager:
         return [
             usable_capacity_for_device(
                 d,
-                headroom_bytes=self.min_vram_reserve_bytes,
+                headroom_bytes=self.headroom_for_device(d),
                 reserved_bytes=int(by_device.get(d.stable_device_id, {}).get("reserved", 0)),
                 measured_owned_bytes=int(by_device.get(d.stable_device_id, {}).get("measured", 0)),
                 exclusive_held=bool(by_device.get(d.stable_device_id, {}).get("exclusive", False)),

@@ -66,6 +66,7 @@ class _ModelResidencySlot:
     state: ResidencyState = ResidencyState.UNLOADED
     placement: PhysicalPlacement = PhysicalPlacement.UNKNOWN
     managed: bool = False
+    lifecycle_controllable: bool = False
     worker_id: str | None = None
     pid: int | None = None
     endpoint: str | None = None
@@ -556,16 +557,20 @@ class ModelResidencyManager:
         managed: bool = True,
         runtime_kind: str | None = None,
         confirm_oom: bool = False,
+        lifecycle_controllable: bool = False,
     ) -> dict[str, Any]:
         async with self._lock:
             slot = self._get_or_create_slot(model_id)
-            slot.managed = managed
+            # External-but-controllable providers (LM Studio API) are not process-owned
+            # by Leviathan, yet load/unload via provider API is allowed.
+            slot.managed = bool(managed) or bool(lifecycle_controllable)
+            slot.lifecycle_controllable = bool(lifecycle_controllable)
             if runtime_kind:
                 slot.runtime_kind = runtime_kind
-            if not managed:
+            if not managed and not lifecycle_controllable:
                 raise ModelControlError(
                     code=MODEL_RUNTIME_UNAVAILABLE,
-                    message="Manual load is only for managed runtimes",
+                    message="Manual load is only for managed or lifecycle-controllable runtimes",
                     model_id=model_id,
                     http_status=409,
                 )
@@ -588,7 +593,8 @@ class ModelResidencyManager:
                         "consumers": sorted({lease.consumer for lease in slot.leases.values()}),
                     },
                 )
-            if not slot.managed:
+            controllable = bool(getattr(slot, "lifecycle_controllable", False))
+            if not slot.managed and not controllable:
                 raise ModelControlError(
                     code=MODEL_RUNTIME_UNAVAILABLE,
                     message="External provider lifecycle is not owned by LEVIATHAN",

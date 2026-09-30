@@ -289,7 +289,7 @@ class LoadOptions:
     gpu_offload_layers: int | None = None
     gpu_memory_limit_bytes: int | None = None
     cpu_threads: int | None = None
-    batch_size: int | None = None
+    batch_size: int | None = None  # eval batch size for LM Studio llama.cpp engine
     flash_attention: bool | None = None
     # Device placement (optional; filtered by RuntimeCapabilities.load_options).
     preferred_device_ids: tuple[str, ...] | None = None
@@ -308,6 +308,14 @@ class LoadOptions:
     speculative_decoding: bool | None = None
     draft_model_id: str | None = None
     speculative_tokens: int | None = None
+    # LM Studio / multi-provider extensions (capability-gated).
+    offload_kv_cache_to_gpu: bool | None = None
+    num_experts: int | None = None
+    gpu_offload_ratio: float | None = None  # 0.0–1.0 provider GPU offload ratio
+    gpu_split_mode: str | None = None  # auto | evenly | priority | manual | single
+    gpu_strict_vram_cap: bool | None = None
+    keep_display_headroom: bool | None = None
+    seed: int | None = None
 
     def as_provider_payload(self, allowed: tuple[str, ...] | list[str]) -> dict[str, Any]:
         mapping = {
@@ -332,6 +340,13 @@ class LoadOptions:
             "speculativeDecoding": self.speculative_decoding,
             "draftModelId": self.draft_model_id,
             "speculativeTokens": self.speculative_tokens,
+            "offloadKvCacheToGpu": self.offload_kv_cache_to_gpu,
+            "numExperts": self.num_experts,
+            "gpuOffloadRatio": self.gpu_offload_ratio,
+            "gpuSplitMode": self.gpu_split_mode,
+            "gpuStrictVramCap": self.gpu_strict_vram_cap,
+            "keepDisplayHeadroom": self.keep_display_headroom,
+            "seed": self.seed,
         }
         return {k: v for k, v in mapping.items() if k in allowed and v is not None}
 
@@ -628,6 +643,16 @@ class MemoryPressure(str, Enum):
     UNKNOWN = "UNKNOWN"
 
 
+class DeviceRole(str, Enum):
+    """Operator policy for GPU role. AUTO means unset / unknown display attachment."""
+
+    AUTO = "AUTO"
+    DISPLAY = "DISPLAY"
+    AUXILIARY = "AUXILIARY"
+    COMPUTE = "COMPUTE"
+    RESERVED = "RESERVED"
+
+
 class DeviceHealth(str, Enum):
     HEALTHY = "HEALTHY"
     DEGRADED = "DEGRADED"
@@ -711,6 +736,8 @@ class ComputeDevice:
     enabled_for_new_work: bool = True
     measured_at: str | None = None
     provenance: ResourceProvenance = ResourceProvenance.UNKNOWN
+    role: DeviceRole = DeviceRole.AUTO
+    headroom_bytes: int | None = None  # effective per-device VRAM reserve used by planner
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -733,6 +760,8 @@ class ComputeDevice:
             "enabledForNewWork": self.enabled_for_new_work,
             "measuredAt": self.measured_at,
             "provenance": self.provenance.value,
+            "role": self.role.value,
+            "headroomBytes": self.headroom_bytes,
         }
 
 

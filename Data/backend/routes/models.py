@@ -31,6 +31,7 @@ MODELS_STATIC_SEGMENTS = frozenset(
         "import",
         "download",
         "residency",
+        "optimization",
     }
 )
 
@@ -84,6 +85,7 @@ class LoadRequest(BaseModel):
     gpuMemoryLimitBytes: int | None = None
     cpuThreads: int | None = None
     batchSize: int | None = None
+    evalBatchSize: int | None = None
     flashAttention: bool | None = None
     preferredDeviceIds: list[str] | None = None
     pinnedDeviceIds: list[str] | None = None
@@ -97,6 +99,20 @@ class LoadRequest(BaseModel):
     confirmOom: bool = False
     vramOverrideBytes: int | None = None
     multiGpuCapability: str | None = None
+    prefixCache: bool | None = None
+    continuousBatching: bool | None = None
+    kvCacheDtype: str | None = None
+    speculativeDecoding: bool | None = None
+    draftModelId: str | None = None
+    speculativeTokens: int | None = None
+    offloadKvCacheToGpu: bool | None = None
+    numExperts: int | None = None
+    gpuOffloadRatio: float | None = None
+    gpuOffloadPercent: float | None = None
+    gpuSplitMode: str | None = None
+    gpuStrictVramCap: bool | None = None
+    keepDisplayHeadroom: bool | None = None
+    seed: int | None = None
 
 
 class PlacementPreflightRequest(BaseModel):
@@ -111,17 +127,54 @@ class PlacementPreflightRequest(BaseModel):
     shardingMode: str | None = None
     vramOverrideBytes: int | None = None
     multiGpuCapability: str | None = None
+    batchSize: int | None = None
+    flashAttention: bool | None = None
+    offloadKvCacheToGpu: bool | None = None
+    gpuOffloadRatio: float | None = None
+    keepDisplayHeadroom: bool | None = None
 
 
 class DevicePolicyUpdate(BaseModel):
     disabledDeviceIds: list[str] | None = None
     headroomVramBytes: int | None = None
     headroomRamBytes: int | None = None
+    defaultVramHeadroomBytes: int | None = None
+    ramHeadroomBytes: int | None = None
     preserveLargeGpu: bool | None = None
     specialistPacking: bool | None = None
     multiGpuPolicy: str | None = None  # disabled | verified_only | explicit
     cpuOffloadPolicy: str | None = None
     lowRamProtection: bool | None = None
+    perDeviceHeadroomBytes: dict[str, int] | None = None
+    roleHeadroomBytes: dict[str, int] | None = None
+    deviceRoles: dict[str, str] | None = None
+    displayGpuReserveBytes: int | None = None
+    auxGpuReserveBytes: int | None = None
+
+
+class OptimizeRequest(BaseModel):
+    contextLength: int | None = None
+    batchSize: int | None = None
+    flashAttention: bool | None = None
+    offloadKvCacheToGpu: bool | None = None
+    gpuOffloadRatio: float | None = None
+    gpuSplitMode: str | None = None
+    tensorSplit: list[float] | None = None
+    keepDisplayHeadroom: bool | None = None
+    allowMultiGpu: bool | None = None
+    maxCandidates: int = 8
+    deadlineSeconds: float = 900.0
+    objectives: dict[str, Any] | None = None
+
+
+class EstimateRequest(BaseModel):
+    contextLength: int | None = None
+    batchSize: int | None = None
+    flashAttention: bool | None = None
+    offloadKvCacheToGpu: bool | None = None
+    gpuOffloadRatio: float | None = None
+    numExperts: int | None = None
+    keepDisplayHeadroom: bool | None = None
 
 
 class ImportRequest(BaseModel):
@@ -183,15 +236,71 @@ def build_models_router(plane: ModelControlPlane) -> APIRouter:
     def put_hardware_policy(payload: DevicePolicyUpdate) -> dict:
         policy = {k: v for k, v in payload.model_dump().items() if v is not None}
         plane.resources.set_device_policy(policy)
-        if payload.headroomVramBytes is not None:
-            plane.resources.min_vram_reserve_bytes = int(payload.headroomVramBytes)
-            plane.resources._planner.default_vram_headroom_bytes = int(payload.headroomVramBytes)
-        if payload.headroomRamBytes is not None:
-            plane.resources.min_ram_reserve_bytes = int(payload.headroomRamBytes)
-            plane.resources._planner.default_ram_headroom_bytes = int(payload.headroomRamBytes)
+        if payload.headroomVramBytes is not None or payload.defaultVramHeadroomBytes is not None:
+            vram = payload.defaultVramHeadroomBytes if payload.defaultVramHeadroomBytes is not None else payload.headroomVramBytes
+            if vram is not None:
+                plane.resources.min_vram_reserve_bytes = int(vram)
+                plane.resources._planner.default_vram_headroom_bytes = int(vram)
+        if payload.headroomRamBytes is not None or payload.ramHeadroomBytes is not None:
+            ram = payload.ramHeadroomBytes if payload.ramHeadroomBytes is not None else payload.headroomRamBytes
+            if ram is not None:
+                plane.resources.min_ram_reserve_bytes = int(ram)
+                plane.resources._planner.default_ram_headroom_bytes = int(ram)
         if payload.preserveLargeGpu is not None:
             plane.resources._planner.preserve_large_gpu = bool(payload.preserveLargeGpu)
-        return {"policy": plane.resources._device_policy, "hardware": plane.resources.hardware_snapshot().public_dict()}
+        return {
+            "policy": plane.resources.device_policy_public(),
+            "hardware": plane.resources.hardware_snapshot(force_refresh=True).public_dict(),
+        }
+
+    @router.get("/api/models/providers/{provider_id}/capabilities")
+    async def provider_capabilities(provider_id: str) -> dict:
+        try:
+            return await plane.provider_control_capabilities(provider_id)
+        except ModelControlError as exc:
+            raise_model_error(exc)
+
+    @router.post("/api/models/{model_id:path}/estimate")
+    async def estimate_model(model_id: str, payload: EstimateRequest | None = None) -> dict:
+        body = payload.model_dump() if payload else {}
+        options = parse_load_options(body)
+        try:
+            return await plane.estimate_model_load(model_id, options)
+        except ModelControlError as exc:
+            raise_model_error(exc)
+
+    @router.post("/api/models/{model_id:path}/optimization")
+    async def start_optimization(model_id: str, payload: OptimizeRequest | None = None) -> dict:
+        body = payload.model_dump() if payload else {}
+        options = parse_load_options(body)
+        try:
+            return await plane.start_optimization(
+                model_id,
+                options=options,
+                objectives=body.get("objectives"),
+                max_candidates=int(body.get("maxCandidates") or 8),
+                deadline_seconds=float(body.get("deadlineSeconds") or 900),
+            )
+        except ModelControlError as exc:
+            raise_model_error(exc)
+
+    @router.get("/api/models/{model_id:path}/optimization")
+    def list_optimizations(model_id: str) -> dict:
+        return plane.list_optimizations(model_id)
+
+    @router.get("/api/models/optimization/{run_id}")
+    def get_optimization(run_id: str) -> dict:
+        try:
+            return plane.get_optimization(run_id)
+        except ModelControlError as exc:
+            raise_model_error(exc)
+
+    @router.post("/api/models/optimization/{run_id}/cancel")
+    def cancel_optimization(run_id: str) -> dict:
+        try:
+            return plane.cancel_optimization(run_id)
+        except ModelControlError as exc:
+            raise_model_error(exc)
 
     @router.post("/api/models/{model_id:path}/placement-preflight")
     def placement_preflight(model_id: str, payload: PlacementPreflightRequest | None = None) -> dict:

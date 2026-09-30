@@ -37,6 +37,7 @@ from Data.modules.models.errors import (
     VALIDATION_ERROR,
     ModelControlError,
 )
+from Data.modules.models.optimizer import ModelLoadOptimizer, OptimizationObjective, OptimizationStatus
 from Data.modules.models.gateway import ModelGateway
 from Data.modules.models.import_service import ImportService
 from Data.modules.models.inference_session import open_inference_session
@@ -142,6 +143,8 @@ class ModelControlPlane:
         self._llm: Any | None = None
         self._job_runtime: Any | None = None
         self._model_runtime_client: Any | None = None
+        self.optimizer = ModelLoadOptimizer()
+        self._optimization_tasks: dict[str, Any] = {}
 
     def bind_job_runtime(self, job_runtime: Any | None) -> None:
         """Attach Job Kernel for downloads/imports + model_runtime lifecycle enqueue."""
@@ -198,6 +201,7 @@ class ModelControlPlane:
             "hardware": snap.public_dict(),
             "reservations": held,
             "residency": [s.public_dict() for s in self.residency.list_snapshots()],
+            "policy": self.resources.device_policy_public(),
         }
 
     def placement_preflight(
@@ -1168,6 +1172,19 @@ class ModelControlPlane:
                         "allowMultiGpu",
                         "allowCpuOffload",
                         "shardingMode",
+                        "prefixCache",
+                        "continuousBatching",
+                        "kvCacheDtype",
+                        "speculativeDecoding",
+                        "draftModelId",
+                        "speculativeTokens",
+                        "offloadKvCacheToGpu",
+                        "numExperts",
+                        "gpuOffloadRatio",
+                        "gpuSplitMode",
+                        "gpuStrictVramCap",
+                        "keepDisplayHeadroom",
+                        "seed",
                     )
                 )
             else:
@@ -1192,13 +1209,39 @@ class ModelControlPlane:
                 },
             }
         binding = self.get_runtime_binding(model_id)
+        lifecycle_controllable = self._adapter_lifecycle_controllable(model_id, binding)
         return await self.residency.manual_load(
             model_id,
             options=options,
             managed=bool(binding.managed),
             runtime_kind=binding.runtime_kind,
             confirm_oom=confirm_oom,
+            lifecycle_controllable=lifecycle_controllable,
         )
+
+    def _adapter_lifecycle_controllable(self, model_id: str, binding: Any | None = None) -> bool:
+        adapter = None
+        provider_id = getattr(binding, "provider_id", None) if binding is not None else None
+        try:
+            if provider_id:
+                adapter = self.get_adapter(str(provider_id))
+        except Exception:  # noqa: BLE001
+            adapter = None
+        if adapter is None:
+            try:
+                model = self.registry.get(model_id)
+                adapter = self.get_adapter(model.provider_id)
+            except Exception:  # noqa: BLE001
+                return False
+        if bool(getattr(adapter, "lifecycle_controllable", False)):
+            return True
+        try:
+            caps = adapter.capabilities()
+            return bool(caps.load_model) and not bool(
+                getattr(adapter, "managed_by_leviathan", True)
+            )
+        except Exception:  # noqa: BLE001
+            return False
 
     async def unload_model(self, model_id: str) -> dict[str, Any]:
         if self._externalize_runtime():
@@ -1237,6 +1280,11 @@ class ModelControlPlane:
                     "execution_owner": "model_runtime",
                 },
             }
+        binding = self.get_runtime_binding(model_id)
+        controllable = self._adapter_lifecycle_controllable(model_id, binding)
+        if controllable:
+            slot = self.residency._get_or_create_slot(model_id)
+            slot.lifecycle_controllable = True
         result = await self.residency.manual_unload(model_id)
         # Invalidate live runtime prefix/KV affinity — tokenizer caches may remain.
         try:
@@ -1455,6 +1503,196 @@ class ModelControlPlane:
             metadata=meta if isinstance(meta, dict) else {},
         )
 
+    async def provider_control_capabilities(self, provider_id: str) -> dict[str, Any]:
+        adapter = self.get_adapter(provider_id)
+        if hasattr(adapter, "probe_control_capabilities"):
+            caps = await adapter.probe_control_capabilities()
+            return {
+                "providerId": provider_id,
+                "providerType": getattr(adapter, "provider_type", None),
+                "capabilities": caps.public_dict(),
+            }
+        runtime_caps = adapter.capabilities()
+        return {
+            "providerId": provider_id,
+            "providerType": getattr(adapter, "provider_type", None),
+            "capabilities": {
+                "load": "SUPPORTED" if runtime_caps.load_model else "UNSUPPORTED",
+                "unload": "SUPPORTED" if runtime_caps.unload_model else "UNSUPPORTED",
+                "loadOptions": list(runtime_caps.load_options),
+            },
+            "runtimeCapabilities": runtime_caps.public_dict(),
+        }
+
+    async def estimate_model_load(
+        self,
+        model_id: str,
+        options: LoadOptions | None = None,
+    ) -> dict[str, Any]:
+        model = self.registry.get(model_id)
+        leviathan_est = None
+        if hasattr(self.resources, "estimate"):
+            try:
+                leviathan_est = self.resources.estimate(
+                    model, requested_context=options.context_length if options else None
+                ).public_dict()
+            except Exception as exc:  # noqa: BLE001
+                leviathan_est = {"error": str(exc), "provenance": "LEVIATHAN_ESTIMATE"}
+
+        provider_est = None
+        warnings: list[str] = []
+        try:
+            adapter = self.get_adapter(model.provider_id)
+            if hasattr(adapter, "estimate_load"):
+                provider_est = await adapter.estimate_load(model_id, options)
+            else:
+                warnings.append("Provider does not expose estimate_load")
+        except ModelControlError as exc:
+            warnings.append(exc.message)
+            provider_est = {"error": exc.public_dict(), "provenance": "PROVIDER_ESTIMATE"}
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(str(exc))
+
+        disagree = False
+        try:
+            p_gpu = (provider_est or {}).get("estimate", {}).get("estimatedGpuMemoryBytes")
+            l_vram = (leviathan_est or {}).get("estimatedVramBytes") or (
+                leviathan_est or {}
+            ).get("vramBytes")
+            if isinstance(p_gpu, int) and isinstance(l_vram, int) and l_vram > 0:
+                ratio = abs(p_gpu - l_vram) / max(p_gpu, l_vram)
+                if ratio > 0.25:
+                    disagree = True
+                    warnings.append(
+                        "Leviathan and LM Studio estimates disagree by more than 25%"
+                    )
+        except Exception:  # noqa: BLE001
+            pass
+
+        self._emit(
+            "model.estimate",
+            {"modelId": model_id, "provider": provider_est, "leviathan": leviathan_est},
+        )
+        return {
+            "modelId": model_id,
+            "leviathanEstimate": leviathan_est,
+            "providerEstimate": provider_est,
+            "disagreeMaterially": disagree,
+            "warnings": warnings,
+            "timestamp": time.time(),
+        }
+
+    async def start_optimization(
+        self,
+        model_id: str,
+        *,
+        options: LoadOptions | None = None,
+        objectives: dict[str, Any] | None = None,
+        max_candidates: int = 8,
+        deadline_seconds: float = 900.0,
+    ) -> dict[str, Any]:
+        import asyncio
+
+        model = self.registry.get(model_id)
+        obj = OptimizationObjective(
+            max_tokens_per_sec=bool((objectives or {}).get("maxTokensPerSec", True)),
+            keep_display_responsive=bool((objectives or {}).get("keepDisplayResponsive", True)),
+            maximize_model_size=bool((objectives or {}).get("maximizeModelSize", False)),
+            stable_no_oom=bool((objectives or {}).get("stableNoOom", True)),
+        )
+        hw = self.resources.hardware_snapshot()
+        device_count = len(hw.devices)
+
+        async def load_fn(mid: str, opts: LoadOptions) -> dict[str, Any]:
+            return await self.load_model(mid, opts, confirm_oom=False)
+
+        async def unload_fn(mid: str) -> dict[str, Any]:
+            return await self.unload_model(mid)
+
+        async def benchmark_fn(mid: str) -> dict[str, Any]:
+            try:
+                await self.benchmarks.quick_benchmark(mid)
+            except Exception:  # noqa: BLE001
+                pass
+            return await self.benchmarks.quick_benchmark(mid)
+
+        async def preflight_fn(mid: str, opts: LoadOptions) -> dict[str, Any]:
+            return self.placement_preflight(mid, load_options=opts)
+
+        provider_version = None
+        try:
+            adapter = self.get_adapter(model.provider_id)
+            if hasattr(adapter, "control_capabilities"):
+                provider_version = adapter.control_capabilities().provider_version
+        except Exception:  # noqa: BLE001
+            provider_version = None
+
+        from Data.modules.models.optimizer import OptimizationRun
+
+        pending = OptimizationRun(
+            run_id=str(uuid.uuid4()),
+            model_id=model_id,
+            objectives=obj,
+            max_candidates=max(4, min(12, int(max_candidates))),
+            deadline_seconds=float(deadline_seconds),
+            status=OptimizationStatus.RUNNING,
+            started_at=time.time(),
+        )
+        self.optimizer._runs[pending.run_id] = pending
+        self._emit("model.optimize.start", {"modelId": model_id, "runId": pending.run_id})
+
+        async def _bound_start() -> None:
+            real = await self.optimizer.run(
+                model_id=model_id,
+                base_options=options or LoadOptions(),
+                objectives=obj,
+                max_candidates=pending.max_candidates,
+                deadline_seconds=pending.deadline_seconds,
+                device_count=device_count,
+                provider_version=provider_version,
+                hardware_fingerprint=None,
+                quantization=model.quantization,
+                load_fn=load_fn,
+                unload_fn=unload_fn,
+                benchmark_fn=benchmark_fn,
+                preflight_fn=preflight_fn,
+            )
+            real.run_id = pending.run_id
+            self.optimizer._runs[pending.run_id] = real
+            self._emit(
+                "model.optimize.complete",
+                {"modelId": model_id, "runId": real.run_id, "status": real.status.value},
+            )
+
+        task = asyncio.create_task(_bound_start())
+        self._optimization_tasks[pending.run_id] = task
+        return {"queued": True, "optimization": pending.public_dict()}
+
+    def get_optimization(self, run_id: str) -> dict[str, Any]:
+        run = self.optimizer.get(run_id)
+        if run is None:
+            raise ModelControlError(
+                code="NOT_FOUND",
+                message=f"Optimization run not found: {run_id}",
+                http_status=404,
+            )
+        return {"optimization": run.public_dict()}
+
+    def list_optimizations(self, model_id: str) -> dict[str, Any]:
+        runs = self.optimizer.list_for_model(model_id)
+        return {"optimizations": [r.public_dict() for r in runs]}
+
+    def cancel_optimization(self, run_id: str) -> dict[str, Any]:
+        run = self.optimizer.cancel(run_id)
+        if run is None:
+            raise ModelControlError(
+                code="NOT_FOUND",
+                message=f"Optimization run not found: {run_id}",
+                http_status=404,
+            )
+        self._emit("model.optimize.cancel", {"runId": run_id})
+        return {"optimization": run.public_dict()}
+
     def _emit(self, name: str, payload: dict[str, Any]) -> None:
         if self.observability:
             self.observability.emit("models", name, payload=payload)
@@ -1465,12 +1703,36 @@ def LMStudioCaps() -> RuntimeCapabilities:
         discover_models=True,
         import_model=False,
         download_model=False,
-        load_model=False,
-        unload_model=False,
+        load_model=True,
+        unload_model=True,
         delete_model=False,
-        list_loaded_models=False,
+        list_loaded_models=True,
         inference=True,
         streaming=True,
+        load_options=(
+            "contextLength",
+            "batchSize",
+            "flashAttention",
+            "offloadKvCacheToGpu",
+            "numExperts",
+            "gpuOffloadRatio",
+            "gpuSplitMode",
+            "tensorSplit",
+            "mainGpuOrdinal",
+            "excludedDeviceIds",
+            "gpuStrictVramCap",
+            "kvCacheDtype",
+            "continuousBatching",
+            "prefixCache",
+            "speculativeDecoding",
+            "draftModelId",
+            "speculativeTokens",
+            "allowMultiGpu",
+            "shardingMode",
+            "seed",
+            "cpuThreads",
+            "keepDisplayHeadroom",
+        ),
     )
 
 
@@ -1492,12 +1754,24 @@ def parse_load_options(payload: dict[str, Any] | None) -> LoadOptions | None:
             return tuple(float(v) for v in value)
         return (float(value),)
 
+    # Accept both batchSize and evalBatchSize
+    batch = payload.get("batchSize")
+    if batch is None:
+        batch = payload.get("evalBatchSize")
+
+    ratio = payload.get("gpuOffloadRatio")
+    if ratio is None and payload.get("gpuOffloadPercent") is not None:
+        try:
+            ratio = float(payload["gpuOffloadPercent"]) / 100.0
+        except (TypeError, ValueError):
+            ratio = None
+
     return LoadOptions(
         context_length=payload.get("contextLength"),
         gpu_offload_layers=payload.get("gpuOffloadLayers"),
         gpu_memory_limit_bytes=payload.get("gpuMemoryLimitBytes"),
         cpu_threads=payload.get("cpuThreads"),
-        batch_size=payload.get("batchSize"),
+        batch_size=batch,
         flash_attention=payload.get("flashAttention"),
         preferred_device_ids=_tuple_ids(payload.get("preferredDeviceIds")),
         pinned_device_ids=_tuple_ids(payload.get("pinnedDeviceIds")),
@@ -1514,4 +1788,11 @@ def parse_load_options(payload: dict[str, Any] | None) -> LoadOptions | None:
         speculative_decoding=payload.get("speculativeDecoding"),
         draft_model_id=payload.get("draftModelId"),
         speculative_tokens=payload.get("speculativeTokens"),
+        offload_kv_cache_to_gpu=payload.get("offloadKvCacheToGpu"),
+        num_experts=payload.get("numExperts"),
+        gpu_offload_ratio=float(ratio) if ratio is not None else None,
+        gpu_split_mode=payload.get("gpuSplitMode"),
+        gpu_strict_vram_cap=payload.get("gpuStrictVramCap"),
+        keep_display_headroom=payload.get("keepDisplayHeadroom"),
+        seed=payload.get("seed"),
     )
