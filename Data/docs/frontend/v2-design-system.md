@@ -142,3 +142,12 @@ Media Control, Plugin & Runtime, Coding Agent, and other deep links remain regis
 - Production never ships screenshot mock rows; KPIs/table/activity/resources come from TaskService + system telemetry. Unknown progress/resources stay unknown/`UNAVAILABLE`.
 - Reference: `docs/ui_reference/taken-v2-reference.png`.
 
+## Memory / Geheugen migration
+
+- `/memory` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "Onderzoek & Kennis / Geheugen").
+- Research group children stay MAIN_MENU-derived — Geheugen selected; do not copy screenshot submenu labels.
+- Composition: `GeheugenPage` + `useMemoryWorkspace` + `src/components/memory/*`.
+- No page-local Memory CSS; layout lives in `leviathan-v2.css` under `.lv-v2-page--memory` / `.lv-v2-memory-*`.
+- KPIs/search/table/analytics/semantic-index/processing are real API-backed; fixture-only Screen 1 numbers live in `src/mocks/memoryV2VisualFixture.ts`.
+- Visual: `e2e/helpers/memoryV2Visual.ts` + `e2e/memory-v2.visual.spec.ts` (reference: `docs/ui_reference/memory-v2-reference.png`).
+- Memory ≠ Knowledge ≠ Brain — document/web actions deep-link to Knowledge/Research authorities.

@@ -430,7 +430,27 @@ Historical graph snapshots are **not** reconstructed from `created_at`. Workbenc
 
 ## Memory — `/memory`
 
-`src/pages/GeheugenPage.tsx` presents durable MemoryStore records/scopes/trust/corrections.
+`src/pages/GeheugenPage.tsx` presents the Leviathan V2 **Geheugen** control plane under `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2`.
+
+Composition: `useMemoryWorkspace` + `src/components/memory/*` (hero, KPIs, search/table, right column, bottom analytics, dialogs/drawer).
+
+Screen 1 layout lives only in global `leviathan-v2.css` under `.lv-v2-page--memory` / `.lv-v2-memory-*` — no page-local Memory CSS.
+
+Research group children stay MAIN_MENU-derived via `v2ChildrenFromMainMenu` — Geheugen is selected on `/memory`; screenshot submenu labels are not navigation truth.
+
+Production UI never falls back to mock/demo Memory totals. Screen 1 parity data exists only in `src/mocks/memoryV2VisualFixture.ts` (Playwright). Reference: `docs/ui_reference/memory-v2-reference.png`.
+
+Backend authority remains `MemoryStore` on the CONTROL database:
+
+- cursor pagination + filters on `GET /api/memory`
+- overview aggregates on `GET /api/memory/overview`
+- real pin/unpin (`POST .../pin|unpin`), PATCH metadata, correction/supersede, archive/restore/revoke
+- lexical / semantic / hybrid search with honest degradation
+- semantic index on CONTROL (`memory_embeddings`) via memory worker → embedding.batch
+- analytics / activity / search telemetry
+- automatic processing policy in Settings (`memory.processing.*`)
+
+Memory ≠ Knowledge ≠ Brain. Document upload opens Knowledge; web save opens Research; conversation save is an explicit operator action.
 
 ## Knowledge — `/knowledge`
 
