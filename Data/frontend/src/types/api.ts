@@ -1154,6 +1154,88 @@ export type DatasetRecord = {
   indexes?: DatasetIndex[];
   learningState?: DatasetLearningState;
   canonicalState?: string;
+  quality?: DatasetQualitySignal;
+};
+
+/**
+ * Evidence-based quality presentation — see DatasetService.dataset_overview /
+ * quality_signals.quality_from_validation. Never a fabricated score; when no
+ * validation evidence exists, `measured` is false and `score` is null.
+ */
+export type DatasetQualitySignal = {
+  measured: boolean;
+  score: number | null;
+  label: string;
+  segments: boolean[];
+  tone: "good" | "fair" | "poor" | "critical" | "unknown";
+  constituents?: {
+    errorCount?: number;
+    warningCount?: number;
+    emptyContentCount?: number;
+    rowCount?: number;
+    valid?: boolean | null;
+    formula?: string;
+  };
+  truth?: Record<string, unknown>;
+};
+
+export type DatasetServiceProjection = {
+  id: string;
+  name: string;
+  source: string;
+  state: string;
+  label: string;
+  detail?: string | null;
+  measured: boolean;
+};
+
+export type DatasetStorageBreakdownRow = {
+  id: string;
+  label: string;
+  bytes: number;
+  pct: number;
+};
+
+export type DatasetCatalogStatus = {
+  state: string;
+  label: string;
+  valid: boolean;
+  lastCatalogReconcileAt?: string | null;
+  entryCount?: number | null;
+  path?: string | null;
+  truth?: Record<string, unknown>;
+};
+
+/** DatasetService.dataset_overview() — bounded aggregate truth for Dataset Management. */
+export type DatasetOverview = {
+  totalDatasets: number;
+  totalSamples: number;
+  samplesMeasuredDatasets: number;
+  samplesUnmeasuredDatasets: number;
+  totalKnownBytes: number;
+  attributableBytes: number;
+  bytesMeasuredDatasets: number;
+  bytesUnmeasuredDatasets: number;
+  capacityBytes?: number | null;
+  freeBytes?: number | null;
+  usedBytes?: number | null;
+  measurementStatus: string;
+  activeImports: number;
+  runningImports: number;
+  queuedImports: number;
+  validationIssues: number;
+  criticalValidationIssues: number;
+  warningValidationIssues: number;
+  versionsWithValidation: number;
+  exportVersionCount: number;
+  byStatus: Record<string, number>;
+  bySourceType: Record<string, number>;
+  tagCounts: { tag: string; count: number }[];
+  storageBreakdown: DatasetStorageBreakdownRow[];
+  catalogStatus: DatasetCatalogStatus;
+  services: DatasetServiceProjection[];
+  qualityModel?: Record<string, unknown>;
+  truth?: Record<string, unknown>;
 };
 
 export type DatasetSemanticProfileSummary = {

@@ -947,6 +947,28 @@ Important dataset concepts:
 
 HTTP: `Data/backend/routes/datasets.py`. Knowledge ingestion: `Data/backend/routes/knowledge.py`. Source ingestion enters through domain APIs but heavy parse/index work is worker-owned.
 
+### Catalog query, overview, and quality
+
+`GET /api/datasets` supports bounded server-side listing (backward compatible with `limit`-only callers):
+
+- `q` — search name / displayName / description / category / tags metadata
+- `source` / `sourceType`, `category`, `split`, `status`, `type` / `detectedFormat`, `tags`
+- `sort`, `offset`, `limit` (capped)
+- response includes `datasets`, `total`, `hasMore`, `nextOffset` — **page size never defines catalog totals**
+
+`GET /api/datasets/overview` returns bounded aggregates for the Dataset Management control plane:
+
+- totalDatasets / totalSamples (partial measurement when `row_count` is null)
+- attributableBytes + disk capacity (`shutil.disk_usage` on corpus root) + storageBreakdown
+- active/running/queued import jobs
+- validation issue rollups from persisted `validation_json` (not failed-job counts)
+- catalogStatus from derived catalog reconcile (`generatedAt`) — not remote “Online sync”
+- tagCounts and Dataset Services **status projections** (embedding / dataset / training / knowledge) — no new daemons
+
+Quality presentation (`Data/modules/datasets/quality_signals.py`) is evidence-based from validation only. Unmeasured quality is never shown as 100%. Formula: `clamp(0,100, 100 - 8*errors - 2*warnings - 1*emptyContent)` with constituents exposed.
+
+Semantic operator overrides remain `PATCH /api/datasets/{id}/semantic`. Brain learn remains `POST …/learn` → INDEX job; local presence ≠ learned. Training consumers must pass immutable `datasetId` + `versionId`.
+
 ---
 
 # 17. Training, flywheel, evaluation, release and verification

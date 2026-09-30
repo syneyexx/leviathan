@@ -47,6 +47,7 @@ DATASETS_STATIC_SEGMENTS = frozenset(
         "sidecars",
         "catalog",
         "semantic",
+        "overview",
     }
 )
 
@@ -208,11 +209,88 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
     # Collection + upload (no path params)
     # ------------------------------------------------------------------
     @router.get("/api/datasets")
-    def list_datasets(limit: int = 100, includeBrain: bool = True) -> dict:
-        if includeBrain:
-            return {"datasets": service.list_library_datasets(limit=limit)}
-        items = service.list_datasets(limit=limit)
-        return {"datasets": [service.public_dataset(d) for d in items]}
+    def list_datasets(
+        limit: int = 100,
+        offset: int = 0,
+        q: str | None = None,
+        status: str | None = None,
+        source: str | None = None,
+        sourceType: str | None = None,
+        type: str | None = None,
+        detectedFormat: str | None = None,
+        category: str | None = None,
+        tags: str | None = None,
+        split: str | None = None,
+        sort: str = "created_at_desc",
+        includeBrain: bool = True,
+        includeQuality: bool = True,
+    ) -> dict:
+        """List datasets with optional server-side search/filter/pagination.
+
+        Backward compatible: callers that only pass ``limit`` still receive
+        ``{datasets: [...]}``. When any query/pagination field beyond the
+        legacy default is used (or ``offset`` > 0), the response also includes
+        ``total``, ``offset``, ``limit``, ``hasMore``, ``nextOffset``.
+        """
+        source_type = sourceType or source
+        detected_format = detectedFormat or type
+        # Normalize UI-facing source labels to store enums when possible.
+        if source_type:
+            st = source_type.strip().lower()
+            alias = {
+                "hugging face": "huggingface",
+                "hf": "huggingface",
+                "lokaal": "local",
+                "local": "local",
+                "upload": "upload",
+                "afgeleid": "derived",
+                "derived": "derived",
+                "synthetic": "derived",
+            }
+            source_type = alias.get(st, st)
+        if detected_format:
+            detected_format = detected_format.strip().lower()
+        if status:
+            status = status.strip().lower()
+
+        page = service.query_datasets(
+            limit=limit,
+            offset=offset,
+            q=q,
+            status=status,
+            source_type=source_type,
+            detected_format=detected_format,
+            category=category,
+            tags=tags,
+            split=split,
+            sort=sort,
+            include_brain=includeBrain,
+            include_quality=includeQuality,
+        )
+        # Legacy shape always present.
+        out: dict = {"datasets": page["datasets"]}
+        # Always expose totals so UI never uses page length as catalog truth.
+        out.update(
+            {
+                "total": page["total"],
+                "limit": page["limit"],
+                "offset": page["offset"],
+                "sort": page["sort"],
+                "hasMore": page["hasMore"],
+                "nextOffset": page["nextOffset"],
+                "truth": page["truth"],
+            }
+        )
+        return out
+
+    @router.get("/api/datasets/overview")
+    def datasets_overview() -> dict:
+        """Bounded aggregate KPIs / storage / tags / service projections."""
+        try:
+            return {"overview": service.dataset_overview()}
+        except DatasetError as exc:
+            _raise(exc)
+            raise
 
     @router.post("/api/datasets")
     def create_dataset(body: CreateDatasetBody) -> dict:

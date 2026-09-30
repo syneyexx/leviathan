@@ -137,7 +137,7 @@ The “Hades AI” navigation label is UI naming. It does not make `Data/HADES/`
 | `/coding` | `CodingPage` |
 | `/models` | `ModelsPage` |
 | `/training` | `TrainingPage` (V2) |
-| `/dataset-management` | `DatasetManagementPixelPage` |
+| `/dataset-management` | `DatasetManagementPage` (V2) |
 | `/offline-datasets` | `OfflineDatasetsPixelPage` |
 | `/agents` | `AgentsPage` |
 | `/analytics` | `AnalyticsPage` |
@@ -500,13 +500,23 @@ Evidence=0 alone is not a diagnosis. The UI should display backend reasons such 
 
 # 15. Datasets UI
 
-Two related surfaces exist:
+Two related surfaces exist and **must share the same DatasetService / DatasetStore identities**:
 
+- `/dataset-management` → `src/pages/DatasetManagementPage.tsx` + `src/pages/dataset-management/` + `src/components/dataset-management/` — **LLM → Dataset Management** operator control plane (Leviathan V2);
 - `/datasets` → `src/pages/DatasetsPage.tsx` and `src/pages/datasets/` — research/knowledge dataset surface;
-- `/dataset-management` → `src/pages/pixel/DatasetManagementPixelPage.tsx` — operator management view;
 - `/offline-datasets` → `src/pages/pixel/OfflineDatasetsPixelPage.tsx` — offline dataset tooling.
 
-Supporting dataset code includes:
+`/dataset-management` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "LLM / Dataset Management"). MAIN_MENU owns the page under LLM (`v2ChildrenFromMainMenu("llm")`); there is no separate Dataset rail owner.
+
+Composition: `DatasetManagementPage` + `useDatasetManagementWorkspace` + `src/components/dataset-management/*` (hero, metrics, actions, services, library, details, semantic summary, preview, storage, tags) + shared `DatasetActivityConsole`.
+
+No page-local Dataset Management CSS file — layout lives in global `leviathan-v2.css` under `.lv-v2-page--dataset-mgmt` / `.lv-v2-dm-*`.
+
+Catalog listing is **server-side** (`GET /api/datasets` with `q` / filters / `offset` / `limit` / `total`). KPI / storage / services / popular tags come from `GET /api/datasets/overview`. Quality is evidence-based (`quality_signals` from persisted validation); unmeasured ≠ 100%. Catalog status is derived-catalog reconcile truth — not a fake “Online sync”.
+
+Production never imports `mocks/dataset-management` configuration or Screen 1 fixture numbers. Visual fixture: `src/mocks/datasetManagementV2VisualFixture.ts` + `e2e/helpers/datasetManagementV2Visual.ts` + `e2e/dataset-management-v2.visual.spec.ts` (reference: `docs/ui_reference/dataset-management-llm-v2-reference.png`, 1672×941).
+
+Supporting shared dataset code includes:
 
 - `DatasetActivityConsole.tsx`;
 - `datasetActivity.ts`;
@@ -515,7 +525,7 @@ Supporting dataset code includes:
 - `datasetLearningState.ts`;
 - dataset activity/management tests.
 
-Dataset Management uses `displayName ?? name`, category/tags/search and semantic re-analysis APIs. `REINDEX_REQUIRED` is never shown as learned Brain state.
+Dataset Management uses `displayName ?? name`, category/tags/search and semantic re-analysis APIs (`PATCH /api/datasets/{id}/semantic`). `REINDEX_REQUIRED` is never shown as learned Brain state. Training deep-links pass immutable `datasetId` + `datasetVersionId`.
 
 Job/activity panels expose backend compute truth (`python_streaming` / `rust_native`) and progress. Missing peak RSS/spill/throughput remains UNMEASURED.
 

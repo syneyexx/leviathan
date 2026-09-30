@@ -366,6 +366,394 @@ class DatasetService:
     def list_datasets(self, *, limit: int = 100) -> list[DatasetRecord]:
         return self.store.list_datasets(limit=limit)
 
+    def query_datasets(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        q: str | None = None,
+        status: str | None = None,
+        source_type: str | None = None,
+        detected_format: str | None = None,
+        category: str | None = None,
+        tags: str | None = None,
+        split: str | None = None,
+        sort: str = "created_at_desc",
+        include_brain: bool = True,
+        include_quality: bool = True,
+    ) -> dict[str, Any]:
+        """Server-side catalog page — same DatasetStore, no parallel registry."""
+        from .quality_signals import quality_from_validation
+
+        page = self.store.query_datasets(
+            limit=limit,
+            offset=offset,
+            q=q,
+            status=status,
+            source_type=source_type,
+            detected_format=detected_format,
+            category=category,
+            tags=tags,
+            split=split,
+            sort=sort,
+        )
+        items = page["items"]
+        quality_map: dict[str, dict[str, Any]] = {}
+        if include_quality and items:
+            quality_map = self.store.latest_version_validation_map(
+                [d.dataset_id for d in items]
+            )
+
+        datasets: list[dict[str, Any]] = []
+        for ds in items:
+            if include_brain:
+                entry = self.brain_library_entry(ds)
+            else:
+                entry = self.public_dataset(ds)
+            if include_quality:
+                entry["quality"] = quality_from_validation(quality_map.get(ds.dataset_id))
+            datasets.append(entry)
+
+        next_offset = page["offset"] + len(datasets)
+        return {
+            "datasets": datasets,
+            "total": page["total"],
+            "limit": page["limit"],
+            "offset": page["offset"],
+            "sort": page["sort"],
+            "nextOffset": next_offset if next_offset < page["total"] else None,
+            "hasMore": next_offset < page["total"],
+            "truth": {
+                "totalIsFilteredCatalogCount": True,
+                "pageSizeDoesNotDefineTotals": True,
+                "qualityRequiresValidationEvidence": True,
+            },
+        }
+
+    def dataset_overview(self) -> dict[str, Any]:
+        """Bounded aggregate truth for Dataset Management KPIs / storage / tags / services."""
+        import shutil
+
+        from .quality_signals import quality_from_validation
+
+        stats = self.store.aggregate_catalog_stats()
+        tags = self.store.aggregate_tag_counts(limit=24)
+
+        # Catalog / sync semantics — derived catalog reconcile, not "page refresh".
+        cat = self.catalog_status()
+        catalog_valid = bool(cat.get("valid"))
+        catalog_doc = cat.get("catalog") if isinstance(cat.get("catalog"), dict) else {}
+        last_reconcile = catalog_doc.get("generatedAt") if catalog_valid else None
+        if catalog_valid:
+            catalog_label = "Gezond"
+            catalog_state = "healthy"
+        elif cat.get("code") == "catalog_missing" or not Path(str(cat.get("path") or "")).exists():
+            catalog_label = "Geen catalogus"
+            catalog_state = "missing"
+        else:
+            catalog_label = "Corrupt / ongeldig"
+            catalog_state = "invalid"
+
+        # Storage: prefer measured corpus version bytes + capacity from corpus root disk.
+        known_bytes = int(stats["totalKnownBytes"])
+        by_kind = dict(stats.get("bytesByVersionKind") or {})
+        version_bytes_total = sum(int(v) for v in by_kind.values())
+        # Prefer version rollup when present (includes exports/indexes materializations).
+        attributable = version_bytes_total if version_bytes_total > 0 else known_bytes
+
+        capacity_bytes: int | None = None
+        free_bytes: int | None = None
+        measurement_status = "partial" if stats["bytesUnmeasuredDatasets"] else "complete"
+        try:
+            usage = shutil.disk_usage(Path(self.corpus.root))
+            capacity_bytes = int(usage.total)
+            free_bytes = int(usage.free)
+        except OSError:
+            measurement_status = "unmeasured_capacity"
+            capacity_bytes = None
+            free_bytes = None
+
+        datasets_bytes = int(by_kind.get("raw", 0)) + int(by_kind.get("materialized", 0)) + int(
+            by_kind.get("transformed", 0)
+        ) + int(by_kind.get("split", 0))
+        export_bytes = int(by_kind.get("export", 0))
+        # Indexes are tracked via dataset_indexes storage paths when present — use file size rollup if available.
+        index_bytes = self._sum_index_storage_bytes()
+        other_bytes = max(0, attributable - datasets_bytes - export_bytes - index_bytes)
+
+        storage_breakdown = [
+            {"id": "datasets", "label": "Datasets", "bytes": datasets_bytes},
+            {"id": "indexes", "label": "Indexen", "bytes": index_bytes},
+            {"id": "exports", "label": "Exports", "bytes": export_bytes},
+            {"id": "other", "label": "Overig", "bytes": other_bytes},
+        ]
+        # Drop empty categories except datasets anchor.
+        storage_breakdown = [
+            row
+            for row in storage_breakdown
+            if row["bytes"] > 0 or row["id"] == "datasets"
+        ]
+        for row in storage_breakdown:
+            row["pct"] = (
+                round(100.0 * row["bytes"] / attributable, 1) if attributable > 0 else 0.0
+            )
+
+        services = self.dataset_services_status()
+
+        return {
+            "totalDatasets": stats["totalDatasets"],
+            "totalSamples": stats["totalSamples"],
+            "samplesMeasuredDatasets": stats["samplesMeasuredDatasets"],
+            "samplesUnmeasuredDatasets": stats["samplesUnmeasuredDatasets"],
+            "totalKnownBytes": known_bytes,
+            "attributableBytes": attributable,
+            "bytesMeasuredDatasets": stats["bytesMeasuredDatasets"],
+            "bytesUnmeasuredDatasets": stats["bytesUnmeasuredDatasets"],
+            "capacityBytes": capacity_bytes,
+            "freeBytes": free_bytes,
+            "usedBytes": (capacity_bytes - free_bytes) if capacity_bytes is not None and free_bytes is not None else None,
+            "measurementStatus": measurement_status,
+            "activeImports": stats["activeImports"],
+            "runningImports": stats["runningImports"],
+            "queuedImports": stats["queuedImports"],
+            "validationIssues": stats["validationIssues"],
+            "criticalValidationIssues": stats["criticalValidationIssues"],
+            "warningValidationIssues": stats["warningValidationIssues"],
+            "versionsWithValidation": stats["versionsWithValidation"],
+            "exportVersionCount": stats["exportVersionCount"],
+            "byStatus": stats["byStatus"],
+            "bySourceType": stats["bySourceType"],
+            "tagCounts": tags,
+            "storageBreakdown": storage_breakdown,
+            "catalogStatus": {
+                "state": catalog_state,
+                "label": catalog_label,
+                "valid": catalog_valid,
+                "lastCatalogReconcileAt": last_reconcile,
+                "entryCount": catalog_doc.get("entryCount") if catalog_valid else None,
+                "path": cat.get("path"),
+                "truth": {
+                    "catalogIsDerived": True,
+                    "datasetStoreIsCanonical": True,
+                    "notRemoteSyncOnline": True,
+                    "lastReconcileIsNotPageRefresh": True,
+                },
+            },
+            "services": services,
+            "qualityModel": quality_from_validation(None)["truth"],
+            "truth": {
+                "nullRowCountIsUnmeasuredNotZero": True,
+                "pageSizeDoesNotDefineTotals": True,
+                "storageFromCorpusAndVersions": True,
+                "capacityFromDiskUsage": capacity_bytes is not None,
+                "validationIssuesFromPersistedReports": True,
+            },
+        }
+
+    def _sum_index_storage_bytes(self) -> int:
+        total = 0
+        try:
+            with self.store.connect() as conn:
+                rows = conn.execute(
+                    "SELECT storage_path FROM dataset_indexes WHERE storage_path IS NOT NULL"
+                ).fetchall()
+            for row in rows:
+                path = row["storage_path"]
+                if not path:
+                    continue
+                try:
+                    p = Path(path)
+                    if p.is_file():
+                        total += p.stat().st_size
+                    elif p.is_dir():
+                        for child in p.rglob("*"):
+                            if child.is_file():
+                                total += child.stat().st_size
+                except OSError:
+                    continue
+        except Exception:  # noqa: BLE001
+            return 0
+        return int(total)
+
+    def dataset_services_status(self) -> list[dict[str, Any]]:
+        """Project Dataset Services panel from existing architecture — no new daemons."""
+        services: list[dict[str, Any]] = []
+
+        def _pool_status(pool_id: str) -> dict[str, Any]:
+            try:
+                from Data.modules.workers.registry import WorkerRegistry
+                from Data.modules.workers.settings import load_worker_settings
+
+                registry = WorkerRegistry(self.store.db_path)
+                registry.initialize()
+                regs = registry.list(pool_id=pool_id)
+                wsettings = load_worker_settings()
+                desired = wsettings.desired_count(pool_id)
+                ready = sum(1 for r in regs if getattr(r.state, "value", str(r.state)) == "READY")
+                busy = sum(1 for r in regs if getattr(r.state, "value", str(r.state)) == "BUSY")
+                if busy > 0:
+                    return {
+                        "state": "busy",
+                        "label": "Busy",
+                        "detail": f"{busy} busy / {ready} ready (desired {desired})",
+                        "measured": True,
+                    }
+                if ready > 0:
+                    return {
+                        "state": "running",
+                        "label": "Running",
+                        "detail": f"{ready} ready (desired {desired})",
+                        "measured": True,
+                    }
+                if desired <= 0:
+                    return {
+                        "state": "unavailable",
+                        "label": "Unavailable",
+                        "detail": "desired_count=0",
+                        "measured": True,
+                    }
+                return {
+                    "state": "offline",
+                    "label": "Offline",
+                    "detail": f"no live workers (desired {desired})",
+                    "measured": True,
+                }
+            except Exception as exc:  # noqa: BLE001
+                return {
+                    "state": "unmeasured",
+                    "label": "Unmeasured",
+                    "detail": redact_secrets(str(exc))[:160],
+                    "measured": False,
+                }
+
+        # Embedding Pipeline → embedding worker / knowledge embedding provider
+        emb = _pool_status("embedding")
+        if self.knowledge is not None:
+            try:
+                provider = getattr(self.knowledge, "embedding_provider", None)
+                if provider is not None and hasattr(provider, "status"):
+                    st = provider.status()
+                    mode = (st or {}).get("mode") if isinstance(st, dict) else None
+                    if mode in {"unavailable", "error", "disabled"}:
+                        emb = {
+                            "state": "unavailable",
+                            "label": "Unavailable",
+                            "detail": f"embedding provider mode={mode}",
+                            "measured": True,
+                        }
+                    elif emb["state"] in {"offline", "unmeasured"} and mode:
+                        emb = {
+                            "state": "ready",
+                            "label": "Ready",
+                            "detail": f"provider mode={mode}",
+                            "measured": True,
+                        }
+            except Exception:  # noqa: BLE001
+                pass
+        services.append(
+            {
+                "id": "embedding_pipeline",
+                "name": "Embedding Pipeline",
+                "source": "embedding worker / Knowledge embedding provider",
+                **emb,
+            }
+        )
+
+        # Indexing Service → dataset worker (INDEX jobs) + knowledge
+        idx = _pool_status("dataset")
+        services.append(
+            {
+                "id": "indexing_service",
+                "name": "Indexing Service",
+                "source": "dataset worker (INDEX) + KnowledgeStore",
+                **idx,
+            }
+        )
+
+        # Validation Engine → dataset worker validate capability
+        services.append(
+            {
+                "id": "validation_engine",
+                "name": "Validation Engine",
+                "source": "dataset worker validate",
+                **_pool_status("dataset"),
+            }
+        )
+
+        # Semantic Enrichment → enrich_metadata on dataset worker
+        services.append(
+            {
+                "id": "semantic_enrichment",
+                "name": "Semantic Enrichment",
+                "source": "dataset worker enrich_metadata / semantic profiler",
+                **_pool_status("dataset"),
+            }
+        )
+
+        # Training Connector → training control plane presence
+        training_state = {
+            "state": "unmeasured",
+            "label": "Unmeasured",
+            "detail": "training module not probed",
+            "measured": False,
+        }
+        try:
+            from Data.modules.training import store as training_store_mod  # noqa: F401
+
+            training_state = {
+                "state": "ready",
+                "label": "Ready",
+                "detail": "Training module importable; consumes immutable dataset versions",
+                "measured": True,
+            }
+        except Exception as exc:  # noqa: BLE001
+            training_state = {
+                "state": "unavailable",
+                "label": "Unavailable",
+                "detail": redact_secrets(str(exc))[:160],
+                "measured": True,
+            }
+        services.append(
+            {
+                "id": "training_connector",
+                "name": "Training Connector",
+                "source": "Training control plane / dataset version refs",
+                **training_state,
+            }
+        )
+
+        # Brain Sync → Knowledge/Brain availability
+        brain_state = {
+            "state": "unmeasured",
+            "label": "Unmeasured",
+            "detail": "knowledge not wired",
+            "measured": False,
+        }
+        if self.knowledge is None:
+            brain_state = {
+                "state": "unavailable",
+                "label": "Unavailable",
+                "detail": "KnowledgeStore not attached to DatasetService",
+                "measured": True,
+            }
+        else:
+            brain_state = {
+                "state": "ready",
+                "label": "Ready",
+                "detail": "KnowledgeStore attached; learn/index via dataset worker",
+                "measured": True,
+            }
+        services.append(
+            {
+                "id": "brain_sync",
+                "name": "Brain Sync",
+                "source": "Brain/Knowledge dataset index integration",
+                **brain_state,
+            }
+        )
+
+        return services
+
     def get_dataset(self, dataset_id: str) -> DatasetRecord:
         ds = self.store.get_dataset(dataset_id)
         if ds is None:
