@@ -33,6 +33,7 @@ class TrainingJobCreate(BaseModel):
     max_seq_length: int = 512
     logging_steps: int = 1
     save_steps: int = 50
+    eval_steps: int | None = None
     precision: str = "fp32"
     lora_r: int = 8
     lora_alpha: int = 16
@@ -44,6 +45,23 @@ class TrainingJobCreate(BaseModel):
     fixture_sleep_ms: int = 50
     mixture_id: str | None = None
     mixture_content_hash: str | None = None
+    # Production device / optimizer / eval knobs (optional — ignored until TrainingConfig merges).
+    device_strategy: str = "auto"
+    selected_stable_device_ids: list[str] = Field(default_factory=list)
+    optimizer: str = "adamw_torch"
+    lr_scheduler_type: str = "linear"
+    flash_attention: bool = False
+    eval_during_training: bool = True
+    save_total_limit: int | None = 3
+    load_best_model_at_end: bool = False
+    metric_for_best_model: str = "eval_loss"
+    greater_is_better: bool = False
+    early_stopping_patience: int | None = None
+    bnb_4bit_quant_type: str = "nf4"
+    bnb_4bit_use_double_quant: bool = True
+    bnb_4bit_compute_dtype: str = "bfloat16"
+    dpo_beta: float = 0.1
+    apply_planner_suggestions: bool = False
     auto_start: bool = False
 
 
@@ -58,13 +76,25 @@ class PreflightRequest(BaseModel):
     epochs: float | None = 1.0
     max_steps: int | None = None
     train_batch_size: int = 1
+    eval_batch_size: int = 1
     gradient_accumulation: int = 1
     learning_rate: float = 2e-4
+    warmup_steps: int = 0
+    weight_decay: float = 0.0
     max_seq_length: int = 512
     precision: str = "fp32"
+    lora_r: int = 8
+    lora_alpha: int = 16
+    gradient_checkpointing: bool = False
     load_in_4bit: bool = False
     fixture_steps: int = 5
     fixture_sleep_ms: int = 50
+    device_strategy: str = "auto"
+    selected_stable_device_ids: list[str] = Field(default_factory=list)
+    optimizer: str = "adamw_torch"
+    lr_scheduler_type: str = "linear"
+    flash_attention: bool = False
+    eval_during_training: bool = True
 
 
 class TrainingCreateRequest(BaseModel):

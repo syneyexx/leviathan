@@ -921,7 +921,25 @@ HTTP: `Data/backend/routes/datasets.py`. Knowledge ingestion: `Data/backend/rout
 
 ## Training
 
-`Data/modules/training/` owns durable recipes/jobs/TrainingStore domain truth and post-training data. `Data/backend/routes/training.py` exposes bounded Control Plane operations (create/plan/preflight/start/cancel/resume/status). A recipe definition is not proof a GPU training run completed.
+`Data/modules/training/` owns durable recipes/jobs/TrainingStore domain truth and post-training data. `Data/backend/routes/training.py` exposes bounded Control Plane operations (create/plan/preflight/start/cancel/resume/status/evaluate/export). A recipe definition is not proof a GPU training run completed.
+
+### Production methods (durable trainer)
+
+| Method | Trainer path | Notes |
+|---|---|---|
+| `sft` | Full-parameter causal LM (`Trainer`, **no PEFT**) | Requires local Transformers weights |
+| `lora` | PEFT LoRA + HF Trainer | |
+| `qlora` | bitsandbytes 4-bit + PEFT LoRA | CUDA required |
+| `dpo` | TRL `DPOTrainer` (+ PEFT) | Preference pairs; not `dpo_micro` |
+| `fixture` | Deterministic CI stub | Test/dev only — never production default |
+
+Capability probe (`capabilities.py`): `ready` is true only when at least one of SFT/LoRA/QLoRA/DPO is operational. Fixture alone does **not** make Training ready. `canRunDpo` means durable TRL DPO; `canRunDpoMicro` is the separate pure-Python preference objective.
+
+### Device selection
+
+Operators select GPUs by `stableDeviceId`. At launch, `device_resolve` maps identity → current CUDA ordinal and sets trainer `CUDA_VISIBLE_DEVICES`. Multi-GPU strategies are not implemented and must not be exposed as operational. Planner uses the **selected** device (not blindly `gpus[0]`). Config mutation from the planner requires explicit `accept_plan` / `apply_planner_suggestions`.
+
+GGUF / inference-only artifacts are blocked for training; trainers load with `local_files_only=True` from resolved local/HF-cache paths.
 
 ### training_control ownership
 
@@ -930,10 +948,10 @@ The Worker Fabric **`training_control` singleton pool** (`default_count=1`, `max
 ```text
 FastAPI
   -> validate / plan / create durable TrainingStore job
-  -> JobRuntime enqueue training.control (GPU_EXCLUSIVE)
+  -> JobRuntime enqueue training.control
   -> training_control worker
-       -> ResourceAdmission GPU_EXCLUSIVE
-       -> spawn trainer subprocess (scrubbed env)
+       -> ResourceAdmission (GPU_EXCLUSIVE for real methods; CPU_HEAVY for fixture)
+       -> spawn trainer subprocess (scrubbed env + CUDA_VISIBLE_DEVICES)
        -> supervise FULL lifetime (heartbeat lease)
        -> observe cancel / crash
        -> wait for trainer terminal state
@@ -945,11 +963,13 @@ Invariants:
 
 - FastAPI never `Popen`s a production trainer (`execution_gate.py`).
 - `training.control` does **not** complete merely because spawn succeeded.
-- GPU_EXCLUSIVE covers the entire actual trainer lifetime.
+- GPU_EXCLUSIVE covers the entire actual trainer lifetime for real methods.
+- Fixture jobs must not lock GPU_EXCLUSIVE.
 - Trainer children receive an allow-listed env (`env_policy.py`) — no API/provider/broker secrets.
 - Offline/local asset preference (`HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE`) for production training.
-- Process generation + PID fingerprint fence stale cancel/reconcile.
+- Process generation + PID fingerprint fence stale cancel/reconcile / duplicate spawn.
 - Windows-safe process-tree termination on cancel.
+- Resume verifies checkpoint integrity before relaunch.
 
 ### Non-GPU training work
 
@@ -957,7 +977,8 @@ Pool ownership is `training_control`, but resource class is job-specific:
 
 | Capability | Resource class |
 |---|---|
-| `training.control` (start/resume) | `GPU_EXCLUSIVE` + `BATCH` |
+| `training.control` (real methods) | `GPU_EXCLUSIVE` + `BATCH` |
+| `training.control` (fixture) | `CPU_HEAVY` |
 | `training.integrity.verify` | `IO_HEAVY` / `CPU_HEAVY` |
 | `training.checkpoint.verify` | `IO_HEAVY` |
 | `training.dataset.hash` | `IO_HEAVY` / `CPU_HEAVY` |

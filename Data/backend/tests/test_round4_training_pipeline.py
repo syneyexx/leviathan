@@ -126,13 +126,18 @@ class DpoObjectiveTests(unittest.TestCase):
 
     def test_capabilities_honest_about_hf_dpo(self) -> None:
         caps = probe_training_capabilities()
-        self.assertTrue(caps.can_run_dpo)
+        # can_run_dpo means durable TRL DPO — not the pure-Python micro objective.
         joined = " ".join(caps.notes).lower()
         self.assertIn("micro", joined)
-        self.assertIn("not claimed", joined)
-        self.assertIn("blocked", joined)
+        self.assertTrue(caps.can_run_dpo_micro)
+        if caps.can_run_dpo:
+            self.assertEqual(caps.dpo_hf_status, "SUPPORTED")
+            self.assertIn("dpotrainer", joined.replace(" ", ""))
+        else:
+            self.assertEqual(caps.dpo_hf_status, "DEPENDENCY_MISSING")
+            self.assertIn("trl", joined)
 
-    def test_durable_method_dpo_refused(self) -> None:
+    def test_durable_method_dpo_requires_real_path(self) -> None:
         from Data.modules.training.preflight import run_preflight
         from Data.modules.training.worker.trainer_loop import run_training_loop
 
@@ -143,8 +148,20 @@ class DpoObjectiveTests(unittest.TestCase):
             dataset_path="/tmp/does-not-matter.jsonl",
         )
         result = run_preflight(cfg)
-        self.assertEqual(result.verdict.value, "BLOCKED")
-        self.assertTrue(any(i.code == "dpo_not_durable_lora" for i in result.issues))
+        # Without local model / dataset / deps, preflight blocks — but never via the
+        # old "dpo_not_durable_lora" honesty shim (DPO is a real durable method now).
+        self.assertFalse(any(i.code == "dpo_not_durable_lora" for i in result.issues))
+        caps = probe_training_capabilities()
+        if not caps.can_run_dpo:
+            self.assertEqual(result.verdict.value, "BLOCKED")
+            self.assertTrue(
+                any(
+                    i.code in {"missing_packages", "dpo_deps_missing", "dpo_dependencies_missing", "missing_trl"}
+                    or "trl" in i.message.lower()
+                    or "dpo" in i.message.lower()
+                    for i in result.issues
+                )
+            )
         with self.assertRaises(RuntimeError) as ctx:
             run_training_loop(
                 job_id="j1",
@@ -154,9 +171,17 @@ class DpoObjectiveTests(unittest.TestCase):
                 events=__import__("unittest.mock").mock.Mock(),
                 cancel_check=lambda: False,
             )
-        msg = str(ctx.exception)
-        self.assertIn("dpo_micro", msg.lower())
-        self.assertIn("LoRA", msg)
+        msg = str(ctx.exception).lower()
+        # Must not silently fall through to LoRA; either missing TRL deps or dataset/model.
+        self.assertTrue(
+            "trl" in msg
+            or "dpo" in msg
+            or "dataset" in msg
+            or "model" in msg
+            or "gguf" in msg
+            or "missing" in msg
+        )
+        self.assertNotIn("does not run causal-lm lora", msg)
 
 
 class SyntheticAndQualityTests(unittest.TestCase):

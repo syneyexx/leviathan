@@ -119,12 +119,49 @@ class PackageAvailability:
         }
 
 
+class MethodSupportStatus(str, Enum):
+    SUPPORTED = "SUPPORTED"
+    UNSUPPORTED = "UNSUPPORTED"
+    DEPENDENCY_MISSING = "DEPENDENCY_MISSING"
+    HARDWARE_BLOCKED = "HARDWARE_BLOCKED"
+    FEATURE_GATED = "FEATURE_GATED"
+
+
+PRODUCTION_TRAINING_METHODS = ("sft", "lora", "qlora", "dpo")
+
+
+@dataclass(frozen=True)
+class MethodSupport:
+    method: str
+    status: MethodSupportStatus
+    requires: tuple[str, ...] = ()
+    missing: tuple[str, ...] = ()
+    optional_missing: tuple[str, ...] = ()
+    reasons: tuple[str, ...] = ()
+
+    @property
+    def operational(self) -> bool:
+        return self.status == MethodSupportStatus.SUPPORTED
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "method": self.method,
+            "status": self.status.value,
+            "operational": self.operational,
+            "requires": list(self.requires),
+            "missingPackages": list(self.missing),
+            "optionalMissingPackages": list(self.optional_missing),
+            "reasons": list(self.reasons),
+        }
+
+
 @dataclass(frozen=True)
 class TrainingCapabilities:
     packages: tuple[PackageAvailability, ...]
     can_run_fixture: bool
     can_run_lora: bool
     can_run_qlora: bool
+    # Durable HF/TRL DPO job (method=dpo). Pure-Python micro objective is separate.
     can_run_dpo: bool
     ready: bool
     missing_for_lora: tuple[str, ...]
@@ -137,14 +174,40 @@ class TrainingCapabilities:
     grpo_status: str = "FEATURE_GATED"
     rl_status: str = "FEATURE_GATED"
     dpo_hf_status: str = "FEATURE_GATED"
+    can_run_sft: bool = False
+    can_run_dpo_micro: bool = True
+    can_use_flash_attention: bool = False
+    can_use_8bit_optimizer: bool = False
+    cuda_available: bool | None = None
+    method_support: dict[str, MethodSupport] = field(default_factory=dict)
+    missing_for_sft: tuple[str, ...] = ()
+    missing_for_qlora: tuple[str, ...] = ()
+    missing_for_dpo: tuple[str, ...] = ()
+    device_strategies: tuple[str, ...] = ("auto", "single")
+    multi_gpu_status: str = MethodSupportStatus.UNSUPPORTED.value
+
+    @property
+    def production_methods(self) -> tuple[str, ...]:
+        return tuple(
+            m for m in PRODUCTION_TRAINING_METHODS
+            if m in self.method_support and self.method_support[m].operational
+        )
+
+    def method_status(self, method: str) -> MethodSupport | None:
+        return self.method_support.get((method or "").strip().lower())
 
     def public_dict(self) -> dict[str, Any]:
         return {
             "packages": [p.public_dict() for p in self.packages],
             "canRunFixture": self.can_run_fixture,
+            "canRunSft": self.can_run_sft,
             "canRunLora": self.can_run_lora,
             "canRunQlora": self.can_run_qlora,
             "canRunDpo": self.can_run_dpo,
+            "canRunDpoMicro": self.can_run_dpo_micro,
+            "canUseFlashAttention": self.can_use_flash_attention,
+            "canUse8bitOptimizer": self.can_use_8bit_optimizer,
+            "cudaAvailable": self.cuda_available,
             "canRunRewardModel": self.can_run_reward_model,
             "canRunGrpo": self.can_run_grpo,
             "canRunRl": self.can_run_rl,
@@ -152,12 +215,22 @@ class TrainingCapabilities:
             "grpoStatus": self.grpo_status,
             "rlStatus": self.rl_status,
             "dpoHfStatus": self.dpo_hf_status,
+            "methodSupport": {k: v.public_dict() for k, v in self.method_support.items()},
+            "productionMethods": list(self.production_methods),
+            "deviceStrategies": list(self.device_strategies),
+            "multiGpuStatus": self.multi_gpu_status,
             "ready": self.ready,
+            "missingForSft": list(self.missing_for_sft),
             "missingForLora": list(self.missing_for_lora),
+            "missingForQlora": list(self.missing_for_qlora),
+            "missingForDpo": list(self.missing_for_dpo),
             "notes": list(self.notes),
             "truth": {
                 "optional_ml_deps_do_not_crash_imports": True,
                 "recipe_registered_is_not_operational_trainer": True,
+                "fixture_is_not_production_ready": True,
+                "ready_requires_production_method": True,
+                "dpo_micro_is_not_durable_dpo": True,
             },
         }
 
@@ -170,15 +243,30 @@ class GpuDeviceInfo:
     free_vram_bytes: int | None = None
     used_vram_bytes: int | None = None
     compute_capability: str | None = None
+    stable_device_id: str = ""
+    uuid: str | None = None
+    pci_bus_id: str | None = None
+    # Only populated when measured (nvidia-smi); never estimated.
+    utilization_pct: float | None = None
+    temperature_c: float | None = None
+    # "nvidia-smi" ordinals follow PCI bus order; "torch" ordinals follow the
+    # probing process' CUDA enumeration (may already be remapped by CUDA_VISIBLE_DEVICES).
+    probe_source: str = "nvidia-smi"
 
     def public_dict(self) -> dict[str, Any]:
         return {
             "index": self.index,
             "name": self.name,
+            "stableDeviceId": self.stable_device_id,
+            "uuid": self.uuid,
+            "pciBusId": self.pci_bus_id,
             "totalVramBytes": self.total_vram_bytes,
             "freeVramBytes": self.free_vram_bytes,
             "usedVramBytes": self.used_vram_bytes,
             "computeCapability": self.compute_capability,
+            "utilizationPct": self.utilization_pct,
+            "temperatureC": self.temperature_c,
+            "probeSource": self.probe_source,
         }
 
 
@@ -264,6 +352,14 @@ class TrainingPlan:
     warnings: tuple[str, ...] = ()
     estimated: bool = True
     details: dict[str, Any] = field(default_factory=dict)
+    # Planner knobs the operator asked for / planner recommends / will actually run.
+    requested_config: dict[str, Any] = field(default_factory=dict)
+    suggested_config: dict[str, Any] = field(default_factory=dict)
+    effective_config: dict[str, Any] = field(default_factory=dict)
+    suggested_changes: dict[str, Any] = field(default_factory=dict)
+    suggestions_applied: bool = False
+    selected_device: dict[str, Any] | None = None
+    memory_estimate: dict[str, Any] = field(default_factory=dict)
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -279,6 +375,18 @@ class TrainingPlan:
             "warnings": list(self.warnings),
             "estimated": self.estimated,
             "details": self.details,
+            "requestedConfig": dict(self.requested_config),
+            "suggestedConfig": dict(self.suggested_config),
+            "effectiveConfig": dict(self.effective_config),
+            "suggestedChanges": dict(self.suggested_changes),
+            "suggestionsApplied": self.suggestions_applied,
+            "selectedDevice": dict(self.selected_device) if self.selected_device else None,
+            "memoryEstimate": dict(self.memory_estimate),
+            "truth": {
+                "top_level_values_are_effective": True,
+                "planner_never_silently_mutates_config": True,
+                "multi_gpu_not_implemented": True,
+            },
         }
 
 

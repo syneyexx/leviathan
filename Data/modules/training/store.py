@@ -508,6 +508,19 @@ class TrainingStore:
                 return False
         return row is not None
 
+    def dataset_version_storage_path(self, version_id: str) -> str | None:
+        with self.connect() as conn:
+            try:
+                row = conn.execute(
+                    "SELECT storage_path FROM dataset_versions WHERE version_id = ?",
+                    (version_id,),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                return None
+        if row is None or not row[0]:
+            return None
+        return str(row[0])
+
     def _job_from_row(self, row: sqlite3.Row) -> DurableTrainingJob:
         return DurableTrainingJob(
             job_id=row["job_id"],

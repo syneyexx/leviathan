@@ -10,10 +10,10 @@ import { CommandPage } from "./pages/CommandPage";
 import {
   DatasetManagementPixelPage,
   OfflineDatasetsPixelPage,
-  TrainingPixelPage,
 } from "./pages/pixel";
 import { DatasetsPage } from "./pages/DatasetsPage";
 import { ModelsPage } from "./pages/ModelsPage";
+import { TrainingPage } from "./pages/TrainingPage";
 import { EvaluationsPage } from "./pages/EvaluationsPage";
 import { EvidenceVaultPage } from "./pages/EvidenceVaultPage";
 import { GeheugenPage } from "./pages/GeheugenPage";
@@ -94,7 +94,7 @@ export default function App() {
       <Route path="/coding" element={<CodingPage />} />
 
       <Route path="/models" element={<ModelsPage />} />
-      <Route path="/training" element={<TrainingPixelPage />} />
+      <Route path="/training" element={<TrainingPage />} />
       <Route path="/dataset-management" element={<DatasetManagementPixelPage />} />
       <Route path="/offline-datasets" element={<OfflineDatasetsPixelPage />} />
       <Route path="/agents" element={<AgentsPage />} />
