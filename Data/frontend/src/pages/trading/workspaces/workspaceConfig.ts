@@ -39,21 +39,13 @@ export const TRADING_WORKSPACES: readonly TradingWorkspaceDefinition[] = [
     subtitle:
       "Central overview and control for autonomous trading research, simulation, and paper trading.",
     defaultSurface: "overview",
-    surfaces: [
-      { id: "overview", label: "Overview", level: "PRIMARY" },
-      {
-        id: "research-command",
-        label: "Research Command",
-        level: "SECONDARY",
-        legacyPath: "/trading/onderzoek",
-      },
-      {
-        id: "control-room",
-        label: "Control Room",
-        level: "ADVANCED",
-        legacyPath: "/trading/control-room",
-      },
-    ],
+    /**
+     * WAVE 5 — Command Hub is a full native page with no legacy surface tabs.
+     * A single "overview" surface remains so redirects and progressive-disclosure
+     * checks stay meaningful; Research Command / Control Room are reached via
+     * in-page drawers and CTAs instead of tab embeds.
+     */
+    surfaces: [{ id: "overview", label: "Overview", level: "PRIMARY" }],
   },
   {
     id: "strategy_lab",
