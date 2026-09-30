@@ -48,6 +48,7 @@ import type {
   DatasetLearningEnrichedJob,
   DatasetLearningState,
   DatasetLearningStatus,
+  DatasetOverview,
   DatasetPreviewRow,
   DatasetRecord,
   DatasetRecoveryAssessment,
@@ -1720,8 +1721,53 @@ export const api = {
 
   /* ---------- Datasets ---------- */
 
-  listDatasets(limit = 100): Promise<{ datasets: DatasetRecord[] }> {
-    return request(`/api/datasets?limit=${encodeURIComponent(String(limit))}`);
+  listDatasets(
+    limit = 100,
+    params?: {
+      offset?: number;
+      q?: string;
+      status?: string;
+      source?: string;
+      sourceType?: string;
+      type?: string;
+      detectedFormat?: string;
+      category?: string;
+      tags?: string;
+      split?: string;
+      sort?: string;
+      includeBrain?: boolean;
+      includeQuality?: boolean;
+    },
+  ): Promise<{
+    datasets: DatasetRecord[];
+    total?: number;
+    limit?: number;
+    offset?: number;
+    sort?: string;
+    hasMore?: boolean;
+    nextOffset?: number | null;
+    truth?: Record<string, unknown>;
+  }> {
+    const sp = new URLSearchParams();
+    sp.set("limit", String(limit));
+    if (params?.offset != null) sp.set("offset", String(params.offset));
+    if (params?.q) sp.set("q", params.q);
+    if (params?.status) sp.set("status", params.status);
+    if (params?.source) sp.set("source", params.source);
+    if (params?.sourceType) sp.set("sourceType", params.sourceType);
+    if (params?.type) sp.set("type", params.type);
+    if (params?.detectedFormat) sp.set("detectedFormat", params.detectedFormat);
+    if (params?.category) sp.set("category", params.category);
+    if (params?.tags) sp.set("tags", params.tags);
+    if (params?.split) sp.set("split", params.split);
+    if (params?.sort) sp.set("sort", params.sort);
+    if (params?.includeBrain === false) sp.set("includeBrain", "false");
+    if (params?.includeQuality === false) sp.set("includeQuality", "false");
+    return request(`/api/datasets?${sp.toString()}`);
+  },
+
+  getDatasetsOverview(): Promise<{ overview: DatasetOverview }> {
+    return request("/api/datasets/overview");
   },
 
   createDataset(payload: {

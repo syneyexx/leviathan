@@ -604,6 +604,18 @@ def _m14_datasets_training_research(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_dataset_jobs_status ON dataset_jobs(status, created_at)"
     )
     conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_datasets_created_at ON datasets(created_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_datasets_status ON datasets(status)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_datasets_source_type ON datasets(source_type)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_dataset_jobs_type_status ON dataset_jobs(job_type, status)"
+    )
+    conn.execute(
         """
         CREATE TABLE IF NOT EXISTS dataset_indexes (
             index_id TEXT PRIMARY KEY,

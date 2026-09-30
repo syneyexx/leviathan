@@ -148,12 +148,306 @@ class DatasetStore:
         return self._dataset_from_row(row) if row else None
 
     def list_datasets(self, *, limit: int = 100) -> list[DatasetRecord]:
+        """Backward-compatible list (newest first). Prefer ``query_datasets`` for filters."""
+        result = self.query_datasets(limit=limit, offset=0)
+        return result["items"]
+
+    def query_datasets(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        q: str | None = None,
+        status: str | None = None,
+        source_type: str | None = None,
+        detected_format: str | None = None,
+        category: str | None = None,
+        tags: str | None = None,
+        split: str | None = None,
+        sort: str = "created_at_desc",
+    ) -> dict[str, Any]:
+        """Bounded catalog query with server-side filters, sort, offset, and total.
+
+        Returns ``{items, total, limit, offset, sort}``. Does not invent rows —
+        ``total`` is the filtered catalog count independent of page size.
+        """
+        safe_limit = max(1, min(int(limit), 500))
+        safe_offset = max(0, int(offset))
+        clauses: list[str] = []
+        params: list[Any] = []
+
+        if q and str(q).strip():
+            needle = f"%{str(q).strip().lower()}%"
+            clauses.append(
+                """(
+                lower(name) LIKE ?
+                OR lower(COALESCE(description, '')) LIKE ?
+                OR lower(COALESCE(original_filename, '')) LIKE ?
+                OR lower(COALESCE(original_uri, '')) LIKE ?
+                OR lower(COALESCE(json_extract(metadata_json, '$.displayName'), '')) LIKE ?
+                OR lower(COALESCE(json_extract(metadata_json, '$.semanticProfile.displayName'), '')) LIKE ?
+                OR lower(COALESCE(json_extract(metadata_json, '$.primaryCategory'), '')) LIKE ?
+                OR lower(COALESCE(json_extract(metadata_json, '$.semanticProfile.primaryCategory'), '')) LIKE ?
+                OR lower(metadata_json) LIKE ?
+                )"""
+            )
+            params.extend([needle] * 9)
+
+        if status and str(status).strip():
+            clauses.append("status = ?")
+            params.append(str(status).strip().lower())
+
+        if source_type and str(source_type).strip():
+            clauses.append("lower(source_type) = ?")
+            params.append(str(source_type).strip().lower())
+
+        if detected_format and str(detected_format).strip():
+            clauses.append("lower(COALESCE(detected_format, '')) = ?")
+            params.append(str(detected_format).strip().lower())
+
+        if category and str(category).strip():
+            cat = str(category).strip().lower()
+            clauses.append(
+                """(
+                lower(COALESCE(json_extract(metadata_json, '$.primaryCategory'), '')) = ?
+                OR lower(COALESCE(json_extract(metadata_json, '$.semanticProfile.primaryCategory'), '')) = ?
+                )"""
+            )
+            params.extend([cat, cat])
+
+        if tags and str(tags).strip():
+            # Tags live in metadata JSON arrays; membership via bounded LIKE.
+            tag = str(tags).strip()
+            clauses.append("lower(metadata_json) LIKE ?")
+            params.append(f"%{tag.lower()}%")
+
+        if split and str(split).strip():
+            # Dataset has at least one version whose split_json contains the key.
+            split_key = str(split).strip().lower()
+            clauses.append(
+                """EXISTS (
+                    SELECT 1 FROM dataset_versions v
+                    WHERE v.dataset_id = datasets.dataset_id
+                      AND (
+                        lower(v.split_json) LIKE ?
+                        OR json_extract(v.split_json, ?) IS NOT NULL
+                      )
+                )"""
+            )
+            params.append(f'%"{split_key}"%')
+            params.append(f"$.{split_key}")
+
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        sort_key = (sort or "created_at_desc").strip().lower()
+        order_map = {
+            "created_at_desc": "created_at DESC",
+            "created_at_asc": "created_at ASC",
+            "updated_at_desc": "updated_at DESC",
+            "updated_at_asc": "updated_at ASC",
+            "name_asc": "lower(name) ASC",
+            "name_desc": "lower(name) DESC",
+            "byte_size_desc": "COALESCE(byte_size, -1) DESC",
+            "byte_size_asc": "COALESCE(byte_size, 9223372036854775807) ASC",
+            "row_count_desc": "COALESCE(row_count, -1) DESC",
+            "row_count_asc": "COALESCE(row_count, 9223372036854775807) ASC",
+        }
+        order_sql = order_map.get(sort_key, order_map["created_at_desc"])
+
+        with self.connect() as conn:
+            total = int(
+                conn.execute(
+                    f"SELECT COUNT(*) FROM datasets {where}",
+                    params,
+                ).fetchone()[0]
+            )
+            rows = conn.execute(
+                f"SELECT * FROM datasets {where} ORDER BY {order_sql} LIMIT ? OFFSET ?",
+                [*params, safe_limit, safe_offset],
+            ).fetchall()
+
+        return {
+            "items": [self._dataset_from_row(r) for r in rows],
+            "total": total,
+            "limit": safe_limit,
+            "offset": safe_offset,
+            "sort": sort_key if sort_key in order_map else "created_at_desc",
+        }
+
+    def aggregate_catalog_stats(self) -> dict[str, Any]:
+        """Bounded SQL aggregates for overview KPIs — independent of page size."""
+        with self.connect() as conn:
+            total = int(conn.execute("SELECT COUNT(*) FROM datasets").fetchone()[0])
+            measured_rows = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS measured,
+                    COALESCE(SUM(row_count), 0) AS sample_sum
+                FROM datasets
+                WHERE row_count IS NOT NULL
+                """
+            ).fetchone()
+            measured_bytes = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS measured,
+                    COALESCE(SUM(byte_size), 0) AS byte_sum
+                FROM datasets
+                WHERE byte_size IS NOT NULL
+                """
+            ).fetchone()
+            status_rows = conn.execute(
+                "SELECT status, COUNT(*) AS n FROM datasets GROUP BY status"
+            ).fetchall()
+            source_rows = conn.execute(
+                "SELECT source_type, COUNT(*) AS n FROM datasets GROUP BY source_type"
+            ).fetchall()
+            # Validation rollup from newest version per dataset that has validation_json.
+            validation_rows = conn.execute(
+                """
+                SELECT validation_json FROM dataset_versions
+                WHERE validation_json IS NOT NULL
+                  AND validation_json != '{}'
+                  AND validation_json != ''
+                """
+            ).fetchall()
+            version_bytes = conn.execute(
+                """
+                SELECT kind, COALESCE(SUM(byte_size), 0) AS byte_sum
+                FROM dataset_versions
+                WHERE byte_size IS NOT NULL
+                GROUP BY kind
+                """
+            ).fetchall()
+            export_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM dataset_versions WHERE kind = ?",
+                    (VersionKind.EXPORT.value,),
+                ).fetchone()[0]
+            )
+            active_imports = conn.execute(
+                """
+                SELECT status, COUNT(*) AS n FROM dataset_jobs
+                WHERE job_type IN (?, ?)
+                  AND status IN (?, ?)
+                GROUP BY status
+                """,
+                (
+                    DatasetJobType.IMPORT_LOCAL.value,
+                    DatasetJobType.IMPORT_HF.value,
+                    DatasetJobStatus.QUEUED.value,
+                    DatasetJobStatus.RUNNING.value,
+                ),
+            ).fetchall()
+
+        row_measured = int(measured_rows["measured"] or 0)
+        byte_measured = int(measured_bytes["measured"] or 0)
+        validation_issues = 0
+        validation_critical = 0
+        validation_warning = 0
+        versions_with_validation = 0
+        for row in validation_rows:
+            blob = _loads(row["validation_json"], {})
+            if not isinstance(blob, dict) or not blob:
+                continue
+            versions_with_validation += 1
+            errors = int(blob.get("errorCount") or blob.get("errors") or 0)
+            warnings = int(blob.get("warningCount") or blob.get("warnings") or 0)
+            validation_critical += errors
+            validation_warning += warnings
+            validation_issues += errors + warnings
+
+        import_running = 0
+        import_queued = 0
+        for row in active_imports:
+            if row["status"] == DatasetJobStatus.RUNNING.value:
+                import_running = int(row["n"])
+            elif row["status"] == DatasetJobStatus.QUEUED.value:
+                import_queued = int(row["n"])
+
+        by_kind = {str(r["kind"]): int(r["byte_sum"] or 0) for r in version_bytes}
+
+        return {
+            "totalDatasets": total,
+            "totalSamples": int(measured_rows["sample_sum"] or 0),
+            "samplesMeasuredDatasets": row_measured,
+            "samplesUnmeasuredDatasets": max(0, total - row_measured),
+            "totalKnownBytes": int(measured_bytes["byte_sum"] or 0),
+            "bytesMeasuredDatasets": byte_measured,
+            "bytesUnmeasuredDatasets": max(0, total - byte_measured),
+            "byStatus": {str(r["status"]): int(r["n"]) for r in status_rows},
+            "bySourceType": {str(r["source_type"]): int(r["n"]) for r in source_rows},
+            "validationIssues": validation_issues,
+            "criticalValidationIssues": validation_critical,
+            "warningValidationIssues": validation_warning,
+            "versionsWithValidation": versions_with_validation,
+            "activeImports": import_running + import_queued,
+            "runningImports": import_running,
+            "queuedImports": import_queued,
+            "exportVersionCount": export_count,
+            "bytesByVersionKind": by_kind,
+        }
+
+    def aggregate_tag_counts(self, *, limit: int = 40) -> list[dict[str, Any]]:
+        """Aggregate semantic/operator tags across the catalog (bounded)."""
+        counts: dict[str, int] = {}
         with self.connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM datasets ORDER BY created_at DESC LIMIT ?",
-                (max(1, min(limit, 500)),),
+                "SELECT metadata_json FROM datasets ORDER BY created_at DESC LIMIT 10000"
             ).fetchall()
-        return [self._dataset_from_row(r) for r in rows]
+        for row in rows:
+            meta = _loads(row["metadata_json"], {})
+            if not isinstance(meta, dict):
+                continue
+            semantic = meta.get("semanticProfile") if isinstance(meta.get("semanticProfile"), dict) else {}
+            tags = (
+                semantic.get("tags")
+                or meta.get("semanticTags")
+                or meta.get("tags")
+                or []
+            )
+            if not isinstance(tags, list):
+                continue
+            for raw in tags:
+                tag = str(raw or "").strip()
+                if not tag:
+                    continue
+                counts[tag] = counts.get(tag, 0) + 1
+        ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0].lower()))
+        return [{"tag": t, "count": c} for t, c in ordered[: max(1, min(limit, 200))]]
+
+    def latest_version_validation_map(
+        self, dataset_ids: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        """Return newest non-empty validation blob per dataset (for quality column)."""
+        if not dataset_ids:
+            return {}
+        out: dict[str, dict[str, Any]] = {}
+        # Chunk to keep SQLite variable limits safe.
+        chunk = 200
+        with self.connect() as conn:
+            for i in range(0, len(dataset_ids), chunk):
+                batch = dataset_ids[i : i + chunk]
+                placeholders = ",".join("?" * len(batch))
+                rows = conn.execute(
+                    f"""
+                    SELECT dataset_id, validation_json, updated_at
+                    FROM dataset_versions
+                    WHERE dataset_id IN ({placeholders})
+                      AND validation_json IS NOT NULL
+                      AND validation_json != '{{}}'
+                      AND validation_json != ''
+                    ORDER BY updated_at DESC
+                    """,
+                    batch,
+                ).fetchall()
+                for row in rows:
+                    ds_id = str(row["dataset_id"])
+                    if ds_id in out:
+                        continue
+                    blob = _loads(row["validation_json"], {})
+                    if isinstance(blob, dict) and blob:
+                        out[ds_id] = blob
+        return out
 
     def update_dataset(self, dataset_id: str, **fields: Any) -> DatasetRecord:
         allowed = {

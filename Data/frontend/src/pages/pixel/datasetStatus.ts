@@ -1,6 +1,12 @@
-import type { DatasetMgmtStatus } from "../../mocks/dataset-management";
-
-export type { DatasetMgmtStatus };
+/** Canonical NL dataset status labels — used by both Pixel and V2 pages. */
+export type DatasetMgmtStatus =
+  | "Klaar"
+  | "Verwerkt"
+  | "Bezig"
+  | "Wachtrij"
+  | "Waarschuwing"
+  | "Fout"
+  | "Onbekend";
 
 /**
  * Map backend/canonical dataset status to NL UI labels.
