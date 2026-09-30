@@ -158,6 +158,11 @@ import type {
   KnowledgeDocument,
   KnowledgeChunk,
   KnowledgeSearchHit,
+  KnowledgeLibraryItem,
+  KnowledgeLibraryOverview,
+  KnowledgeLibraryListResponse,
+  KnowledgeIngestionRecentItem,
+  KnowledgeEmbeddingStatus,
   MemoryCreatePayload,
   MemoryRecord,
   EvidenceRecord,
@@ -1463,6 +1468,162 @@ export const api = {
     if (opts.limit != null) params.set("limit", String(opts.limit));
     if (opts.source) params.set("source", opts.source);
     return request(`/api/knowledge/search?${params.toString()}`);
+  },
+
+  getKnowledgeHealth(): Promise<{ health: Record<string, unknown> }> {
+    return request("/api/knowledge/health");
+  },
+
+  getKnowledgeLibraryOverview(): Promise<{ overview: KnowledgeLibraryOverview }> {
+    return request("/api/knowledge/library/overview");
+  },
+
+  listKnowledgeLibrary(opts: {
+    q?: string;
+    type?: string;
+    tag?: string;
+    status?: string;
+    date_from?: string;
+    date_to?: string;
+    sort?: string;
+    limit?: number;
+    offset?: number;
+    cursor?: string;
+  } = {}): Promise<KnowledgeLibraryListResponse> {
+    const params = new URLSearchParams();
+    if (opts.q) params.set("q", opts.q);
+    if (opts.type) params.set("type", opts.type);
+    if (opts.tag) params.set("tag", opts.tag);
+    if (opts.status) params.set("status", opts.status);
+    if (opts.date_from) params.set("date_from", opts.date_from);
+    if (opts.date_to) params.set("date_to", opts.date_to);
+    if (opts.sort) params.set("sort", opts.sort);
+    if (opts.limit != null) params.set("limit", String(opts.limit));
+    if (opts.offset != null) params.set("offset", String(opts.offset));
+    if (opts.cursor) params.set("cursor", opts.cursor);
+    const q = params.toString();
+    return request(`/api/knowledge/library${q ? `?${q}` : ""}`);
+  },
+
+  getKnowledgeLibraryDocument(documentId: string): Promise<{ document: KnowledgeLibraryItem }> {
+    return request(`/api/knowledge/library/${encodeURIComponent(documentId)}`);
+  },
+
+  setKnowledgeLibraryTags(
+    documentId: string,
+    tags: string[],
+    mode: "replace" | "add" = "replace",
+  ): Promise<{ document_id: string; tags: string[]; mode: string }> {
+    return request(`/api/knowledge/library/${encodeURIComponent(documentId)}/tags`, {
+      method: "POST",
+      body: JSON.stringify({ tags, mode }),
+    });
+  },
+
+  getKnowledgeLibraryPreview(documentId: string): Promise<{
+    preview: Record<string, unknown>;
+    document: KnowledgeLibraryItem | null;
+  }> {
+    return request(`/api/knowledge/library/${encodeURIComponent(documentId)}/preview`);
+  },
+
+  getKnowledgeLibraryContentChunks(
+    documentId: string,
+    opts: { offset?: number; limit?: number } = {},
+  ): Promise<{
+    document_id: string;
+    chunks: KnowledgeChunk[];
+    total: number;
+    offset: number;
+    limit: number;
+    has_more: boolean;
+    next_offset: number | null;
+  }> {
+    const params = new URLSearchParams();
+    if (opts.offset != null) params.set("offset", String(opts.offset));
+    if (opts.limit != null) params.set("limit", String(opts.limit));
+    const q = params.toString();
+    return request(
+      `/api/knowledge/library/${encodeURIComponent(documentId)}/content-chunks${q ? `?${q}` : ""}`,
+    );
+  },
+
+  getKnowledgeLibraryEmbeddings(
+    documentId: string,
+  ): Promise<{ embeddings: KnowledgeEmbeddingStatus }> {
+    return request(`/api/knowledge/library/${encodeURIComponent(documentId)}/embeddings`);
+  },
+
+  getKnowledgeLibraryRelations(
+    documentId: string,
+    limit = 50,
+  ): Promise<{ document_id: string; relations: Array<Record<string, unknown>>; total: number }> {
+    return request(
+      `/api/knowledge/library/${encodeURIComponent(documentId)}/relations?limit=${Math.max(1, Math.min(200, limit))}`,
+    );
+  },
+
+  getKnowledgeLibraryRelated(
+    documentId: string,
+    limit = 12,
+  ): Promise<{ document_id: string; related: KnowledgeLibraryItem[]; total: number }> {
+    return request(
+      `/api/knowledge/library/${encodeURIComponent(documentId)}/related?limit=${Math.max(1, Math.min(40, limit))}`,
+    );
+  },
+
+  knowledgeLibraryDownloadUrl(documentId: string): string {
+    return `/api/knowledge/library/${encodeURIComponent(documentId)}/download`;
+  },
+
+  knowledgeLibraryContentUrl(documentId: string): string {
+    return `/api/knowledge/library/${encodeURIComponent(documentId)}/content`;
+  },
+
+  getKnowledgeLibraryIngestionCapabilities(): Promise<Record<string, unknown>> {
+    return request("/api/knowledge/library/ingestion/capabilities");
+  },
+
+  async uploadKnowledgeLibraryFile(file: File): Promise<Record<string, unknown>> {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    return request("/api/knowledge/library/ingestion/upload", {
+      method: "POST",
+      body: form,
+    });
+  },
+
+  listKnowledgeLibraryRecentIngestions(
+    limit = 20,
+    offset = 0,
+  ): Promise<{ items: KnowledgeIngestionRecentItem[]; limit: number; offset: number }> {
+    return request(
+      `/api/knowledge/library/ingestion/recent?limit=${Math.max(1, Math.min(100, limit))}&offset=${Math.max(0, offset)}`,
+    );
+  },
+
+  getKnowledgeLibraryIngestionStatus(
+    sourceId: string,
+  ): Promise<{ source_id: string; progress: Record<string, unknown> }> {
+    return request(`/api/knowledge/library/ingestion/${encodeURIComponent(sourceId)}`);
+  },
+
+  cancelKnowledgeLibraryIngestion(
+    sourceId: string,
+  ): Promise<{ progress: Record<string, unknown> }> {
+    return request(`/api/knowledge/library/ingestion/${encodeURIComponent(sourceId)}/cancel`, {
+      method: "POST",
+    });
+  },
+
+  retryKnowledgeLibraryIngestion(
+    sourceId: string,
+    failedOnly = true,
+  ): Promise<Record<string, unknown>> {
+    return request(
+      `/api/knowledge/library/ingestion/${encodeURIComponent(sourceId)}/retry?failed_only=${failedOnly ? "true" : "false"}`,
+      { method: "POST" },
+    );
   },
 
   listFunctions(): Promise<{ functions: unknown[]; loaded?: unknown[]; telemetry?: unknown }> {

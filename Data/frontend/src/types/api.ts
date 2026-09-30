@@ -2173,6 +2173,114 @@ export type KnowledgeSearchHit = {
   provenance?: Record<string, unknown>;
 };
 
+/** Lightweight Knowledge Library row — never includes full content/chunks. */
+export type KnowledgeLibraryItem = {
+  id: string;
+  title: string;
+  source: string;
+  status: string;
+  library_type: string;
+  library_type_label?: string;
+  size_bytes: number | null;
+  size_measured: boolean;
+  created_at: string;
+  updated_at: string;
+  tags: string[];
+  parser?: string | null;
+  content_hash?: string | null;
+  mime_type?: string | null;
+  page_count?: number | null;
+  error?: string | null;
+  relationship_kind?: string;
+  score?: number | null;
+  truth?: Record<string, boolean>;
+};
+
+export type KnowledgeLibraryOverview = {
+  total_sources: number;
+  measured_bytes: number;
+  measured_sources: number;
+  unknown_size_sources: number;
+  size_coverage_percent: number | null;
+  source_type_count: number;
+  source_type_counts: Array<{ id: string; label: string; count: number }>;
+  top_tags: Array<{ tag: string; count: number }>;
+  tag_vocabulary_size: number;
+  embedding: {
+    status: string;
+    coverage_percent: number | null;
+    chunks_total: number;
+    chunks_embedded: number;
+    chunks_missing: number;
+    provider_id?: string | null;
+    provider_configured: boolean;
+    provider_available: boolean;
+  };
+  latest_ingestion: {
+    document_id?: string;
+    source_id?: string;
+    title?: string;
+    created_at?: string;
+    updated_at?: string;
+    status?: string;
+    source?: string;
+    size_bytes?: number | null;
+    kind?: string;
+    progress_pct?: number | null;
+    measured?: boolean;
+  } | null;
+  health?: Record<string, unknown>;
+  known_library_types?: Array<{ id: string; label: string }>;
+  truth?: Record<string, unknown>;
+};
+
+export type KnowledgeLibraryListResponse = {
+  items: KnowledgeLibraryItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+  next_offset: number | null;
+  next_cursor: string | null;
+  sort: string;
+  filters?: Record<string, string | null | undefined>;
+  type_labels?: Record<string, string>;
+  truth?: Record<string, boolean>;
+};
+
+export type KnowledgeIngestionRecentItem = {
+  source_id: string;
+  filename: string;
+  created_at: string;
+  size_bytes: number | null;
+  status: string;
+  phase?: string;
+  progress_pct?: number | null;
+  measured?: boolean;
+  job_id?: string | null;
+  is_archive?: boolean;
+  brain_status?: string;
+  brain_document_id?: string | null;
+  caller_context?: string;
+};
+
+export type KnowledgeEmbeddingStatus = {
+  document_id: string;
+  document_status: string;
+  indexed: boolean;
+  chunks_total: number;
+  chunks_embedded: number;
+  chunks_missing: number;
+  coverage_percent: number | null;
+  embedding_status: string;
+  provider_id?: string | null;
+  dimensions?: number | null;
+  embeddings_updated_at?: string | null;
+  provider_configured: boolean;
+  provider_available: boolean;
+  truth?: Record<string, boolean>;
+};
+
 /* ---------- Memory (Geheugen) ---------- */
 
 export type MemoryKind =
