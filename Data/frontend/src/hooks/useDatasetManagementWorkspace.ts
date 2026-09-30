@@ -236,18 +236,22 @@ export function useDatasetManagementWorkspace() {
           includeQuality: true,
         });
         if (gen !== libraryReqGen.current) return;
-        setDatasets(res.datasets);
+        setDatasets((prev) =>
+          offset > 0 ? [...prev, ...res.datasets.filter((d) => !prev.some((p) => p.datasetId === d.datasetId))] : res.datasets,
+        );
         setLibraryTotal(res.total ?? res.datasets.length);
         setLibraryHasMore(Boolean(res.hasMore));
         setLibraryOffset(res.offset ?? offset);
-        setSelectedId((prev) => {
-          if (opts?.preferId && res.datasets.some((d) => d.datasetId === opts.preferId)) {
-            return opts.preferId;
-          }
-          if (res.datasets.length === 0) return null;
-          if (prev && res.datasets.some((d) => d.datasetId === prev)) return prev;
-          return res.datasets[0].datasetId;
-        });
+        if (offset === 0) {
+          setSelectedId((prev) => {
+            if (opts?.preferId && res.datasets.some((d) => d.datasetId === opts.preferId)) {
+              return opts.preferId;
+            }
+            if (res.datasets.length === 0) return null;
+            if (prev && res.datasets.some((d) => d.datasetId === prev)) return prev;
+            return res.datasets[0].datasetId;
+          });
+        }
         if (opts?.quiet) setError(null);
       } catch (err) {
         if (gen !== libraryReqGen.current) return;
