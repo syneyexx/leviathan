@@ -1,25 +1,24 @@
 /**
- * SVG DNA knowledge network — Screen 1 double-helix, data-driven, stable.
+ * Kennis Netwerk DNA surface — helix canvas, activation, controls, workbench.
+ * Keeps .lv-v2-dna for existing E2E selectors.
  */
 
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
-} from "react";
-import {
-  BRAIN_CATEGORY_HEX,
-  BRAIN_CATEGORY_META,
   BRAIN_FILTER_TABS,
   filterNodesByCategory,
   type BrainCategoryFilter,
 } from "./brain-categories";
-import { layoutDnaNetwork, type DnaLaidOutNode } from "./brain-dna-layout";
+import { BrainLivingNetworkCanvas } from "./BrainLivingNetworkCanvas";
+import {
+  BrainNetworkWorkbench,
+  startResearchFromGap,
+  type ResearchActionState,
+} from "./BrainNetworkWorkbench";
+import type { KnowledgeActivationState } from "./brain-activation";
+import { findKnowledgeGaps, memoryScopeLabel, scopeFromNode } from "./brain-knowledge-model";
 import type { LiveBrainEdge, LiveBrainNode } from "./brain-live";
+import { api } from "../../api/client";
 
 export type BrainDnaNetworkProps = {
   nodes: readonly LiveBrainNode[];
@@ -34,31 +33,27 @@ export type BrainDnaNetworkProps = {
   onRetry?: () => void;
   reducedMotion?: boolean;
   className?: string;
+  /** Chat→Brain activation projection (optional). */
+  activation?: KnowledgeActivationState | null;
+  onFollowRequest?: (requestId: string) => void;
+  graphTruncated?: boolean;
+  graphMaxNodes?: number | null;
+  searchQuery?: string;
 };
-
-const MIN_ZOOM = 0.55;
-const MAX_ZOOM = 2.4;
 
 function prefersReducedMotion(): boolean {
   if (typeof window === "undefined" || !window.matchMedia) return false;
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-function labelWorthy(
-  node: DnaLaidOutNode,
-  selectedId: string | null,
-  hoverId: string | null,
-  zoom: number,
-): boolean {
-  if (node.focal) return true;
-  if (node.id === selectedId || node.id === hoverId) return true;
-  if (zoom < 0.8) return node.degree >= 4;
-  if (!/^Node \d+$/i.test(node.label) && node.label.length <= 20) {
-    // Bound labeled nodes so helix stays readable
-    return node.degree >= 2 || node.r >= 7;
-  }
-  return node.degree >= 4 || node.r >= 10;
-}
+const MEMORY_SCOPES = [
+  { id: "all", label: "Alles" },
+  { id: "CONVERSATION", label: "Gesprek" },
+  { id: "PROJECT", label: "Project" },
+  { id: "USER", label: "Persoonlijk" },
+  { id: "ORCHESTRATOR_SHARED", label: "Gedeeld" },
+  { id: "GLOBAL", label: "Globaal" },
+] as const;
 
 export function BrainDnaNetwork({
   nodes,
@@ -73,95 +68,91 @@ export function BrainDnaNetwork({
   onRetry,
   reducedMotion,
   className = "",
+  activation = null,
+  onFollowRequest,
+  graphTruncated = false,
+  graphMaxNodes = null,
+  searchQuery = "",
 }: BrainDnaNetworkProps) {
   const shellRef = useRef<HTMLDivElement>(null);
-  const stageRef = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState({ width: 720, height: 300 });
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [hoverId, setHoverId] = useState<string | null>(null);
-  const [dragging, setDragging] = useState(false);
-  const dragOrigin = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
   const motionOff = reducedMotion ?? prefersReducedMotion();
+  const [mode, setMode] = useState<"dna" | "network">("dna");
+  const [paused, setPaused] = useState(motionOff);
+  const pausePref = useRef(motionOff);
+  const [speed, setSpeed] = useState(0.24);
+  const [twist, setTwist] = useState(1.6);
+  const [showLabels, setShowLabels] = useState(true);
+  const [scopeFilter, setScopeFilter] = useState<string>("all");
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [researchAction, setResearchAction] = useState<ResearchActionState>({
+    status: "idle",
+    jobId: null,
+    projectId: null,
+    message: "Nog geen onderzoekstaak gestart.",
+  });
 
-  useEffect(() => {
-    const el = stageRef.current;
-    if (!el) return;
-    const apply = () => {
-      const rect = el.getBoundingClientRect();
-      const width = Math.max(280, rect.width || 720);
-      const height = Math.max(220, rect.height || 300);
-      setSize((prev) =>
-        Math.abs(prev.width - width) < 1 && Math.abs(prev.height - height) < 1
-          ? prev
-          : { width, height },
+  const filteredNodes = useMemo(() => {
+    let list = filterNodesByCategory(nodes, categoryFilter);
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      list = list.filter(
+        (n) =>
+          n.label.toLowerCase().includes(q) ||
+          n.id.toLowerCase().includes(q) ||
+          n.type.toLowerCase().includes(q),
       );
-    };
-    apply();
-    if (typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => apply());
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+    }
+    if (scopeFilter !== "all") {
+      list = list.filter((n) => {
+        const scope = scopeFromNode(n);
+        if (!scope) return false;
+        return scope.toUpperCase() === scopeFilter;
+      });
+    }
+    return list;
+  }, [nodes, categoryFilter, searchQuery, scopeFilter]);
 
-  const filteredNodes = useMemo(
-    () => filterNodesByCategory(nodes, categoryFilter),
-    [nodes, categoryFilter],
-  );
   const filteredIds = useMemo(() => new Set(filteredNodes.map((n) => n.id)), [filteredNodes]);
   const filteredEdges = useMemo(
     () => edges.filter((e) => filteredIds.has(e.source) && filteredIds.has(e.target)),
     [edges, filteredIds],
   );
 
-  const layout = useMemo(
-    () =>
-      layoutDnaNetwork(filteredNodes, filteredEdges, {
-        width: size.width,
-        height: size.height,
-        preferredFocalId,
-        maxPrimary: 36,
-        turns: 2.15,
-      }),
-    [filteredNodes, filteredEdges, size.width, size.height, preferredFocalId],
+  const activeNodeIds = useMemo(
+    () => new Set(activation?.activeNodeIds ?? []),
+    [activation?.activeNodeIds],
   );
 
-  const pos = useMemo(() => new Map(layout.nodes.map((n) => [n.id, n])), [layout.nodes]);
+  const gaps = useMemo(
+    () => findKnowledgeGaps(filteredNodes, filteredEdges, { truncated: graphTruncated, maxNodes: graphMaxNodes }),
+    [filteredNodes, filteredEdges, graphTruncated, graphMaxNodes],
+  );
+  const gapNodeIds = useMemo(() => new Set(gaps.map((g) => g.nodeId).filter(Boolean)), [gaps]);
 
-  // Cap simultaneous labels for Screen 1 density
-  const labeledIds = useMemo(() => {
-    const ranked = [...layout.nodes]
-      .filter((n) => !n.focal)
-      .sort((a, b) => b.degree - a.degree || a.id.localeCompare(b.id));
-    const keep = new Set<string>();
-    keep.add(layout.focalId ?? "");
-    for (const n of ranked) {
-      if (keep.size >= 14) break;
-      if (!/^Node \d+$/i.test(n.label)) keep.add(n.id);
+  // preferredFocalId: when set and no selection, soft-focus via activation
+  useEffect(() => {
+    if (preferredFocalId && !selectedId) {
+      // no auto-select — only preferred for layout elsewhere
     }
-    if (selectedId) keep.add(selectedId);
-    if (hoverId) keep.add(hoverId);
-    return keep;
-  }, [layout.nodes, layout.focalId, selectedId, hoverId]);
+  }, [preferredFocalId, selectedId]);
 
-  const clampZoom = useCallback((value: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value)), []);
-
-  const zoomBy = useCallback(
-    (factor: number) => {
-      setZoom((z) => clampZoom(z * factor));
+  const onSelectNode = useCallback(
+    (id: string | null) => {
+      onSelect(id);
+      if (id) {
+        pausePref.current = paused;
+        setPaused(true);
+      } else {
+        setPaused(pausePref.current);
+      }
     },
-    [clampZoom],
+    [onSelect, paused],
   );
 
-  const resetView = useCallback(() => {
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
-  }, []);
-
-  const fitView = useCallback(() => {
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
-  }, []);
+  const clearFocus = useCallback(() => {
+    onSelect(null);
+    setPaused(pausePref.current);
+  }, [onSelect]);
 
   const enterFullscreen = useCallback(async () => {
     const el = shellRef.current;
@@ -174,45 +165,29 @@ export function BrainDnaNetwork({
     }
   }, []);
 
-  const onPointerDown = (event: ReactPointerEvent) => {
-    if (event.button !== 0) return;
-    const target = event.target as Element;
-    if (target.closest(".lv-v2-dna-node")) return;
-    dragOrigin.current = { x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y };
-    setDragging(true);
-    (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
-  };
+  const resetView = useCallback(() => {
+    setSpeed(0.24);
+    setTwist(1.6);
+    setMode("dna");
+    setPaused(motionOff);
+    pausePref.current = motionOff;
+  }, [motionOff]);
 
-  const onPointerMove = (event: ReactPointerEvent) => {
-    if (!dragOrigin.current) return;
-    const dx = event.clientX - dragOrigin.current.x;
-    const dy = event.clientY - dragOrigin.current.y;
-    setPan({ x: dragOrigin.current.panX + dx, y: dragOrigin.current.panY + dy });
-  };
+  const phaseTitle = (() => {
+    if (!activation || activation.phase === "standby") return "Het geheugen wacht op een vraag";
+    if (activation.phase === "retrieving") return "Bezig met retrieval";
+    if (!activation.identifiersAvailable) return "Activatie zonder node-ids";
+    if (activation.activeNodeIds.length) return "Kennis geactiveerd";
+    return "Retrieval afgerond";
+  })();
 
-  const onPointerUp = () => {
-    dragOrigin.current = null;
-    setDragging(false);
-  };
+  const phaseTag = (activation?.phase ?? "standby").toUpperCase();
 
-  const onNodeKeyDown = (event: KeyboardEvent, id: string) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      onSelect(id);
-    }
-  };
+  const hasScopeMeta = nodes.some((n) => scopeFromNode(n));
 
-  const rootClass = [
-    "lv-v2-dna",
-    motionOff ? "is-reduced-motion" : "",
-    dragging ? "is-dragging" : "",
-    className,
-  ]
+  const rootClass = ["lv-v2-dna", motionOff ? "is-reduced-motion" : "", className]
     .filter(Boolean)
     .join(" ");
-
-  const cx = size.width / 2;
-  const cy = size.height / 2;
 
   return (
     <div className={rootClass} ref={shellRef}>
@@ -231,14 +206,56 @@ export function BrainDnaNetwork({
         ))}
       </div>
 
-      <div
-        ref={stageRef}
-        className="lv-v2-dna__stage"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-      >
+      <div className="lv-v2-dna__research-bar">
+        <div className="lv-v2-dna__display-switch" role="group" aria-label="Netwerkweergave">
+          <button
+            type="button"
+            className={mode === "dna" ? "is-active" : undefined}
+            aria-pressed={mode === "dna"}
+            onClick={() => setMode("dna")}
+          >
+            DNA
+          </button>
+          <button
+            type="button"
+            className={mode === "network" ? "is-active" : undefined}
+            aria-pressed={mode === "network"}
+            onClick={() => setMode("network")}
+          >
+            Relaties
+          </button>
+        </div>
+        {hasScopeMeta ? (
+          <label className="lv-v2-dna__scope">
+            Geheugen
+            <select
+              aria-label="Geheugenscope"
+              value={scopeFilter}
+              onChange={(e) => setScopeFilter(e.target.value)}
+            >
+              {MEMORY_SCOPES.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <span className="lv-v2-muted lv-v2-dna__scope-note">
+            Scopefilter wanneer Memory-scope in projectie aanwezig is
+          </span>
+        )}
+        {graphTruncated ? (
+          <span className="lv-v2-dna__cap">
+            Begrensde projectie{graphMaxNodes != null ? ` · max ${graphMaxNodes}` : ""} ·{" "}
+            {filteredNodes.length} zichtbaar
+          </span>
+        ) : (
+          <span className="lv-v2-dna__cap">{filteredNodes.length} nodes</span>
+        )}
+      </div>
+
+      <div className="lv-v2-dna__stage">
         {error ? (
           <div className="lv-v2-dna__overlay" role="alert">
             <p>{error}</p>
@@ -249,19 +266,22 @@ export function BrainDnaNetwork({
             ) : null}
           </div>
         ) : null}
-        {!error && loading && layout.nodes.length === 0 ? (
+        {!error && loading && filteredNodes.length === 0 ? (
           <div className="lv-v2-dna__overlay" aria-busy="true">
             <p>Kennisnetwerk laden…</p>
           </div>
         ) : null}
-        {!error && !loading && layout.nodes.length === 0 ? (
+        {!error && !loading && filteredNodes.length === 0 ? (
           <div className="lv-v2-dna__overlay">
             <p>Geen kennisnodes in deze projectie</p>
-            {categoryFilter !== "all" ? (
+            {categoryFilter !== "all" || scopeFilter !== "all" ? (
               <button
                 type="button"
                 className="lv-v2-button lv-v2-button--secondary lv-v2-button--sm"
-                onClick={() => onCategoryFilterChange("all")}
+                onClick={() => {
+                  onCategoryFilterChange("all");
+                  setScopeFilter("all");
+                }}
               >
                 Reset filter
               </button>
@@ -269,229 +289,187 @@ export function BrainDnaNetwork({
           </div>
         ) : null}
 
-        <svg
-          className="lv-v2-dna__svg"
-          width="100%"
-          height="100%"
-          viewBox={`0 0 ${size.width} ${size.height}`}
-          role="img"
-          aria-label="DNA kennisnetwerk"
-        >
-          <defs>
-            <radialGradient id="lv2-dna-focal-glow" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#67e8f9" stopOpacity="0.7" />
-              <stop offset="45%" stopColor="#22d3ee" stopOpacity="0.28" />
-              <stop offset="100%" stopColor="#22d3ee" stopOpacity="0" />
-            </radialGradient>
-            <linearGradient id="lv2-dna-strand-grad" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.15" />
-              <stop offset="50%" stopColor="#67e8f9" stopOpacity="0.85" />
-              <stop offset="100%" stopColor="#22d3ee" stopOpacity="0.15" />
-            </linearGradient>
-            <filter id="lv2-dna-soft-glow" x="-50%" y="-50%" width="200%" height="200%">
-              <feGaussianBlur stdDeviation="2.4" result="blur" />
-              <feMerge>
-                <feMergeNode in="blur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-            <filter id="lv2-dna-strand-glow" x="-20%" y="-20%" width="140%" height="140%">
-              <feGaussianBlur stdDeviation="1.6" result="blur" />
-              <feMerge>
-                <feMergeNode in="blur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-          </defs>
-
-          <g
-            transform={`translate(${cx} ${cy}) scale(${zoom}) translate(${-cx + pan.x / zoom} ${-cy + pan.y / zoom})`}
-          >
-            {/* Ambient particles along helix (decorative, non-interactive) */}
-            {Array.from({ length: 18 }, (_, i) => {
-              const t = (i + 0.5) / 18;
-              const x = size.width * 0.08 + t * size.width * 0.84;
-              const y = cy + Math.sin(t * Math.PI * 2 * 2.15 + i) * (size.height * 0.28);
-              return (
-                <circle
-                  key={`dust-${i}`}
-                  className="lv-v2-dna__dust"
-                  cx={x}
-                  cy={y}
-                  r={i % 3 === 0 ? 1.6 : 1.1}
-                />
-              );
-            })}
-
-            {/* DNA backbone strands — Screen 1 silhouette (glow + core) */}
-            {layout.helix.strand0 ? (
-              <>
-                <path
-                  className="lv-v2-dna__helix lv-v2-dna__helix--glow"
-                  d={layout.helix.strand0}
-                  fill="none"
-                />
-                <path
-                  className="lv-v2-dna__helix lv-v2-dna__helix--a"
-                  d={layout.helix.strand0}
-                  fill="none"
-                  filter="url(#lv2-dna-strand-glow)"
-                />
-              </>
-            ) : null}
-            {layout.helix.strand1 ? (
-              <>
-                <path
-                  className="lv-v2-dna__helix lv-v2-dna__helix--glow"
-                  d={layout.helix.strand1}
-                  fill="none"
-                />
-                <path
-                  className="lv-v2-dna__helix lv-v2-dna__helix--b"
-                  d={layout.helix.strand1}
-                  fill="none"
-                  filter="url(#lv2-dna-strand-glow)"
-                />
-              </>
-            ) : null}
-
-            {/* Edges: rungs (+ Screen 1 beads), then strand, then faint secondary */}
-            {layout.edges.map((edge) => {
-              const a = pos.get(edge.source);
-              const b = pos.get(edge.target);
-              if (!a || !b) return null;
-              if (edge.kind === "rung") {
-                const beads = [0.22, 0.4, 0.5, 0.6, 0.78].map((t, i) => {
-                  const bx = a.x + (b.x - a.x) * t;
-                  const by = a.y + (b.y - a.y) * t;
-                  const palette = ["#a78bfa", "#22d3ee", "#67e8f9", "#fbbf24", "#34d399"];
-                  return (
-                    <circle
-                      key={`${edge.id}:bead:${i}`}
-                      className="lv-v2-dna__bead"
-                      cx={bx}
-                      cy={by}
-                      r={i === 2 ? 2.2 : 1.55}
-                      fill={palette[i % palette.length]}
-                    />
-                  );
-                });
-                return (
-                  <g key={edge.id} pointerEvents="none">
-                    <line
-                      className="lv-v2-dna__edge lv-v2-dna__edge--rung"
-                      x1={a.x}
-                      y1={a.y}
-                      x2={b.x}
-                      y2={b.y}
-                      opacity={edge.opacity}
-                    />
-                    {beads}
-                  </g>
-                );
-              }
-              const midX = (a.x + b.x) / 2;
-              const midY = (a.y + b.y) / 2 + (edge.kind === "strand" ? (a.strand === 0 ? -6 : 6) : 0);
-              return (
-                <path
-                  key={edge.id}
-                  className={`lv-v2-dna__edge lv-v2-dna__edge--${edge.kind}`}
-                  d={`M ${a.x} ${a.y} Q ${midX} ${midY} ${b.x} ${b.y}`}
-                  opacity={edge.opacity}
-                />
-              );
-            })}
-
-            {layout.nodes.map((node) => {
-              const selected = node.id === selectedId;
-              const showLabel =
-                labeledIds.has(node.id) || labelWorthy(node, selectedId, hoverId, zoom);
-              // Screen 1: focal hub is luminous cyan regardless of category
-              const color = node.focal ? "#22d3ee" : BRAIN_CATEGORY_HEX[node.category];
-              return (
-                <g
-                  key={node.id}
-                  className={`lv-v2-dna-node${selected ? " is-selected" : ""}${node.focal ? " is-focal" : ""}`}
-                  transform={`translate(${node.x} ${node.y})`}
-                  tabIndex={0}
-                  role="button"
-                  aria-label={`${node.label} (${node.category})`}
-                  aria-pressed={selected}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onSelect(node.id);
-                  }}
-                  onKeyDown={(event) => onNodeKeyDown(event, node.id)}
-                  onMouseEnter={() => setHoverId(node.id)}
-                  onMouseLeave={() => setHoverId((id) => (id === node.id ? null : id))}
-                >
-                  {/* Invisible hit target so rungs/beads never steal clicks */}
-                  <circle className="lv-v2-dna-node__hit" r={Math.max(node.r + 8, 14)} fill="transparent" />
-                  {node.focal || selected ? (
-                    <circle
-                      className="lv-v2-dna-node__halo"
-                      r={node.r + (node.focal ? 18 : 12)}
-                      fill="url(#lv2-dna-focal-glow)"
-                    />
-                  ) : null}
-                  <circle
-                    className="lv-v2-dna-node__core"
-                    r={node.r}
-                    fill={color}
-                    filter={node.focal || selected ? "url(#lv2-dna-soft-glow)" : undefined}
-                  />
-                  {node.focal ? (
-                    <circle
-                      className="lv-v2-dna-node__ring"
-                      r={node.r + 4}
-                      fill="none"
-                      stroke="#67e8f9"
-                      strokeWidth="1.4"
-                      opacity="0.85"
-                    />
-                  ) : null}
-                  {showLabel ? (
-                    <text
-                      className="lv-v2-dna-node__label"
-                      y={node.focal ? -(node.r + 14) : node.strand === 0 ? -(node.r + 8) : node.r + 14}
-                      textAnchor="middle"
-                    >
-                      {node.label}
-                    </text>
-                  ) : null}
-                </g>
-              );
-            })}
-          </g>
-        </svg>
-
-        <div className="lv-v2-dna__legend" aria-hidden="true">
-          {BRAIN_CATEGORY_META.map((row) => (
-            <span key={row.id} className="lv-v2-dna__legend-item">
-              <i style={{ background: BRAIN_CATEGORY_HEX[row.id] }} />
-              {row.label}
-            </span>
-          ))}
+        <div className="lv-v2-dna__canvas-heading" aria-hidden="true">
+          <span>
+            DOUBLE HELIX <b>V3</b>
+          </span>
+          <span>LIVE VIEW</span>
+        </div>
+        <div className="lv-v2-dna__strand-key" aria-hidden="true">
+          <span>
+            <i className="lv-v2-dna__dot lv-v2-dna__dot--source" /> Bronnen &amp; observaties
+          </span>
+          <span>
+            <i className="lv-v2-dna__dot lv-v2-dna__dot--insight" /> Inzichten &amp; hypotheses
+          </span>
         </div>
 
+        {selectedId ? (
+          <div className="lv-v2-dna__focus-pill">
+            <span>Focus actief</span>
+            <button type="button" onClick={clearFocus}>
+              Verlaat focus ×
+            </button>
+          </div>
+        ) : null}
+
+        <BrainLivingNetworkCanvas
+          nodes={nodes}
+          edges={edges}
+          selectedId={selectedId}
+          onSelect={onSelectNode}
+          selectedEdgeId={selectedEdgeId}
+          onSelectEdge={setSelectedEdgeId}
+          activeNodeIds={activeNodeIds}
+          gapNodeIds={gapNodeIds}
+          mode={mode}
+          paused={paused}
+          speed={speed}
+          twist={twist}
+          showLabels={showLabels}
+          reducedMotion={motionOff}
+          filterPredicate={(n) => filteredIds.has(n.id)}
+        />
+
         <div className="lv-v2-dna__controls" role="toolbar" aria-label="Netwerk bediening">
-          <button type="button" aria-label="Zoom in" onClick={() => zoomBy(1.15)}>
-            +
+          <button
+            type="button"
+            aria-label="Labels tonen of verbergen"
+            aria-pressed={showLabels}
+            onClick={() => setShowLabels((v) => !v)}
+          >
+            Aa
           </button>
-          <button type="button" aria-label="Zoom out" onClick={() => zoomBy(1 / 1.15)}>
-            −
+          <button
+            type="button"
+            aria-label={paused ? "Rotatie hervatten" : "Rotatie pauzeren"}
+            aria-pressed={paused}
+            onClick={() => {
+              setPaused((p) => {
+                const next = !p;
+                pausePref.current = next;
+                return next;
+              });
+            }}
+          >
+            {paused ? "▶" : "Ⅱ"}
           </button>
           <button type="button" aria-label="Reset weergave" onClick={resetView} title="Reset">
             ⌖
-          </button>
-          <button type="button" aria-label="Passend maken" onClick={fitView} title="Fit">
-            ⛶
           </button>
           <button type="button" aria-label="Volledig scherm" onClick={() => void enterFullscreen()}>
             ↗
           </button>
         </div>
       </div>
+
+      <div className="lv-v2-dna__query-status" role="status">
+        <div className="lv-v2-dna__query-icon" aria-hidden="true">
+          ◎
+        </div>
+        <div>
+          <strong>{phaseTitle}</strong>
+          <p>{activation?.detail ?? "Stel in /chat een vraag; open /brain parallel om activatie te zien."}</p>
+        </div>
+        <span className="lv-v2-dna__phase-tag">{phaseTag}</span>
+      </div>
+
+      {activation && activation.requests.length > 1 ? (
+        <label className="lv-v2-dna__request-pick">
+          Gevolgde request
+          <select
+            value={activation.followedRequestId ?? ""}
+            onChange={(e) => onFollowRequest?.(e.target.value)}
+            aria-label="Kies gevolgd retrieval-request"
+          >
+            {activation.requests.map((r) => (
+              <option key={r.requestId} value={r.requestId}>
+                {r.requestId.slice(0, 12)}… · {r.phase}
+                {r.conversationId ? ` · ${r.conversationId.slice(0, 8)}` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+
+      <div className="lv-v2-dna__sliders">
+        <label>
+          Rotatie
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={Math.round(speed * 100)}
+            onChange={(e) => setSpeed(Number(e.target.value) / 100)}
+          />
+          <output>{speed.toFixed(2)}×</output>
+        </label>
+        <label>
+          Twist
+          <input
+            type="range"
+            min={100}
+            max={240}
+            value={Math.round(twist * 100)}
+            onChange={(e) => setTwist(Number(e.target.value) / 100)}
+          />
+          <output>{twist.toFixed(2)}</output>
+        </label>
+      </div>
+
+      <div className="lv-v2-dna__timeline">
+        <div className="lv-v2-dna__timeline-title">
+          <span className="lv-v2-eyebrow">Geheugen door de tijd</span>
+          <span className="lv-v2-muted">Live</span>
+        </div>
+        <p className="lv-v2-muted">
+          Historische snapshots: niet beschikbaar in het huidige Brain-graphcontract. Geen
+          verzonnen reconstructie uit created_at.
+        </p>
+      </div>
+
+      <BrainNetworkWorkbench
+        nodes={filteredNodes}
+        edges={filteredEdges}
+        selectedId={selectedId}
+        selectedEdgeId={selectedEdgeId}
+        onSelectNode={onSelectNode}
+        onSelectEdge={setSelectedEdgeId}
+        graphTruncated={graphTruncated}
+        graphMaxNodes={graphMaxNodes}
+        historyAvailable={false}
+        researchAction={researchAction}
+        onStartResearch={(gap, action) => {
+          setResearchAction({
+            status: "pending",
+            jobId: null,
+            projectId: null,
+            message: "Research aanvraag wordt gestart…",
+          });
+          void startResearchFromGap(gap, action).then(setResearchAction);
+        }}
+        onMemoryAction={async (action, memoryId) => {
+          try {
+            if (action === "archive") {
+              await api.archiveMemory(memoryId);
+              return { ok: true, message: `Geheugen ${memoryId} gearchiveerd.` };
+            }
+            await api.revokeMemory(memoryId);
+            return { ok: true, message: `Geheugen ${memoryId} ingetrokken.` };
+          } catch (err) {
+            return {
+              ok: false,
+              message: err instanceof Error ? err.message : "Memory-mutatie mislukt",
+            };
+          }
+        }}
+      />
+
+      {selectedId ? (
+        <p className="lv-v2-dna__scope-foot lv-v2-muted">
+          Selectie scope: {memoryScopeLabel(scopeFromNode(nodes.find((n) => n.id === selectedId) ?? null))}
+        </p>
+      ) : null}
     </div>
   );
 }

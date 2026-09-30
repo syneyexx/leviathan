@@ -14,6 +14,28 @@ test.describe("Brain operator paths", () => {
     await expect(page.locator(".lv-v2-dna")).toBeVisible();
   });
 
+  test("Kennis Netwerk keeps Research Memory tools inside the panel", async ({ page }) => {
+    await installApiStubs(page);
+    await page.goto("/brain");
+    await expect(page.getByText("Kennis Netwerk", { exact: true })).toBeVisible({ timeout: 20_000 });
+    const panel = page.locator(".lv-v2-brain-network-panel");
+    await expect(panel.locator(".lv-v2-dna")).toBeVisible();
+    await expect(panel.getByRole("button", { name: "DNA" })).toBeVisible();
+    await expect(panel.getByRole("button", { name: "Relaties" })).toBeVisible();
+    const tools = panel.getByRole("tablist", { name: "Onderzoekstools" });
+    await expect(tools.getByRole("tab", { name: "Bewijs" })).toBeVisible();
+    await expect(tools.getByRole("tab", { name: /Kennishiaten/ })).toBeVisible();
+    await expect(tools.getByRole("tab", { name: "Vergelijken" })).toBeVisible();
+    await expect(tools.getByRole("tab", { name: "Agents" })).toBeVisible();
+    await expect(tools.getByRole("tab", { name: "Wijzigingen" })).toBeVisible();
+    await expect(tools.getByRole("tab", { name: "Bewaren" })).toBeVisible();
+    // Surrounding Brain sections remain
+    await expect(page.getByText("Geselecteerde Node", { exact: true })).toBeVisible();
+    await expect(page.getByText("Recente Kennis Activiteit", { exact: true })).toBeVisible();
+    await expect(page.getByText("Redenering Queue", { exact: true })).toBeVisible();
+    await expect(page.getByText("Systeem Gezondheid", { exact: true })).toBeVisible();
+  });
+
   test("Brain Clusters view loads when tab exists", async ({ page }) => {
     await installBrainV2VisualFixture(page);
     await page.goto("/brain");

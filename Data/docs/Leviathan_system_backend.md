@@ -374,7 +374,8 @@ Multimodal routes: `Data/backend/routes/multimodal.py`. Model vision capability 
 - `access.py` — access contracts;
 - `contracts.py` — Brain-facing types;
 - `facade.py` — unified query across canonical stores;
-- `compute.py` — heavy **derived** Brain computation (snapshots/analysis) for the `brain_compute` worker pool.
+- `compute.py` — heavy **derived** Brain computation (snapshots/analysis) for the `brain_compute` worker pool;
+- `activation_events.py` — public `brain.knowledge_activation` observability events mapping chat retrieval hits to Brain node ids (`knowledge:document:…`, `memory:…`) for `/brain` live highlight (hit counts alone never identify nodes).
 
 Bounded UI reads (`GET /api/brain/graph`, `GET /api/brain/stats`) remain inline and capped by `max_nodes`/`max_edges`. Heavy snapshot/rebuild/analyze work is enqueued as `brain.compute.snapshot` / `brain.rebuild` / `brain.analyze` onto the Worker Fabric `brain_compute` pool (`default_count=1`, `max_count=2`). Results are advisory ArtifactStore snapshots with algorithm/version provenance — never a competing Brain/graph database and never a silent Knowledge/Memory mutation.
 

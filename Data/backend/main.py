@@ -3579,6 +3579,20 @@ async def chat(payload: ChatRequest, request: Request):
                     "early_own": True,
                 },
             )
+            # Cognition early-own: hit counts alone do not identify Brain nodes.
+            from Data.modules.brain.activation_events import emit_knowledge_activation
+
+            emit_knowledge_activation(
+                observability,
+                conversation_id=conversation_id,
+                request_id=request_id,
+                run_id=run.run_id,
+                phase="complete",
+                knowledge_hits=[],
+                memory_hits=[],
+                hit_count=retrieval_rounds,
+                identifiers_available=False,
+            )
         history_rows = db.get_messages(conversation_id, limit=live_settings().max_history_messages)
         history = [{"role": row["role"], "content": row["content"]} for row in history_rows]
     else:
@@ -3586,6 +3600,19 @@ async def chat(payload: ChatRequest, request: Request):
             # All successful retrieval strategies must converge here:
             # RETRIEVAL_STARTED → (deep|staged|hybrid) → RETRIEVAL_COMPLETED → EXECUTING
             runs.append_event(run.run_id, EventType.RETRIEVAL_STARTED, {})
+            from Data.modules.brain.activation_events import emit_knowledge_activation
+
+            emit_knowledge_activation(
+                observability,
+                conversation_id=conversation_id,
+                request_id=request_id,
+                run_id=run.run_id,
+                phase="retrieving",
+                knowledge_hits=[],
+                memory_hits=[],
+                hit_count=0,
+                identifiers_available=False,
+            )
             retrieval_source = "staged_or_hybrid"
             try:
                 if plan.use_deep_recall and economy.allow_deep_recall:
@@ -3746,6 +3773,18 @@ async def chat(payload: ChatRequest, request: Request):
                     include_global=True,
                 )
             ]
+        from Data.modules.brain.activation_events import emit_knowledge_activation
+
+        emit_knowledge_activation(
+            observability,
+            conversation_id=conversation_id,
+            request_id=request_id,
+            run_id=run.run_id,
+            phase="complete",
+            knowledge_hits=knowledge_hits,
+            memory_hits=memory_hits,
+            hit_count=len(knowledge_hits) + len(memory_hits),
+        )
         knowledge_ids = [str(item.get("id") or "") for item in knowledge_hits if item.get("id")]
         neuro = NeuroAssessment(enabled=False, signals=(), notes=())
         if reasoning_mode.effective != "fast":
