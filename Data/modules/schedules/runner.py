@@ -132,10 +132,17 @@ class ScheduleRunner:
             idem = f"schedule:{schedule.schedule_id}:{occurrence}"
             # Specialist routing — do NOT hardcode general.
             worker_pool = _resolve_target_pool(schedule.target_ref)
+            payload = dict(schedule.target_payload or {})
+            arguments = dict(payload.get("arguments") or {})
+            # Allow top-level workflow_id for durable delay resumes.
+            if payload.get("workflow_id") and "workflow_id" not in arguments:
+                arguments["workflow_id"] = payload["workflow_id"]
+            if payload.get("execution_id") and "workflow_id" not in arguments:
+                arguments["workflow_id"] = payload["execution_id"]
             enqueue_kwargs: dict[str, Any] = {
                 "capability_id": schedule.target_ref,
-                "arguments": dict(schedule.target_payload.get("arguments") or {}),
-                "approval_id": schedule.target_payload.get("approval_id"),
+                "arguments": arguments,
+                "approval_id": payload.get("approval_id"),
                 "requested_by": f"schedule:{schedule.schedule_id}",
                 "idempotency_key": idem,
                 "domain": "schedules",
@@ -144,6 +151,9 @@ class ScheduleRunner:
             }
             if worker_pool:
                 enqueue_kwargs["worker_pool"] = worker_pool
+            # workflow.advance must land on the workflow pool.
+            if schedule.target_ref == "workflow.advance":
+                enqueue_kwargs["worker_pool"] = "workflow"
             job = self.jobs.enqueue(**enqueue_kwargs)
             # Detect idempotent reuse (duplicate occurrence after crash/reclaim).
             idempotent_reuse = False
@@ -153,15 +163,20 @@ class ScheduleRunner:
             except Exception:  # noqa: BLE001
                 existing = None
             if existing is not None and existing.job_id == job.job_id:
-                # Job existed before this tick if created_at is older than a few ms —
-                # best-effort: treat same idempotency key return as reuse when
-                # last_run_at is set on the schedule (second delivery).
                 if schedule.last_run_at:
                     idempotent_reuse = True
             done = None
             if execute:
                 # TEST-ONLY — production scheduler must never call process_next.
                 done = self.jobs.process_next()
+            # One-shot delay schedules must not recur.
+            if (schedule.metadata or {}).get("one_shot"):
+                try:
+                    from .types import ScheduleStatus
+
+                    self.store.set_status(schedule.schedule_id, ScheduleStatus.DISABLED)
+                except Exception:  # noqa: BLE001
+                    pass
             return {
                 "target": "job",
                 "job_id": job.job_id,
@@ -174,6 +189,54 @@ class ScheduleRunner:
         if schedule.target_kind == ScheduleTargetKind.WORKFLOW:
             if self.workflows is None:
                 raise RuntimeError("WorkflowRuntime not configured for schedules")
+            # Prefer reusable definition target when target_ref is a known definition.
+            definition_id = str(
+                schedule.target_payload.get("workflow_id")
+                or schedule.target_payload.get("definition_id")
+                or ""
+            )
+            if not definition_id and hasattr(self.workflows, "store"):
+                maybe = self.workflows.store.get_definition(schedule.target_ref)
+                if maybe is not None:
+                    definition_id = maybe.workflow_id
+            if definition_id and hasattr(self.workflows, "run_definition"):
+                from Data.modules.workflows.types import WorkflowDefinitionStatus
+
+                definition = self.workflows.store.get_definition(definition_id)
+                if definition is None:
+                    raise RuntimeError(f"SCHEDULE stale workflow target: {definition_id}")
+                if definition.status != WorkflowDefinitionStatus.ACTIVE:
+                    return {
+                        "target": "workflow",
+                        "skipped": True,
+                        "reason": "workflow_inactive",
+                        "workflow_id": definition_id,
+                        "definition_status": definition.status.value,
+                    }
+                execution, job = self.workflows.run_definition(
+                    definition_id,
+                    requested_by=f"schedule:{schedule.schedule_id}",
+                    trigger_source="SCHEDULE",
+                    inputs=dict(schedule.target_payload.get("inputs") or {}),
+                    idempotency_key=f"schedule:{schedule.schedule_id}:{schedule.next_run_at}",
+                )
+                if execute and hasattr(self.workflows, "run"):
+                    done = self.workflows.run(execution.execution_id)
+                    return {
+                        "target": "workflow",
+                        "workflow_id": definition_id,
+                        "execution_id": done.workflow_id,
+                        "workflow_state": done.state.value,
+                        "executed_inline": True,
+                    }
+                return {
+                    "target": "workflow",
+                    "workflow_id": definition_id,
+                    "execution_id": execution.execution_id,
+                    "workflow_state": execution.state.value,
+                    "job_id": getattr(job, "job_id", None),
+                    "executed_inline": False,
+                }
             steps_raw = schedule.target_payload.get("steps") or []
             steps = [
                 WorkflowStepDef(
