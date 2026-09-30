@@ -178,3 +178,14 @@ Media Control, Plugin & Runtime, Coding Agent, and other deep links remain regis
 - Lifecycle enqueue awaits JobRuntime terminal state; Feature Flag / KPIs / filters / update evidence are API-backed.
 - Local views `?view=runtimes|installation|environments` are projections — not new backend systems.
 - Visual fixture: `src/mocks/modulesV2VisualFixture.ts` + `e2e/modules-v2.visual.spec.ts` (reference: `docs/ui_reference/modules-v2-reference.png`, 1672×941). Production never imports fixture defaults.
+
+## Dataset Management migration
+
+- `/dataset-management` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "LLM / Dataset Management").
+- **MAIN_MENU owns Dataset Management under LLM.** On `/dataset-management` LM auto-expands with the Dataset Manager child selected. Do not move this page to Onderzoek & Kennis in this surface.
+- `/datasets` remains the separate Research/Knowledge dataset surface — same `DatasetService` / identities / versions / jobs.
+- Composition: `DatasetManagementPage` + `useDatasetManagementWorkspace` + `src/components/dataset-management/*` + shared `DatasetActivityConsole`.
+- No page-local Dataset CSS; layout lives in `leviathan-v2.css` under `.lv-v2-page--dataset-management` / `.lv-v2-dm-*`.
+- KPIs / search / filters / pagination / storage / tags / catalog status / quality are API-backed (`/api/datasets`, `/api/datasets/overview`). Null sample counts stay partial/UNMEASURED — never invent Screen 1 numbers.
+- Training deep link passes immutable `datasetId` + `datasetVersionId`. Brain learn uses canonical `learnDataset` / rebuild.
+- Visual fixture: `src/mocks/datasetManagementV2VisualFixture.ts` + `e2e/helpers/datasetManagementV2Visual.ts` + `e2e/dataset-management-v2.visual.spec.ts` (reference: `docs/ui_reference/dataset-management-llm-v2-reference.jpg`, 1672×941).

@@ -137,7 +137,7 @@ The “Hades AI” navigation label is UI naming. It does not make `Data/HADES/`
 | `/coding` | `CodingPage` |
 | `/models` | `ModelsPage` |
 | `/training` | `TrainingPage` (V2) |
-| `/dataset-management` | `DatasetManagementPixelPage` |
+| `/dataset-management` | `DatasetManagementPage` (V2) |
 | `/offline-datasets` | `OfflineDatasetsPixelPage` |
 | `/agents` | `AgentsPage` |
 | `/analytics` | `AnalyticsPage` |
@@ -498,26 +498,42 @@ Evidence=0 alone is not a diagnosis. The UI should display backend reasons such 
 
 # 15. Datasets UI
 
-Two related surfaces exist:
+Two related surfaces share **one** Dataset domain authority (`DatasetService` / `DatasetStore` / dataset worker / JobRuntime):
 
-- `/datasets` → `src/pages/DatasetsPage.tsx` and `src/pages/datasets/` — research/knowledge dataset surface;
-- `/dataset-management` → `src/pages/pixel/DatasetManagementPixelPage.tsx` — operator management view;
+- `/dataset-management` → `src/pages/DatasetManagementPage.tsx` — **LLM → Dataset Management** operator control plane (V2);
+- `/datasets` → `src/pages/DatasetsPage.tsx` and `src/pages/datasets/` — Research/Knowledge dataset surface;
 - `/offline-datasets` → `src/pages/pixel/OfflineDatasetsPixelPage.tsx` — offline dataset tooling.
 
-Supporting dataset code includes:
+They must never fork dataset identities, versions, or jobs.
 
-- `DatasetActivityConsole.tsx`;
-- `datasetActivity.ts`;
-- `useDatasetActivity.ts`;
-- `datasetsInventory.ts`;
-- `datasetLearningState.ts`;
-- dataset activity/management tests.
+## Dataset Management V2 (`/dataset-management`)
 
-Dataset Management uses `displayName ?? name`, category/tags/search and semantic re-analysis APIs. `REINDEX_REQUIRED` is never shown as learned Brain state.
+- Shell: `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title `LLM / Dataset Management`).
+- **MAIN_MENU owns Dataset Management under LLM.** On `/dataset-management` LM auto-expands with the Dataset Manager child selected (`v2ChildrenFromMainMenu("llm")`).
+- Composition: `DatasetManagementPage` + `useDatasetManagementWorkspace` + `src/components/dataset-management/*` + shared `DatasetActivityConsole`.
+- Production constants: `pages/datasets/datasetManagementConstants.ts` (no screenshot metrics). Visual fixture: `mocks/datasetManagementV2VisualFixture.ts` (Playwright only, gate `__LV_V2_VISUAL_FIXTURE__ === 'dataset-management'`).
+- No page-local Dataset CSS; layout lives in `leviathan-v2.css` under `.lv-v2-page--dataset-management` / `.lv-v2-dm-*`.
+- Reference: `docs/ui_reference/dataset-management-llm-v2-reference.jpg` (1672×941). E2E: `e2e/dataset-management-v2.visual.spec.ts`.
+
+### Catalog / KPIs
+
+- Library listing uses server-side `GET /api/datasets` with `q` / filters / `limit` / `offset` / `total` / `hasMore` — never page-length as KPI truth.
+- KPI row uses `GET /api/datasets/overview` (totals, samples with partial-measurement honesty, storage + filesystem capacity, active imports, validation issues, catalog status, tag counts).
+- Quality column is evidence-based (`quality` projection); never-validated datasets show **Niet gemeten** / `—`, never decorative 100%.
+- Catalog Status reflects derived catalog reconcile health — not page-refresh Online/Offline.
+
+### Operator actions
+
+Upload, Hugging Face import, local import, create shell, rescan (library refresh), delete, duplicate, validate, export + download, Brain learn / rebuild index, semantic metadata patch + re-analyze, and Advanced (dedupe / split / tokenize / contamination / PII / materialize) enqueue real Dataset jobs. Enqueue ≠ completed.
+
+### Brain / Training
+
+- Local dataset ≠ learned. Brain status uses canonical learning state; `REINDEX_REQUIRED` / failed / stale are never shown as Geleerd.
+- **Gebruik in training** deep-links `/training?datasetId=&datasetVersionId=` with immutable version identity. Training V2 consumes those query params.
+
+Supporting shared code: `DatasetActivityConsole.tsx`, `datasetActivity.ts`, `useDatasetActivity.ts`, `datasetLearningState.ts`, `datasetManagementFormat.ts`.
 
 Job/activity panels expose backend compute truth (`python_streaming` / `rust_native`) and progress. Missing peak RSS/spill/throughput remains UNMEASURED.
-
-Explicit demo rows are labeled DEMO and are protected from appearing as live inventory.
 
 ---
 

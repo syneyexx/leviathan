@@ -51,7 +51,7 @@ test.describe("Dataset Management V2 visual", () => {
     await expect(page.getByText("Opslag Gebruikt")).toBeVisible();
     await expect(page.getByText("Actieve Imports")).toBeVisible();
     await expect(page.getByText("Validatie Issues")).toBeVisible();
-    await expect(page.getByText("Sync Status")).toBeVisible();
+    await expect(page.getByText("Catalog Status")).toBeVisible();
 
     await expect(page.getByRole("heading", { name: "Dataset Acties" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Dataset Services" })).toBeVisible();
@@ -61,6 +61,7 @@ test.describe("Dataset Management V2 visual", () => {
     await expect(page.getByRole("heading", { name: "Voorbeeld data" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Opslag" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Sla metagegevens op" })).toBeVisible();
+    await expect(page.getByText(/Data is ruwe potentie/)).toBeVisible();
 
     await page.waitForTimeout(400);
 

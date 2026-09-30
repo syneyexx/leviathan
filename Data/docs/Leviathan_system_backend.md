@@ -938,14 +938,42 @@ CONTROL PLANE
 
 Important dataset concepts:
 
-- canonical dataset identity + versions;
+- canonical dataset identity + versions (immutable `version_id` consumed by Training);
 - processing/index state separate from “learned”/Brain state;
-- semantic re-analysis explicitly requested;
-- large transforms externalized;
+- semantic re-analysis explicitly requested; operator overrides via `PATCH /api/datasets/{id}/semantic`;
+- large transforms externalized to the `dataset` worker via JobRuntime;
 - native/Python compute backend reported honestly;
 - missing memory/throughput metrics remain UNMEASURED.
 
+### Catalog query & overview (control plane)
+
+`GET /api/datasets` remains backward compatible (`limit` default 100) and additionally accepts server-side:
+
+- `q`, `status`, `source`/`sourceType`, `category`, `split`, `tag`/`tags`, `type`, `sort`
+- `limit` + `offset` pagination with response `{ datasets, total, limit, offset, hasMore }`
+
+`GET /api/datasets/overview` returns bounded SQL aggregates for operator KPIs:
+
+- `totalDatasets`, `totalSamples` (+ measured/unmeasured counts — null `rowCount` is never treated as 0)
+- storage used bytes vs filesystem `disk_usage` capacity; breakdown categories that are not measured stay `UNMEASURED`
+- active import jobs (queued + running of `import_local` / `import_hf` only)
+- validation issue aggregates from persisted version `validation_json` (not failed jobs)
+- catalog status from derived catalog soft-read (`valid` / last generatedAt)
+- popular `tagCounts`
+
+Quality projection (`quality` on list rows when `includeQuality=true`):
+
+- formula when validation evidence exists: `clamp(100 - 12*errors - 3*warnings - contamination/PII/dup penalties, 0, 100)`
+- never validated → `measured=false`, `score=null` (UI: Niet gemeten)
+
 HTTP: `Data/backend/routes/datasets.py`. Knowledge ingestion: `Data/backend/routes/knowledge.py`. Source ingestion enters through domain APIs but heavy parse/index work is worker-owned.
+
+Surfaces:
+
+- `/dataset-management` — LLM operator management (V2)
+- `/datasets` — Research/Knowledge browse surface
+
+Both resolve the same DatasetStore identities.
 
 ---
 
