@@ -15,7 +15,7 @@ test.describe("Agents V2 visual", () => {
     deviceScaleFactor: 1,
   });
 
-  test("agents loads with LM nav expanded and Screen 1 sections", async ({ page }) => {
+  test("agents loads with LLM nav expanded and Screen 1 sections", async ({ page }) => {
     await installAgentsV2VisualFixture(page);
     const errors: string[] = [];
     page.on("pageerror", (err) => errors.push(err.message));
@@ -27,10 +27,10 @@ test.describe("Agents V2 visual", () => {
     await expect(page.locator(".lv-v2")).toBeVisible({ timeout: 20_000 });
 
     const nav = page.getByRole("navigation", { name: "Hoofdmenu" });
-    await expect(page.locator(".lv-v2-nav-group.is-open .lv-v2-nav-item__label")).toContainText("LM");
+    await expect(page.locator(".lv-v2-nav-group.is-open .lv-v2-nav-item__label")).toContainText("LLM");
     await expect(page.locator(".lv-v2-nav-group.is-open .lv-v2-nav-child.is-active")).toContainText("Agents");
     await expect(nav.getByRole("link", { name: "Agents", exact: true }).first()).toBeVisible();
-    // Hades may deep-link to Agents, but there is no standalone top-level owner.
+    // Agents lives under LLM — no standalone top-level Agents owner.
     await expect(nav.locator("> .lv-v2-nav-item", { hasText: "Agents" })).toHaveCount(0);
 
     await expect(page.getByRole("heading", { name: "LLM / Agents" })).toBeVisible();
@@ -72,11 +72,11 @@ test.describe("Agents V2 visual", () => {
     expect(errors.filter((e) => !e.includes("favicon")).slice(0, 8), `console/page errors: ${errors.join(" | ")}`).toEqual([]);
   });
 
-  test("/agents keeps LM group open with Agents child active (not Hades)", async ({ page }) => {
+  test("/agents keeps LLM group open with Agents child active", async ({ page }) => {
     await installAgentsV2VisualFixture(page);
     await page.goto("/agents");
     await expect(page.locator(".lv-v2")).toBeVisible({ timeout: 20_000 });
-    await expect(page.locator(".lv-v2-nav-group.is-open .lv-v2-nav-item__label")).toContainText("LM");
+    await expect(page.locator(".lv-v2-nav-group.is-open .lv-v2-nav-item__label")).toContainText("LLM");
     await expect(page.locator(".lv-v2-nav-group.is-open .lv-v2-nav-child.is-active")).toContainText("Agents");
     await expect(page.locator(".lv-v2-nav-item.is-active .lv-v2-nav-item__label")).not.toContainText("Hades");
   });

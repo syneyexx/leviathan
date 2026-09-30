@@ -20,23 +20,17 @@ const ICONS: Record<V2NavIconId, ReactNode> = {
       <rect x="13" y="13" width="7" height="7" rx="1.2" />
     </>
   ),
-  chat: <path d="M5 6h14v9H9l-4 3V6z" />,
-  tasks: (
+  llm: (
     <>
-      <path d="M8 7h11M8 12h11M8 17h11" />
-      <path d="M5 7h.01M5 12h.01M5 17h.01" />
+      <path d="M12 4v6M12 10l-6 8M12 10l6 8M7.5 14.5h9" />
+      <circle cx="12" cy="4" r="1.4" />
     </>
   ),
-  agents: (
+  media: (
     <>
-      <circle cx="12" cy="8" r="3.2" />
-      <path d="M5 19c1.8-3.2 4.2-4.8 7-4.8s5.2 1.6 7 4.8" />
-    </>
-  ),
-  research: (
-    <>
-      <circle cx="11" cy="11" r="6.5" />
-      <path d="M16 16l4 4" />
+      <rect x="4" y="6" width="16" height="12" rx="2" />
+      <path d="M8 14l3-3 2.5 2.5L16 11l4 4" />
+      <circle cx="9" cy="10" r="1.2" />
     </>
   ),
   trading: (
@@ -45,25 +39,13 @@ const ICONS: Record<V2NavIconId, ReactNode> = {
       <path d="M17 6v4h4" />
     </>
   ),
-  lm: (
+  research: (
     <>
-      <path d="M12 4v6M12 10l-6 8M12 10l6 8M7.5 14.5h9" />
-      <circle cx="12" cy="4" r="1.4" />
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="M16 16l4 4" />
     </>
   ),
-  training: (
-    <>
-      <path d="M4 18V8l8-4 8 4v10l-8 4-8-4z" />
-      <path d="M12 8v10" />
-    </>
-  ),
-  data: (
-    <>
-      <ellipse cx="12" cy="7" rx="7" ry="3" />
-      <path d="M5 7v10c0 1.7 3.1 3 7 3s7-1.3 7-3V7" />
-    </>
-  ),
-  automation: (
+  runtime: (
     <>
       <circle cx="7" cy="8" r="2.2" />
       <circle cx="17" cy="8" r="2.2" />
@@ -71,22 +53,10 @@ const ICONS: Record<V2NavIconId, ReactNode> = {
       <path d="M8.8 9.2l2.4 5.2M15.2 9.2l-2.4 5.2M9.2 8h5.6" />
     </>
   ),
-  system: (
-    <>
-      <rect x="4" y="5" width="16" height="12" rx="2" />
-      <path d="M8 20h8M12 17v3" />
-    </>
-  ),
   settings: (
     <>
       <circle cx="12" cy="12" r="3" />
       <path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6.1 6.1l1.6 1.6M16.3 16.3l1.6 1.6M17.9 6.1l-1.6 1.6M7.7 16.3l-1.6 1.6" />
-    </>
-  ),
-  hades: (
-    <>
-      <path d="M12 4c-2.2 0-4 1.6-4 3.6 0 1.4.7 2.5 1.8 3.2L8 18h8l-1.8-7.2c1.1-.7 1.8-1.8 1.8-3.2C16 5.6 14.2 4 12 4z" />
-      <path d="M9 18h6M10 21h4" />
     </>
   ),
 };

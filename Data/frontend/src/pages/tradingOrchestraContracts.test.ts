@@ -114,8 +114,9 @@ describe("G66 — trading cards render only backend truth", () => {
     expect(universeLabel({ universe: [] })).toContain("leeg");
   });
 
-  it("registers the Onderzoek page under TradingCenter", () => {
+  it("registers the Onderzoek page under Trading Center", () => {
     const trading = MAIN_MENU.find((m) => m.id === "trading");
+    expect(trading?.label).toBe("Trading Center");
     expect(trading?.submenu?.some((s) => s.to === "/trading/onderzoek")).toBe(true);
     expect(trading?.submenu?.some((s) => s.to === "/trading/lab")).toBe(true);
   });

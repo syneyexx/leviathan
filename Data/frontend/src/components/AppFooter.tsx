@@ -15,8 +15,15 @@ const DEFAULT_ICON = (
 );
 
 const ICONS: Record<string, ReactNode> = {
-  chatten: <path d="M5 6h14v9H8l-3 3V6z" />,
-  coding: <path d="M8 8l-4 4 4 4M16 8l4 4-4 4" />,
+  "dashboard-home": (
+    <>
+      <rect x="4" y="4" width="7" height="7" rx="1.2" />
+      <rect x="13" y="4" width="7" height="7" rx="1.2" />
+      <rect x="4" y="13" width="7" height="7" rx="1.2" />
+      <rect x="13" y="13" width="7" height="7" rx="1.2" />
+    </>
+  ),
+  chat: <path d="M5 6h14v9H8l-3 3V6z" />,
   taken: <path d="M5 19V9M12 19V5M19 19v-7" />,
   modellen: (
     <>

@@ -1,9 +1,13 @@
 /**
- * Leviathan V2 primary navigation — Screen 1 sidebar contract.
+ * Leviathan V2 primary navigation — left sidebar contract.
  *
  * Route truth for expandable group children is adapted from MAIN_MENU
- * (canonical product IA) where possible. V2 presentation metadata (icons,
- * Screen 1 labels) lives here — do not maintain a second independent route tree.
+ * (canonical product IA). V2 presentation metadata (icons, labels) lives
+ * here — do not maintain a second independent route tree.
+ *
+ * Exact left-nav groups (nothing else between):
+ * Dashboard · LLM · Media Control · Trading Center · Onderzoek & Kennis ·
+ * Plugins & Runtime · Instellingen
  */
 
 import { MAIN_MENU, normalizePath, type SubMenuItem } from "./menu";
@@ -29,17 +33,11 @@ export type V2NavItem = {
 
 export type V2NavIconId =
   | "dashboard"
-  | "chat"
-  | "tasks"
-  | "agents"
-  | "research"
+  | "llm"
+  | "media"
   | "trading"
-  | "hades"
-  | "lm"
-  | "training"
-  | "data"
-  | "automation"
-  | "system"
+  | "research"
+  | "runtime"
   | "settings";
 
 /** Map MAIN_MENU submenu rows into V2 child presentation nodes. */
@@ -58,134 +56,44 @@ export function v2ChildrenFromMainMenu(mainMenuId: string): readonly V2NavChild[
 }
 
 /**
- * Dashboard Screen 1 children — home + Taken.
- * Chat moved under Hades AI (Chat V2 Screen 1). Coding Agent remains
- * reachable via MAIN_MENU / router without forcing it into this rail.
+ * Build an expandable V2 group from a MAIN_MENU section.
+ * Instellingen stays a single non-expandable link (no left-nav dropdown).
  */
-const DASHBOARD_CHILDREN: readonly V2NavChild[] = [
-  { id: "dashboard-home", label: "Dashboard", to: "/", match: ["/"] },
-  { id: "taken", label: "Taken", to: "/tasks", match: ["/tasks"] },
-];
-
-/** Research / Onderzoek & Kennis — full canonical submenu from MAIN_MENU. */
-const RESEARCH_CHILDREN = v2ChildrenFromMainMenu("research");
+function v2GroupFromMainMenu(
+  mainMenuId: string,
+  icon: V2NavIconId,
+  options?: { expandable?: boolean; includeChildren?: boolean },
+): V2NavItem {
+  const section = MAIN_MENU.find((item) => item.id === mainMenuId);
+  if (!section) {
+    throw new Error(`MAIN_MENU section missing: ${mainMenuId}`);
+  }
+  const expandable = options?.expandable ?? true;
+  const includeChildren = options?.includeChildren ?? expandable;
+  return {
+    id: section.id,
+    label: section.label,
+    to: section.to,
+    match: section.match,
+    expandable,
+    icon,
+    children: includeChildren ? v2ChildrenFromMainMenu(mainMenuId) : undefined,
+  };
+}
 
 /**
- * Hades AI — Chat V2 Screen 1 submenu.
- * Routes map to existing product surfaces; Prompts / Evaluations are
- * first-class thin V2 pages over real backend capabilities.
- *
- * MAIN_MENU places Agents under LLM. Hades → Agents still deep-links to
- * `/agents`, but intentionally has no `match` so it never steals active
- * highlighting from LM → Agents.
- */
-const HADES_CHILDREN: readonly V2NavChild[] = [
-  { id: "chat", label: "Chat", to: "/chat", match: ["/chat"] },
-  { id: "reasoning", label: "Reasoning", to: "/cognition", match: ["/cognition"] },
-  { id: "hades-agents", label: "Agents", to: "/agents", match: [] },
-  { id: "bibliotheek", label: "Bibliotheek", to: "/knowledge", match: ["/knowledge"] },
-  { id: "prompts", label: "Prompts", to: "/prompts", match: ["/prompts"] },
-  { id: "evaluations", label: "Evaluations", to: "/evaluations", match: ["/evaluations"] },
-];
-
-/**
- * LM — expandable group derived from MAIN_MENU("llm") (Modellen / Agents /
- * Training / Dataset Management / Offline Datasets / Statestieken).
- *
- * Canonical ownership for `/agents` is LM → Agents (MAIN_MENU authority).
- * Training / dataset / analytics routes keep dedicated top-level owners where
- * those Screen 1 rail items already exist; LM children still deep-link to them.
- */
-const LLM_CHILDREN = v2ChildrenFromMainMenu("llm");
-
-/**
- * Screen 1 primary rail. Deep-link destinations for Media / Plugin & Runtime /
- * Coding / etc. remain registered in the router and MAIN_MENU; they are not
- * deleted — they stay reachable from those pages' own surfaces.
- *
- * Agents is intentionally NOT a standalone top-level owner — MAIN_MENU places
- * it under LLM, and `/agents` must light LM → Agents only.
+ * Screen 1 primary rail — exact canonical IA from MAIN_MENU.
+ * Deep-link destinations not listed here remain registered in the router.
  */
 export const V2_PRIMARY_NAV: readonly V2NavItem[] = [
-  {
-    id: "dashboard",
-    label: "Dashboard",
-    to: "/",
-    match: ["/", "/tasks"],
-    expandable: true,
-    icon: "dashboard",
-    children: DASHBOARD_CHILDREN,
-  },
-  {
-    id: "research",
-    label: "Research",
-    to: "/research",
-    match: ["/research", "/brain", "/memory", "/knowledge", "/evidence"],
-    expandable: true,
-    icon: "research",
-    children: RESEARCH_CHILDREN,
-  },
-  {
-    id: "trading",
-    label: "Trading",
-    to: "/trading/simulatie",
-    match: ["/trading"],
-    icon: "trading",
-  },
-  {
-    id: "hades",
-    label: "Hades AI",
-    to: "/chat",
-    match: ["/chat", "/cognition", "/prompts", "/evaluations"],
-    expandable: true,
-    icon: "hades",
-    children: HADES_CHILDREN,
-  },
-  {
-    id: "lm",
-    label: "LM",
-    to: "/models",
-    match: ["/models", "/agents"],
-    expandable: true,
-    icon: "lm",
-    children: LLM_CHILDREN,
-  },
-  {
-    id: "training",
-    label: "Training",
-    to: "/training",
-    match: ["/training"],
-    icon: "training",
-  },
-  {
-    id: "data",
-    label: "Data",
-    to: "/datasets",
-    match: ["/datasets", "/dataset-management", "/offline-datasets"],
-    icon: "data",
-  },
-  {
-    id: "automation",
-    label: "Automation",
-    to: "/workflows",
-    match: ["/workflows"],
-    icon: "automation",
-  },
-  {
-    id: "system",
-    label: "System",
-    to: "/performance",
-    match: ["/performance", "/console", "/tools", "/modules", "/skills", "/mcp"],
-    icon: "system",
-  },
-  {
-    id: "settings",
-    label: "Settings",
-    to: "/settings",
-    match: ["/settings"],
-    icon: "settings",
-  },
-] as const;
+  v2GroupFromMainMenu("dashboard", "dashboard"),
+  v2GroupFromMainMenu("llm", "llm"),
+  v2GroupFromMainMenu("media", "media"),
+  v2GroupFromMainMenu("trading", "trading"),
+  v2GroupFromMainMenu("research", "research"),
+  v2GroupFromMainMenu("runtime", "runtime"),
+  v2GroupFromMainMenu("settings", "settings", { expandable: false, includeChildren: false }),
+];
 
 export function pathMatchesPrefix(pathname: string, prefix: string): boolean {
   const path = normalizePath(pathname);
@@ -234,15 +142,6 @@ export function findActiveV2Child(
 /** Expandable groups auto-open when their match prefixes are active. */
 export function shouldAutoExpandV2Group(item: V2NavItem, pathname: string): boolean {
   if (!item.expandable) return false;
-  // Hades owns Chat/Reasoning/Prompts/Evaluations expansion.
-  // On /agents LM is the owner (MAIN_MENU); Hades must not auto-expand.
-  // On /knowledge Research stays the owner (canonical research IA).
-  if (item.id === "hades") {
-    return item.match.some((prefix) => pathMatchesPrefix(pathname, prefix));
-  }
-  if (item.id === "research") {
-    return isV2NavItemActive(item, pathname);
-  }
   return isV2NavItemActive(item, pathname);
 }
 

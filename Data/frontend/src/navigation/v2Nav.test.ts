@@ -9,27 +9,58 @@ import {
 } from "./v2Nav";
 
 const dashboard = V2_PRIMARY_NAV.find((item) => item.id === "dashboard");
+const llm = V2_PRIMARY_NAV.find((item) => item.id === "llm");
+const media = V2_PRIMARY_NAV.find((item) => item.id === "media");
+const trading = V2_PRIMARY_NAV.find((item) => item.id === "trading");
 const research = V2_PRIMARY_NAV.find((item) => item.id === "research");
-const hades = V2_PRIMARY_NAV.find((item) => item.id === "hades");
-const lm = V2_PRIMARY_NAV.find((item) => item.id === "lm");
+const runtime = V2_PRIMARY_NAV.find((item) => item.id === "runtime");
+const settings = V2_PRIMARY_NAV.find((item) => item.id === "settings");
+
+describe("v2Nav primary rail contract", () => {
+  it("exposes exactly the canonical left-nav groups in order", () => {
+    expect(V2_PRIMARY_NAV.map((item) => item.label)).toEqual([
+      "Dashboard",
+      "LLM",
+      "Media Control",
+      "Trading Center",
+      "Onderzoek & Kennis",
+      "Plugins & Runtime",
+      "Instellingen",
+    ]);
+  });
+
+  it("derives expandable children from MAIN_MENU and keeps Instellingen flat", () => {
+    for (const id of ["dashboard", "llm", "media", "trading", "research", "runtime"] as const) {
+      const nav = V2_PRIMARY_NAV.find((item) => item.id === id);
+      const main = MAIN_MENU.find((item) => item.id === id);
+      expect(nav?.expandable).toBe(true);
+      expect(nav?.children?.map((c) => c.label)).toEqual(main?.submenu.map((s) => s.label));
+      expect(nav?.children?.map((c) => c.to)).toEqual(main?.submenu.map((s) => s.to));
+    }
+    expect(settings?.expandable).toBeFalsy();
+    expect(settings?.children).toBeUndefined();
+    expect(settings?.to).toBe("/settings");
+  });
+});
 
 describe("v2Nav dashboard group", () => {
-  it("marks dashboard group active on / and /tasks, not /chat", () => {
+  it("marks dashboard group active on /, /chat and /tasks", () => {
     expect(dashboard).toBeDefined();
     if (!dashboard) return;
     expect(isV2NavItemActive(dashboard, "/")).toBe(true);
     expect(isV2NavItemActive(dashboard, "/tasks")).toBe(true);
-    expect(isV2NavItemActive(dashboard, "/chat")).toBe(false);
+    expect(isV2NavItemActive(dashboard, "/chat")).toBe(true);
     expect(isV2NavItemActive(dashboard, "/agents")).toBe(false);
   });
 
-  it("findActiveV2Child resolves home and tasks", () => {
+  it("findActiveV2Child resolves home, chat and tasks", () => {
     expect(dashboard).toBeDefined();
     if (!dashboard) return;
     expect(findActiveV2Child(dashboard, "/")?.id).toBe("dashboard-home");
+    expect(findActiveV2Child(dashboard, "/chat")?.id).toBe("chat");
     expect(findActiveV2Child(dashboard, "/tasks")?.id).toBe("taken");
     expect(findActiveV2Child(dashboard, "/tasks/123")?.id).toBe("taken");
-    expect(findActiveV2Child(dashboard, "/chat")).toBeNull();
+    expect(findActiveV2Child(dashboard, "/agents")).toBeNull();
   });
 
   it("shouldAutoExpandV2Group expands dashboard on its match prefixes", () => {
@@ -37,52 +68,94 @@ describe("v2Nav dashboard group", () => {
     if (!dashboard) return;
     expect(shouldAutoExpandV2Group(dashboard, "/")).toBe(true);
     expect(shouldAutoExpandV2Group(dashboard, "/tasks")).toBe(true);
-    expect(shouldAutoExpandV2Group(dashboard, "/chat")).toBe(false);
+    expect(shouldAutoExpandV2Group(dashboard, "/chat")).toBe(true);
     expect(shouldAutoExpandV2Group(dashboard, "/research")).toBe(false);
   });
 });
 
-describe("v2Nav Hades AI group", () => {
-  it("is expandable with Screen 1 children", () => {
-    expect(hades).toBeDefined();
-    if (!hades) return;
-    expect(hades.expandable).toBe(true);
-    expect(hades.children?.map((c) => c.label)).toEqual([
-      "Chat",
-      "Reasoning",
+describe("v2Nav LLM group", () => {
+  it("is expandable and derives children from MAIN_MENU('llm')", () => {
+    expect(llm).toBeDefined();
+    if (!llm) return;
+    expect(llm.expandable).toBe(true);
+    const fromMenu = v2ChildrenFromMainMenu("llm");
+    expect(llm.children?.map((c) => c.to)).toEqual(fromMenu.map((c) => c.to));
+    expect(llm.children?.map((c) => c.label)).toEqual([
+      "Modellen",
       "Agents",
-      "Bibliotheek",
-      "Prompts",
-      "Evaluations",
+      "Training",
+      "Dataset Manager",
+      "Offline Datasets",
+      "Statestieken",
     ]);
   });
 
-  it("marks Hades active on chat/cognition/prompts/evaluations", () => {
-    expect(hades).toBeDefined();
-    if (!hades) return;
-    expect(isV2NavItemActive(hades, "/chat")).toBe(true);
-    expect(isV2NavItemActive(hades, "/cognition")).toBe(true);
-    expect(isV2NavItemActive(hades, "/prompts")).toBe(true);
-    expect(isV2NavItemActive(hades, "/evaluations")).toBe(true);
-    expect(isV2NavItemActive(hades, "/")).toBe(false);
-    expect(isV2NavItemActive(hades, "/agents")).toBe(false);
+  it("marks LLM active on all LLM child routes", () => {
+    expect(llm).toBeDefined();
+    if (!llm) return;
+    expect(isV2NavItemActive(llm, "/models")).toBe(true);
+    expect(isV2NavItemActive(llm, "/agents")).toBe(true);
+    expect(isV2NavItemActive(llm, "/training")).toBe(true);
+    expect(isV2NavItemActive(llm, "/dataset-management")).toBe(true);
+    expect(isV2NavItemActive(llm, "/offline-datasets")).toBe(true);
+    expect(isV2NavItemActive(llm, "/analytics")).toBe(true);
+    expect(isV2NavItemActive(llm, "/")).toBe(false);
   });
 
-  it("does not claim Agents child ownership on /agents (LM owns it)", () => {
-    expect(hades).toBeDefined();
-    if (!hades) return;
-    expect(findActiveV2Child(hades, "/agents")).toBeNull();
-    expect(hades.children?.find((c) => c.id === "hades-agents")?.to).toBe("/agents");
-    expect(hades.children?.find((c) => c.id === "hades-agents")?.match).toEqual([]);
+  it("auto-expands LLM on child routes and marks Modellen active on /models", () => {
+    expect(llm).toBeDefined();
+    if (!llm) return;
+    expect(shouldAutoExpandV2Group(llm, "/models")).toBe(true);
+    expect(shouldAutoExpandV2Group(llm, "/agents")).toBe(true);
+    expect(shouldAutoExpandV2Group(llm, "/training")).toBe(true);
+    expect(findActiveV2Child(llm, "/models")?.label).toBe("Modellen");
+    expect(findActiveV2Child(llm, "/agents")?.label).toBe("Agents");
+  });
+});
+
+describe("v2Nav media / trading / runtime groups", () => {
+  it("keeps Media Control children and expands on /media routes", () => {
+    expect(media).toBeDefined();
+    if (!media) return;
+    expect(media.children?.map((c) => c.label)).toEqual([
+      "Overzicht",
+      "Youtube",
+      "Tiktok",
+      "Instagram",
+      "Facebook",
+      "Algemene Publicatiewachtrij",
+      "Viral Radar",
+      "Calendar",
+      "Analytics",
+      "Bibliotheek",
+      "Personas",
+    ]);
+    expect(shouldAutoExpandV2Group(media, "/media/youtube")).toBe(true);
+    expect(findActiveV2Child(media, "/media/youtube")?.label).toBe("Youtube");
   });
 
-  it("auto-expands on /chat and marks Chat child active", () => {
-    expect(hades).toBeDefined();
-    if (!hades) return;
-    expect(shouldAutoExpandV2Group(hades, "/chat")).toBe(true);
-    expect(findActiveV2Child(hades, "/chat")?.id).toBe("chat");
-    expect(findActiveV2Child(hades, "/cognition")?.label).toBe("Reasoning");
-    expect(findActiveV2Child(hades, "/prompts")?.label).toBe("Prompts");
+  it("keeps Trading Center children including Markt Simulatie", () => {
+    expect(trading).toBeDefined();
+    if (!trading) return;
+    expect(trading.children?.[0]?.label).toBe("Markt Simulatie");
+    expect(trading.children?.map((c) => c.label)).toContain("PAPER Trading");
+    expect(trading.children?.map((c) => c.label)).toContain("BROKER Trading");
+    expect(shouldAutoExpandV2Group(trading, "/trading/paper")).toBe(true);
+  });
+
+  it("keeps Plugins & Runtime children starting with Performance", () => {
+    expect(runtime).toBeDefined();
+    if (!runtime) return;
+    expect(runtime.children?.map((c) => c.label)).toEqual([
+      "Performance",
+      "Tools",
+      "Modules",
+      "Skills",
+      "MCP",
+      "Workflows",
+      "Console",
+    ]);
+    expect(shouldAutoExpandV2Group(runtime, "/performance")).toBe(true);
   });
 });
 
@@ -120,52 +193,5 @@ describe("v2Nav research group", () => {
 
   it("does not duplicate dashboard children into research", () => {
     expect(research?.children?.some((c) => c.to === "/chat")).toBe(false);
-  });
-});
-
-describe("v2Nav LM group", () => {
-  it("is expandable and derives children from MAIN_MENU('llm')", () => {
-    expect(lm).toBeDefined();
-    if (!lm) return;
-    expect(lm.expandable).toBe(true);
-    const fromMenu = v2ChildrenFromMainMenu("llm");
-    expect(lm.children?.map((c) => c.to)).toEqual(fromMenu.map((c) => c.to));
-    const main = MAIN_MENU.find((m) => m.id === "llm");
-    expect(main).toBeDefined();
-    expect(lm.children?.map((c) => c.to)).toEqual(main!.submenu.map((s) => s.to));
-    expect(lm.children?.map((c) => c.label)).toContain("Modellen");
-    expect(lm.children?.map((c) => c.label)).toContain("Agents");
-  });
-
-  it("marks LM active on /models and /agents — MAIN_MENU owns Agents under LLM", () => {
-    expect(lm).toBeDefined();
-    if (!lm) return;
-    expect(isV2NavItemActive(lm, "/models")).toBe(true);
-    expect(isV2NavItemActive(lm, "/agents")).toBe(true);
-    expect(isV2NavItemActive(lm, "/training")).toBe(false);
-    expect(isV2NavItemActive(lm, "/dataset-management")).toBe(false);
-    expect(isV2NavItemActive(lm, "/offline-datasets")).toBe(false);
-    expect(isV2NavItemActive(lm, "/analytics")).toBe(false);
-  });
-
-  it("shouldAutoExpandV2Group expands LM on /models and /agents", () => {
-    expect(lm).toBeDefined();
-    if (!lm) return;
-    expect(shouldAutoExpandV2Group(lm, "/models")).toBe(true);
-    expect(shouldAutoExpandV2Group(lm, "/agents")).toBe(true);
-    expect(shouldAutoExpandV2Group(lm, "/training")).toBe(false);
-    expect(shouldAutoExpandV2Group(lm, "/dataset-management")).toBe(false);
-  });
-
-  it("findActiveV2Child marks Modellen on /models and Agents on /agents", () => {
-    expect(lm).toBeDefined();
-    if (!lm) return;
-    expect(findActiveV2Child(lm, "/models")?.label).toBe("Modellen");
-    expect(findActiveV2Child(lm, "/agents")?.label).toBe("Agents");
-  });
-
-  it("does not keep a standalone top-level Agents rail owner", () => {
-    expect(V2_PRIMARY_NAV.some((item) => item.id === "agents" && !item.expandable)).toBe(false);
-    expect(V2_PRIMARY_NAV.find((item) => item.id === "agents")).toBeUndefined();
   });
 });

@@ -114,12 +114,12 @@ test.describe("Research V2 visual", () => {
     await expect(page.getByText("Timeline", { exact: true })).toBeVisible({ timeout: 10_000 });
   });
 
-  test("/research keeps Research group open with Research child active", async ({ page }) => {
+  test("/research keeps Onderzoek & Kennis group open with Research child active", async ({ page }) => {
     await installResearchV2VisualFixture(page);
     await page.goto("/research");
     await expect(page.locator(".lv-v2")).toBeVisible({ timeout: 20_000 });
     await expect(page.locator(".lv-v2-nav-group.is-open .lv-v2-nav-item__label")).toContainText(
-      "Research",
+      "Onderzoek & Kennis",
     );
     await expect(page.locator(".lv-v2-nav-child.is-active")).toContainText("Research");
   });
