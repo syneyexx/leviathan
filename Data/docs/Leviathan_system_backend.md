@@ -1542,12 +1542,40 @@ Old evidence remains immutable. PAPER-observed StrategyMemory has its own episte
 
 # 21. Workflows, schedules and tasks
 
-- `Data/modules/workflows/` — workflow store/runtime/multi-step execution;
-- `Data/modules/schedules/` — schedule persistence/runner;
+- `Data/modules/workflows/` — reusable workflow **definitions**, immutable **versions**, and
+  version-pinned **executions** (graph + legacy linear), orchestrated by `WorkflowRuntime`;
+- `Data/modules/schedules/` — schedule persistence/runner (including one-shot delay resumes);
 - `Data/modules/tasks/` — durable operator task service;
 - `Data/modules/run/` — parent run/event envelope utilities.
 
 They reuse JobRuntime/ExecutionGateway rather than maintaining independent execution queues or side-effect channels.
+
+## 21.0 Workflow definition vs execution (CURRENT)
+
+Owner: `Data/modules/workflows/` (`types.py`, `store.py`, `runtime.py`, `graph.py`, `variables.py`, `overview.py`).  
+HTTP: `Data/backend/routes/workflows.py`. CONTROL DB migration **v60** adds `workflow_versions` /
+`workflow_executions` and extends `workflows` as the definition table (no second database file).
+
+Domain split:
+
+| Concept | Meaning | State examples |
+|---------|---------|----------------|
+| **Definition** | Reusable automation identity + latest editable graph | `ACTIVE` / `INACTIVE` / `DRAFT` / `TEMPLATE` / `ARCHIVED` |
+| **Version** | Immutable executable snapshot (graph, variables, config, layout) | integer `version` + content hash |
+| **Execution** | One run pinned to a version | `QUEUED` → `RUNNING` / `WAITING` / `WAITING_APPROVAL` → `COMPLETED` / `FAILED` / `CANCELLED` |
+
+Rules:
+
+- Definition status is **not** execution state. Completing a run does not mark the definition `COMPLETED`.
+- Manual `POST /api/workflows/{id}/run` creates a **new** execution of the current (or chosen) version and enqueues `workflow.advance` — it never mutates definition state to `RUNNING`.
+- Historical executions keep their pinned `workflow_version` after later edits.
+- Legacy `WorkflowRecord.workflow_id` addressing equals **execution_id** so TaskService / ScheduleRunner / the workflow worker keep working. Legacy linear steps auto-convert to a sequential graph on migrate/create.
+- Graph control nodes: trigger (skipped in-advance), capability/agent via ExecutionGateway, structured condition predicates (no `eval`), bounded loop, durable delay via ScheduleStore one-shot → `workflow.advance` (no worker `sleep`).
+- Automatic schedule triggers require definition `ACTIVE`; inactive definitions still allow explicit manual run.
+- Overview KPIs / 24h buckets / top workflows / recent executions are server-side aggregates (`GET /api/workflows/overview`). Success rate denominator: `successful / (successful + failed)` (cancelled excluded). Resource gauges compose SystemTelemetry + workflow-pool worker busy/desired — never fabricate zeros on probe failure (`UNMEASURED`).
+- Templates live as definitions with status `TEMPLATE` (same store). Visual screenshot numbers exist only in `Data/frontend/src/mocks/workflowsV2VisualFixture.ts` behind `__LV_V2_VISUAL_FIXTURE__ === 'workflows'`.
+
+Worker Fabric: pool `workflow` owns `workflow.advance` continuation; `EXTERNAL_REQUIRED` child capabilities route to specialist pools; no busy-wait; cancellation propagates to pending child jobs when supported.
 
 ## 21.1 TaskService Taken projections
 

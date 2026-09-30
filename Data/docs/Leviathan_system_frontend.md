@@ -798,7 +798,15 @@ Skill execution still uses backend capability authority. Catalog presence and en
 # 29. MCP, Workflows and Console UI
 
 - `/mcp` → `src/pages/McpPage.tsx`: server/session/tool state from backend MCP bridge;
-- `/workflows` → `src/pages/WorkflowsPage.tsx`: workflow store/runtime control;
+- `/workflows` → `src/pages/WorkflowsPage.tsx` + `src/pages/workflows/useWorkflowsWorkspace.ts` +
+  `src/components/workflows/*` — **Runtime & Tools / Workflows** Leviathan V2 control plane
+  (`AppShell variant="v2"`). Definition library, graph canvas editor, detail
+  (Overzicht / Configuratie / Variabelen / Versies), executions/logs tabs, and bottom
+  analytics project canonical WorkflowStore / WorkflowRuntime / ScheduleRunner /
+  ExecutionGateway / SystemTelemetry truth. MAIN_MENU owns the page under Runtime & Tools
+  (`/workflows`). Production never falls back to mock KPI/fixture rows on API failure.
+  Visual fixture: `src/mocks/workflowsV2VisualFixture.ts` + `e2e/workflows-v2.visual.spec.ts`
+  (reference: `docs/ui_reference/workflows-v2-reference.png`, 1664×936);
 - `/console` → `src/pages/ConsolePage.tsx`: operator console projection;
 - `/performance` → `src/pages/PerformancePage.tsx`: performance/native/DB read model.
 
