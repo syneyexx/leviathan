@@ -728,6 +728,25 @@ export const api = {
     return request<{ jobs: JobRecord[] }>("/api/jobs");
   },
 
+  /** GET /api/media/status — cached media engine posture (never runs FFmpeg). */
+  mediaStatus(): Promise<Record<string, unknown>> {
+    return request<Record<string, unknown>>("/api/media/status");
+  },
+
+  /** POST /api/media/request — enqueue media capability via JobRuntime. */
+  mediaRequest(payload: {
+    action: string;
+    path?: string | null;
+    prompt?: string | null;
+    instruction?: string | null;
+    wait_seconds?: number | null;
+  }): Promise<Record<string, unknown>> {
+    return request<Record<string, unknown>>("/api/media/request", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
   getJob(jobId: string): Promise<{ job: JobRecord }> {
     return request<{ job: JobRecord }>(`/api/jobs/${encodeURIComponent(jobId)}`);
   },

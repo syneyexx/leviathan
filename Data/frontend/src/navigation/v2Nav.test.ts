@@ -119,19 +119,15 @@ describe("v2Nav media / trading / runtime groups", () => {
     if (!media) return;
     expect(media.children?.map((c) => c.label)).toEqual([
       "Overzicht",
-      "Youtube",
-      "Tiktok",
-      "Instagram",
-      "Facebook",
-      "Algemene Publicatiewachtrij",
-      "Viral Radar",
-      "Calendar",
-      "Analytics",
       "Bibliotheek",
-      "Personas",
+      "Genereren",
+      "Bewerken",
+      "Planning",
+      "Distributie",
     ]);
+    expect(shouldAutoExpandV2Group(media, "/media/library")).toBe(true);
+    expect(findActiveV2Child(media, "/media/library")?.label).toBe("Bibliotheek");
     expect(shouldAutoExpandV2Group(media, "/media/youtube")).toBe(true);
-    expect(findActiveV2Child(media, "/media/youtube")?.label).toBe("Youtube");
   });
 
   it("keeps Trading Center children including Markt Simulatie", () => {

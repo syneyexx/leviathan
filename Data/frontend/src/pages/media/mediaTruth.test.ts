@@ -28,13 +28,17 @@ describe("media connection truth helpers", () => {
 
 describe("Media Control fabricated metrics (FRONTEND-004)", () => {
   const src = read("MediaControlPage.tsx");
+  const mid = readFileSync(
+    join(here, "../../components/media/MediaMidGrid.tsx"),
+    "utf8",
+  );
 
   it("does not present fabricated subscriber / reach KPIs as live", () => {
     expect(src).not.toMatch(/1\.32M|1\.80M|8\.42M|142\.6K/);
     expect(src).not.toMatch(/All Systems Nominal/);
     expect(src).not.toMatch(/MEMORY ONLINE/);
     expect(src).toMatch(/MediaTruthBanner|NOT CONNECTED|UNAVAILABLE/);
-    expect(src).toMatch(/data-truth="not-connected"|data-truth="unavailable"/);
+    expect(`${src}\n${mid}`).toMatch(/data-truth="not-connected"|data-truth="unavailable"/);
   });
 });
 

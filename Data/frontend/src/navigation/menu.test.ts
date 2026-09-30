@@ -111,17 +111,17 @@ describe("navigation menu", () => {
   });
 
   it("resolves nested media and trading submenu routes", () => {
-    const media = findMainMenuByPath("/media/youtube");
+    const media = findMainMenuByPath("/media/library");
     expect(media.id).toBe("media");
     expect(findSubMenuItem(media, "/media")?.id).toBe("overzicht");
-    expect(findSubMenuItem(media, "/media/youtube")?.id).toBe("youtube");
-    expect(findSubMenuItem(media, "/media/youtube")?.label).toBe("Youtube");
-    expect(findSubMenuItem(media, "/media/queue")?.id).toBe("queue");
-    expect(findSubMenuItem(media, "/media/queue")?.label).toBe("Algemene Publicatiewachtrij");
-    expect(findSubMenuItem(media, "/media/viral")?.label).toBe("Viral Radar");
-    expect(findSubMenuItem(media, "/media/calendar")?.label).toBe("Calendar");
+    expect(findSubMenuItem(media, "/media/library")?.id).toBe("library");
     expect(findSubMenuItem(media, "/media/library")?.label).toBe("Bibliotheek");
-    expect(findSubMenuItem(media, "/media/personas")?.label).toBe("Personas");
+    expect(findSubMenuItem(media, "/media/genereren")?.label).toBe("Genereren");
+    expect(findSubMenuItem(media, "/media/bewerken")?.label).toBe("Bewerken");
+    expect(findSubMenuItem(media, "/media/planning")?.label).toBe("Planning");
+    expect(findSubMenuItem(media, "/media/distributie")?.label).toBe("Distributie");
+    // Deep platform routes remain under Media Control even when not in primary submenu.
+    expect(findMainMenuByPath("/media/youtube").id).toBe("media");
     expect(findMainMenuByPath("/trading/simulatie").id).toBe("trading");
     expect(findMainMenuByPath("/trading/simulatie").label).toBe("Trading Center");
     expect(findSubMenuItem(findMainMenuByPath("/trading/simulatie"), "/trading/simulatie")?.label).toBe(
