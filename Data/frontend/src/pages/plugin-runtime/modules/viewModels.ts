@@ -830,14 +830,13 @@ export function lifecycleBadges(row: ManagedModuleRow): { label: string; tone: S
   const badges: { label: string; tone: StatusTone }[] = [];
   const s = statusUpper(row.status);
   const failed = s === "FAILED" || s === "ERROR";
-  if (!failed && (s === "DISCOVERED" || !isInstalled(row))) {
-    badges.push({ label: "DISCOVERED", tone: "cyan" });
-  }
-  if (isInstalled(row)) {
+  if (!failed && (s === "DISCOVERED" || s === "NOT_INSTALLED" || (!isInstalled(row) && !s))) {
+    badges.push({ label: s === "NOT_INSTALLED" ? "NOT INSTALLED" : "DISCOVERED", tone: "cyan" });
+  } else if (s && s !== "INSTALLED") {
+    // Prefer live lifecycle status (READY/RUNNING/DEGRADED/…) over a redundant INSTALLED chip.
+    badges.push({ label: s === "NOT_INSTALLED" ? "NOT INSTALLED" : s, tone: statusTone(s) });
+  } else if (isInstalled(row)) {
     badges.push({ label: "INSTALLED", tone: "ok" });
-  }
-  if (s && s !== "DISCOVERED" && s !== "INSTALLED" && s !== "NOT_INSTALLED") {
-    badges.push({ label: s, tone: statusTone(s) });
   }
   if (row.adapter) {
     badges.push({ label: row.adapter.toUpperCase(), tone: "muted" });

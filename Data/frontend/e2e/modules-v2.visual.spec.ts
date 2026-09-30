@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertModulesFrozenClockContract, installModulesV2VisualFixture } from "./helpers/modulesV2Visual";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REFERENCE = path.resolve(__dirname, "../../docs/ui_reference/modules-v2-reference.png");
@@ -10,25 +11,31 @@ const REFERENCE = path.resolve(__dirname, "../../docs/ui_reference/modules-v2-re
  * Fixture-only data via window.__LV_V2_VISUAL_FIXTURE__ = 'modules'.
  */
 test.describe("Modules V2 visual", () => {
-  test.use({ viewport: { width: 1672, height: 941 } });
+  test.use({ viewport: { width: 1672, height: 941 }, deviceScaleFactor: 1 });
+
+  test("frozen clock contract", () => {
+    assertModulesFrozenClockContract();
+  });
 
   test("Screen 1 matches reference within tolerance", async ({ page }) => {
-    await page.addInitScript(() => {
-      (window as Window & { __LV_V2_VISUAL_FIXTURE__?: string; __LV_V2_FROZEN_NOW__?: string }).__LV_V2_VISUAL_FIXTURE__ =
-        "modules";
-      (window as Window & { __LV_V2_FROZEN_NOW__?: string }).__LV_V2_FROZEN_NOW__ = "2025-05-25T14:37:26.000Z";
-    });
+    await installModulesV2VisualFixture(page);
 
     await page.goto("/modules?module=fincept-terminal");
     await expect(page.locator(".lv-v2-page--modules")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByRole("heading", { name: "Modules", exact: true }).first()).toBeVisible();
     await expect(page.getByText("Feature Flag")).toBeVisible();
     await expect(page.getByText("Fincept Terminal Analytics").first()).toBeVisible();
+    await expect(page.getByText("Runtime Informatie")).toBeVisible();
+    await expect(page.getByText("Recente Activiteiten")).toBeVisible();
+    await expect(page.getByText("Dependencies & Installatie")).toBeVisible();
+    await page.waitForTimeout(400);
 
     await expect(page).toHaveScreenshot("modules-v2-screen1.png", {
       fullPage: false,
       maxDiffPixelRatio: 0.08,
-      // Reference lives under docs; Playwright stores baselines under e2e.
+      animations: "disabled",
     });
   });
 });
+
+void REFERENCE;

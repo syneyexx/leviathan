@@ -118,6 +118,25 @@ function formatActivityTime(ev: Record<string, unknown>): string {
   return "—";
 }
 
+/** Avoid leaking absolute host install roots in the operator console. */
+function safeDisplayPath(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed) return "—";
+  const markers = ["/modules/", "/external-modules/", "/runtimes/", "/venvs/"];
+  for (const marker of markers) {
+    const idx = trimmed.toLowerCase().lastIndexOf(marker);
+    if (idx >= 0) {
+      return `$INSTALL_ROOT${trimmed.slice(idx)}`;
+    }
+  }
+  if (trimmed.startsWith("/") || /^[A-Za-z]:[\\/]/.test(trimmed)) {
+    const parts = trimmed.replace(/\\/g, "/").split("/").filter(Boolean);
+    const tail = parts.slice(-3).join("/");
+    return tail ? `…/${tail}` : "—";
+  }
+  return trimmed;
+}
+
 function detailPanelText(args: {
   tab: DetailTabId;
   selected: ManagedModuleRow | null;
@@ -351,10 +370,11 @@ export function ModulesDetail(props: Props) {
       : runtime && typeof runtime.timeout === "number"
         ? `${runtime.timeout}s`
         : "—";
-  const cwd =
+  const rawCwd =
     typeof runtime?.working_directory === "string"
       ? String(runtime.working_directory)
-      : selected.manifest?.source_path ?? "—";
+      : selected.manifest?.source_path ?? null;
+  const cwd = rawCwd ? safeDisplayPath(rawCwd) : "—";
 
   return (
     <aside className="lv-v2-panel lv-v2-modules-detail" aria-label="Geselecteerde module">
@@ -468,15 +488,17 @@ export function ModulesDetail(props: Props) {
               </button>
             );
           })}
-          <button
-            type="button"
-            role="tab"
-            aria-selected={props.detailTab === "execute"}
-            className={`lv-v2-modules-tab${props.detailTab === "execute" ? " is-active" : ""}`}
-            onClick={() => props.setDetailTab("execute")}
-          >
-            Execute
-          </button>
+          {props.detailTab === "execute" ? (
+            <button
+              type="button"
+              role="tab"
+              aria-selected
+              className="lv-v2-modules-tab is-active"
+              onClick={() => props.setDetailTab("execute")}
+            >
+              Execute
+            </button>
+          ) : null}
           <div className="lv-v2-modules-tabs__tools">
             <button type="button" className="lv-v2-modules-icon-btn" title="Kopieer panel" onClick={() => copyText(panelText)}>
               <IconCopy />
@@ -511,6 +533,77 @@ export function ModulesDetail(props: Props) {
               </dl>
             </Panel>
 
+            <Panel
+              title="Beschikbare Operaties"
+              className="lv-v2-modules-subpanel"
+              meta={
+                <button
+                  type="button"
+                  className="lv-v2-modules-linkbtn"
+                  onClick={() => props.setDetailTab("execute")}
+                >
+                  Execute
+                </button>
+              }
+            >
+              {ops.length === 0 ? (
+                <p className="lv-v2-muted">Geen operaties gedeclareerd.</p>
+              ) : (
+                <table className="lv-v2-modules-ops-table">
+                  <thead>
+                    <tr>
+                      <th>Operatie</th>
+                      <th>Side effects</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ops.map((op) => {
+                      const cap = props.capabilitiesPayload.find(
+                        (c) => c.capabilityId.endsWith(`.${op}`) || c.name === op,
+                      );
+                      const effects = cap?.sideEffects?.length
+                        ? cap.sideEffects.join(", ")
+                        : sideEffects !== "—"
+                          ? sideEffects
+                          : "—";
+                      return (
+                        <tr key={op}>
+                          <td>
+                            <button
+                              type="button"
+                              className="lv-v2-modules-op-link"
+                              onClick={() => {
+                                props.setOperation(op);
+                                props.setDetailTab("execute");
+                              }}
+                            >
+                              <code>{op}</code>
+                            </button>
+                          </td>
+                          <td>{effects}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </Panel>
+
+            <Panel title="Dependencies & Installatie" className="lv-v2-modules-subpanel">
+              <dl className="lv-v2-modules-kv">
+                <dt>Strategies</dt>
+                <dd>{strategies.length ? strategies.join(", ") : "UNMEASURED"}</dd>
+                <dt>Python deps</dt>
+                <dd>
+                  {depList.length
+                    ? depList.join(", ")
+                    : deps.kind === "measured"
+                      ? "UNMEASURED"
+                      : formatMeasured({ kind: deps.kind })}
+                </dd>
+              </dl>
+            </Panel>
+
             <Panel title="Health & Performance" className="lv-v2-modules-subpanel">
               <div className={`lv-v2-modules-health-mark is-${health.tone}`} aria-hidden="true">
                 {health.tone === "ok" ? "✓" : health.tone === "err" ? "!" : "·"}
@@ -535,60 +628,10 @@ export function ModulesDetail(props: Props) {
               </dl>
             </Panel>
 
-            <Panel title="Beschikbare Operaties" className="lv-v2-modules-subpanel">
-              {ops.length === 0 ? (
-                <p className="lv-v2-muted">Geen operaties gedeclareerd.</p>
-              ) : (
-                <table className="lv-v2-modules-ops-table">
-                  <thead>
-                    <tr>
-                      <th>Operatie</th>
-                      <th>Side effects</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ops.map((op) => {
-                      const cap = props.capabilitiesPayload.find(
-                        (c) => c.capabilityId.endsWith(`.${op}`) || c.name === op,
-                      );
-                      const effects = cap?.sideEffects?.length
-                        ? cap.sideEffects.join(", ")
-                        : sideEffects !== "—"
-                          ? sideEffects
-                          : "—";
-                      return (
-                        <tr key={op}>
-                          <td>
-                            <code>{op}</code>
-                          </td>
-                          <td>{effects}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
-            </Panel>
-
             <Panel title="Manifest (excerpt)" className="lv-v2-modules-subpanel">
               <pre className="lv-v2-modules-code" tabIndex={0}>
                 {JSON.stringify(manifestExcerpt, null, 2)}
               </pre>
-            </Panel>
-
-            <Panel title="Dependencies & Installatie" className="lv-v2-modules-subpanel">
-              <dl className="lv-v2-modules-kv">
-                <dt>Strategies</dt>
-                <dd>{strategies.length ? strategies.join(", ") : "UNMEASURED"}</dd>
-                <dt>Python deps</dt>
-                <dd>
-                  {depList.length
-                    ? depList.join(", ")
-                    : deps.kind === "measured"
-                      ? "UNMEASURED"
-                      : formatMeasured({ kind: deps.kind })}
-                </dd>
-              </dl>
             </Panel>
 
             <Panel title="Recente Activiteiten" className="lv-v2-modules-subpanel">

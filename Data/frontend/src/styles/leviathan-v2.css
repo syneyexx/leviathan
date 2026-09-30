@@ -8780,8 +8780,8 @@
 
 .lv-v2-modules-workspace {
   display: grid;
-  grid-template-columns: 148px minmax(280px, 0.95fr) minmax(0, 1.55fr);
-  gap: 10px;
+  grid-template-columns: 132px minmax(260px, 0.88fr) minmax(0, 1.62fr);
+  gap: 8px;
   min-height: 520px;
   align-items: stretch;
 }
@@ -9597,17 +9597,17 @@
 
 .lv-v2-modules-tool {
   display: inline-flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 2px;
-  min-width: 64px;
-  padding: 6px 4px;
+  gap: 5px;
+  min-width: 0;
+  padding: 5px 8px;
   border: 1px solid var(--lv2-border);
   background: rgba(15, 23, 42, 0.7);
   color: var(--lv2-text-secondary);
   border-radius: 7px;
   font: inherit;
-  font-size: 10px;
+  font-size: 10.5px;
   cursor: pointer;
 }
 
@@ -9667,35 +9667,62 @@
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 6px;
   margin: 0 12px 10px;
-  padding: 8px 10px;
+  padding: 6px 10px;
   border: 1px solid var(--lv2-border);
   border-radius: 8px;
   background: rgba(2, 8, 23, 0.45);
 }
 
+.lv-v2-modules-state-strip > div {
+  min-width: 0;
+}
+
 .lv-v2-modules-state-strip dt {
+  display: inline;
   font-size: 10px;
   color: var(--lv2-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.lv-v2-modules-state-strip dt::after {
+  content: ": ";
 }
 
 .lv-v2-modules-state-strip dd {
-  margin: 2px 0 0;
-  font-size: 12px;
+  display: inline;
+  margin: 0;
+  font-size: 11.5px;
   font-weight: 650;
   color: var(--lv2-text);
 }
 
 .lv-v2-modules-runtime-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  padding: 0 12px 12px;
+  padding: 10px 12px 12px;
+  overflow: auto;
+  min-height: 0;
+  flex: 1;
 }
 
 .lv-v2-modules-subpanel {
   min-height: 0;
+}
+
+.lv-v2-modules-linkbtn,
+.lv-v2-modules-op-link {
+  border: 0;
+  background: transparent;
+  color: #93c5fd;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+
+.lv-v2-modules-op-link code {
+  color: inherit;
 }
 
 .lv-v2-modules-kv {

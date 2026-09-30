@@ -64,7 +64,10 @@ function mod(
           },
           runtime: {
             timeout_s: 300,
-            working_directory: `/opt/leviathan/modules/${id}`,
+            working_directory:
+              id === "fincept-terminal"
+                ? "$INSTALL_ROOT/fincept-qt/scripts/Analytics"
+                : `$INSTALL_ROOT/modules/${id}`,
             operations: [
               { name: "analyze", side_effects: ["READ", "NETWORK"] },
               { name: "quant", side_effects: ["READ", "NETWORK"] },
