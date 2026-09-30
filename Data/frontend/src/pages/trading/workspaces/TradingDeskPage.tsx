@@ -1,25 +1,8 @@
-import { useSearchParams } from "react-router-dom";
-import { BrokerTradingPage } from "../BrokerTradingPage";
-import { PaperTradingPage } from "../PaperTradingPage";
-import { PortefeuillePage } from "../PortefeuillePage";
-import { AgentWalletsPanel } from "./AgentWalletsPanel";
-import { PaperDeploymentAdvancedPanel } from "./PaperDeploymentAdvancedPanel";
-import { TradingWorkspaceShell } from "./TradingWorkspaceShell";
-import { getTradingWorkspace, resolveWorkspaceSurface } from "./workspaceConfig";
-
-export function TradingDeskPage() {
-  const workspace = getTradingWorkspace("trading_desk");
-  const [params] = useSearchParams();
-  const surface = resolveWorkspaceSurface(workspace, params.get("surface"));
-  const showAdvanced = params.get("advanced") === "1" || surface.id === "paper";
-
-  return (
-    <TradingWorkspaceShell workspaceId="trading_desk">
-      {surface.id === "paper" || surface.id === "portfolio" ? <AgentWalletsPanel /> : null}
-      {surface.id === "paper" && showAdvanced ? <PaperDeploymentAdvancedPanel /> : null}
-      {surface.id === "paper" ? <PaperTradingPage embedded /> : null}
-      {surface.id === "portfolio" ? <PortefeuillePage embedded /> : null}
-      {surface.id === "broker" ? <BrokerTradingPage embedded /> : null}
-    </TradingWorkspaceShell>
-  );
-}
+/**
+ * WAVE 5/6 — Trading Desk is now a fully native, pixel-exact page.
+ * No PaperTradingPage / PortefeuillePage / BrokerTradingPage embedding, and no
+ * AgentWalletsPanel / PaperDeploymentAdvancedPanel legacy panels; paper
+ * execution, wallets, positions/orders, RiskGuard, paper deployments, and the
+ * broker boundary all live natively under `workspaces/tradingDesk/`.
+ */
+export { TradingDeskPage } from "./tradingDesk/TradingDeskPage";
