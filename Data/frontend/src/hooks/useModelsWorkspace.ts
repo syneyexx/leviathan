@@ -26,24 +26,66 @@ import type {
   ModelResidency,
   ModelRuntimeBinding,
   ModelsStatus,
+  ProviderCapabilityField,
   ProviderControlCapabilities,
   ResidencyPolicy,
   RouterConfig,
 } from "../types/api";
 
 const OPTIMIZE_POLL_MS = 1500;
+const JOB_POLL_MS = 750;
+const JOB_POLL_TIMEOUT_MS = 30 * 60 * 1000;
 const RUNNING_OPTIMIZATION_STATUSES = new Set(["PENDING", "RUNNING"]);
+const TERMINAL_JOB_STATES = new Set([
+  "SUCCEEDED",
+  "FAILED",
+  "CANCELLED",
+  "COMPLETED",
+  "SUCCESS",
+  "ERROR",
+]);
 
-/**
- * LM Studio never exposes control support for these fields via
- * `/providers/{id}/capabilities` (they are not dataclass fields on
- * `LMStudioControlCapabilities`) — the backend hardcodes them UNSUPPORTED in
- * `LMStudioControlCapabilities.field_support()` when compiling a load
- * request. Mirrored here so Screen 1 can disable them truthfully instead of
- * defaulting to a false "UNKNOWN → editable" state for a runtime we already
- * know cannot honor them.
- */
-const LM_STUDIO_ALWAYS_UNSUPPORTED = new Set(["prefixCache", "cpuThreads", "seed"]);
+/** Map UI / legacy capability keys → backend field-matrix keys. */
+const CAP_KEY_ALIASES: Record<string, string[]> = {
+  contextLength: ["contextLength"],
+  evalBatch: ["evalBatchSize", "evalBatch", "batchSize"],
+  evalBatchSize: ["evalBatchSize", "evalBatch"],
+  flashAttention: ["flashAttention"],
+  kvGpuOffload: ["offloadKvCacheToGpu", "kvGpuOffload"],
+  moeNumExperts: ["numExperts", "moeNumExperts"],
+  gpuRatio: ["gpuOffloadRatio", "gpuRatio"],
+  gpuOffloadRatio: ["gpuOffloadRatio", "gpuRatio"],
+  gpuSplit: ["gpuSplitMode", "gpuSplit"],
+  gpuSplitMode: ["gpuSplitMode", "gpuSplit"],
+  customGpuSplit: ["tensorSplit", "customGpuSplit"],
+  tensorSplit: ["tensorSplit", "customGpuSplit"],
+  mainGpu: ["mainGpuOrdinal", "mainGpu"],
+  mainGpuOrdinal: ["mainGpuOrdinal", "mainGpu"],
+  kvQuantization: ["kvCacheDtype", "kvQuantization"],
+  kvCacheDtype: ["kvCacheDtype", "kvQuantization"],
+  continuousBatching: ["continuousBatching"],
+  prefixCache: ["prefixCache"],
+  speculativeDecoding: ["speculativeDecoding"],
+  draftModel: ["draftModelId", "draftModel"],
+  draftModelId: ["draftModelId", "draftModel"],
+  speculativeTokens: ["speculativeTokens"],
+  cpuThreads: ["cpuThreads"],
+  seed: ["seed"],
+  shardingMode: ["shardingMode", "gpuSplitMode"],
+  keepDisplayHeadroom: ["keepDisplayHeadroom"],
+  tensorParallelSize: ["tensorParallelSize"],
+};
+
+const REASON_NL: Record<string, string> = {
+  SDK_REQUIRED: "Vereist LM Studio SDK (niet geïnstalleerd of niet bereikbaar)",
+  SDK_OR_CLI_REQUIRED: "Vereist lms CLI of LM Studio SDK",
+  SDK_SPLIT_STRATEGY_ONLY:
+    "Alleen Auto/evenly/favorMainGpu — geen willekeurige per-GPU percentages",
+  INFERENCE_ONLY_SETTING: "Inferentie-instelling (niet bij model laden)",
+  PROVIDER_VERSION_UNSUPPORTED: "Niet beschikbaar via de verbonden LM Studio-versie",
+  UNSUPPORTED: "Niet ondersteund door deze provider",
+  NATIVE_API_UNAVAILABLE: "Native LM Studio REST-API niet bereikbaar",
+};
 
 export type GpuAllocationDraft = Record<string, number>;
 
@@ -150,6 +192,8 @@ function loadOptionsPayload(draft: ModelsLoadDraft, devices: ModelHardwareInvent
     ? orderedIds.map((id) => draft.gpuAllocation[id] ?? 0)
     : undefined;
 
+  // Inference-scoped fields (cpuThreads, speculative*) stay out of the load
+  // payload — they belong on prediction/runtime profiles, not LM Studio load.
   return {
     contextLength: draft.contextLength,
     batchSize: draft.evalBatchSize,
@@ -166,10 +210,6 @@ function loadOptionsPayload(draft: ModelsLoadDraft, devices: ModelHardwareInvent
     shardingMode: draft.shardingMode === "auto" ? null : draft.shardingMode,
     continuousBatching: draft.continuousBatching,
     prefixCache: draft.prefixCache,
-    speculativeDecoding: draft.speculativeDecoding,
-    draftModelId: draft.draftModelId,
-    speculativeTokens: draft.speculativeTokens,
-    cpuThreads: draft.cpuThreads,
     seed: draft.seed,
     allowMultiGpu: draft.gpuSplitMode !== "single",
   };
@@ -241,9 +281,13 @@ export type ModelsWorkspace = {
   saveVramReserve: () => Promise<void>;
 
   busy: string | null;
+  activeJobId: string | null;
   loadSelected: () => Promise<void>;
   unloadSelected: () => Promise<void>;
   stop: () => Promise<void>;
+  /** Worker Fabric model_runtime readiness (separate from provider health). */
+  modelRuntime: ModelsStatus["modelRuntime"];
+  capField: (key: string) => ProviderCapabilityField | null;
 
   showImport: boolean;
   setShowImport: (v: boolean) => void;
@@ -301,11 +345,13 @@ export function useModelsWorkspace(): ModelsWorkspace {
   const [savingVramReserve, setSavingVramReserve] = useState(false);
 
   const [busy, setBusy] = useState<string | null>(null);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [drawer, setDrawer] = useState<ModelsDrawer>(null);
   const [providerConnecting, setProviderConnecting] = useState(false);
 
   const selectGen = useRef(0);
+  const jobPollAbort = useRef(0);
 
   const selectedModel = useMemo(
     () => models.find((m) => m.id === selectedId) ?? null,
@@ -390,30 +436,17 @@ export function useModelsWorkspace(): ModelsWorkspace {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hardware]);
 
-  const refresh = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      const result = await api.refreshModels();
-      setModels(result.models);
-      setStatus(result.status);
-      await loadAll();
-      toast("Modellen vernieuwd");
-    } catch (err) {
-      toast(errMsg(err, "Refresh mislukt"));
-    } finally {
-      setRefreshing(false);
-    }
-  }, [loadAll, toast]);
-
-  const loadCapabilities = useCallback(async (providerId: string) => {
+  const loadCapabilities = useCallback(async (providerId: string, force = false) => {
     if (!providerId) {
       setCapabilities(null);
       return;
     }
-    const cached = capabilitiesCache.current.get(providerId);
-    if (cached) {
-      setCapabilities(cached);
-      return;
+    if (!force) {
+      const cached = capabilitiesCache.current.get(providerId);
+      if (cached) {
+        setCapabilities(cached);
+        return;
+      }
     }
     setCapabilitiesLoading(true);
     try {
@@ -426,6 +459,25 @@ export function useModelsWorkspace(): ModelsWorkspace {
       setCapabilitiesLoading(false);
     }
   }, []);
+
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      capabilitiesCache.current.clear();
+      const result = await api.refreshModels();
+      setModels(result.models);
+      setStatus(result.status);
+      await loadAll();
+      if (activeProvider?.id) {
+        await loadCapabilities(activeProvider.id, true);
+      }
+      toast("Modellen vernieuwd");
+    } catch (err) {
+      toast(errMsg(err, "Refresh mislukt"));
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadAll, toast, activeProvider?.id, loadCapabilities]);
 
   const selectModel = useCallback(
     (id: string | null) => {
@@ -491,27 +543,105 @@ export function useModelsWorkspace(): ModelsWorkspace {
     setDraftState(baseline);
   }, [baseline]);
 
-  const capSupport = useCallback(
-    (key: string): CapabilitySupportValue => {
-      const raw = (capabilities?.capabilities as Record<string, unknown> | undefined)?.[key];
-      if (raw === "SUPPORTED" || raw === "UNSUPPORTED" || raw === "UNKNOWN") return raw;
-      if (capabilities?.providerType === "lm_studio" && LM_STUDIO_ALWAYS_UNSUPPORTED.has(key)) {
-        return "UNSUPPORTED";
+  const capField = useCallback(
+    (key: string): ProviderCapabilityField | null => {
+      const fields = capabilities?.capabilities?.fields;
+      if (!fields?.length) return null;
+      const aliases = CAP_KEY_ALIASES[key] ?? [key];
+      for (const alias of aliases) {
+        const hit = fields.find((f) => f.key === alias);
+        if (hit) return hit;
       }
-      return "UNKNOWN";
+      return null;
     },
     [capabilities],
   );
 
+  const capSupport = useCallback(
+    (key: string): CapabilitySupportValue => {
+      const field = capField(key);
+      if (field) return field.support;
+      const caps = capabilities?.capabilities as Record<string, unknown> | undefined;
+      if (!caps) return "UNKNOWN";
+      const aliases = CAP_KEY_ALIASES[key] ?? [key];
+      for (const alias of aliases) {
+        const raw = caps[alias];
+        if (raw === "SUPPORTED" || raw === "UNSUPPORTED" || raw === "UNKNOWN") return raw;
+      }
+      return "UNKNOWN";
+    },
+    [capField, capabilities],
+  );
+
   const capNote = useCallback(
     (key: string): string | null => {
-      const support = capSupport(key);
-      if (support !== "UNSUPPORTED") return null;
-      const providerName = activeProvider?.name || "deze provider";
-      return `Niet ondersteund door ${providerName}`;
+      const field = capField(key);
+      const support = field?.support ?? capSupport(key);
+      if (support === "SUPPORTED") return null;
+      if (field?.reasonCode && REASON_NL[field.reasonCode]) {
+        return REASON_NL[field.reasonCode];
+      }
+      if (field?.note) return field.note;
+      if (support === "UNSUPPORTED") {
+        const providerName = activeProvider?.name || "deze provider";
+        return `Niet ondersteund door ${providerName}`;
+      }
+      if (support === "UNKNOWN") return "Capability nog niet geprobeerd";
+      return null;
     },
-    [capSupport, activeProvider],
+    [capField, capSupport, activeProvider],
   );
+
+  const awaitJob = useCallback(async (jobId: string): Promise<{ ok: boolean; message?: string }> => {
+    const token = ++jobPollAbort.current;
+    setActiveJobId(jobId);
+    const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      if (token !== jobPollAbort.current) {
+        return { ok: false, message: "Operatie geannuleerd" };
+      }
+      try {
+        const res = await api.getJob(jobId);
+        const job = res.job;
+        const state = String(job.state ?? job.status ?? "").toUpperCase();
+        if (TERMINAL_JOB_STATES.has(state)) {
+          setActiveJobId(null);
+          if (state === "SUCCEEDED" || state === "COMPLETED" || state === "SUCCESS") {
+            return { ok: true };
+          }
+          if (state === "CANCELLED") {
+            return { ok: false, message: "Geannuleerd" };
+          }
+          return {
+            ok: false,
+            message: String(job.error ?? job.error_code ?? `Job ${state}`),
+          };
+        }
+      } catch (err) {
+        // Transient poll errors — keep trying until timeout.
+        if (err instanceof ApiError && err.status === 404) {
+          setActiveJobId(null);
+          return { ok: false, message: "Job niet gevonden" };
+        }
+      }
+      await new Promise((r) => window.setTimeout(r, JOB_POLL_MS));
+    }
+    setActiveJobId(null);
+    return { ok: false, message: "Timeout tijdens wachten op model_runtime job" };
+  }, []);
+
+  const extractQueuedJobId = (result: unknown): string | null => {
+    if (!result || typeof result !== "object") return null;
+    const obj = result as Record<string, unknown>;
+    const job = obj.job;
+    if (job && typeof job === "object") {
+      const j = job as Record<string, unknown>;
+      const id = j.jobId ?? j.job_id ?? j.id;
+      if (typeof id === "string" && id) return id;
+    }
+    const direct = obj.jobId ?? obj.job_id;
+    return typeof direct === "string" ? direct : null;
+  };
 
   const runEstimate = useCallback(async () => {
     if (!selectedId) return;
@@ -627,7 +757,16 @@ export function useModelsWorkspace(): ModelsWorkspace {
     await withOp("load", async () => {
       const payload = loadOptionsPayload(draft, hardware?.devices ?? []);
       try {
-        await api.loadModel(selectedId, payload);
+        const result = await api.loadModel(selectedId, payload);
+        const jobId = extractQueuedJobId(result);
+        if (jobId) {
+          toast("Laden in wachtrij — Worker Fabric start model_runtime indien koud");
+          const terminal = await awaitJob(jobId);
+          if (!terminal.ok) {
+            toast(terminal.message || "Laden mislukt");
+            return;
+          }
+        }
         setBaseline(draft);
         toast("Model geladen");
         await loadAll();
@@ -635,7 +774,15 @@ export function useModelsWorkspace(): ModelsWorkspace {
         const message = errMsg(err, "Laden mislukt");
         if (/OOM|memory/i.test(message) && window.confirm(`${message}\n\nToch doorgaan (confirmOom)?`)) {
           try {
-            await api.loadModel(selectedId, { ...payload, confirmOom: true });
+            const result = await api.loadModel(selectedId, { ...payload, confirmOom: true });
+            const jobId = extractQueuedJobId(result);
+            if (jobId) {
+              const terminal = await awaitJob(jobId);
+              if (!terminal.ok) {
+                toast(terminal.message || "Laden mislukt");
+                return;
+              }
+            }
             setBaseline(draft);
             toast("Model geladen (OOM bevestigd)");
             await loadAll();
@@ -649,13 +796,22 @@ export function useModelsWorkspace(): ModelsWorkspace {
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, draft, hardware, loadAll, toast, busy]);
+  }, [selectedId, draft, hardware, loadAll, toast, busy, awaitJob]);
 
   const unloadSelected = useCallback(async () => {
     if (!selectedId) return;
     await withOp("unload", async () => {
       try {
-        await api.unloadModel(selectedId);
+        const result = await api.unloadModel(selectedId);
+        const jobId = extractQueuedJobId(result);
+        if (jobId) {
+          toast("Ontladen in wachtrij");
+          const terminal = await awaitJob(jobId);
+          if (!terminal.ok) {
+            toast(terminal.message || "Ontladen mislukt");
+            return;
+          }
+        }
         toast("Model ontladen");
         await loadAll();
       } catch (err) {
@@ -663,13 +819,30 @@ export function useModelsWorkspace(): ModelsWorkspace {
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, loadAll, toast, busy]);
+  }, [selectedId, loadAll, toast, busy, awaitJob]);
 
   const stop = useCallback(async () => {
+    // Cancel Leviathan-owned operation only — never kill external LM Studio.
+    const jobId = activeJobId;
+    if (jobId) {
+      jobPollAbort.current += 1;
+      try {
+        await api.cancelJob(jobId, "models_page_stop");
+        toast("Operatie geannuleerd");
+      } catch (err) {
+        toast(errMsg(err, "Annuleren mislukt"));
+      } finally {
+        setActiveJobId(null);
+        setBusy(null);
+      }
+    }
     if (optimization && RUNNING_OPTIMIZATION_STATUSES.has(optimization.status)) {
       await cancelOptimize();
     }
-  }, [optimization, cancelOptimize]);
+    if (!jobId && !(optimization && RUNNING_OPTIMIZATION_STATUSES.has(optimization.status))) {
+      toast("Geen annuleerbare Leviathan-operatie actief");
+    }
+  }, [activeJobId, optimization, cancelOptimize, toast]);
 
   const setVramReserveDraft = useCallback((patch: Partial<VramReserveDraft>) => {
     setVramReserveDraftState((prev) => ({ ...prev, ...patch }));
@@ -698,6 +871,8 @@ export function useModelsWorkspace(): ModelsWorkspace {
     setProviderConnecting(true);
     try {
       const result = await api.testModelProvider(activeProvider.id);
+      capabilitiesCache.current.delete(activeProvider.id);
+      await loadCapabilities(activeProvider.id, true);
       toast(
         result.connected
           ? `Verbonden met ${result.provider}: ${result.modelsFound} modellen`
@@ -709,7 +884,7 @@ export function useModelsWorkspace(): ModelsWorkspace {
     } finally {
       setProviderConnecting(false);
     }
-  }, [activeProvider, loadAll, toast]);
+  }, [activeProvider, loadAll, loadCapabilities, toast]);
 
   const setOptimizationGoal = useCallback((key: keyof OptimizationGoals, value: boolean) => {
     setOptimizationGoals((prev) => ({ ...prev, [key]: value }));
@@ -739,12 +914,28 @@ export function useModelsWorkspace(): ModelsWorkspace {
   const sidebarStatus = useMemo((): SidebarStatusRow[] => {
     const provider = activeProvider;
     const providerTone = provider?.health === "healthy" ? "success" : provider?.health === "offline" ? "danger" : "muted";
+    const rt = status?.modelRuntime;
+    const rtState = String(rt?.poolState || rt?.state || "UNMEASURED");
+    const rtTone =
+      rtState === "READY"
+        ? "success"
+        : rtState === "COLD" || rtState === "STARTING"
+          ? "warning"
+          : rt?.acceptJobs
+            ? "info"
+            : "danger";
     return [
       {
         id: "lm-studio",
         label: provider?.name || "LM Studio",
         value: provider ? (provider.health === "healthy" ? "Running" : provider.health) : loading ? "…" : "UNMEASURED",
         tone: providerTone,
+      },
+      {
+        id: "model-runtime",
+        label: "model_runtime",
+        value: loading ? "…" : rtState,
+        tone: rtTone,
       },
       {
         id: "gpu0",
@@ -765,7 +956,7 @@ export function useModelsWorkspace(): ModelsWorkspace {
         tone: "info",
       },
     ];
-  }, [activeProvider, hardware, models, loading]);
+  }, [activeProvider, hardware, models, loading, status?.modelRuntime]);
 
   const online: boolean | null =
     activeProvider?.health === "healthy" ? true : activeProvider?.health === "offline" ? false : null;
@@ -826,9 +1017,12 @@ export function useModelsWorkspace(): ModelsWorkspace {
     saveVramReserve,
 
     busy,
+    activeJobId,
     loadSelected,
     unloadSelected,
     stop,
+    modelRuntime: status?.modelRuntime ?? null,
+    capField,
 
     showImport,
     setShowImport,

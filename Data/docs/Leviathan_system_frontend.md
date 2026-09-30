@@ -327,8 +327,17 @@ drawers):
 - `ProviderManager.tsx` — providers.
 
 Load/estimate/optimize/unload go through the Model Control Plane API only (never browser →
-LM Studio). Capability-unsupported controls are disabled with an honest reason. Visual
-fixtures for Screen 1 live in `src/mocks/modelsV2VisualFixture.ts` (TEST ONLY).
+LM Studio). Capability-unsupported controls are disabled with an honest reason from the
+backend field matrix (`fields[]` with scope/transport/reasonCode). Visual fixtures for
+Screen 1 live in `src/mocks/modelsV2VisualFixture.ts` (TEST ONLY).
+
+`useModelsWorkspace` distinguishes:
+- provider health vs `status.modelRuntime` Worker Fabric readiness (`COLD`/`READY`/…);
+- queued load/unload jobs (`activeJobId`) polled to terminal before claiming success;
+- **Stoppen** cancels the Leviathan job / optimizer only — never kills LM Studio.exe;
+- inference-only controls (`cpuThreads`, speculative draft) stay out of the load payload;
+- multi-GPU manual per-device % is disabled when the provider only exposes SDK
+  evenly/favorMainGpu strategies.
 
 The page must distinguish registry presence, provider availability, active routing, residency, READY serving and measured capabilities. Vision/tool/structured-response/reasoning support is only shown as supported when backend capability probes say so.
 

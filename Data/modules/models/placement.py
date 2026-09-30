@@ -282,6 +282,26 @@ class PlacementPlanner:
                     pin_mode = PinMode.PREFERENCE
             if load_options.excluded_device_ids:
                 excluded.update(load_options.excluded_device_ids)
+            if load_options.keep_display_headroom:
+                display_ids = [
+                    d.stable_device_id
+                    for d in hardware.devices
+                    if (
+                        d.role.value
+                        if isinstance(d.role, DeviceRole)
+                        else str(d.role or "")
+                    ).upper()
+                    == DeviceRole.DISPLAY.value
+                ]
+                if len(hardware.devices) > 1 and display_ids:
+                    excluded.update(display_ids)
+                    warnings.append(
+                        "keepDisplayHeadroom: DISPLAY GPU(s) excluded from model placement"
+                    )
+                elif display_ids:
+                    warnings.append(
+                        "keepDisplayHeadroom: single-GPU host — DISPLAY role VRAM reserve applies"
+                    )
 
         vram_needed = requirement.vram_bytes
         if vram_needed is None and profile and profile.total_vram_bytes is not None:

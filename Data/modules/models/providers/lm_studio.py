@@ -1,8 +1,8 @@
 """LM Studio provider adapter — discovery, inference, and native lifecycle control.
 
 LM Studio remains externally owned (managed_by_leviathan=False). Leviathan may
-load/unload models via the official native REST API and optionally the lms CLI
-for GPU ratio / resource estimation. Leviathan must not kill LM Studio.exe.
+load/unload models via the official native REST API, optional lms CLI, and
+optional official Python SDK. Leviathan must not kill LM Studio.exe.
 """
 
 from __future__ import annotations
@@ -143,8 +143,12 @@ class LMStudioAdapter(OpenAICompatibleAdapter):
         return headers
 
     async def probe_control_capabilities(self) -> LMStudioControlCapabilities:
-        """Probe connected LM Studio for native REST + CLI surfaces."""
+        """Probe connected LM Studio for native REST + CLI + optional SDK surfaces."""
         cli_ok = discover_lms_executable() is not None
+        from Data.modules.models.lm_studio_sdk import probe_sdk_import, sdk_probe_reachable
+
+        sdk_available, sdk_version = probe_sdk_import()
+        sdk_reachable = False
         version: str | None = None
         native_ok = False
         notes_extra: list[str] = []
@@ -190,6 +194,17 @@ class LMStudioAdapter(OpenAICompatibleAdapter):
                 http_status=503,
             ) from exc
 
+        if sdk_available:
+            # Bounded SDK reachability — do not block forever.
+            try:
+                import asyncio
+
+                sdk_reachable = await asyncio.to_thread(
+                    sdk_probe_reachable, self.host, timeout_seconds=5.0
+                )
+            except Exception:  # noqa: BLE001
+                sdk_reachable = False
+
         from dataclasses import replace
 
         caps = capabilities_from_probe(
@@ -197,7 +212,10 @@ class LMStudioAdapter(OpenAICompatibleAdapter):
             version=version,
             cli_available=cli_ok,
             rest_base=self.native_base,
-            load_probe_ok=True if native_ok else False,
+            load_probe_ok=True if native_ok or sdk_reachable else False,
+            sdk_available=sdk_available,
+            sdk_reachable=sdk_reachable,
+            sdk_version=sdk_version if sdk_available else None,
         )
         if notes_extra:
             caps = replace(caps, notes=tuple([*caps.notes, *notes_extra]))
@@ -220,7 +238,7 @@ class LMStudioAdapter(OpenAICompatibleAdapter):
             structured_output=False,
             vision=False,
             runtime_metrics=False,
-            load_options=_REST_LOAD_OPTIONS if native_ok else (),
+            load_options=_REST_LOAD_OPTIONS if native_ok or sdk_reachable else (),
         )
         return caps
 
@@ -306,8 +324,10 @@ class LMStudioAdapter(OpenAICompatibleAdapter):
         started = time.perf_counter()
         timestamp = utc_now()
 
-        # Prefer REST for documented fields; use CLI when GPU ratio must apply.
-        if compiled.transport == "cli" and caps.cli_available:
+        # Prefer REST for documented fields; CLI for GPU ratio; SDK when required.
+        if compiled.transport == "sdk":
+            result = await self._load_via_sdk(model_key, compiled)
+        elif compiled.transport == "cli" and caps.cli_available:
             result = await self._load_via_cli(model_key, compiled)
         else:
             result = await self._load_via_rest(compiled)
@@ -514,10 +534,15 @@ class LMStudioAdapter(OpenAICompatibleAdapter):
         }
 
     async def _load_via_rest(self, compiled) -> dict[str, Any]:
+        body = {
+            k: v
+            for k, v in dict(compiled.rest_body or {}).items()
+            if not str(k).startswith("_")
+        }
         try:
             return await self._native_post(
                 "/models/load",
-                compiled.rest_body,
+                body,
                 timeout=self.load_timeout_seconds,
             )
         except ModelControlError as exc:
@@ -529,6 +554,43 @@ class LMStudioAdapter(OpenAICompatibleAdapter):
                 http_status=exc.http_status,
                 details=exc.details,
             ) from exc
+
+    async def _load_via_sdk(self, model_key: str, compiled) -> dict[str, Any]:
+        import asyncio
+
+        from Data.modules.models.lm_studio_sdk import sdk_load_model
+
+        sdk_config = {}
+        if isinstance(compiled.rest_body, dict):
+            sdk_config = dict(compiled.rest_body.get("_sdkConfig") or {})
+        # Never send private stash keys to provider
+        try:
+            result = await asyncio.to_thread(
+                sdk_load_model,
+                endpoint=self.host,
+                model_key=model_key,
+                config=sdk_config,
+                timeout_seconds=self.load_timeout_seconds,
+            )
+        except ModelControlError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            code = classify_lm_studio_error(str(exc))
+            raise ModelControlError(
+                code=code,
+                message=f"LM Studio SDK load failed: {exc}",
+                provider_id=self.provider_id,
+                http_status=502,
+                details={"transport": "sdk", "modelKey": model_key},
+            ) from exc
+        return {
+            "status": result.get("status") or "loaded",
+            "instance_id": result.get("instanceId"),
+            "load_time_seconds": None,
+            "load_config": result.get("loadConfig"),
+            "transport": "sdk",
+            "result": result,
+        }
 
     async def _load_via_cli(self, model_key: str, compiled) -> dict[str, Any]:
         argv = ["load", model_key, *compiled.cli_args]

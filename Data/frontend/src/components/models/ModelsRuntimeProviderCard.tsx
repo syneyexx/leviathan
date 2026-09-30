@@ -30,17 +30,38 @@ const HEALTH_TONE: Record<string, "success" | "danger" | "muted" | "warning"> = 
   degraded: "warning",
 };
 
+function runtimeTone(state: string | undefined): "success" | "danger" | "muted" | "warning" {
+  const s = (state || "").toUpperCase();
+  if (s === "READY") return "success";
+  if (s === "COLD" || s === "STARTING") return "warning";
+  if (s === "DISABLED" || s === "SUPERVISOR_UNAVAILABLE" || s === "UNAVAILABLE") return "danger";
+  return "muted";
+}
+
 export function ModelsRuntimeProviderCard({ ws, onOpenProviders }: Props) {
   const [open, setOpen] = useState(false);
   const provider = ws.activeProvider;
   const tone = provider ? HEALTH_TONE[provider.health] ?? "muted" : "muted";
-  const version = ws.capabilities?.capabilities?.providerVersion;
+  const caps = ws.capabilities?.capabilities;
+  const version = caps?.providerVersion;
+  const rt = ws.modelRuntime;
+  const rtState = String(rt?.poolState || rt?.state || "UNMEASURED");
+  const rtLabel =
+    rtState === "READY"
+      ? "Worker warm"
+      : rtState === "COLD"
+        ? "Worker koud (cold-start mogelijk)"
+        : rtState === "STARTING"
+          ? "Worker start"
+          : rt?.acceptJobs
+            ? rtState
+            : `Worker ${rtState}`;
 
   return (
     <Panel title="Runtime Provider" icon={<ProviderIcon />} className="lv-v2-models-provider">
       <p className="lv-v2-muted lv-v2-models-provider__desc">
-        Kies en beheer de inference engine. Leviathan kan aansturen op een end-to-end configuratie
-        optimaliseren.
+        Kies en beheer de inference engine. Provider-gezondheid en Worker Fabric
+        model_runtime zijn aparte waarheden.
       </p>
 
       <div className="lv-v2-models-provider__select-wrap">
@@ -92,8 +113,21 @@ export function ModelsRuntimeProviderCard({ ws, onOpenProviders }: Props) {
 
       <div className="lv-v2-models-provider__status">
         <StatusDot tone={tone} pulse={tone === "success"} />
-        <span>{provider ? (provider.health === "healthy" ? "Verbonden" : provider.health) : "Onbekend"}</span>
+        <span>{provider ? (provider.health === "healthy" ? "Provider verbonden" : provider.health) : "Onbekend"}</span>
         {version ? <span className="lv-v2-muted">v{String(version)}</span> : null}
+      </div>
+
+      <div className="lv-v2-models-provider__status" title={rt?.reason || undefined}>
+        <StatusDot tone={runtimeTone(rtState)} />
+        <span>{rtLabel}</span>
+        {caps?.cliAvailable != null ? (
+          <span className="lv-v2-muted">CLI {caps.cliAvailable ? "aan" : "uit"}</span>
+        ) : null}
+        {caps?.sdkAvailable != null ? (
+          <span className="lv-v2-muted">
+            SDK {caps.sdkReachable ? "bereikbaar" : caps.sdkAvailable ? "niet bereikbaar" : "niet geïnstalleerd"}
+          </span>
+        ) : null}
       </div>
 
       <div className="lv-v2-models-provider__actions">

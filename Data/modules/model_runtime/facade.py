@@ -8,7 +8,11 @@ import time
 from typing import Any
 
 from Data.modules.jobs.states import TERMINAL_JOB_STATES
-from Data.modules.model_runtime.readiness import model_runtime_workers_ready
+from Data.modules.model_runtime.readiness import (
+    model_runtime_can_accept_jobs,
+    model_runtime_readiness_snapshot,
+    model_runtime_workers_ready,
+)
 from Data.modules.models.errors import (
     MODEL_RUNTIME_UNAVAILABLE,
     ModelControlError,
@@ -40,17 +44,52 @@ class ModelRuntimeClient:
     def _db_path(self) -> Any:
         return getattr(getattr(self.job_runtime, "store", None), "path", None)
 
+    def readiness_snapshot(self) -> dict[str, Any]:
+        return model_runtime_readiness_snapshot(self._db_path())
+
+    def workers_warm(self) -> bool:
+        """True only when a model_runtime worker is already READY/BUSY."""
+        return model_runtime_workers_ready(self._db_path())
+
     def require_workers_ready(self) -> None:
-        if not model_runtime_workers_ready(self._db_path()):
-            raise ModelControlError(
-                code=MODEL_RUNTIME_UNAVAILABLE,
-                message=(
-                    "Model runtime worker is unavailable; Control Plane will not "
-                    "start managed servers or run inference diagnostics inline."
-                ),
-                retryable=True,
-                http_status=503,
+        """Enqueue gate: accept warm *or* cold-startable (supervisor-backed) pools.
+
+        Historically this required an already-READY worker, which deadlocked with
+        Worker Fabric scale-to-zero (cold pool → refuse enqueue → no demand →
+        never wakes). Queue demand must be allowed to wake a cold singleton.
+        """
+        snap = self.readiness_snapshot()
+        if model_runtime_can_accept_jobs(self._db_path()):
+            return
+        pool_state = str(snap.get("poolState") or "UNAVAILABLE")
+        reason = str(snap.get("reason") or "unavailable")
+        if pool_state == "SUPERVISOR_UNAVAILABLE" or reason.startswith("supervisor_"):
+            message = (
+                "Model runtime worker is unavailable because Worker Fabric "
+                f"supervisor cannot accept work ({reason}); Control Plane will not "
+                "start managed servers or run inference diagnostics inline."
             )
+        elif pool_state == "DISABLED":
+            message = (
+                "Model runtime pool is disabled or desired_count=0; Control Plane "
+                "will not enqueue model lifecycle work."
+            )
+        else:
+            message = (
+                "Model runtime worker is unavailable; Control Plane will not "
+                "start managed servers or run inference diagnostics inline."
+            )
+        raise ModelControlError(
+            code=MODEL_RUNTIME_UNAVAILABLE,
+            message=message,
+            retryable=True,
+            http_status=503,
+            details={
+                "poolState": pool_state,
+                "reason": reason,
+                "readiness": snap,
+            },
+        )
 
     def _enqueue(
         self,

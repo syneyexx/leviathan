@@ -731,6 +731,14 @@ export const api = {
     return request<{ job: JobRecord }>(`/api/jobs/${encodeURIComponent(jobId)}`);
   },
 
+  cancelJob(jobId: string, reason?: string): Promise<{ job: JobRecord }> {
+    const qs = reason ? `?reason=${encodeURIComponent(reason)}` : "";
+    return request<{ job: JobRecord }>(
+      `/api/jobs/${encodeURIComponent(jobId)}/cancel${qs}`,
+      { method: "POST" },
+    );
+  },
+
   releaseGates(): Promise<{ report: ReleaseGateReport }> {
     return request<{ report: ReleaseGateReport }>("/api/release/gates");
   },
