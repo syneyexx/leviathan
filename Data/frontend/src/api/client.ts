@@ -1243,8 +1243,36 @@ export const api = {
     });
   },
 
-  listWorkflows(limit = 100): Promise<{ workflows: WorkflowRecord[] }> {
-    return request(`/api/workflows?limit=${encodeURIComponent(String(limit))}`);
+  listWorkflows(
+    limit = 100,
+    opts?: { status?: string; category?: string; q?: string; offset?: number },
+  ): Promise<{ workflows: WorkflowRecord[] }> {
+    const params = new URLSearchParams();
+    params.set("limit", String(limit));
+    if (opts?.offset != null) params.set("offset", String(opts.offset));
+    if (opts?.status) params.set("status", opts.status);
+    if (opts?.category) params.set("category", opts.category);
+    if (opts?.q) params.set("q", opts.q);
+    return request(`/api/workflows?${params.toString()}`);
+  },
+
+  workflowsOverview(opts?: {
+    chartHours?: number;
+    topDays?: number;
+  }): Promise<{ overview: import("../types/api").WorkflowOverview }> {
+    const params = new URLSearchParams();
+    if (opts?.chartHours != null) params.set("chartHours", String(opts.chartHours));
+    if (opts?.topDays != null) params.set("topDays", String(opts.topDays));
+    const q = params.toString();
+    return request(`/api/workflows/overview${q ? `?${q}` : ""}`);
+  },
+
+  workflowTemplates(limit = 50): Promise<{ templates: WorkflowRecord[] }> {
+    return request(`/api/workflows/templates?limit=${encodeURIComponent(String(limit))}`);
+  },
+
+  workflowPalette(): Promise<{ palette: import("../types/api").WorkflowPalette }> {
+    return request("/api/workflows/palette");
   },
 
   createWorkflow(payload: WorkflowCreatePayload): Promise<{ workflow: WorkflowRecord }> {
@@ -1255,12 +1283,100 @@ export const api = {
     return request(`/api/workflows/${encodeURIComponent(workflowId)}`);
   },
 
-  runWorkflow(workflowId: string): Promise<{ workflow: WorkflowRecord }> {
-    return request(`/api/workflows/${encodeURIComponent(workflowId)}/run`, { method: "POST" });
+  patchWorkflow(
+    workflowId: string,
+    payload: Record<string, unknown>,
+  ): Promise<{ workflow: WorkflowRecord }> {
+    return request(`/api/workflows/${encodeURIComponent(workflowId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  deleteWorkflow(workflowId: string, hard = false): Promise<{ ok: boolean }> {
+    return request(
+      `/api/workflows/${encodeURIComponent(workflowId)}?hard=${hard ? "true" : "false"}`,
+      { method: "DELETE" },
+    );
+  },
+
+  duplicateWorkflow(
+    workflowId: string,
+    name?: string,
+  ): Promise<{ workflow: WorkflowRecord }> {
+    return request(`/api/workflows/${encodeURIComponent(workflowId)}/duplicate`, {
+      method: "POST",
+      body: JSON.stringify(name ? { name } : {}),
+    });
+  },
+
+  listWorkflowVersions(
+    workflowId: string,
+  ): Promise<{ versions: Array<Record<string, unknown>> }> {
+    return request(`/api/workflows/${encodeURIComponent(workflowId)}/versions`);
+  },
+
+  restoreWorkflowVersion(
+    workflowId: string,
+    version: number,
+  ): Promise<{ workflow: WorkflowRecord }> {
+    return request(`/api/workflows/${encodeURIComponent(workflowId)}/restore-version`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    });
+  },
+
+  listWorkflowExecutions(
+    workflowId: string,
+    limit = 50,
+  ): Promise<{ executions: import("../types/api").WorkflowExecution[] }> {
+    return request(
+      `/api/workflows/${encodeURIComponent(workflowId)}/executions?limit=${encodeURIComponent(String(limit))}`,
+    );
+  },
+
+  workflowLogs(
+    workflowId: string,
+    opts?: { executionId?: string; limit?: number },
+  ): Promise<{ logs: Array<Record<string, unknown>> }> {
+    const params = new URLSearchParams();
+    if (opts?.executionId) params.set("executionId", opts.executionId);
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    const q = params.toString();
+    return request(`/api/workflows/${encodeURIComponent(workflowId)}/logs${q ? `?${q}` : ""}`);
+  },
+
+  runWorkflow(
+    workflowId: string,
+    payload?: { inputs?: Record<string, unknown>; idempotency_key?: string },
+  ): Promise<{
+    workflow: WorkflowRecord;
+    execution?: import("../types/api").WorkflowExecution;
+    job?: Record<string, unknown> | null;
+    mode?: string;
+  }> {
+    return request(`/api/workflows/${encodeURIComponent(workflowId)}/run`, {
+      method: "POST",
+      body: JSON.stringify(payload || {}),
+    });
   },
 
   cancelWorkflow(workflowId: string): Promise<{ workflow: WorkflowRecord }> {
     return request(`/api/workflows/${encodeURIComponent(workflowId)}/cancel`, { method: "POST" });
+  },
+
+  getWorkflowExecution(
+    executionId: string,
+  ): Promise<{ execution: import("../types/api").WorkflowExecution }> {
+    return request(`/api/workflow-executions/${encodeURIComponent(executionId)}`);
+  },
+
+  cancelWorkflowExecution(
+    executionId: string,
+  ): Promise<{ execution?: import("../types/api").WorkflowExecution; workflow: WorkflowRecord }> {
+    return request(`/api/workflow-executions/${encodeURIComponent(executionId)}/cancel`, {
+      method: "POST",
+    });
   },
 
   listSchedules(opts?: {

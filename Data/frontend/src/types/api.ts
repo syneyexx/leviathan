@@ -3411,6 +3411,24 @@ export type ModuleSnapshot = {
 
 export type WorkflowState = "CREATED" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";
 
+export type WorkflowDefinitionStatus =
+  | "ACTIVE"
+  | "INACTIVE"
+  | "DRAFT"
+  | "TEMPLATE"
+  | "ARCHIVED";
+
+export type WorkflowExecutionState =
+  | "QUEUED"
+  | "STARTING"
+  | "RUNNING"
+  | "WAITING"
+  | "WAITING_APPROVAL"
+  | "COMPLETED"
+  | "FAILED"
+  | "CANCELLING"
+  | "CANCELLED";
+
 export type WorkflowStepDef = {
   step_id: string;
   capability_id: string;
@@ -3420,9 +3438,98 @@ export type WorkflowStepDef = {
 
 export type WorkflowStepResult = {
   step_id: string;
-  capability_id: string;
+  capability_id?: string;
   status: string;
   result?: Record<string, unknown>;
+  node_id?: string;
+  output?: Record<string, unknown>;
+};
+
+export type WorkflowGraphNode = {
+  node_id: string;
+  kind: string;
+  label?: string;
+  config?: Record<string, unknown>;
+};
+
+export type WorkflowGraphEdge = {
+  edge_id: string;
+  source: string;
+  target: string;
+  source_handle?: string | null;
+  label?: string | null;
+};
+
+export type WorkflowGraph = {
+  nodes: WorkflowGraphNode[];
+  edges: WorkflowGraphEdge[];
+};
+
+export type WorkflowLayoutNode = {
+  node_id: string;
+  x: number;
+  y: number;
+};
+
+export type WorkflowVariableDef = {
+  name: string;
+  type: string;
+  default?: unknown;
+  required?: boolean;
+  description?: string;
+  secret?: boolean;
+};
+
+export type WorkflowDefinition = {
+  workflow_id: string;
+  name: string;
+  description?: string;
+  category?: string;
+  tags?: string[];
+  status: WorkflowDefinitionStatus | string;
+  definition_status?: string;
+  current_version?: number;
+  graph?: WorkflowGraph;
+  variables?: WorkflowVariableDef[];
+  layout?: WorkflowLayoutNode[];
+  config?: Record<string, unknown>;
+  trigger_bindings?: Array<Record<string, unknown>>;
+  triggers?: Array<Record<string, unknown>>;
+  revision?: number;
+  created_at: string;
+  updated_at: string;
+  metadata?: Record<string, unknown>;
+  steps?: WorkflowStepDef[];
+  tools?: number;
+  agents?: number;
+  mcp_servers?: number;
+  execution_count?: number;
+  avg_duration_ms?: number | null;
+  running_executions?: number;
+  validation?: Record<string, unknown>;
+};
+
+export type WorkflowExecution = {
+  execution_id: string;
+  workflow_id: string;
+  workflow_version: number;
+  state: WorkflowExecutionState | string;
+  trigger_source?: string;
+  requested_by?: string | null;
+  created_at: string;
+  updated_at: string;
+  started_at?: string | null;
+  ended_at?: string | null;
+  duration_ms?: number | null;
+  current_node_id?: string | null;
+  node_results?: WorkflowStepResult[];
+  error?: string | null;
+  root_job_id?: string | null;
+  child_job_ids?: string[];
+  run_id?: string | null;
+  input_snapshot?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  name?: string;
 };
 
 export type WorkflowRecord = {
@@ -3437,17 +3544,112 @@ export type WorkflowRecord = {
   step_results?: WorkflowStepResult[];
   error?: string | null;
   metadata?: Record<string, unknown>;
+  definition_id?: string | null;
+  execution_id?: string | null;
+  workflow_version?: number | null;
+  definition_status?: string | null;
+  // V2 definition fields (when listing definitions)
+  description?: string;
+  category?: string;
+  tags?: string[];
+  status?: string;
+  graph?: WorkflowGraph;
+  variables?: WorkflowVariableDef[];
+  layout?: WorkflowLayoutNode[];
+  config?: Record<string, unknown>;
+  revision?: number;
+  tools?: number;
+  agents?: number;
+  mcp_servers?: number;
+  execution_count?: number;
+  avg_duration_ms?: number | null;
+  triggers?: Array<Record<string, unknown>>;
 };
 
 export type WorkflowCreatePayload = {
   name: string;
   run_id?: string | null;
-  steps: Array<{
+  steps?: Array<{
     step_id?: string;
     capability_id: string;
     arguments?: Record<string, unknown>;
     approval_id?: string | null;
   }>;
+  description?: string;
+  category?: string;
+  tags?: string[];
+  status?: string;
+  graph?: WorkflowGraph;
+  variables?: WorkflowVariableDef[];
+  layout?: WorkflowLayoutNode[];
+  config?: Record<string, unknown>;
+  from_template_id?: string;
+};
+
+export type WorkflowOverview = {
+  generated_at?: string;
+  counts: {
+    total_definitions: number;
+    active_definitions: number;
+    inactive_definitions: number;
+    draft_definitions: number;
+    templates: number;
+    running_executions: number;
+  };
+  kpis: Array<{
+    id: string;
+    label: string;
+    value: number | null;
+    unit?: string;
+    secondary?: string | null;
+    change?: { value: number | null; display: string; direction: string };
+    sparkline?: number[];
+    unmeasured?: boolean;
+  }>;
+  chart: {
+    period: string;
+    buckets: Array<{
+      bucket_start: string;
+      succeeded: number;
+      failed: number;
+      cancelled: number;
+    }>;
+    series: { succeeded: number; failed: number; cancelled: number };
+  };
+  top_workflows: {
+    period: string;
+    items: Array<{
+      workflow_id: string;
+      name: string;
+      execution_count: number;
+      rank?: number;
+      relative?: number;
+    }>;
+  };
+  recent_executions: WorkflowExecution[];
+  resources: {
+    cpu: { available: boolean; utilization_pct?: number | null; display: string };
+    memory: {
+      available: boolean;
+      used_bytes?: number | null;
+      total_bytes?: number | null;
+      display: string;
+    };
+    workers: {
+      available: boolean;
+      busy?: number | null;
+      capacity?: number | null;
+      display: string;
+      semantics?: string;
+    };
+  };
+};
+
+export type WorkflowPalette = {
+  Agents: Array<Record<string, unknown>>;
+  Tools: Array<Record<string, unknown>>;
+  Data: Array<Record<string, unknown>>;
+  Control: Array<Record<string, unknown>>;
 };
 
 /* ---------- Schedules ---------- */
