@@ -681,6 +681,18 @@ A model stating “I ran tool X” is not evidence. ExecutionGateway result/Obse
 
 Gateway idempotency prevents replayed `idempotency_key` actions from dispatching side effects twice. Approval IDs are validated against policy; booleans such as `approved_by_user=true` are never authority.
 
+### Tools control-plane read models
+
+Additive HTTP projections for the `/tools` operator surface:
+
+- `GET /api/capabilities/overview` — KPI counts, success ratio (COMPLETED / (COMPLETED+FAILED+TIMEOUT)), MCP/plugin panels, recent receipts
+- `GET /api/capabilities/library` — bounded searchable rows with category/source/origin/last-used
+- `GET /api/capabilities/{id}?detail=true` — usage aggregation, providers, receipts, dependencies, examples, edit/testability
+- `GET /api/capabilities/receipts/by-capability/{id}` — bounded receipt query + usage
+- Custom capability wrappers persist in CONTROL table `custom_capability_definitions` (same SQLite file; not a second tools database) and hydrate into CapabilityCatalog
+
+Receipts may carry durable `requested_by` caller provenance. Legacy rows without it remain readable and show unknown attribution.
+
 ## 11.2 FunctionRuntime
 
 `Data/modules/function_runtime/` owns registry/runtime/built-ins/types. Physical cold functions are under `Data/functions/`, including text file read/write/patch/delete, workspace list/search, test execution, git status/diff, CSV/PDF and numeric compute functions.

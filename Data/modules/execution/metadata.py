@@ -23,6 +23,14 @@ _CANONICAL_KEYS = (
     "docs_url",
     "execution_class",
     "workload_class",
+    # Descriptive ownership / presentation (not authorization).
+    "origin",
+    "version",
+    "tool_version",
+    "provider_version",
+    "examples",
+    "delegates_to",
+    "wraps_capability_id",
 )
 
 
@@ -74,6 +82,14 @@ def normalize_capability_metadata(
         worker_kind=worker_kind,
     )
 
+    origin = str(raw.pop("origin", "") or "").strip().lower() or None
+    version = str(raw.pop("version", "") or "").strip() or None
+    tool_version = str(raw.pop("tool_version", "") or "").strip() or None
+    provider_version = str(raw.pop("provider_version", "") or "").strip() or None
+    examples = raw.pop("examples", None)
+    delegates_to = str(raw.pop("delegates_to", "") or "").strip() or None
+    wraps_capability_id = str(raw.pop("wraps_capability_id", "") or "").strip() or None
+
     # Soft domain inference from capability id prefix.
     if not domains and "." in capability_id:
         domains = (capability_id.split(".", 1)[0].lower(),)
@@ -91,6 +107,13 @@ def normalize_capability_metadata(
         "risk_tier": risk_tier,
         "docs_url": docs_url,
         "execution_class": execution_class,
+        "origin": origin,
+        "version": version or tool_version or provider_version,
+        "tool_version": tool_version,
+        "provider_version": provider_version,
+        "examples": examples if isinstance(examples, (list, dict)) else None,
+        "delegates_to": delegates_to,
+        "wraps_capability_id": wraps_capability_id,
         "search_text": " ".join(
             filter(
                 None,
@@ -102,6 +125,7 @@ def normalize_capability_metadata(
                     " ".join(domains),
                     " ".join(aliases),
                     execution_class or "",
+                    origin or "",
                 ],
             )
         ).lower(),
@@ -110,6 +134,7 @@ def normalize_capability_metadata(
             "metadata_is_not_authorization": True,
             "discoverable_is_not_approved": True,
             "execution_class_is_not_authorization": True,
+            "origin_is_not_authorization": True,
         },
     }
 

@@ -310,6 +310,9 @@ approval_store = ApprovalStore(settings.database_path)
 approval_service = ApprovalService(approval_store, PolicyEngine())
 observation_store = ObservationStore(settings.database_path)
 capability_receipts = CapabilityReceiptStore(settings.database_path)
+from Data.modules.execution.custom_store import CustomCapabilityStore  # noqa: E402
+
+custom_capability_store = CustomCapabilityStore(settings.database_path)
 secrets_broker = SecretsBroker(settings.database_path)
 execution_gateway = ExecutionGateway(
     catalog=capability_catalog,
@@ -2158,6 +2161,16 @@ async def lifespan(_: FastAPI):
     observation_store.initialize()
     evidence_store.initialize()
     capability_receipts.initialize()
+    custom_capability_store.initialize()
+    try:
+        custom_capability_store.hydrate_into_catalog(capability_catalog)
+    except Exception as exc:  # noqa: BLE001
+        observability.emit(
+            "capability",
+            "custom.hydrate_failed",
+            payload={"error": str(exc)},
+            level="warning",
+        )
     secrets_broker.initialize()
     memory_store.initialize()
     # One in-process MemoryStore owner — signal fabric reuses the canonical instance.
@@ -2317,6 +2330,20 @@ async def lifespan(_: FastAPI):
             observability.emit(
                 "external_capability",
                 "plugin_registry.rehydrate_failed",
+                payload={"error": str(exc)},
+                level="warning",
+            )
+        try:
+            custom_n = custom_capability_store.hydrate_into_catalog(capability_catalog)
+            observability.emit(
+                "capability",
+                "custom.rehydrated",
+                payload={"count": custom_n},
+            )
+        except Exception as exc:  # noqa: BLE001
+            observability.emit(
+                "capability",
+                "custom.rehydrate_failed",
                 payload={"error": str(exc)},
                 level="warning",
             )
@@ -2665,6 +2692,10 @@ app.include_router(
         observation_store=observation_store,
         observability=observability,
         capability_receipts=capability_receipts,
+        plugin_registry=plugin_registry,
+        mcp_bridge=mcp_bridge,
+        function_registry=function_registry,
+        custom_capability_store=custom_capability_store,
     )
 )
 app.include_router(

@@ -4535,6 +4535,38 @@ def _m55_institutional_core(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m61_tools_control_plane(conn: sqlite3.Connection) -> None:
+    """Tools V2: receipt caller provenance + capability_id index + custom wrappers."""
+
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(capability_call_receipts)").fetchall()}
+    if cols and "requested_by" not in cols:
+        conn.execute("ALTER TABLE capability_call_receipts ADD COLUMN requested_by TEXT")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_capability_receipts_capability "
+        "ON capability_call_receipts(capability_id, recorded_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS custom_capability_definitions (
+            capability_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            wraps_capability_id TEXT NOT NULL,
+            version TEXT NOT NULL DEFAULT '1.0.0',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            revision INTEGER NOT NULL DEFAULT 1
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_custom_capabilities_wraps "
+        "ON custom_capability_definitions(wraps_capability_id)"
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -4667,6 +4699,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=60,
         name="workflow_definitions_executions",
         apply=_m60_workflow_definitions_executions,
+    ),
+    Migration(
+        version=61,
+        name="tools_control_plane",
+        apply=_m61_tools_control_plane,
     ),
 )
 
