@@ -39,6 +39,7 @@ export function ResearchPage() {
       }}
       v2StatusRows={ws.sidebarStatus}
       v2Now={frozen ? () => frozen : undefined}
+      v2ScrollableMain
     >
       <main className="lv-v2-page lv-v2-page--research">
         <ResearchHero onNewResearch={ws.focusComposer} onTemplates={ws.focusTemplates} />
