@@ -363,8 +363,14 @@ signal_fabric = SignalFabricService(
 # Canonical MemoryStore only — bind after initialize() in lifespan (F-011).
 analytics_service = AnalyticsService(settings.database_path)
 workflow_store = WorkflowStore(settings.database_path)
-workflow_runtime = WorkflowRuntime(workflow_store, execution_gateway, job_runtime=job_runtime)
+workflow_runtime = WorkflowRuntime(
+    workflow_store,
+    execution_gateway,
+    job_runtime=job_runtime,
+    schedule_store=None,  # bound after ScheduleStore init below
+)
 schedule_store = ScheduleStore(settings.database_path)
+workflow_runtime.bind_schedule_store(schedule_store)
 schedule_runner = ScheduleRunner(
     schedule_store,
     jobs=job_runtime,
@@ -2671,7 +2677,13 @@ app.include_router(
     )
 )
 app.include_router(
-    build_workflows_router(workflow_store=workflow_store, workflow_runtime=workflow_runtime)
+    build_workflows_router(
+        workflow_store=workflow_store,
+        workflow_runtime=workflow_runtime,
+        telemetry_sampler=system_telemetry_sampler,
+        capability_catalog=capability_catalog,
+        schedule_store=schedule_store,
+    )
 )
 app.include_router(
     build_schedules_router(
