@@ -35,21 +35,43 @@ export function DatasetManagementStorage({ ws }: Props) {
             {breakdown.map((b) => (
               <li key={b.id}>
                 <span>{b.label}</span>
-                <strong>{b.bytes == null ? "—" : formatBytes(b.bytes)}</strong>
+                <strong>
+                  {b.bytes == null
+                    ? b.provenance === "UNMEASURED"
+                      ? "UNMEASURED"
+                      : "—"
+                    : formatBytes(b.bytes)}
+                </strong>
               </li>
             ))}
           </ul>
         ) : null}
 
-        <h4 className="lv-v2-dm-storage__tags-title">Populaire tags</h4>
+        <div className="lv-v2-dm-storage__tags-head">
+          <h4 className="lv-v2-dm-storage__tags-title">Populaire tags</h4>
+          {ws.tagFilter ? (
+            <button
+              type="button"
+              className="lv-v2-dm-pill is-tag is-active"
+              onClick={() => ws.setTagFilter(null)}
+            >
+              Wis filter: {ws.tagFilter}
+            </button>
+          ) : null}
+        </div>
         <div className="lv-v2-dm-tag-cloud">
           {ws.tagCloud.length === 0 ? (
             <span className="lv-v2-dm-pill">Geen tags</span>
           ) : (
             ws.tagCloud.map((t) => (
-              <span key={t.tag} className="lv-v2-dm-pill is-tag">
+              <button
+                key={t.tag}
+                type="button"
+                className={`lv-v2-dm-pill is-tag${ws.tagFilter === t.tag ? " is-active" : ""}`}
+                onClick={() => ws.setTagFilter(ws.tagFilter === t.tag ? null : t.tag)}
+              >
                 {t.tag} ({t.count})
-              </span>
+              </button>
             ))
           )}
         </div>

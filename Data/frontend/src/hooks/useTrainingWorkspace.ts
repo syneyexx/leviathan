@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import type { SidebarStatusRow } from "../components/layout/AppSidebarV2";
 import { useAppToast } from "../state/useAppToast";
@@ -261,6 +262,10 @@ export type TrainingWorkspace = {
 
 export function useTrainingWorkspace(): TrainingWorkspace {
   const toast = useAppToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deepLinkDatasetId = searchParams.get("datasetId");
+  const deepLinkVersionId =
+    searchParams.get("datasetVersionId") || searchParams.get("versionId");
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -450,13 +455,14 @@ export function useTrainingWorkspace(): TrainingWorkspace {
     [capabilities, capsError],
   );
 
-  const loadDatasetVersions = useCallback(async (datasetId: string) => {
+  const loadDatasetVersions = useCallback(async (datasetId: string, preferVersionId?: string | null) => {
     try {
       const res = await api.listDatasetVersions(datasetId);
       setDatasetVersions(res.versions);
       const preferred =
-        res.versions.find((v) => v.status === "ready" || v.status === "published") ??
-        res.versions[0] ??
+        (preferVersionId && res.versions.find((v) => v.versionId === preferVersionId)) ||
+        res.versions.find((v) => v.status === "ready" || v.status === "published") ||
+        res.versions[0] ||
         null;
       setSelectedVersionId(preferred?.versionId ?? null);
       if (preferred) {
@@ -559,6 +565,9 @@ export function useTrainingWorkspace(): TrainingWorkspace {
       const list = datasetsRes.value.datasets;
       setDatasets(list);
       setSelectedDatasetId((prev) => {
+        if (deepLinkDatasetId && list.some((d) => d.datasetId === deepLinkDatasetId)) {
+          return deepLinkDatasetId;
+        }
         if (prev && list.some((d) => d.datasetId === prev)) return prev;
         return list[0]?.datasetId ?? null;
       });
@@ -581,7 +590,7 @@ export function useTrainingWorkspace(): TrainingWorkspace {
     } else {
       setModels([]);
     }
-  }, []);
+  }, [deepLinkDatasetId]);
 
   useEffect(() => {
     void (async () => {
@@ -593,8 +602,31 @@ export function useTrainingWorkspace(): TrainingWorkspace {
 
   useEffect(() => {
     if (!selectedDatasetId) return;
-    void loadDatasetVersions(selectedDatasetId);
-  }, [selectedDatasetId, loadDatasetVersions]);
+    void loadDatasetVersions(
+      selectedDatasetId,
+      selectedDatasetId === deepLinkDatasetId ? deepLinkVersionId : null,
+    );
+  }, [selectedDatasetId, loadDatasetVersions, deepLinkDatasetId, deepLinkVersionId]);
+
+  // Clear deep-link query once applied so later refreshes don't force sticky selection.
+  useEffect(() => {
+    if (!deepLinkDatasetId && !deepLinkVersionId) return;
+    if (!selectedDatasetId) return;
+    if (deepLinkDatasetId && selectedDatasetId !== deepLinkDatasetId) return;
+    if (deepLinkVersionId && selectedVersionId !== deepLinkVersionId) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("datasetId");
+    next.delete("datasetVersionId");
+    next.delete("versionId");
+    setSearchParams(next, { replace: true });
+  }, [
+    deepLinkDatasetId,
+    deepLinkVersionId,
+    selectedDatasetId,
+    selectedVersionId,
+    searchParams,
+    setSearchParams,
+  ]);
 
   useEffect(() => {
     if (!selectedJobId) {

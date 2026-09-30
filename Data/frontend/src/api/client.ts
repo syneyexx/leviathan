@@ -1990,6 +1990,17 @@ export const api = {
     );
   },
 
+  contaminationScanDatasetVersion(
+    datasetId: string,
+    versionId: string,
+    payload: { sealedCases?: Record<string, unknown>[]; threshold?: number } = {},
+  ): Promise<{ job: DatasetJob }> {
+    return request(
+      `/api/datasets/${encodeURIComponent(datasetId)}/versions/${encodeURIComponent(versionId)}/contamination-scan`,
+      { method: "POST", body: JSON.stringify(payload) },
+    );
+  },
+
   exportDatasetVersion(
     datasetId: string,
     versionId: string,

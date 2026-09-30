@@ -1,5 +1,6 @@
 import {
   DM_CATEGORY_FILTERS,
+  DM_PAGE_COPY,
   DM_SOURCE_FILTERS,
   DM_SPLIT_FILTERS,
   DM_STATUS_FILTERS,
@@ -45,7 +46,7 @@ export function DatasetManagementLibrary({ ws }: Props) {
             <input
               value={ws.query}
               onChange={(e) => ws.setQuery(e.target.value)}
-              placeholder="Zoek…"
+              placeholder={DM_PAGE_COPY.searchPlaceholder}
               aria-label="Zoek datasets"
             />
           </label>
@@ -130,7 +131,7 @@ export function DatasetManagementLibrary({ ws }: Props) {
                   <th>Bron</th>
                   <th>Split</th>
                   <th>Grootte</th>
-                  <th>Tokens</th>
+                  <th>Samples / Tokens</th>
                   <th>Status</th>
                   <th>Tags</th>
                   <th>Kwaliteit</th>
@@ -139,7 +140,7 @@ export function DatasetManagementLibrary({ ws }: Props) {
               <tbody>
                 {ws.datasets.map((row) => {
                   const typeLabel = mapTypeLabel(row);
-                  const category = categoryForDataset(row) || "—";
+                  const category = categoryForDataset(row) || "Ongecategoriseerd";
                   const statusNl = mapDatasetStatus(
                     row.status,
                     row.brainStatus ?? row.brain?.brainStatus,
@@ -154,11 +155,20 @@ export function DatasetManagementLibrary({ ws }: Props) {
                       : "—";
                   const tags = tagsForDataset(row);
                   const q = qualityBars(row);
+                  const countHint = tokenHintForRow(row, selectedVersion, isSelected);
                   return (
                     <tr
                       key={row.datasetId}
                       className={isSelected ? "is-active" : undefined}
+                      tabIndex={0}
+                      aria-selected={isSelected}
                       onClick={() => ws.setSelectedId(row.datasetId)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          ws.setSelectedId(row.datasetId);
+                        }
+                      }}
                     >
                       <td>
                         <strong>{displayNameForDataset(row)}</strong>
@@ -174,7 +184,14 @@ export function DatasetManagementLibrary({ ws }: Props) {
                       <td>{mapSourceLabel(row.sourceType)}</td>
                       <td>{split}</td>
                       <td>{formatBytes(row.byteSize)}</td>
-                      <td>{tokenHintForRow(row, selectedVersion, isSelected)}</td>
+                      <td title={countHint.kind === "tokens" ? "Tokens" : countHint.kind === "samples" ? "Samples" : "Niet gemeten"}>
+                        {countHint.value}
+                        {countHint.kind === "tokens" ? (
+                          <span className="lv-v2-dm-unit"> tok</span>
+                        ) : countHint.kind === "samples" ? (
+                          <span className="lv-v2-dm-unit"> smp</span>
+                        ) : null}
+                      </td>
                       <td>
                         <span className={`lv-v2-dm-pill is-${toneForDatasetStatus(statusNl)}`}>
                           {statusNl}
@@ -185,11 +202,24 @@ export function DatasetManagementLibrary({ ws }: Props) {
                           {tags.length === 0 ? (
                             <span className="lv-v2-dm-pill">—</span>
                           ) : (
-                            tags.map((t) => (
-                              <span key={t} className="lv-v2-dm-pill">
-                                {t}
-                              </span>
-                            ))
+                            <>
+                              {tags.slice(0, 3).map((t) => (
+                                <button
+                                  key={t}
+                                  type="button"
+                                  className="lv-v2-dm-pill"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    ws.setTagFilter(t);
+                                  }}
+                                >
+                                  {t}
+                                </button>
+                              ))}
+                              {tags.length > 3 ? (
+                                <span className="lv-v2-dm-pill">+{tags.length - 3}</span>
+                              ) : null}
+                            </>
                           )}
                         </div>
                       </td>
@@ -199,12 +229,14 @@ export function DatasetManagementLibrary({ ws }: Props) {
                           title={q.label}
                           aria-label={`Kwaliteit ${q.label}`}
                         >
-                          {Array.from({ length: 5 }).map((_, i) => (
-                            <i
-                              key={i}
-                              className={q.measured && q.bars != null && i < q.bars ? "is-on" : undefined}
-                            />
-                          ))}
+                          {q.measured
+                            ? Array.from({ length: 5 }).map((_, i) => (
+                                <i
+                                  key={i}
+                                  className={q.bars != null && i < q.bars ? "is-on" : undefined}
+                                />
+                              ))
+                            : "—"}
                         </span>
                       </td>
                     </tr>

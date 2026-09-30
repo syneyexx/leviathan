@@ -20,6 +20,92 @@ type Props = {
   ws: DatasetManagementWorkspace;
 };
 
+function brainActionLabel(ws: DatasetManagementWorkspace): {
+  label: string;
+  mode: "learn" | "rebuild" | "open";
+} {
+  const selected = ws.selected;
+  const brain = selected?.brainStatus ?? selected?.brain?.brainStatus;
+  const canonical =
+    selected?.canonicalState ??
+    selected?.learningState?.canonicalState ??
+    selected?.brain?.canonicalState;
+  const learned =
+    Boolean(selected?.learned) ||
+    brain === "learned" ||
+    canonical === "LEARNED";
+  if (learned) return { label: "Open in Brain", mode: "open" };
+  if (brain === "indexing" || brain === "queued" || canonical === "INDEXING") {
+    return { label: "Indexeren…", mode: "learn" };
+  }
+  if (brain === "failed" || canonical === "FAILED") {
+    return { label: "Opnieuw leren", mode: "rebuild" };
+  }
+  if (ws.recovery?.reindexRequired || ws.recovery?.recoveryState === "REINDEX_REQUIRED") {
+    return { label: "Herindexeren", mode: "rebuild" };
+  }
+  return { label: "Kennis leren", mode: "learn" };
+}
+
+function brainStatusText(ws: DatasetManagementWorkspace): string {
+  const selected = ws.selected;
+  if (!selected) return "—";
+  const brain = selected.brainStatus ?? selected.brain?.brainStatus;
+  const canonical =
+    selected.canonicalState ??
+    selected.learningState?.canonicalState ??
+    selected.brain?.canonicalState;
+  if (selected.learned || brain === "learned" || canonical === "LEARNED") return "Geleerd";
+  if (brain === "indexing" || brain === "queued" || canonical === "INDEXING") return "Indexeren";
+  if (brain === "failed" || canonical === "FAILED") return "Mislukt";
+  if (ws.recovery?.reindexRequired || ws.recovery?.recoveryState === "REINDEX_REQUIRED") {
+    return "Verouderd — herindexeren";
+  }
+  return selected.learningState?.label ?? "Niet geleerd";
+}
+
+function previewTable(ws: DatasetManagementWorkspace) {
+  const rows = ws.preview.slice(0, 8);
+  if (rows.length === 0) return null;
+  const cols = new Set<string>();
+  for (const row of rows) {
+    Object.keys(row as object).forEach((k) => cols.add(k));
+  }
+  const headers = [...cols].slice(0, 8);
+  return (
+    <div className="lv-v2-dm-preview-table-wrap">
+      <table className="lv-v2-dm-preview-table">
+        <thead>
+          <tr>
+            {headers.map((h) => (
+              <th key={h}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, idx) => {
+            const r = row as Record<string, unknown>;
+            return (
+              <tr key={idx}>
+                {headers.map((h) => {
+                  const v = r[h];
+                  const text =
+                    v == null
+                      ? "—"
+                      : typeof v === "string" || typeof v === "number" || typeof v === "boolean"
+                        ? String(v).slice(0, 120)
+                        : JSON.stringify(v).slice(0, 120);
+                  return <td key={h}>{text}</td>;
+                })}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function DatasetManagementDetail({ ws }: Props) {
   const selected = ws.selected;
   const statusNl = selected
@@ -31,6 +117,8 @@ export function DatasetManagementDetail({ ws }: Props) {
           selected.brain?.canonicalState,
       )
     : null;
+  const brainAction = brainActionLabel(ws);
+  const trainBlocked = ws.actionDisabledReason("train");
 
   return (
     <div className="lv-v2-dm-detail-stack">
@@ -57,7 +145,7 @@ export function DatasetManagementDetail({ ws }: Props) {
               <dl className="lv-v2-dm-meta">
                 <div>
                   <dt>Categorie</dt>
-                  <dd>{dash(categoryForDataset(selected) || null)}</dd>
+                  <dd>{dash(categoryForDataset(selected) || "Ongecategoriseerd")}</dd>
                 </div>
                 <div>
                   <dt>Bron</dt>
@@ -69,7 +157,16 @@ export function DatasetManagementDetail({ ws }: Props) {
                 </div>
                 <div>
                   <dt>Locatie</dt>
-                  <dd>{dash(selected.rawPath ?? selected.originalUri)}</dd>
+                  <dd title={selected.rawPath ?? selected.originalUri ?? undefined}>
+                    {dash(
+                      (selected.rawPath ?? selected.originalUri)
+                        ? String(selected.rawPath ?? selected.originalUri).replace(
+                            /^.*[/\\]([^/\\]+)$/,
+                            "…/$1",
+                          )
+                        : null,
+                    )}
+                  </dd>
                 </div>
                 <div>
                   <dt>Versie</dt>
@@ -93,14 +190,7 @@ export function DatasetManagementDetail({ ws }: Props) {
                 </div>
                 <div>
                   <dt>Brain</dt>
-                  <dd>
-                    {selected.learningState?.canonicalState === "LEARNED" || selected.learned
-                      ? "Geïndexeerd"
-                      : ws.recovery?.reindexRequired ||
-                          ws.recovery?.recoveryState === "REINDEX_REQUIRED"
-                        ? "Herindexeren vereist"
-                        : dash(selected.learningState?.label ?? selected.brainStatus ?? "niet geleerd")}
-                  </dd>
+                  <dd>{brainStatusText(ws)}</dd>
                 </div>
                 <div>
                   <dt>Recovery</dt>
@@ -187,7 +277,7 @@ export function DatasetManagementDetail({ ws }: Props) {
                   }}
                 >
                   <DmIcon name="sliders" />
-                  <span>Metagegevens bewerken</span>
+                  <span>Metadata bewerken</span>
                 </button>
                 <button
                   type="button"
@@ -197,18 +287,48 @@ export function DatasetManagementDetail({ ws }: Props) {
                   <DmIcon name="refresh" />
                   <span>Opnieuw analyseren</span>
                 </button>
-                <button type="button" disabled={!ws.selectedVersionId} onClick={() => ws.setSampleTab("JSON")}>
+                <button
+                  type="button"
+                  disabled={!ws.selectedVersionId}
+                  onClick={() => {
+                    ws.setSampleTab("JSON");
+                    document
+                      .querySelector(".lv-v2-dm-preview")
+                      ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                  }}
+                >
                   <DmIcon name="file" />
                   <span>Voorbeeld bekijken</span>
                 </button>
-                <Link to={ws.trainingDeepLink} className="lv-v2-dm-quick__link">
-                  <DmIcon name="play" />
-                  <span>Gebruik in training</span>
-                </Link>
-                <Link to="/offline-datasets" className="lv-v2-dm-quick__link is-brain">
-                  <DmIcon name="database" />
-                  <span>Geleerd in Brain</span>
-                </Link>
+                {trainBlocked ? (
+                  <button type="button" disabled title={trainBlocked}>
+                    <DmIcon name="play" />
+                    <span>Gebruik in training</span>
+                  </button>
+                ) : (
+                  <Link to={ws.trainingDeepLink} className="lv-v2-dm-quick__link">
+                    <DmIcon name="play" />
+                    <span>Gebruik in training</span>
+                  </Link>
+                )}
+                {brainAction.mode === "open" ? (
+                  <Link to="/offline-datasets" className="lv-v2-dm-quick__link is-brain">
+                    <DmIcon name="database" />
+                    <span>{brainAction.label}</span>
+                  </Link>
+                ) : (
+                  <button
+                    type="button"
+                    className="lv-v2-dm-quick__link is-brain"
+                    disabled={ws.busy || Boolean(ws.actionDisabledReason(brainAction.mode === "rebuild" ? "index" : "learn"))}
+                    onClick={() =>
+                      void ws.onSidebarAction(brainAction.mode === "rebuild" ? "index" : "learn")
+                    }
+                  >
+                    <DmIcon name="database" />
+                    <span>{brainAction.label}</span>
+                  </button>
+                )}
               </div>
             </>
           ) : (
@@ -231,10 +351,27 @@ export function DatasetManagementDetail({ ws }: Props) {
                 {t}
               </button>
             ))}
+            <button
+              type="button"
+              className="lv-v2-dm-tab"
+              disabled={!ws.samplePreview}
+              onClick={() => {
+                void navigator.clipboard?.writeText(ws.samplePreview || "").then(
+                  () => undefined,
+                  () => undefined,
+                );
+              }}
+            >
+              Kopieer
+            </button>
           </div>
         </div>
         <div className="lv-v2-panel__body">
-          <pre className="lv-v2-dm-code">{ws.samplePreview}</pre>
+          {ws.sampleTab === "Tabel" && ws.preview.length > 0 && !ws.previewError
+            ? previewTable(ws)
+            : (
+              <pre className="lv-v2-dm-code">{ws.samplePreview}</pre>
+            )}
         </div>
       </section>
     </div>

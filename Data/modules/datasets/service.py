@@ -631,7 +631,8 @@ class DatasetService:
             },
             "byStatus": agg["byStatus"],
             "bySource": agg["bySource"],
-            "tagCounts": agg["tagCounts"],
+            "tagCounts": dict(agg.get("tagCountMap") or {}),
+            "popularTags": list(agg.get("tagCounts") or []),
             "truth": {
                 "kpis_are_not_page_length": True,
                 "null_row_count_is_not_zero_samples": True,

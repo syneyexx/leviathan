@@ -151,13 +151,18 @@ export function tokenHintForRow(
   row: DatasetRecord,
   selectedVersion: DatasetVersion | null,
   isSelected: boolean,
-): string {
+): { value: string; kind: "tokens" | "samples" | "unknown" } {
   if (isSelected && selectedVersion?.tokenStats) {
     const stats = selectedVersion.tokenStats as Record<string, unknown>;
-    const n = Number(stats.total_tokens ?? stats.token_count);
-    if (Number.isFinite(n) && n > 0) return formatCompactCount(n);
+    const n = Number(stats.total_tokens ?? stats.token_count ?? stats.totalTokens);
+    if (Number.isFinite(n) && n > 0) {
+      return { value: formatCompactCount(n), kind: "tokens" };
+    }
   }
-  return formatCompactCount(row.rowCount);
+  if (row.rowCount != null) {
+    return { value: formatCompactCount(row.rowCount), kind: "samples" };
+  }
+  return { value: "—", kind: "unknown" };
 }
 
 export function qualityBars(ds: DatasetRecord): { measured: boolean; bars: number | null; label: string } {

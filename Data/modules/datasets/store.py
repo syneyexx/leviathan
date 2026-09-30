@@ -214,6 +214,7 @@ class DatasetStore:
                 "chat": ["chat", "dialog", "conversation", "messages"],
                 "pdf": ["pdf"],
                 "logs": ["log", "logs"],
+                "vision": ["vision", "image", "img", "png", "jpg", "jpeg"],
             }.get(label, [label])
             type_parts: list[str] = []
             for n in type_needles:
@@ -447,6 +448,7 @@ class DatasetStore:
                 "validationIssues": total_errors + total_warnings,
             },
             "tagCounts": [{"tag": t, "count": c} for t, c in top_tags],
+            "tagCountMap": {t: c for t, c in top_tags},
         }
 
     def update_dataset(self, dataset_id: str, **fields: Any) -> DatasetRecord:

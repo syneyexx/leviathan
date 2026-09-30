@@ -16,7 +16,8 @@ export function DatasetManagementHero({ onAddDataset, onOpenLibrary }: Props) {
       <div className="lv-v2-hero__shade lv-v2-hero__shade--dataset-mgmt" />
       <div className="lv-v2-hero__content">
         <h2 className="lv-v2-hero__title">{DM_PAGE_COPY.title}</h2>
-        <p className="lv-v2-hero__copy">{DM_PAGE_COPY.subtitle}</p>
+        <p className="lv-v2-hero__kicker">{DM_PAGE_COPY.subtitle}</p>
+        <p className="lv-v2-hero__copy">{DM_PAGE_COPY.body}</p>
         <div className="lv-v2-hero__actions">
           <Button variant="primary" size="sm" onClick={onAddDataset}>
             + Dataset toevoegen
@@ -34,8 +35,13 @@ export function DatasetManagementHero({ onAddDataset, onOpenLibrary }: Props) {
         </ul>
       </div>
       <blockquote className="lv-v2-hero__quote">
-        {DM_PAGE_COPY.quote}
-        <cite>— LEVIATHAN</cite>
+        {DM_PAGE_COPY.quote.split("\n").map((line) => (
+          <span key={line}>
+            {line}
+            <br />
+          </span>
+        ))}
+        <cite>{DM_PAGE_COPY.quoteAttribution}</cite>
       </blockquote>
     </section>
   );

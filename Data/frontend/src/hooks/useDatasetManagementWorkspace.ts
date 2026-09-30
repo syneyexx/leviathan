@@ -123,6 +123,8 @@ export function useDatasetManagementWorkspace() {
   const [splitFilter, setSplitFilter] = useState(DM_SPLIT_FILTERS[0]);
   const [statusFilter, setStatusFilter] = useState(DM_STATUS_FILTERS[0]);
   const [sort, setSort] = useState("newest");
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [recovery, setRecovery] = useState<DatasetRecoveryAssessment | null>(null);
   const [editDisplayName, setEditDisplayName] = useState("");
@@ -231,6 +233,7 @@ export function useDatasetManagementWorkspace() {
           category: categoryFilter === "Alle categorieën" ? undefined : categoryFilter,
           split: splitFilter === "Alle splits" ? undefined : splitFilter,
           type: typeFilterToQuery(typeFilter),
+          tag: tagFilter || undefined,
           sort,
           includeBrain: true,
           includeQuality: true,
@@ -270,6 +273,7 @@ export function useDatasetManagementWorkspace() {
       splitFilter,
       typeFilter,
       sort,
+      tagFilter,
     ],
   );
 
@@ -327,7 +331,7 @@ export function useDatasetManagementWorkspace() {
     if (loading) return;
     void loadLibrary({ quiet: true, offset: 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedQuery, typeFilter, sourceFilter, categoryFilter, splitFilter, statusFilter, sort]);
+  }, [debouncedQuery, typeFilter, sourceFilter, categoryFilter, splitFilter, statusFilter, sort, tagFilter]);
 
   const selected = datasets.find((d) => d.datasetId === selectedId) ?? detail;
   const selectedVersion =
@@ -487,6 +491,16 @@ export function useDatasetManagementWorkspace() {
   const kpis = useMemo((): DatasetKpiCard[] => {
     const ov = overview;
     const loadingValue = loading && !ov;
+    const catalog = ov?.catalogStatus;
+    const catalogLabel =
+      catalog?.label ||
+      (catalog?.state === "HEALTHY"
+        ? "Gezond"
+        : catalog?.state
+          ? String(catalog.state)
+          : error || healthOk === false
+            ? "Offline"
+            : "—");
     return [
       {
         id: "datasets",
@@ -494,7 +508,6 @@ export function useDatasetManagementWorkspace() {
         value: loadingValue ? "…" : String(ov?.totalDatasets ?? libraryTotal),
         hint: ov ? undefined : error ? "Laden mislukt" : undefined,
         tone: "cyan",
-        sparkline: [4, 5, 6, 7, 8, 9, 10, 11],
       },
       {
         id: "samples",
@@ -509,7 +522,6 @@ export function useDatasetManagementWorkspace() {
                 ? `${(ov.totalSamples ?? 0).toLocaleString()} rijen`
                 : undefined,
         tone: "cyan",
-        sparkline: [3, 4, 5, 6, 8, 9, 10, 12],
       },
       {
         id: "storage",
@@ -527,95 +539,98 @@ export function useDatasetManagementWorkspace() {
       {
         id: "imports",
         label: "Actieve Imports",
-        value: String(ov?.activeImports ?? activeJobs.length),
+        value: loadingValue ? "…" : ov ? String(ov.activeImports) : "—",
         hint: jobsError
           ? jobsError
           : ov
             ? `${ov.activeImportsRunning} bezig · ${ov.activeImportsQueued} in wachtrij`
-            : activeJobs.length
-              ? `${activeJobs.filter((j) => j.status.toLowerCase() === "running").length} bezig`
-              : "Geen actieve jobs",
+            : "Geen overview",
         tone: "cyan",
       },
       {
         id: "validation",
         label: "Validatie Issues",
-        value: ov ? String(ov.validationIssues) : "—",
+        value: loadingValue ? "…" : ov ? String(ov.validationIssues) : "—",
         hint: ov
           ? `${ov.criticalValidationIssues} kritiek · ${ov.validationWarnings} waarschuwingen`
           : "Geen overview",
         tone: "red",
-        sparkline: [8, 7, 9, 6, 5, 7, 4, 3],
       },
       {
         id: "sync",
-        label: "Sync Status",
-        value: error || healthOk === false ? "Offline" : catalogOk === false ? "Degraded" : "Online",
-        hint: error ?? relativeSyncHint(ov?.catalogStatus?.lastReconcileAt),
-        tone: error || healthOk === false ? "red" : catalogOk === false ? "gold" : "green",
-        sparkline: [10, 10, 9, 10, 10, 10, 9, 10],
+        label: "Catalog Status",
+        value: loadingValue ? "…" : catalogLabel,
+        hint: relativeSyncHint(catalog?.lastReconcileAt),
+        tone:
+          error || healthOk === false
+            ? "red"
+            : catalog?.state === "HEALTHY"
+              ? "green"
+              : catalogOk === false
+                ? "gold"
+                : "cyan",
       },
     ];
-  }, [overview, loading, libraryTotal, error, activeJobs, jobsError, healthOk, catalogOk]);
+  }, [overview, loading, libraryTotal, error, jobsError, healthOk, catalogOk]);
 
   const datasetServices = useMemo((): DatasetServiceStatus[] => {
     const catalogState = overview?.catalogStatus?.state;
     const catalogReady = catalogState === "HEALTHY";
     const online = !error && healthOk !== false;
+    const indexingBusy = activeJobs.some(
+      (j) =>
+        isActiveJob(j) &&
+        (j.jobType === "index" || String(j.config?.learnToBrain ?? "") === "true"),
+    );
+    const validationBusy = activeJobs.some((j) => isActiveJob(j) && j.jobType === "validate");
+    const semanticBusy = activeJobs.some(
+      (j) => isActiveJob(j) && (j.jobType === "enrich_metadata" || j.jobType.includes("semantic")),
+    );
     return [
       {
-        id: "dataset-service",
-        label: "Dataset Service",
-        state: online ? "Ready" : error ? "Offline" : "UNMEASURED",
-        tone: online ? "success" : error ? "danger" : "muted",
-        detail: error ?? undefined,
-      },
-      {
-        id: "catalog",
-        label: "Catalogus",
-        state: catalogReady ? "Ready" : catalogState ? "Degraded" : "UNMEASURED",
-        tone: catalogReady ? "success" : catalogState ? "warning" : "muted",
-        detail: overview?.catalogStatus?.label,
-      },
-      {
-        id: "import-pipeline",
-        label: "Import Pipeline",
-        state: jobsError ? "Degraded" : activeJobs.length ? "Running" : online ? "Ready" : "UNMEASURED",
-        tone: jobsError ? "warning" : activeJobs.length ? "success" : online ? "success" : "muted",
-        detail: `${activeJobs.length} actief`,
+        id: "embedding",
+        label: "Embedding Pipeline",
+        state: online ? (indexingBusy ? "Running" : "Ready") : error ? "Offline" : "UNMEASURED",
+        tone: online ? (indexingBusy ? "success" : "success") : error ? "danger" : "muted",
+        detail: "via Knowledge embedding provider",
       },
       {
         id: "indexing",
         label: "Indexing Service",
-        state: online ? "Ready" : "Offline",
-        tone: online ? "success" : "danger",
-        detail: "via Dataset learn/index jobs",
+        state: indexingBusy ? "Running" : online ? "Ready" : "Offline",
+        tone: indexingBusy || online ? "success" : "danger",
+        detail: "Dataset → Brain/Knowledge index jobs",
       },
       {
         id: "validation",
-        label: "Validatie Engine",
-        state: online ? "Ready" : "Offline",
-        tone: online ? "success" : "danger",
+        label: "Validation Engine",
+        state: validationBusy ? "Running" : online ? "Ready" : "Offline",
+        tone: validationBusy || online ? "success" : "danger",
+        detail: "dataset worker / validate capability",
       },
       {
-        id: "storage",
-        label: "Opslag",
-        state:
-          overview?.storage.measurementStatus === "MEASURED" ||
-          overview?.storage.measurementStatus === "PARTIAL"
-            ? "Ready"
-            : overview
-              ? "UNMEASURED"
-              : "UNMEASURED",
-        tone:
-          overview?.storage.measurementStatus === "MEASURED" ||
-          overview?.storage.measurementStatus === "PARTIAL"
-            ? "success"
-            : "muted",
-        detail: formatBytes(overview?.storage.usedBytes),
+        id: "semantic",
+        label: "Semantic Enrichment",
+        state: semanticBusy ? "Running" : online ? "Ready" : "Offline",
+        tone: semanticBusy || online ? "success" : "danger",
+        detail: "semantic profile analyze / enrich jobs",
+      },
+      {
+        id: "training",
+        label: "Training Connector",
+        state: online ? "Ready" : "Offline",
+        tone: online ? "success" : "danger",
+        detail: "immutable datasetVersionId towards /training",
+      },
+      {
+        id: "brain-sync",
+        label: "Brain Sync",
+        state: catalogReady ? (indexingBusy ? "Running" : "Ready") : catalogState ? "Degraded" : "UNMEASURED",
+        tone: catalogReady ? "success" : catalogState ? "warning" : "muted",
+        detail: overview?.catalogStatus?.label,
       },
     ];
-  }, [overview, error, healthOk, jobsError, activeJobs.length]);
+  }, [overview, error, healthOk, activeJobs]);
 
   const samplePreview = useMemo(() => {
     if (previewError) return previewError;
@@ -655,8 +670,34 @@ export function useDatasetManagementWorkspace() {
   }, [selectedId, selectedVersionId]);
 
   function actionDisabledReason(actionId: string): string | null {
-    const needsSelection = ["delete", "learn", "dup", "index", "validate", "export", "save"];
-    const needsVersion = ["index", "validate", "export"];
+    if (actionId === "advanced") return null;
+    const needsSelection = [
+      "delete",
+      "learn",
+      "dup",
+      "index",
+      "validate",
+      "export",
+      "save",
+      "dedupe",
+      "split",
+      "tokenize",
+      "contamination",
+      "pii",
+      "materialize",
+      "train",
+    ];
+    const needsVersion = [
+      "index",
+      "validate",
+      "export",
+      "dedupe",
+      "split",
+      "tokenize",
+      "contamination",
+      "pii",
+      "train",
+    ];
     if (needsSelection.includes(actionId) && !selectedId) return "Selecteer eerst een dataset";
     if (needsVersion.includes(actionId) && !selectedVersionId) return "Selecteer eerst een datasetversie";
     if (actionId === "learn" && selectedId) {
@@ -667,6 +708,14 @@ export function useDatasetManagementWorkspace() {
       }
       if (brain === "indexing" || brain === "queued") return "Kennis leren is al bezig";
       if (row?.sourceMissing || row?.brain?.sourceMissing) return "Bronbestand ontbreekt op schijf";
+    }
+    if (actionId === "train") {
+      if (recovery?.recoveryState === "HASH_MISMATCH" || recovery?.recoveryState === "CONFLICT") {
+        return `Recovery blokkeert training (${recovery.recoveryState})`;
+      }
+      if (recovery?.recoveryState === "SOURCE_MISSING" || selected?.sourceMissing) {
+        return "Bron ontbreekt — niet trainbaar";
+      }
     }
     return null;
   }
@@ -790,12 +839,14 @@ export function useDatasetManagementWorkspace() {
   async function onRescanLibrary() {
     await withBusy(async () => {
       const res = await api.refreshDatasetLibrary();
-      setDatasets(res.datasets);
-      setLibraryTotal(res.datasets.length);
       toast(
         `Scan klaar: ${res.created} nieuw, ${res.updated} bijgewerkt, ${res.discovered} bronnen`,
       );
-      await loadOverview().catch(() => undefined);
+      // Re-query catalog + overview — never treat scan page length as KPI truth.
+      await Promise.all([
+        loadLibrary({ quiet: true, offset: 0 }),
+        loadOverview().catch(() => undefined),
+      ]);
     });
   }
 
@@ -927,6 +978,54 @@ export function useDatasetManagementWorkspace() {
       case "index":
         await onLearnToBrain({ rebuild: true });
         return;
+      case "advanced":
+        setShowAdvanced((v) => !v);
+        return;
+      case "dedupe":
+        await runVersionJob(
+          () => api.dedupeDatasetVersion(selectedId!, selectedVersionId!),
+          "Deduplicatie",
+        );
+        return;
+      case "split":
+        await runVersionJob(
+          () => api.splitDatasetVersion(selectedId!, selectedVersionId!),
+          "Split",
+        );
+        return;
+      case "tokenize":
+        await runVersionJob(
+          () => api.tokenizeStatsDatasetVersion(selectedId!, selectedVersionId!),
+          "Token-statistieken",
+        );
+        return;
+      case "contamination":
+        await runVersionJob(
+          () => api.contaminationScanDatasetVersion(selectedId!, selectedVersionId!),
+          "Contamination scan",
+        );
+        return;
+      case "pii":
+        await withBusy(async () => {
+          const res = await api.scanDatasetPii(selectedVersionId!);
+          const findings = Number(
+            (res.pii as { findingCount?: number; count?: number } | undefined)?.findingCount ??
+              (res.pii as { count?: number } | undefined)?.count ??
+              0,
+          );
+          toast(
+            findings > 0
+              ? `PII scan: ${findings} bevinding(en) (details beperkt)`
+              : "PII scan: geen bevindingen in sample",
+          );
+        });
+        return;
+      case "materialize":
+        await withBusy(async () => {
+          const res = await api.materializeDataset(selectedId!);
+          await trackJob(res.job, "Materialisatie in wachtrij");
+        });
+        return;
       default:
         return;
     }
@@ -1052,6 +1151,10 @@ export function useDatasetManagementWorkspace() {
     setStatusFilter,
     sort,
     setSort,
+    tagFilter,
+    setTagFilter,
+    showAdvanced,
+    setShowAdvanced,
 
     editDisplayName,
     setEditDisplayName,

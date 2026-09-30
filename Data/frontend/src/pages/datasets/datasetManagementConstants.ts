@@ -24,10 +24,13 @@ export type DatasetSidebarAction = {
 export const DM_PAGE_COPY = {
   title: "Dataset Management",
   subtitle: "ORGANISEER. VERRIJK. CONTROLEER. VERSNEL.",
-  quote: "Goede data vormt de fundering van betere intelligentie.",
+  quote: "Data is ruwe potentie.\nKennis ontstaat door structuur.",
+  quoteAttribution: "— LEVIATHAN",
+  body: "Beheer en verrijk datasets voor modelontwikkeling, RAG, evaluatie en training. Importeer vanuit lokale bestanden, externe bronnen en publieke repositories.",
   pillars: ["RUWE DATA", "BETERE MODELLEN", "DIEPER INZICHT", "GROTERE IMPACT"],
   shellTitle: "LLM / Dataset Management",
-  shellSubtitle: "Organiseer, verrijk en beheer datasets voor training en Brain.",
+  shellSubtitle:
+    "Datasetbeheer, import, validatie, semantische verrijking en training workflows.",
   searchPlaceholder: "Zoek in datasets, tags, bronnen...",
 } as const;
 
@@ -43,6 +46,16 @@ export const DM_SIDEBAR_ACTIONS: DatasetSidebarAction[] = [
   { id: "index", label: "Index opnieuw opbouwen", icon: "refresh" },
   { id: "validate", label: "Valideren", icon: "checkcircle" },
   { id: "export", label: "Exporteren", icon: "download" },
+  { id: "advanced", label: "Geavanceerd…", icon: "sliders" },
+];
+
+export const DM_ADVANCED_ACTIONS: DatasetSidebarAction[] = [
+  { id: "dedupe", label: "Dedupliceren", icon: "copy" },
+  { id: "split", label: "Splitsen (train/val/test)", icon: "sliders" },
+  { id: "tokenize", label: "Token-statistieken", icon: "file" },
+  { id: "contamination", label: "Contamination scan", icon: "shield" },
+  { id: "pii", label: "PII scan", icon: "shield" },
+  { id: "materialize", label: "Materialiseren", icon: "database" },
 ];
 
 export const DM_TYPE_FILTERS = ["Alle types", "Tekst", "Code", "Chat", "PDF", "Logs", "Vision"];
@@ -109,17 +122,16 @@ export const UPLOAD_SUFFIXES = new Set([
 
 /** Map NL UI status filter → backend status query value (or null = all). */
 export function statusFilterToQuery(filter: string): string | undefined {
-  if (!filter || filter === "Alle statussen") return undefined;
+  if (!filter || filter === "Alle statussen" || filter === "Onbekend") return undefined;
   const map: Record<string, string> = {
     Klaar: "ready",
-    Verwerkt: "processed",
-    Bezig: "running",
-    Wachtrij: "queued",
-    Waarschuwing: "warning",
+    Verwerkt: "ready",
+    Bezig: "importing",
+    Wachtrij: "created",
+    Waarschuwing: "failed",
     Fout: "failed",
-    Onbekend: "unknown",
   };
-  return map[filter] ?? filter;
+  return map[filter];
 }
 
 export function sourceFilterToQuery(filter: string): string | undefined {
@@ -127,8 +139,8 @@ export function sourceFilterToQuery(filter: string): string | undefined {
   const map: Record<string, string> = {
     "Hugging Face": "huggingface",
     Lokaal: "local",
-    Synthetic: "synthetic",
-    "Open Data": "open",
+    Synthetic: "derived",
+    "Open Data": "local",
   };
   return map[filter] ?? filter;
 }
