@@ -16,7 +16,10 @@ function PlayIcon() {
 export function ModelsActionsCard({ ws }: Props) {
   const model = ws.selectedModel;
   const busy = ws.busy != null;
-  const canStop = ws.optimizing;
+  const canStop =
+    ws.activeJobId != null ||
+    ws.busy != null ||
+    (ws.optimization != null && ["PENDING", "RUNNING"].includes(ws.optimization.status));
 
   return (
     <Panel title="Acties" icon={<PlayIcon />} className="lv-v2-models-actions">
@@ -53,10 +56,14 @@ export function ModelsActionsCard({ ws }: Props) {
         size="sm"
         className="lv-v2-button--danger"
         disabled={!canStop}
+        title="Annuleert de actieve Leviathan-operatie — stopt LM Studio niet"
         onClick={() => void ws.stop()}
       >
         Stoppen
       </Button>
+      {ws.activeJobId ? (
+        <p className="lv-v2-models-cap-note">Actieve job: {ws.activeJobId}</p>
+      ) : null}
       {ws.dirty ? <p className="lv-v2-models-cap-note">Er zijn niet-toegepaste wijzigingen in de configuratie.</p> : null}
     </Panel>
   );

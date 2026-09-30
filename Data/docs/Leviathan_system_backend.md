@@ -482,16 +482,32 @@ Key files:
 - `capability_probe.py`, `vision.py`, `efficiency_capabilities.py` — measured capabilities;
 - `downloads.py`, `import_service.py`, `benchmarks.py` — acquisition/benchmarking;
 - `providers/` — LM Studio, Ollama, OpenAI-compatible and other configured adapters.
-- `lm_studio_control.py` — LM Studio capability probing, REST/CLI load-config compiler,
-  estimate parsing, and applied-config receipts (native `/api/v1/models/load|unload`).
+- `lm_studio_control.py` — LM Studio capability probing, REST/CLI/SDK load-config compiler,
+  estimate parsing, applied-config receipts, and authoritative field matrix
+  (`SUPPORTED` / `UNSUPPORTED` / `UNKNOWN` + scope LOAD|INFERENCE|PLACEMENT_POLICY +
+  transport REST|CLI|SDK|LEVIATHAN + reason codes).
+- `lm_studio_sdk.py` — optional official `lmstudio` Python SDK bridge (defensive import;
+  absence downgrades capabilities truthfully; never kills LM Studio).
 - `optimizer.py` — bounded deterministic load-profile search (real load → benchmark → unload;
   explicit objective weights; no LLM scoring).
 
 LM Studio remains an externally owned runtime (`managed_by_leviathan=false`) but is
-**lifecycle-controllable** via its official native REST API when reachable. Capability
-fields are `SUPPORTED` / `UNSUPPORTED` / `UNKNOWN` from live probe evidence — not assumed.
+**lifecycle-controllable** via official native REST, `lms` CLI, and optional SDK when
+reachable. Leviathan never kills or restarts `LM Studio.exe`.
+
+Capability truth examples (official LM Studio surfaces):
+- REST load: `context_length`, `eval_batch_size`, `flash_attention`, `num_experts`,
+  `offload_kv_cache_to_gpu`, `echo_load_config`
+- CLI: `--gpu`, `--estimate-only`, `--context-length`
+- SDK load: `seed`, `gpu.ratio` / `mainGpu` / `splitStrategy` / `disabledGpus`,
+  KV quant types, `gpuStrictVramCap`
+- SDK prediction (not load): `cpuThreads`, `draftModel` / speculative decoding
+- Unsupported as placebo: arbitrary per-GPU `%` tensor splits, tensor-parallel size,
+  prefix cache, continuous-batching toggle on REST load
+
 Per-device VRAM headroom (display/aux roles keyed by `stableDeviceId`) is enforced in
-`PlacementPlanner.headroom_for_device` before load.
+`PlacementPlanner.headroom_for_device` before load. `keepDisplayHeadroom` is a
+Leviathan placement policy — not an LM Studio field.
 
 A configured/listed model is not automatically resident, healthy or tool/vision/reasoning capable. Capability probes and runtime evidence determine support.
 
@@ -514,8 +530,20 @@ FastAPI Model Control Plane
                     |
                     v
               managed serving child (llama.cpp / vLLM / …)
+              OR operator-owned LM Studio via adapter transports
               = actual local inference compute
 ```
+
+**Cold-start contract (required):** Worker Fabric may scale `model_runtime` to zero when
+idle. `ModelRuntimeClient` must therefore **accept enqueue** when the pool is cold but
+the WorkerSupervisor lease is healthy — queue demand wakes the singleton via existing
+`scale_to_zero_desired(queued>0)`. Requiring READY/BUSY before enqueue creates a
+deadlock (`MODEL_RUNTIME_UNAVAILABLE` with no job demand). Fail truthfully only when
+the supervisor is absent/expired/degraded-unavailable or the pool is disabled.
+
+Readiness snapshot (`model_runtime_readiness_snapshot`) exposes separate truths:
+`DISABLED` / `SUPERVISOR_UNAVAILABLE` / `COLD` / `STARTING` / `READY` plus `acceptJobs`.
+Provider health is not worker readiness.
 
 - `openai_compatible.py` — provider chat/completion transport (HTTP relay to managed
   local endpoint is allowed from Control Plane; tensor compute stays external);

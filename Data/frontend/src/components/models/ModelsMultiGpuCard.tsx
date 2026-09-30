@@ -30,18 +30,21 @@ export function ModelsMultiGpuCard({ ws }: Props) {
   const disabled = !ws.selectedId;
   const devices = ws.hardware?.devices ?? [];
   const manual = draft.gpuSplitMode === "manual";
-  const sliderUnsupported = capSupport("customGpuSplit") === "UNSUPPORTED";
+  const sliderUnsupported = capSupport("customGpuSplit") !== "SUPPORTED";
+  const splitSupported = capSupport("gpuSplit") === "SUPPORTED";
 
   return (
     <Panel title="Multi-GPU Verdelen" icon={<GpuIcon />} className="lv-v2-models-multi-gpu">
       <p className="lv-v2-muted lv-v2-models-load-config__desc">
-        Verdeel de model-lagen over je GPU's.
+        {sliderUnsupported
+          ? "LM Studio ondersteunt evenly / favorMainGpu via SDK — geen willekeurige per-GPU percentages. Sliders tonen hardware-telemetry, geen placebo-allocatie."
+          : "Verdeel de model-allocatie over je GPU's volgens de provider-transport."}
       </p>
 
       <FieldRow label="Verdelingsmodus" note={capNote("gpuSplit")}>
         <select
           className="lv-v2-select"
-          disabled={disabled || capSupport("gpuSplit") === "UNSUPPORTED"}
+          disabled={disabled || !splitSupported}
           value={draft.gpuSplitMode}
           onChange={(e) => setDraft({ gpuSplitMode: e.target.value })}
         >
@@ -52,6 +55,13 @@ export function ModelsMultiGpuCard({ ws }: Props) {
           ))}
         </select>
       </FieldRow>
+
+      {sliderUnsupported && manual ? (
+        <p className="lv-v2-models-cap-note">
+          {capNote("customGpuSplit") ||
+            "Handmatige per-GPU % is niet beschikbaar — kies Auto/evenly/favorMainGpu."}
+        </p>
+      ) : null}
 
       {devices.length === 0 ? (
         <p className="lv-v2-muted">Geen GPU's gedetecteerd.</p>

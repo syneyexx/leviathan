@@ -118,7 +118,15 @@ Media Control, Plugin & Runtime, Coding Agent, and other deep links remain regis
 - LM is an expandable nav group, derived from `MAIN_MENU` via `v2ChildrenFromMainMenu("llm")`. Its `match` claims `/models`, `/training`, `/agents`, `/analytics`, `/dataset-management`, and `/offline-datasets`. On those routes LM auto-expands with the matching child selected — there is no separate top-level Training owner.
 - `ModelsPage.tsx` composes four card rows (Runtime Provider / Hardware / VRAM; Model list / Load Config / Multi-GPU / Advanced; wide Optimalisatie; Resource Estimate / Performance / Actions) plus a manage-links footer that opens drawers for the existing `ProviderManager`, `ModelGatewayPanel`, `ModelRouterPanel`, and `ModelResidencyPanel` panels — those advanced surfaces are reused unchanged, not rebuilt.
 - All page composition lives in `src/components/models/*` (11 focused card components + `useModelsWorkspace` for data/mutation orchestration). No page-local CSS file; layout, form controls (select/range/toggle rows, tables, meters) live in `leviathan-v2.css` under `.lv-v2-page--models` / `.lv-v2-models-*`.
-- Capability-gating truth discipline: LM Studio control-plane fields the active provider/version doesn't support render disabled with a visible "Niet ondersteund door LM Studio …" note (`ws.capNote()` / `ws.capSupport()`), instead of silently hiding the control. A small hardcoded set (`seed`, `cpuThreads`, `prefixCache`) is always disabled because LM Studio has no control surface for them at all today.
+- Capability-gating truth discipline: controls are enabled/disabled from the backend
+  capability field matrix (`capabilities.fields[]` with support/scope/transport/reasonCode)
+  via `ws.capSupport()` / `ws.capNote()` / `ws.capField()`. Seed is SDK load-scoped when
+  the official SDK is reachable; `cpuThreads` / speculative draft are inference-scoped
+  and never enter the load payload. Arbitrary per-GPU % splits stay disabled with
+  `SDK_SPLIT_STRATEGY_ONLY` when the provider only exposes evenly/favorMainGpu.
+- Runtime Provider card shows provider health **and** separate `modelRuntime` Worker
+  Fabric state (`COLD` / `READY` / …). Load/unload await JobRuntime terminal state;
+  **Stoppen** cancels the Leviathan job/optimizer only (never kills LM Studio).
 - No fake hardcoded hardware/metrics in the production path — `useModelsWorkspace` only calls the real Model Control Plane APIs (`Data/backend/routes/models.py`, `Data/modules/models/*`, including the LM Studio control (`lm_studio_control.py`) and optimizer (`optimizer.py`) modules). Only the dedicated visual-fixture module below may contain deterministic mock data, gated behind `window.__LV_V2_VISUAL_FIXTURE__`.
 - Visual fixture: `src/mocks/modelsV2VisualFixture.ts` + helper `e2e/helpers/modelsV2Visual.ts` + `e2e/models-v2.visual.spec.ts` (reference: `docs/ui_reference/models-v2-reference.png`), covering load, nav-ownership, and interaction flows (select model, search, edit context/offload/GPU-split, estimate, optimize, load/unload).
 

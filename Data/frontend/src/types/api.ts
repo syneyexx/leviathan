@@ -680,6 +680,21 @@ export type ModelsStatus = {
   lastRefreshError?: string | null;
   providerCount?: number;
   offlineProviders?: ModelProvider[];
+  /** Separate from provider health — Worker Fabric model_runtime pool. */
+  modelRuntime?: {
+    pool?: string;
+    state?: string;
+    poolState?: string;
+    acceptJobs?: boolean;
+    reason?: string;
+    warm?: boolean;
+    cold?: boolean;
+    starting?: boolean;
+    supervisorAvailable?: boolean;
+    configuredCount?: number;
+    workerStates?: string[];
+    truth?: Record<string, boolean>;
+  } | null;
 };
 
 export type GatewaySnapshot = {
@@ -939,6 +954,18 @@ export type ModelLoadOptions = {
 /** Per-field runtime control support, as reported by the connected provider. */
 export type CapabilitySupportValue = "SUPPORTED" | "UNSUPPORTED" | "UNKNOWN";
 
+export type CapabilityScopeValue = "LOAD" | "INFERENCE" | "PLACEMENT_POLICY" | "RUNTIME_POLICY";
+export type CapabilityTransportValue = "REST" | "CLI" | "SDK" | "LEVIATHAN" | "NONE";
+
+export type ProviderCapabilityField = {
+  key: string;
+  support: CapabilitySupportValue;
+  scope: CapabilityScopeValue;
+  transport: CapabilityTransportValue;
+  reasonCode?: string | null;
+  note?: string | null;
+};
+
 /** Mirrors LMStudioControlCapabilities.public_dict() (Data/modules/models/lm_studio_control.py). */
 export type ProviderControlCapabilities = {
   providerId: string;
@@ -968,10 +995,16 @@ export type ProviderControlCapabilities = {
     advancedLlamaOverrides?: CapabilitySupportValue;
     contextLength?: CapabilitySupportValue;
     echoLoadConfig?: CapabilitySupportValue;
+    seed?: CapabilitySupportValue;
+    cpuThreads?: CapabilitySupportValue;
     providerVersion?: string | null;
     cliAvailable?: boolean;
+    sdkAvailable?: boolean;
+    sdkReachable?: boolean;
+    sdkVersion?: string | null;
     restBase?: string | null;
     notes?: string[];
+    fields?: ProviderCapabilityField[];
     /** Fallback shape for non-LM Studio providers (RuntimeCapabilities-derived). */
     loadOptions?: string[];
   };

@@ -391,14 +391,20 @@ class CompiledLMStudioLoad:
     warnings: list[str] = field(default_factory=list)
 
     def public_dict(self) -> dict[str, Any]:
+        rest_public = {
+            k: v for k, v in dict(self.rest_body).items() if not str(k).startswith("_")
+        }
         return {
             "modelKey": self.model_key,
-            "restBody": dict(self.rest_body),
+            "restBody": rest_public,
             "cliArgs": list(self.cli_args),
             "requested": dict(self.requested),
             "deferredUnsupported": dict(self.deferred_unsupported),
             "transport": self.transport,
             "warnings": list(self.warnings),
+            "sdkConfig": dict(self.rest_body.get("_sdkConfig") or {})
+            if self.transport == "sdk"
+            else None,
         }
 
 

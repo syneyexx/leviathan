@@ -95,10 +95,13 @@ export function ModelsLoadConfigCard({ ws }: Props) {
         </select>
       </FieldRow>
 
-      <FieldRow label="CPU threads" note={capNote("cpuThreads")}>
+      <FieldRow
+        label="CPU threads (inferentie)"
+        note={capNote("cpuThreads") || "Inferentie-profiel — niet meegestuurd bij load"}
+      >
         <select
           className="lv-v2-select"
-          disabled={disabled || capSupport("cpuThreads") === "UNSUPPORTED"}
+          disabled={disabled || capSupport("cpuThreads") !== "SUPPORTED"}
           value={draft.cpuThreads ?? "auto"}
           onChange={(e) => setDraft({ cpuThreads: e.target.value === "auto" ? null : Number(e.target.value) })}
         >
@@ -115,7 +118,7 @@ export function ModelsLoadConfigCard({ ws }: Props) {
         <input
           type="number"
           placeholder="-1"
-          disabled={disabled || capSupport("seed") === "UNSUPPORTED"}
+          disabled={disabled || capSupport("seed") !== "SUPPORTED"}
           value={draft.seed ?? ""}
           onChange={(e) => setDraft({ seed: e.target.value === "" ? null : Number(e.target.value) })}
         />
