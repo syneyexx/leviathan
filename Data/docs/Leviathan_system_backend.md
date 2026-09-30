@@ -1486,6 +1486,18 @@ Old evidence remains immutable. PAPER-observed StrategyMemory has its own episte
 
 They reuse JobRuntime/ExecutionGateway rather than maintaining independent execution queues or side-effect channels.
 
+## 21.1 TaskService Taken projections
+
+`Data/modules/tasks/` remains the operator task authority. HTTP: `Data/backend/routes/tasks.py`.
+
+Additive Taken V2 projections (no second store/runtime):
+
+- `derive_task_type` / `derive_operational_status` / `short_display_id` in `projection.py` — UI classification from existing tags/project/capability/source/binding + board/execution state;
+- `TaskSummary` exposes `total`, `running`, `waiting`, `completedLast7Days`, `failed`, `typeCounts`, and event-bucketed `sparklines` (from `task_events`, not a parallel metrics DB);
+- `list` accepts `taskType` / `operationalStatus` as derived filters (bounded over-fetch then filter);
+- `enrich_task` adds `taskType`, `operationalStatus`, `displayId`, `progressKnown`, `controls` (including honest `canPause: false`) and redacts `capabilityArguments` / `metadata` via observability `redact_payload`;
+- Pause/resume is **not** implemented on JobRuntime — UI must not pretend otherwise. Cancel/retry/start/duplicate remain TaskService → linked Job/Mission/Workflow.
+
 ---
 
 # 22. Security, isolation, secrets and authority
