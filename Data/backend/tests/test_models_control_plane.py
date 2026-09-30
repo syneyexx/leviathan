@@ -371,3 +371,182 @@ def test_download_blocked_without_outbound(plane: ModelControlPlane) -> None:
         assert exc.value.code == "NETWORK_BLOCKED"
 
     asyncio.run(_run())
+
+
+def _upsert_chat_model(plane: ModelControlPlane, model_id: str, *, display_name: str | None = None) -> None:
+    plane.registry.store.upsert_model(
+        {
+            "model_id": model_id,
+            "display_name": display_name or model_id,
+            "provider_id": "lm_studio",
+            "source": "local",
+            "capabilities": ModelCapabilities(chat=CapabilityState.SUPPORTED).public_dict(),
+            "lifecycle_state": "available",
+            "health": "healthy",
+            "metadata": {"provider_model_id": model_id},
+        }
+    )
+
+
+def test_router_fail_closed_without_authorized_selector(plane: ModelControlPlane) -> None:
+    """No explicit/agent/role/active/fallback → fail closed (never first_eligible)."""
+    for mid in ("alpha-model", "dolphin-qwen3-4b-abliterated", "qwen-model"):
+        _upsert_chat_model(plane, mid)
+    plane.router.save_config({"fallbackOrder": [], "roleModelOverrides": {}, "cloudFallbackAllowed": False})
+    # Clear any bootstrap-activated model.
+    plane.store.set_active_model(None)
+
+    with pytest.raises(ModelControlError) as exc:
+        plane.router.resolve(ModelRequest())
+    assert exc.value.code in {"NO_MODEL_ASSIGNED", "ROUTER_EXHAUSTED", "NO_CHAT_MODEL_AVAILABLE"}
+    assert "first_eligible" not in str(exc.value).lower()
+    assert exc.value.details.get("truth", {}).get("first_eligible_removed") is True
+
+
+def test_router_ordering_independence(plane: ModelControlPlane) -> None:
+    """Registry alphabetical order must not become execution policy."""
+    plane.router.save_config({"fallbackOrder": [], "roleModelOverrides": {}, "cloudFallbackAllowed": False})
+    plane.store.set_active_model(None)
+
+    for order in (
+        ("alpha-model", "dolphin-qwen3-4b-abliterated", "qwen-model"),
+        ("qwen-model", "alpha-model", "dolphin-qwen3-4b-abliterated"),
+        ("dolphin-qwen3-4b-abliterated", "qwen-model", "alpha-model"),
+    ):
+        for mid in order:
+            _upsert_chat_model(plane, mid)
+        with pytest.raises(ModelControlError) as exc:
+            plane.router.resolve(ModelRequest())
+        assert exc.value.code in {"NO_MODEL_ASSIGNED", "ROUTER_EXHAUSTED", "NO_CHAT_MODEL_AVAILABLE"}
+
+
+def test_router_explicit_still_allows_any_registered_model(plane: ModelControlPlane) -> None:
+    _upsert_chat_model(plane, "dolphin-qwen3-4b-abliterated")
+    _upsert_chat_model(plane, "qwen-model")
+    plane.store.set_active_model(None)
+    plane.router.save_config({"fallbackOrder": [], "roleModelOverrides": {}})
+    decision = plane.router.resolve(ModelRequest(explicit_model_id="dolphin-qwen3-4b-abliterated"))
+    assert decision.model_id == "dolphin-qwen3-4b-abliterated"
+    assert decision.reason == "explicit"
+    assert decision.selection_is_authorized is True
+    assert decision.selection_source == "explicit"
+
+
+def test_router_role_override_authorized(plane: ModelControlPlane) -> None:
+    _upsert_chat_model(plane, "qwen-X")
+    _upsert_chat_model(plane, "dolphin-qwen3-4b-abliterated")
+    plane.store.set_active_model(None)
+    plane.router.save_config(
+        {
+            "fallbackOrder": [],
+            "roleModelOverrides": {"trading.researcher": "qwen-X"},
+            "cloudFallbackAllowed": False,
+        }
+    )
+    decision = plane.router.resolve(ModelRequest(preferred_role="trading.researcher"))
+    assert decision.model_id == "qwen-X"
+    assert decision.reason == "role:trading.researcher"
+    assert decision.selection_is_authorized is True
+
+
+def test_router_active_default_authorized(plane: ModelControlPlane) -> None:
+    _upsert_chat_model(plane, "model-B")
+    _upsert_chat_model(plane, "alpha-model")
+    plane.registry.activate("model-B")
+    plane.router.save_config({"fallbackOrder": [], "roleModelOverrides": {}})
+    decision = plane.router.resolve(ModelRequest())
+    assert decision.model_id == "model-B"
+    assert decision.reason == "active_default"
+    assert decision.selection_is_authorized is True
+
+
+def test_router_configured_fallback_authorized(plane: ModelControlPlane) -> None:
+    _upsert_chat_model(plane, "model-B")
+    _upsert_chat_model(plane, "model-C")
+    _upsert_chat_model(plane, "alpha-model")
+    plane.store.set_active_model(None)
+    plane.router.save_config(
+        {
+            "fallbackOrder": ["model-B", "model-C"],
+            "roleModelOverrides": {},
+            "cloudFallbackAllowed": False,
+        }
+    )
+    decision = plane.router.resolve(ModelRequest())
+    assert decision.model_id == "model-B"
+    assert decision.reason == "fallback:configured"
+    assert decision.fallback_used is True
+
+
+def test_router_agent_requirement_authorized(plane: ModelControlPlane) -> None:
+    _upsert_chat_model(plane, "agent-model")
+    _upsert_chat_model(plane, "alpha-model")
+    plane.store.set_active_model(None)
+    plane.router.save_config({"fallbackOrder": [], "roleModelOverrides": {}})
+    decision = plane.router.resolve(ModelRequest(agent_model_id="agent-model"))
+    assert decision.model_id == "agent-model"
+    assert decision.reason == "agent_requirement"
+
+
+def test_router_cloud_fallback_ambiguous_fails_closed(plane: ModelControlPlane) -> None:
+    for mid in ("cloud-a", "cloud-b"):
+        plane.registry.store.upsert_model(
+            {
+                "model_id": mid,
+                "display_name": mid,
+                "provider_id": "openai",
+                "source": "api",
+                "capabilities": ModelCapabilities(chat=CapabilityState.SUPPORTED).public_dict(),
+                "lifecycle_state": "available",
+                "health": "healthy",
+            }
+        )
+    plane.store.set_active_model(None)
+    plane.router.save_config(
+        {"fallbackOrder": [], "roleModelOverrides": {}, "cloudFallbackAllowed": True}
+    )
+    with pytest.raises(ModelControlError) as exc:
+        plane.router.resolve(ModelRequest())
+    assert exc.value.details.get("reason") == "CLOUD_FALLBACK_AMBIGUOUS"
+
+
+def test_router_cloud_fallback_unique_allowed(plane: ModelControlPlane) -> None:
+    plane.registry.store.upsert_model(
+        {
+            "model_id": "cloud-only",
+            "display_name": "cloud-only",
+            "provider_id": "openai",
+            "source": "api",
+            "capabilities": ModelCapabilities(chat=CapabilityState.SUPPORTED).public_dict(),
+            "lifecycle_state": "available",
+            "health": "healthy",
+        }
+    )
+    plane.store.set_active_model(None)
+    plane.router.save_config(
+        {"fallbackOrder": [], "roleModelOverrides": {}, "cloudFallbackAllowed": True}
+    )
+    decision = plane.router.resolve(ModelRequest())
+    assert decision.model_id == "cloud-only"
+    assert decision.reason == "fallback:cloud"
+
+
+def test_resolve_target_selection_authorized_flag(plane: ModelControlPlane) -> None:
+    _upsert_chat_model(plane, "model-B")
+    plane.registry.activate("model-B")
+    target = plane.resolve_target(preferred_role="chat")
+    assert target.selection_is_authorized is True
+    assert target.route.public_dict()["authorized"] is True
+    assert target.public_dict()["selectionIsAuthorized"] is True
+
+
+def test_domain_callers_fail_without_assignment(plane: ModelControlPlane) -> None:
+    """Cognition/coding/trading-style preferred_role without bindings must fail honestly."""
+    _upsert_chat_model(plane, "dolphin-qwen3-4b-abliterated")
+    _upsert_chat_model(plane, "alpha-model")
+    plane.store.set_active_model(None)
+    plane.router.save_config({"fallbackOrder": [], "roleModelOverrides": {}, "cloudFallbackAllowed": False})
+    for role in ("coding", "trading.researcher", "research", "chat"):
+        with pytest.raises(ModelControlError) as exc:
+            plane.resolve_target(preferred_role=role)
+        assert exc.value.code in {"NO_MODEL_ASSIGNED", "ROUTER_EXHAUSTED", "NO_CHAT_MODEL_AVAILABLE"}

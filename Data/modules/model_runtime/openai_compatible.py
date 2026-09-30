@@ -92,9 +92,28 @@ class OpenAICompatibleLLM:
         return self._base_url(endpoint)
 
     async def resolve_model(self, *, endpoint: str | None = None, api_key: str | None = None) -> str:
+        """Return the configured/settings model identity for transport.
+
+        Discovery (GET /v1/models) must never choose an execution target.
+        Production callers must pass ``model_id`` from the Model Control Plane,
+        or configure ``LEVIATHAN_LLM_MODEL`` explicitly.
+        """
         if self._resolved_model:
             return self._resolved_model
+        configured = (self.settings.llm_model or "").strip()
+        if configured:
+            self._resolved_model = configured
+            return self._resolved_model
+        raise LLMUnavailable(
+            "NO_MODEL_ASSIGNED: transport has no model identity. "
+            "Pass model_id from the Model Control Plane, or set LEVIATHAN_LLM_MODEL. "
+            "Provider /v1/models list order is not selection policy."
+        )
 
+    async def list_provider_models(
+        self, *, endpoint: str | None = None, api_key: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Discovery-only: list provider models without selecting an execution target."""
         base = self._ensure_endpoint_allowed(endpoint)
         try:
             async with httpx.AsyncClient(timeout=min(self.settings.llm_timeout_seconds, 10.0)) as client:
@@ -102,25 +121,33 @@ class OpenAICompatibleLLM:
                 response.raise_for_status()
                 payload = response.json()
         except (httpx.HTTPError, ValueError) as exc:
-            raise LLMUnavailable(
-                f"No model configured and model discovery failed at {base}."
-            ) from exc
-
+            raise LLMUnavailable(f"Model discovery failed at {base}.") from exc
         models = payload.get("data") if isinstance(payload, dict) else None
-        if not models or not isinstance(models, list) or not models[0].get("id"):
-            raise LLMUnavailable("The configured model server returned no usable models.")
-
-        self._resolved_model = str(models[0]["id"])
-        return self._resolved_model
+        if not models or not isinstance(models, list):
+            return []
+        return [m for m in models if isinstance(m, dict)]
 
     async def health(self) -> dict[str, Any]:
+        """Passive connectivity check — never selects models[0] for execution."""
+        configured = (self._resolved_model or self.settings.llm_model or "").strip() or None
         try:
-            model = await self.resolve_model()
-            return {"available": True, "model": model, "base_url": self.settings.llm_base_url}
+            models = await self.list_provider_models()
+            return {
+                "available": True,
+                "model": configured,
+                "modelConfigured": bool(configured),
+                "discoveredCount": len(models),
+                "base_url": self.settings.llm_base_url,
+                "truth": {
+                    "discovery_is_not_execution_authority": True,
+                    "provider_list_order_is_not_selection_policy": True,
+                },
+            }
         except LLMUnavailable as exc:
             return {
                 "available": False,
-                "model": self.settings.llm_model,
+                "model": configured or self.settings.llm_model,
+                "modelConfigured": bool(configured),
                 "base_url": self.settings.llm_base_url,
                 "error": str(exc),
             }

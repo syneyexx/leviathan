@@ -475,6 +475,52 @@ class ModelRequest:
     latency_class: str | None = None  # interactive | background | batch
 
 
+# Canonical production-inference selection authorities.
+# Registry / provider discovery order is NEVER an authority.
+AUTHORIZED_SELECTION_REASONS = frozenset(
+    {
+        "explicit",
+        "agent_requirement",
+        "active_default",
+        "fallback:configured",
+        "fallback:cloud",
+        "legacy_settings_fallback",
+        "settings_explicit",
+    }
+)
+
+
+def selection_reason_is_authorized(reason: str | None) -> bool:
+    """True when reason is a valid Model Control Plane selection authority."""
+    if not reason:
+        return False
+    if reason in AUTHORIZED_SELECTION_REASONS:
+        return True
+    # Role overrides are recorded as role:<name>
+    if reason.startswith("role:"):
+        return True
+    return False
+
+
+def selection_source_from_reason(reason: str) -> str:
+    """Machine-readable selection source derived from route reason."""
+    if reason == "explicit":
+        return "explicit"
+    if reason == "agent_requirement":
+        return "agent_requirement"
+    if reason.startswith("role:"):
+        return "role_override"
+    if reason == "active_default":
+        return "active_default"
+    if reason == "fallback:configured":
+        return "fallback_configured"
+    if reason == "fallback:cloud":
+        return "fallback_cloud"
+    if reason in {"legacy_settings_fallback", "settings_explicit"}:
+        return "settings_explicit"
+    return "unauthorized"
+
+
 @dataclass
 class RouteDecision:
     model_id: str
@@ -487,11 +533,29 @@ class RouteDecision:
     job_class: str | None = None
     candidate_scores: list[dict[str, Any]] = field(default_factory=list)
     policy_id: str | None = None
+    # Selection provenance — authorized ≠ ExecutionGateway permission.
+    selection_source: str | None = None
+    authorized: bool | None = None
+
+    def __post_init__(self) -> None:
+        if self.selection_source is None:
+            self.selection_source = selection_source_from_reason(self.reason)
+        if self.authorized is None:
+            self.authorized = selection_reason_is_authorized(self.reason)
+
+    @property
+    def selection_is_authorized(self) -> bool:
+        if self.authorized is not None:
+            return bool(self.authorized)
+        return selection_reason_is_authorized(self.reason)
 
     def public_dict(self) -> dict[str, Any]:
         return {
             "modelId": self.model_id,
             "reason": self.reason,
+            "selectionSource": self.selection_source or selection_source_from_reason(self.reason),
+            "authorized": self.selection_is_authorized,
+            "explicitSelection": self.reason == "explicit",
             "fallbackUsed": self.fallback_used,
             "fallbackReason": self.fallback_reason,
             "candidatesTried": list(self.candidates_tried),
@@ -502,6 +566,8 @@ class RouteDecision:
             "truth": {
                 "selection_is_not_permission": True,
                 "router_does_not_grant_capability_authority": True,
+                "discovery_is_not_execution_authority": True,
+                "registry_order_is_not_selection_policy": True,
             },
         }
 
@@ -1286,6 +1352,11 @@ class ResolvedModelTarget:
     required_capabilities: tuple[str, ...] = ()
     preferred_role: str | None = None
 
+    @property
+    def selection_is_authorized(self) -> bool:
+        """Canonical selection provenance exists (not ExecutionGateway permission)."""
+        return bool(self.route.selection_is_authorized)
+
     def public_dict(self) -> dict[str, Any]:
         return {
             "model": self.model.public_dict(),
@@ -1300,6 +1371,7 @@ class ResolvedModelTarget:
             "contextWindow": self.context_window,
             "managed": self.managed,
             "explicitSelection": self.explicit_selection,
+            "selectionIsAuthorized": self.selection_is_authorized,
             "requiredCapabilities": list(self.required_capabilities),
             "preferredRole": self.preferred_role,
         }

@@ -11,7 +11,7 @@ from typing import Any, AsyncIterator
 
 from Data.modules.model_runtime.serving import InferenceJobClass
 from Data.modules.models.contracts import ResolvedModelTarget, ResidencyLease
-from Data.modules.models.errors import ModelControlError
+from Data.modules.models.errors import NO_MODEL_ASSIGNED, ModelControlError
 
 
 @dataclass
@@ -206,6 +206,33 @@ async def open_inference_session(
         jc = InferenceJobClass(job_class)
     except ValueError:
         jc = InferenceJobClass.INTERACTIVE
+
+    # Defense-in-depth: only authorized Model Control Plane targets may reach the provider.
+    if not getattr(target, "selection_is_authorized", False):
+        route = getattr(target, "route", None)
+        reason = getattr(route, "reason", None) if route is not None else None
+        raise ModelControlError(
+            code=NO_MODEL_ASSIGNED,
+            message=(
+                "Inference refused: target lacks authorized model-selection provenance "
+                f"(reason={reason!r})"
+            ),
+            model_id=getattr(getattr(target, "model", None), "id", None),
+            provider_id=getattr(target, "provider_id", None),
+            http_status=503,
+            details={
+                "reason": "UNAUTHORIZED_SELECTION",
+                "selectionReason": reason,
+                "selectionSource": getattr(route, "selection_source", None) if route else None,
+                "consumer": consumer,
+                "domain": domain,
+                "modelRole": model_role,
+                "truth": {
+                    "discovery_is_not_execution_authority": True,
+                    "registry_order_is_not_selection_policy": True,
+                },
+            },
+        )
 
     binding = target.runtime_binding
     managed = bool(target.managed)

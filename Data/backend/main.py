@@ -4131,7 +4131,12 @@ async def chat(payload: ChatRequest, request: Request):
                     residency_lease_id, model_id=model_id_for_release
                 )
                 residency_lease_id = None
-            if exc.code in {"ROUTER_EXHAUSTED", "NO_CHAT_MODEL_AVAILABLE", "MODEL_NOT_FOUND"} and not payload.model_id:
+            if exc.code in {
+                "ROUTER_EXHAUSTED",
+                "NO_CHAT_MODEL_AVAILABLE",
+                "NO_MODEL_ASSIGNED",
+                "MODEL_NOT_FOUND",
+            } and not payload.model_id:
                 # Soft settings fallback still uses EXTERNAL residency + Gateway —
                 # never silent bypass of the Model Control Plane.
                 try:
