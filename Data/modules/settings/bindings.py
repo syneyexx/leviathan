@@ -484,4 +484,22 @@ def bind_default_consumers(
         if key == "training_fixture":
             os.environ["LEVIATHAN_TRAINING_FIXTURE"] = "1" if value else "0"
 
+        if key == "managed_serving.gpu_memory_limit_pct" and model_plane is not None:
+            mgr = getattr(model_plane, "resources", None) or getattr(
+                model_plane, "resource_manager", None
+            )
+            if mgr is not None and hasattr(mgr, "set_gpu_memory_limit_pct"):
+                mgr.set_gpu_memory_limit_pct(float(value))
+
+        if key == "ui.start_with_system":
+            from Data.modules.settings.startup_registration import apply_registration
+
+            apply_registration(enabled=bool(value))
+
+        if key == "model.timeout_seconds" and llm is not None:
+            if hasattr(llm, "timeout_seconds"):
+                llm.timeout_seconds = float(value)
+            elif hasattr(llm, "timeout"):
+                llm.timeout = float(value)
+
     plane.register_apply_callback(on_apply)

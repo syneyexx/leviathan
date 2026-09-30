@@ -235,6 +235,33 @@ class ManagedServingSettings:
     min_ram_reserve_bytes: int = 1_073_741_824
     min_vram_reserve_bytes: int = 536_870_912
     max_managed_resident_models: int = 4
+    # Soft operator ceiling: models may use at most this fraction of measured VRAM.
+    # ResourceManager converts requested % → reserve headroom when hardware is known.
+    gpu_memory_limit_pct: float = 90.0
+
+
+@dataclass(frozen=True)
+class UiPreferencesSettings:
+    """Operator UI / workstation preferences (Settings → Algemeen).
+
+    These are application presentation and client-policy knobs owned by the
+    Settings Control Plane. They do not invent a parallel preferences store.
+    """
+
+    app_display_name: str = "Leviathan AI Control Center"
+    timezone: str = "Europe/Amsterdam"
+    locale: str = "nl"
+    theme: str = "dark_leviathan"
+    auto_refresh_seconds: int = 30
+    sound_notifications: bool = True
+    desktop_notifications: bool = True
+    start_with_system: bool = False
+    prefer_local_data: bool = True
+    # Optional non-essential diagnostics that may leave the machine.
+    # Operational local SystemTelemetrySampler is NOT gated by this flag.
+    optional_diagnostics_share: bool = False
+    # Local crash fingerprint retention in ObservabilityHub (no external sink today).
+    crash_reports_enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -708,6 +735,7 @@ class Settings:
     browser_qa: BrowserQaSettings
     media: MediaSettings
     managed_serving: ManagedServingSettings
+    ui: UiPreferencesSettings
     database_paths: DatabasePaths
     database_path: Path  # Control Plane path (compat alias)
 
@@ -1007,6 +1035,25 @@ class Settings:
                 "threads": self.native_compute.threads,
                 "rust_threshold_mb": self.native_compute.rust_threshold_mb,
             },
+            "ui": {
+                "app_display_name": self.ui.app_display_name,
+                "timezone": self.ui.timezone,
+                "locale": self.ui.locale,
+                "theme": self.ui.theme,
+                "auto_refresh_seconds": self.ui.auto_refresh_seconds,
+                "sound_notifications": self.ui.sound_notifications,
+                "desktop_notifications": self.ui.desktop_notifications,
+                "start_with_system": self.ui.start_with_system,
+                "prefer_local_data": self.ui.prefer_local_data,
+                "optional_diagnostics_share": self.ui.optional_diagnostics_share,
+                "crash_reports_enabled": self.ui.crash_reports_enabled,
+            },
+            "managed_serving": {
+                "enabled": self.managed_serving.enabled,
+                "gpu_memory_limit_pct": self.managed_serving.gpu_memory_limit_pct,
+                "max_managed_resident_models": self.managed_serving.max_managed_resident_models,
+                "min_vram_reserve_bytes": self.managed_serving.min_vram_reserve_bytes,
+            },
             "database_path": str(self.database_path),
             "database_paths": self.database_paths.public_dict(),
         }
@@ -1183,6 +1230,9 @@ class Settings:
                 ),
                 max_managed_resident_models=_env_int(
                     "LEVIATHAN_MAX_MANAGED_RESIDENT_MODELS", 4, minimum=1, maximum=64
+                ),
+                gpu_memory_limit_pct=_env_float(
+                    "LEVIATHAN_GPU_MEMORY_LIMIT_PCT", 90.0, minimum=10.0, maximum=100.0
                 ),
             ),
             knowledge=KnowledgeSettings(
@@ -1723,6 +1773,33 @@ class Settings:
                     minimum=16 * 1024 * 1024,
                     maximum=64 * 1024 * 1024 * 1024,
                 ),
+            ),
+            ui=UiPreferencesSettings(
+                app_display_name=(
+                    _env_raw("LEVIATHAN_APP_DISPLAY_NAME", "Leviathan AI Control Center")
+                    or "Leviathan AI Control Center"
+                ).strip()[:120]
+                or "Leviathan AI Control Center",
+                timezone=(
+                    _env_raw("LEVIATHAN_UI_TIMEZONE", "Europe/Amsterdam") or "Europe/Amsterdam"
+                ).strip()
+                or "Europe/Amsterdam",
+                locale=(_env_raw("LEVIATHAN_UI_LOCALE", "nl") or "nl").strip().lower() or "nl",
+                theme=(
+                    _env_raw("LEVIATHAN_UI_THEME", "dark_leviathan") or "dark_leviathan"
+                ).strip().lower()
+                or "dark_leviathan",
+                auto_refresh_seconds=_env_int(
+                    "LEVIATHAN_UI_AUTO_REFRESH_SECONDS", 30, minimum=5, maximum=600
+                ),
+                sound_notifications=_env_bool("LEVIATHAN_UI_SOUND_NOTIFICATIONS", True),
+                desktop_notifications=_env_bool("LEVIATHAN_UI_DESKTOP_NOTIFICATIONS", True),
+                start_with_system=_env_bool("LEVIATHAN_UI_START_WITH_SYSTEM", False),
+                prefer_local_data=_env_bool("LEVIATHAN_UI_PREFER_LOCAL_DATA", True),
+                optional_diagnostics_share=_env_bool(
+                    "LEVIATHAN_UI_OPTIONAL_DIAGNOSTICS_SHARE", False
+                ),
+                crash_reports_enabled=_env_bool("LEVIATHAN_UI_CRASH_REPORTS", True),
             ),
             database_paths=database_paths,
             database_path=database_path,

@@ -133,6 +133,16 @@ Media Control, Plugin & Runtime, Coding Agent, and other deep links remain regis
 - No page-local Training CSS file; layout lives in `leviathan-v2.css` under `.lv-v2-page--training` / `.lv-v2-training-*`.
 - Visual fixture: `src/mocks/trainingV2VisualFixture.ts` + `e2e/helpers/trainingV2Visual.ts` + `e2e/training-v2.visual.spec.ts` (reference: `docs/ui_reference/training-v2-reference.png`). Production never imports the fixture as defaults.
 
+## Settings / Systeem Instellingen migration
+
+- `/settings` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "Settings / Systeem Instellingen").
+- Canonical ownership remains the Settings Control Plane (`Data/modules/settings/`). Providers remain Model Control Plane. No second settings DB / provider registry / telemetry stack.
+- Composition: `SettingsPage` + `useSettingsWorkspace` + `src/components/settings/*` (hero, metrics, category nav, algemeen panel, providers, system config, catalog fields).
+- Algemeen preferences live as `ui.*` catalog keys on `Settings.ui`. System config sliders edit existing keys (`managed_serving.gpu_memory_limit_pct`, `context.token_budget`, `resources.max_model_concurrency`, `model.timeout_seconds`).
+- No page-local Settings CSS file; layout lives in `leviathan-v2.css` under `.lv-v2-page--settings` / `.lv-v2-settings-*`.
+- Docs: `Data/docs/frontend/settings-v2.md`. Reference: `docs/ui_reference/settings-v2-reference.jpg`.
+- Screenshot categories Gebruikers/Abonnement are not fabricated as subsystems; Users KPI reports local-operator truth.
+
 ## Taken migration
 
 - `/tasks` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "Dashboard / Taken").

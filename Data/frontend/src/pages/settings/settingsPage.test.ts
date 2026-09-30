@@ -8,6 +8,14 @@ const settingsPageSrc = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "..", "SettingsPage.tsx"),
   "utf8",
 );
+const categoryContentSrc = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "../../components/settings/SettingsCategoryContent.tsx"),
+  "utf8",
+);
+const workspaceSrc = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "../../hooks/useSettingsWorkspace.ts"),
+  "utf8",
+);
 
 describe("settings navigation", () => {
   it("keeps settings under one /settings page with section query links", () => {
@@ -33,15 +41,30 @@ describe("settings navigation", () => {
   });
 });
 
+describe("settings V2 shell", () => {
+  it("opts into AppShell variant v2 without a page-local CSS file", () => {
+    expect(settingsPageSrc).toContain('variant="v2"');
+    expect(settingsPageSrc).toContain("lv-v2-page--settings");
+    expect(settingsPageSrc).toContain("useSettingsWorkspace");
+    expect(settingsPageSrc).not.toMatch(/import\s+["'].*settings-v2\.css/);
+  });
+
+  it("wires save/reset through Settings Control Plane APIs", () => {
+    expect(workspaceSrc).toContain("patchSettings");
+    expect(workspaceSrc).toContain("resetSettingsCategory");
+    expect(workspaceSrc).toContain("getStartupRegistration");
+    expect(workspaceSrc).toContain("listModelProviders");
+  });
+});
+
 describe("behavior hot-apply settings UX", () => {
   it("states next turn is updated without forcing a new chat or reload", () => {
-    expect(settingsPageSrc).toContain("Applied — active from next turn");
-    expect(settingsPageSrc).not.toMatch(/open a new chat/i);
-    expect(settingsPageSrc).not.toMatch(/window\.location\.reload/);
-    expect(settingsPageSrc).not.toMatch(/navigate\(\s*[\"']\/chat/);
-    // Save path updates local draft from API effective profile; backend remains authority.
-    expect(settingsPageSrc).toContain("patchBehaviorProfile");
-    expect(settingsPageSrc).toContain("getBehaviorProfile");
+    expect(categoryContentSrc).toContain("Applied — active from next turn");
+    expect(categoryContentSrc).not.toMatch(/open a new chat/i);
+    expect(categoryContentSrc).not.toMatch(/window\.location\.reload/);
+    expect(categoryContentSrc).not.toMatch(/navigate\(\s*[\"']\/chat/);
+    expect(categoryContentSrc).toContain("patchBehaviorProfile");
+    expect(categoryContentSrc).toContain("putBehaviorSystemPrompt");
   });
 });
 
@@ -52,10 +75,10 @@ describe("settings LLM behavior textareas", () => {
   );
 
   it("uses multiline textarea classes instead of compact lv-input height alone", () => {
-    expect(settingsPageSrc).toMatch(/className="lv-input lv-textarea lv-textarea--identity"/);
-    expect(settingsPageSrc).toMatch(/className="lv-input lv-textarea lv-textarea--system-prompt"/);
-    expect(settingsPageSrc).toMatch(/Identity description[\s\S]*rows=\{6\}/);
-    expect(settingsPageSrc).toMatch(/System Prompt[\s\S]*rows=\{12\}/);
+    expect(categoryContentSrc).toMatch(/className="lv-v2-input lv-textarea lv-textarea--identity"/);
+    expect(categoryContentSrc).toMatch(/className="lv-v2-input lv-textarea lv-textarea--system-prompt"/);
+    expect(categoryContentSrc).toMatch(/Identity description[\s\S]*rows=\{6\}/);
+    expect(categoryContentSrc).toMatch(/System Prompt[\s\S]*rows=\{12\}/);
   });
 
   it("defines textarea overrides so 34px input height does not clip multiline fields", () => {
@@ -64,7 +87,6 @@ describe("settings LLM behavior textareas", () => {
     expect(pagesCss).toMatch(/\.lv-textarea--identity \{[\s\S]*?min-height:\s*6\.5rem/);
     expect(pagesCss).toMatch(/\.lv-textarea--system-prompt \{[\s\S]*?min-height:\s*12\.5rem/);
     expect(pagesCss).toContain("resize: vertical");
-    // Compact controls keep fixed height; textareas explicitly unset it.
     const textareaBlock = pagesCss.slice(pagesCss.indexOf("textarea.lv-input"));
     expect(textareaBlock).toContain("height: auto");
     expect(textareaBlock).not.toMatch(/textarea\.lv-input[\s\S]{0,200}height:\s*34px/);

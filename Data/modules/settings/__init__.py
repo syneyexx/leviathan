@@ -10,6 +10,7 @@ from .catalog import CATALOG, CATALOG_BY_KEY, CATEGORIES, categories_public
 from .resolver import BehaviorSettingsResolver, BehaviorSnapshot
 from .seed import SEED_SYSTEM_PROMPT
 from .service import SettingsControlPlane, apply_overrides_to_settings, merge_db_overrides_if_available
+from .startup_registration import StartupRegistrationState, apply_registration, measure_registration
 from .store import SettingsOverrideStore
 from .types import ApplyMode, MutationStatus, SettingsError, SettingType
 
@@ -29,8 +30,11 @@ __all__ = [
     "SettingsControlPlane",
     "SettingsError",
     "SettingsOverrideStore",
+    "StartupRegistrationState",
     "apply_overrides_to_settings",
+    "apply_registration",
     "categories_public",
+    "measure_registration",
     "merge_behavior_patch",
     "merge_db_overrides_if_available",
     "validate_behavior_patch",
