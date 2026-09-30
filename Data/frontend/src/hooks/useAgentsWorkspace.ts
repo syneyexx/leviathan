@@ -623,7 +623,6 @@ export function useAgentsWorkspace() {
     const lmValue =
       llm?.available === true ? "Running" : llm?.available === false ? "Offline" : health ? "UNMEASURED" : "…";
     const lmTone = llm?.available === true ? "success" : llm?.available === false ? "danger" : "muted";
-    const cpu = telemetry?.cpu?.available ? telemetry.cpu.utilizationPct : null;
     const ramUsed = telemetry?.memory?.available ? telemetry.memory.usedBytes : null;
     const ramTotal = telemetry?.memory?.available ? telemetry.memory.totalBytes : null;
     const gpuDevices = telemetry?.gpu?.available ? telemetry.gpu.devices : [];
