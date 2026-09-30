@@ -11374,3 +11374,15 @@
     padding-top: 0;
   }
 }
+
+/* Bounded drawing window over the complete, paged Brain catalog. */
+.lv-v2-dna__segments {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  padding: 10px 12px; border-top: 1px solid var(--lv2-border);
+  font-size: 11px; color: var(--lv2-text-secondary);
+}
+.lv-v2-dna__segments label { display: flex; align-items: center; gap: 8px; }
+.lv-v2-dna__segments input { width: 100px; }
+.lv-v2-dna__segments button { border: 1px solid var(--lv2-border); padding: 5px 8px; border-radius: 6px; color: var(--lv2-text); }
+.lv-v2-dna__segments button:disabled { opacity: .4; cursor: default; }
+.lv-v2-dna__segments button:focus-visible { outline: 2px solid var(--lv2-cyan); }

@@ -1794,6 +1794,16 @@ brain_facade = BrainQueryFacade(
     workflow_list=lambda: workflow_store.list(limit=100),
     atlas_list=lambda: atlas_store.search("", limit=100) if settings.features.rag_v3 else [],
     relation_list=lambda: knowledge.list_relation_atoms(limit=200),
+    page_sources={
+        "knowledge_list": lambda o, n: knowledge.list_documents(limit=n, offset=o),
+        "evidence_list": lambda o, n: evidence_store.list(limit=n, offset=o),
+        "research_list": lambda o, n: research_service.list_projects(limit=n, offset=o),
+        "dataset_list": lambda o, n: dataset_service.list_library_datasets(limit=n, offset=o),
+        "memory_list": lambda o, n: memory_store.list(limit=n, offset=o, status=None),
+        "workflow_list": lambda o, n: workflow_store.list(limit=n, offset=o),
+        "atlas_list": lambda o, n: atlas_store.list_page(limit=n, offset=o) if settings.features.rag_v3 else [],
+        "relation_list": lambda o, n: knowledge.list_relation_atoms(limit=n, offset=o),
+    },
     max_nodes=250,
     max_edges=500,
 )

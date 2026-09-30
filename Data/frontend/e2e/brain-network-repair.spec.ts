@@ -68,7 +68,7 @@ test('bounded 250-node API graph supports relation mode and exposes every node t
   await page.addInitScript(() => { (window as Window & {__LV_V2_VISUAL_FIXTURE__?:boolean}).__LV_V2_VISUAL_FIXTURE__ = false; });
   const nodes = Array.from({length:250},(_,i)=>({id:`knowledge:document:doc-${i}`,type:'knowledge.document',label:`Document ${i}`,meta:{}}));
   const edges = nodes.slice(1).map((n,i)=>({id:`edge-${i}`,source:nodes[0].id,target:n.id,relation:'related'}));
-  await page.route('**/api/brain/graph?*', route => route.fulfill({json:{nodes,edges,stats:{node_count:250,edge_count:249,by_type:{'knowledge.document':250},by_relation:{related:249}},truth:{bounded_projection:true}}}));
+  await page.route('**/api/brain/catalog?*', route => route.fulfill({json:{nodes,edges,page:{complete:true,next_source:12,next_offset:0},stats:{node_count:250,edge_count:249,by_type:{'knowledge.document':250},by_relation:{related:249}},truth:{bounded_projection:true}}}));
   await page.route('**/api/events?*', route => route.fulfill({json:{events:[],latest_sequence:0}}));
   await page.goto('/brain');
   await expect(page.locator('.lv-v2-dna-a11y-list button')).toHaveCount(250);
@@ -102,4 +102,52 @@ test('relation lines default off and can be toggled without removing graph data'
   await expect(toggle).toHaveAttribute('aria-pressed','false');
   await toggle.press('Space');
   await expect(toggle).toHaveAttribute('aria-pressed','true');
+});
+
+test('reduced-motion users can explicitly start and pause rotation', async ({page}) => {
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await openBrain(page);
+  await expect(page.locator('.lv-v2-dna-a11y-list button')).toHaveCount(58);
+  const play = page.getByRole('button',{name:'Rotatie hervatten'});
+  await expect(play).toBeEnabled();
+  const stopped = await pixels(page);
+  await page.waitForTimeout(200);
+  expect(await pixels(page)).toBe(stopped);
+  await play.click();
+  await expect(page.getByText("Rotatie actief", {exact:true})).toBeVisible();
+  await expect.poll(()=>pixels(page)).not.toBe(stopped);
+  await page.getByRole('button',{name:'Rotatie pauzeren'}).click();
+  await page.waitForTimeout(100);
+  const paused = await pixels(page);
+  await page.waitForTimeout(200);
+  expect(await pixels(page)).toBe(paused);
+});
+
+test('pages beyond 250 load and new data adds navigable DNA segments', async ({page}) => {
+  await installBrainV2VisualFixture(page);
+  let count = 301;
+  const requested: number[] = [];
+  await page.route('**/api/brain/catalog?*', route => {
+    const offset = Number(new URL(route.request().url()).searchParams.get('offset'));
+    requested.push(offset);
+    const nodes = Array.from({length:Math.min(50,Math.max(0,count-offset))},(_,i)=>({id:`knowledge:document:doc-${offset+i}`,type:'knowledge.document',label:`Live document ${offset+i}`,meta:{}}));
+    return route.fulfill({json:{nodes,edges:[],page:{complete:offset+50>=count,next_source:0,next_offset:offset+50}}});
+  });
+  await page.goto('/brain');
+  await expect(page.locator('.lv-v2-dna-a11y-list button')).toHaveCount(301);
+  expect(requested).toContain(300);
+  const slider = page.getByRole('slider',{name:'DNA segment',exact:true});
+  await expect(slider).toHaveAttribute('max','6');
+  await slider.fill('6');
+  await expect(page.getByText('301–301 van 301 nodes · maximaal 60 per segment',{exact:true})).toBeVisible();
+  const last = page.locator('.lv-v2-dna-a11y-list button').last();
+  await last.focus(); await last.press('Enter');
+  await expect(page.locator('.lv-v2-brain-selected__identity h4')).toHaveText('Live document 300');
+  count = 361;
+  await page.getByRole('button',{name:'Refresh dashboard',exact:true}).click();
+  await expect(page.locator('.lv-v2-dna-a11y-list button')).toHaveCount(361);
+  await expect(slider).toHaveAttribute('max','7');
+  await page.getByRole('textbox',{name:'Zoek nodes',exact:true}).fill('Live document 360');
+  await expect(page.locator('.lv-v2-dna-a11y-list button')).toHaveCount(1);
+  await expect(page.locator('.lv-v2-dna-a11y-list button')).toContainText('Live document 360');
 });

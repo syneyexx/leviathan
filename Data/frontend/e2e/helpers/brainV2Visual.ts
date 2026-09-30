@@ -42,6 +42,7 @@ export async function installBrainV2VisualFixture(page: Page): Promise<void> {
     const f = BRAIN_V2_VISUAL_FIXTURE;
 
     if (path === "/api/health") return json(route, f.health);
+    if (path === "/api/brain/catalog") return json(route, { ...f.graph, page: {complete: true, next_source: 12, next_offset: 0} });
     if (path === "/api/brain/graph") return json(route, f.graph);
     if (path === "/api/brain/stats") {
       return json(route, { stats: f.graph.stats, truth: f.graph.truth });

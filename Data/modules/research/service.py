@@ -710,8 +710,8 @@ class ResearchService:
         )
         return project
 
-    def list_projects(self, *, limit: int = 100) -> list[ResearchProject]:
-        projects = self.store.list_projects(limit=limit)
+    def list_projects(self, *, limit: int = 100, offset: int = 0) -> list[ResearchProject]:
+        projects = self.store.list_projects(limit=limit, offset=offset)
         for project in projects:
             project.web_unavailable_reason = web_unavailable_reason(
                 allow_web=project.allow_web,

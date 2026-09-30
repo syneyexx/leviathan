@@ -1138,18 +1138,18 @@ class KnowledgeStore:
             row = conn.execute("SELECT * FROM knowledge_documents WHERE id = ?", (document_id,)).fetchone()
         return self._row_to_document(row) if row else None
 
-    def list_documents(self, limit: int = 100, *, status: IngestStatus | None = None) -> list[DocumentRecord]:
+    def list_documents(self, limit: int = 100, *, status: IngestStatus | None = None, offset: int = 0) -> list[DocumentRecord]:
         with self.connect() as conn:
             self._ensure_schema(conn)
             if status is None:
                 rows = conn.execute(
-                    "SELECT * FROM knowledge_documents ORDER BY updated_at DESC LIMIT ?",
-                    (limit,),
+                    "SELECT * FROM knowledge_documents ORDER BY updated_at DESC, id LIMIT ? OFFSET ?",
+                    (limit, max(0, offset)),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM knowledge_documents WHERE status = ? ORDER BY updated_at DESC LIMIT ?",
-                    (status.value, limit),
+                    "SELECT * FROM knowledge_documents WHERE status = ? ORDER BY updated_at DESC, id LIMIT ? OFFSET ?",
+                    (status.value, limit, max(0, offset)),
                 ).fetchall()
         return [self._row_to_document(row) for row in rows]
 
@@ -1770,6 +1770,7 @@ class KnowledgeStore:
         subject_ref: str | None = None,
         relation_class: RelationClass | str | None = None,
         limit: int = 100,
+        offset: int = 0,
     ) -> list[DirectionalRelationAtom]:
         clauses: list[str] = []
         params: list[Any] = []
@@ -1781,15 +1782,15 @@ class KnowledgeStore:
             clauses.append("relation_class = ?")
             params.append(value)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        params.append(max(1, min(limit, 1000)))
+        params.extend([max(1, min(limit, 1000)), max(0, offset)])
         with self.connect() as conn:
             self._ensure_schema(conn)
             rows = conn.execute(
                 f"""
                 SELECT * FROM directional_relation_atoms
                 {where}
-                ORDER BY created_at DESC
-                LIMIT ?
+                ORDER BY created_at DESC, atom_id
+                LIMIT ? OFFSET ?
                 """,
                 params,
             ).fetchall()

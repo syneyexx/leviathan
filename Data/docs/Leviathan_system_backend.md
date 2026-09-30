@@ -1988,3 +1988,10 @@ For every backend PR that changes a canonical owner, route, database/table owner
 4. state CURRENT vs FEATURE-GATED/UNMEASURED honestly;
 5. include exact file paths so Cursor can start at the right owner;
 6. never use documentation prose to upgrade a runtime state to PASS.
+
+
+### Brain paged catalog
+
+`GET /api/brain/catalog` is the default Brain UI traversal surface, complementary to the existing bounded `/api/brain/graph` and derived-compute endpoints. A validated numeric source index and nonnegative offset address one of `BrainQueryFacade.CATALOG_SOURCES`. Each request reads at most 50 owner records plus a one-record continuation probe. Referenced nodes may increase the number of projected nodes in that response. The response includes `page.next_source`, `page.next_offset` and `page.complete`; it does not claim snapshot consistency or a global row count. No new storage or schema is introduced.
+
+Persistent owner readers expose optional SQL offsets, preserving existing default behavior and per-call limits; ordering includes primary-key tie breakers. Registry providers are already in-memory lists. Catalog memory reads explicitly include inactive records and retain status metadata. Optional disabled MCP/Atlas integrations return empty pages. Lower-confidence stored relation atoms remain inspectable in the catalog, while the legacy graph retains its existing confidence filter. Cross-page edge endpoints are resolved by canonical IDs at the client. Normal source authorization and feature settings still apply; the catalog is a projection of these owners rather than every database table. Source changes during traversal may need another refresh to converge.

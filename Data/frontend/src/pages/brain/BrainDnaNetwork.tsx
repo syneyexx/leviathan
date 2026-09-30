@@ -3,7 +3,7 @@
  * Keeps .lv-v2-dna for existing E2E selectors.
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BRAIN_FILTER_TABS,
   filterNodesByCategory,
@@ -76,6 +76,9 @@ export function BrainDnaNetwork({
   const motionOff = reducedMotion ?? prefersReducedMotion();
   const [mode, setMode] = useState<"dna" | "network">("dna");
   const [paused, setPaused] = useState(motionOff);
+  const [motionOverride, setMotionOverride] = useState(false);
+  const [segment, setSegment] = useState(0);
+  const pageSize = 60;
   const pausePref = useRef(motionOff);
   const [speed, setSpeed] = useState(0.24);
   const [twist, setTwist] = useState(1.6);
@@ -108,6 +111,22 @@ export function BrainDnaNetwork({
     [edges, filteredIds],
   );
 
+  const followedSelection = useRef<string | null>(null);
+  const segmentCount = Math.max(1, Math.ceil(filteredNodes.length / pageSize));
+  const currentSegment = Math.min(segment, segmentCount - 1);
+  const segmentNodes = filteredNodes.slice(currentSegment * pageSize, (currentSegment + 1) * pageSize);
+  const segmentEdges = useMemo(() => {
+    const ids = new Set(filteredNodes.slice(currentSegment * pageSize, (currentSegment + 1) * pageSize).map(n => n.id));
+    return edges.filter(e => ids.has(e.source) && ids.has(e.target));
+  }, [filteredNodes, currentSegment, edges]);
+  useEffect(() => {
+    if (followedSelection.current === selectedId) return;
+    followedSelection.current = selectedId;
+    if (!selectedId) return;
+    const index = filteredNodes.findIndex(n => n.id === selectedId);
+    if (index >= 0) setSegment(Math.floor(index / pageSize));
+  }, [selectedId, filteredNodes]);
+
   const activeNodeIds = useMemo(
     () => new Set(activation?.activeNodeIds ?? []),
     [activation?.activeNodeIds],
@@ -121,7 +140,7 @@ export function BrainDnaNetwork({
 
   const [resetToken, setResetToken] = useState(0);
   const focused = useRef(false);
-  const visibleActiveCount = [...activeNodeIds].filter((id) => filteredIds.has(id)).length;
+  const visibleActiveCount = segmentNodes.filter(n => activeNodeIds.has(n.id)).length;
 
   const onSelectNode = useCallback(
     (id: string | null) => {
@@ -164,9 +183,9 @@ export function BrainDnaNetwork({
     setSpeed(0.24);
     setTwist(1.6);
     setMode("dna");
-    setPaused(motionOff);
-    pausePref.current = motionOff;
-  }, [motionOff, onSelect]);
+    setPaused(motionOff && !motionOverride);
+    pausePref.current = motionOff && !motionOverride;
+  }, [motionOff, motionOverride, onSelect]);
 
   const phaseTitle = (() => {
     if (!activation || activation.phase === "standby") return "Het geheugen wacht op een vraag";
@@ -249,8 +268,8 @@ export function BrainDnaNetwork({
         )}
         {graphTruncated ? (
           <span className="lv-v2-dna__cap">
-            Begrensde projectie{graphMaxNodes != null ? ` · max ${graphMaxNodes}` : ""} ·{" "}
-            {filteredNodes.length} zichtbaar
+            {loading ? "Catalogus laden" : "Catalogus onvolledig"}{graphMaxNodes != null ? ` · max ${graphMaxNodes}` : ""} ·{" "}
+            {filteredNodes.length} geladen
           </span>
         ) : (
           <span className="lv-v2-dna__cap">{filteredNodes.length} nodes</span>
@@ -316,8 +335,9 @@ export function BrainDnaNetwork({
         ) : null}
 
         <BrainLivingNetworkCanvas
-          nodes={nodes}
-          edges={edges}
+          nodes={segmentNodes}
+          accessibilityNodes={filteredNodes}
+          edges={segmentEdges}
           selectedId={selectedId}
           onSelect={onSelectNode}
           selectedEdgeId={selectedEdgeId}
@@ -331,7 +351,7 @@ export function BrainDnaNetwork({
           twist={twist}
           showLabels={showLabels}
           showRelations={showRelations}
-          reducedMotion={motionOff}
+          reducedMotion={motionOff && !motionOverride}
           filterPredicate={(n) => filteredIds.has(n.id)}
         />
 
@@ -347,10 +367,10 @@ export function BrainDnaNetwork({
           <button
             type="button"
             aria-label={paused ? "Rotatie hervatten" : "Rotatie pauzeren"}
-            disabled={motionOff}
-            title={motionOff ? "Rotatie uit: verminderde beweging ingeschakeld" : undefined}
+            title={motionOff && !motionOverride ? "Verminderde beweging: klik om rotatie bewust te starten" : undefined}
             aria-pressed={paused}
             onClick={() => {
+              if (paused) { setMotionOverride(true); if (speed === 0) setSpeed(0.24); }
               setPaused((p) => {
                 const next = !p;
                 pausePref.current = next;
@@ -369,6 +389,17 @@ export function BrainDnaNetwork({
         </div>
       </div>
 
+      <div className="lv-v2-dna__segments" role="group" aria-label="DNA navigatie">
+        <button type="button" disabled={currentSegment === 0} onClick={() => setSegment(currentSegment - 1)}>Vorig segment</button>
+        <label>Segment
+          <input aria-label="DNA segment" type="range" min={1} max={segmentCount} value={currentSegment + 1}
+            onChange={e => setSegment(Number(e.target.value) - 1)} />
+          {currentSegment + 1} / {segmentCount}
+        </label>
+        <button type="button" disabled={currentSegment + 1 === segmentCount} onClick={() => setSegment(currentSegment + 1)}>Volgend segment</button>
+        <span>{filteredNodes.length ? currentSegment * pageSize + 1 : 0}–{Math.min((currentSegment + 1) * pageSize, filteredNodes.length)} van {filteredNodes.length} nodes · maximaal {pageSize} per segment</span>
+      </div>
+
       <div className="lv-v2-dna__query-status" role="status">
         <div className="lv-v2-dna__query-icon" aria-hidden="true">
           ◎
@@ -376,7 +407,7 @@ export function BrainDnaNetwork({
         <div>
           <strong>{phaseTitle}</strong>
           {activation?.connectionNote ? <p>{activation.connectionNote}</p> : null}
-          {activeNodeIds.size > 0 ? <p>{visibleActiveCount} van {activeNodeIds.size} opgehaalde kennisnodes zichtbaar; overige nodes vallen buiten deze graaf of filters.</p> : null}
+          {activeNodeIds.size > 0 ? <p>{visibleActiveCount} van {activeNodeIds.size} opgehaalde kennisnodes zichtbaar; overige nodes vallen buiten dit segment of de filters.</p> : null}
           <p>{activation?.detail ?? "Stel in /chat een vraag; open /brain parallel om activatie te zien."}</p>
         </div>
         <span className="lv-v2-dna__phase-tag">{phaseTag}</span>
@@ -401,6 +432,7 @@ export function BrainDnaNetwork({
       ) : null}
 
       <div className="lv-v2-dna__sliders">
+        <span role="status">{paused || speed === 0 ? "Rotatie gepauzeerd" : "Rotatie actief"}</span>
         <label>
           Rotatie
           <input

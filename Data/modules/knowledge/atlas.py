@@ -288,6 +288,16 @@ class AtlasStore:
             ).fetchone()
         return self._from_row(row) if row else None
 
+    def list_page(self, *, limit: int = 50, offset: int = 0) -> list[AtlasRecord]:
+        """Bounded owner read for the browsable Brain catalog."""
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            rows = conn.execute(
+                "SELECT * FROM atlas_records ORDER BY last_revised_at DESC, atlas_id LIMIT ? OFFSET ?",
+                (max(1, min(limit, 100)), max(0, offset)),
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
     def search(
         self,
         query: str,

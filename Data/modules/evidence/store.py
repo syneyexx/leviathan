@@ -149,6 +149,7 @@ class EvidenceStore:
         status: EvidenceStatus | None = None,
         run_id: str | None = None,
         limit: int = 100,
+        offset: int = 0,
     ) -> list[EvidenceRecord]:
         clauses: list[str] = []
         params: list[Any] = []
@@ -159,11 +160,11 @@ class EvidenceStore:
             clauses.append("run_id = ?")
             params.append(run_id)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        params.append(max(1, min(limit, 500)))
+        params.extend([max(1, min(limit, 500)), max(0, offset)])
         with self.connect() as conn:
             self._ensure_schema(conn)
             rows = conn.execute(
-                f"SELECT * FROM evidence {where} ORDER BY created_at DESC LIMIT ?",
+                f"SELECT * FROM evidence {where} ORDER BY created_at DESC, evidence_id LIMIT ? OFFSET ?",
                 params,
             ).fetchall()
         return [self._from_row(row) for row in rows]

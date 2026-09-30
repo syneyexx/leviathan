@@ -111,11 +111,11 @@ class WorkflowStore:
             ).fetchone()
         return self._from_row(row) if row else None
 
-    def list(self, *, limit: int = 100) -> list[WorkflowRecord]:
+    def list(self, *, limit: int = 100, offset: int = 0) -> list[WorkflowRecord]:
         with self.connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM workflows ORDER BY created_at DESC LIMIT ?",
-                (max(1, min(limit, 500)),),
+                "SELECT * FROM workflows ORDER BY created_at DESC, workflow_id LIMIT ? OFFSET ?",
+                (max(1, min(limit, 500)), max(0, offset)),
             ).fetchall()
         return [self._from_row(row) for row in rows]
 

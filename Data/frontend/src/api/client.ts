@@ -3591,6 +3591,10 @@ export const api = {
     });
   },
 
+  brainCatalog(cursor: import("../pages/brain/brain-catalog").CatalogCursor, signal?: AbortSignal): Promise<import("../pages/brain/brain-catalog").BrainCatalogPage> {
+    return request(`/api/brain/catalog?source=${cursor.source}&offset=${cursor.offset}&limit=50`, { signal });
+  },
+
   brainGraph(opts?: {
     limit?: number;
     q?: string;

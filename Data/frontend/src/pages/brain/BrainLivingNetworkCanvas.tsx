@@ -24,6 +24,7 @@ import { BRAIN_CATEGORY_HEX, categoryForNode } from "./brain-categories";
 
 export type BrainLivingNetworkCanvasProps = {
   nodes: readonly LiveBrainNode[];
+  accessibilityNodes?: readonly LiveBrainNode[];
   edges: readonly LiveBrainEdge[];
   selectedId: string | null;
   onSelect: (id: string | null) => void;
@@ -76,6 +77,7 @@ type EngineRefs = {
 
 export function BrainLivingNetworkCanvas({
   nodes,
+  accessibilityNodes,
   edges,
   selectedId,
   onSelect,
@@ -569,7 +571,7 @@ export function BrainLivingNetworkCanvas({
         aria-label="Draaiende dubbele DNA-helix. Gebruik de kennisindex voor toetsenbordbediening."
       />
       <ul className="lv-v2-dna-a11y-list" aria-label="Kennisindex">
-        {visible.map((n) => (
+        {(accessibilityNodes ?? visible).map((n) => (
           <li key={n.id}>
             <button
               type="button"

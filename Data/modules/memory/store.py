@@ -347,6 +347,7 @@ class MemoryStore:
         workspace_id: str | None = None,
         user_id: str | None = None,
         limit: int = 100,
+        offset: int = 0,
         include_global: bool = True,
     ) -> list[MemoryRecord]:
         clauses: list[str] = []
@@ -370,12 +371,12 @@ class MemoryStore:
             clauses.append(scope_clause)
             params.extend(scope_params)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        params.append(max(1, min(limit, 500)))
+        params.extend([max(1, min(limit, 500)), max(0, offset)])
         with self._lock:
             with self.connect() as conn:
                 self._ensure_schema(conn)
                 rows = conn.execute(
-                    f"SELECT * FROM memory_entries {where} ORDER BY priority DESC, updated_at DESC LIMIT ?",
+                    f"SELECT * FROM memory_entries {where} ORDER BY priority DESC, updated_at DESC, memory_id LIMIT ? OFFSET ?",
                     params,
                 ).fetchall()
         return [self._from_row(row) for row in rows]
