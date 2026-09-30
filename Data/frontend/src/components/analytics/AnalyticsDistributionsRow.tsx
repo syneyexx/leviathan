@@ -45,7 +45,9 @@ function Donut({
           return el;
         })}
         <text x="60" y="56" textAnchor="middle" className="lv-an-donut-total">
-          {total >= 1000 ? `${(total / 1000).toFixed(1)}K` : total}
+          {total >= 10_000
+            ? `${(total / 1000).toFixed(1).replace(/\.0$/, "")}K`
+            : total.toLocaleString("en-US")}
         </text>
         <text x="60" y="72" textAnchor="middle" className="lv-an-donut-sub">
           totaal
