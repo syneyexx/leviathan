@@ -1,6 +1,7 @@
 import {
   latestMetric,
   perplexityFromLoss,
+  visualNowMs,
 } from "../../hooks/useTrainingWorkspace";
 import type { TrainingWorkspace } from "../../hooks/useTrainingWorkspace";
 import { ACTIVE_TRAINING_STATUSES, TRAINING_STATUS_LABELS, trainingStatusTone } from "../../training/constants";
@@ -31,7 +32,8 @@ function etaFromJob(progress: number | null | undefined, startedAt?: string | nu
   if (pct <= 0.01) return "—";
   const start = Date.parse(startedAt);
   if (Number.isNaN(start)) return "—";
-  const elapsed = Date.now() - start;
+  const elapsed = visualNowMs() - start;
+  if (elapsed <= 0) return "—";
   const remaining = elapsed * (1 / pct - 1);
   if (!Number.isFinite(remaining) || remaining < 0) return "—";
   const mins = Math.round(remaining / 60_000);

@@ -170,9 +170,21 @@ function durationHours(startedAt?: string | null, finishedAt?: string | null): n
   if (!startedAt) return null;
   const start = Date.parse(startedAt);
   if (Number.isNaN(start)) return null;
-  const end = finishedAt ? Date.parse(finishedAt) : Date.now();
+  const end = finishedAt ? Date.parse(finishedAt) : visualNowMs();
   if (Number.isNaN(end) || end < start) return null;
   return (end - start) / 3_600_000;
+}
+
+/** Prefer Playwright frozen clock when present so visual fixtures stay honest. */
+export function visualNowMs(): number {
+  if (typeof window !== "undefined") {
+    const frozen = (window as Window & { __LV_V2_FROZEN_NOW__?: string }).__LV_V2_FROZEN_NOW__;
+    if (frozen) {
+      const t = Date.parse(frozen);
+      if (!Number.isNaN(t)) return t;
+    }
+  }
+  return Date.now();
 }
 
 function summaryNumber(summary: Record<string, unknown> | undefined, keys: string[]): number | null {

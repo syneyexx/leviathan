@@ -5,7 +5,7 @@ import {
   TRAINING_STATUS_LABELS,
   trainingStatusTone,
 } from "../../training/constants";
-import type { TrainingWorkspace } from "../../hooks/useTrainingWorkspace";
+import { visualNowMs, type TrainingWorkspace } from "../../hooks/useTrainingWorkspace";
 import type { TrainingJob } from "../../types/api";
 import { Badge, Button, Panel, ProgressBar } from "../ui";
 
@@ -27,7 +27,7 @@ function formatDuration(startedAt?: string | null, finishedAt?: string | null): 
   if (!startedAt) return "—";
   const start = Date.parse(startedAt);
   if (Number.isNaN(start)) return "—";
-  const end = finishedAt ? Date.parse(finishedAt) : Date.now();
+  const end = finishedAt ? Date.parse(finishedAt) : visualNowMs();
   if (Number.isNaN(end) || end < start) return "—";
   const sec = Math.floor((end - start) / 1000);
   const h = Math.floor(sec / 3600);
