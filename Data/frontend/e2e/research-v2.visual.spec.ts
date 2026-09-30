@@ -79,6 +79,11 @@ test.describe("Research V2 visual", () => {
     await page.goto("/research");
     await expect(page.locator(".lv-v2")).toBeVisible({ timeout: 20_000 });
 
+    // Research opts into a real shell scroll container so expanding advanced
+    // options grows the composer/page instead of clipping below the viewport.
+    const mainSlot = page.locator("#main-content");
+    await expect(mainSlot).toHaveCSS("display", "block");
+
     // Start from overview: clear selected run if fixture auto-selected active project
     const back = page.getByRole("button", { name: "Terug naar overzicht" });
     if (await back.isVisible().catch(() => false)) {
@@ -104,8 +109,25 @@ test.describe("Research V2 visual", () => {
 
     await page.getByRole("button", { name: "Gebruik" }).first().click();
 
+    const composer = page.locator(".lv-v2-research-composer");
+    const collapsedHeight = await composer.evaluate((el) => el.getBoundingClientRect().height);
     await page.getByRole("button", { name: /Geavanceerde opties/ }).click();
     await expect(page.getByRole("tab", { name: "Files", exact: true })).toBeVisible();
+    const expandedHeight = await composer.evaluate((el) => el.getBoundingClientRect().height);
+    expect(expandedHeight).toBeGreaterThan(collapsedHeight);
+
+    // No nested composer scrollbar: the card grows with its advanced content,
+    // while the page-level main slot handles overflow when the viewport is full.
+    const composerBody = composer.locator(".lv-v2-panel__body");
+    const bodyOverflowY = await composerBody.evaluate((el) => getComputedStyle(el).overflowY);
+    expect(bodyOverflowY).not.toBe("auto");
+    expect(bodyOverflowY).not.toBe("scroll");
+
+    await page.getByRole("tab", { name: "Files", exact: true }).click();
+    const dropzone = page.locator(".lv-v2-dropzone");
+    await dropzone.scrollIntoViewIfNeeded();
+    await expect(dropzone).toBeVisible();
+    await expect(page.getByRole("button", { name: "Kies bestanden" })).toBeVisible();
 
     await page.getByRole("button", { name: "Refresh" }).click();
     await expect(page.locator(".lv-v2")).toBeVisible();
