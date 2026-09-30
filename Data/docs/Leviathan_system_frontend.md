@@ -296,9 +296,15 @@ The frontier reasoning gate manifest under `Data/backend/tests/frontier_reasonin
 
 # 10. Models UI
 
-Route: `/models`.
+Route: `/models` — Leviathan V2 (`AppShell variant="v2"`).
 
-`src/pages/ModelsPage.tsx` is the route-facing composition. Detailed UI lives in `src/pages/models/`:
+Canonical composition: `src/pages/models/ModelsPage.tsx` + `src/hooks/useModelsWorkspace.ts`
++ `src/components/models/*` (runtime provider, hardware, VRAM reserve, catalog, load config,
+multi-GPU, advanced options, optimization, estimates, actions). Styling lives only in
+`leviathan-v2.css` under `.lv-v2-page--models` (no Models-specific stylesheet).
+
+Advanced panels remain reachable (import dialog, provider settings, gateway/router/residency
+drawers):
 
 - `HardwareInventoryPanel.tsx` — measured host/model hardware;
 - `ModelCatalog.tsx` — registry/catalog;
@@ -312,6 +318,10 @@ Route: `/models`.
 - `ModelStatusCards.tsx` — summary;
 - `ModelTestConsole.tsx` — controlled inference test;
 - `ProviderManager.tsx` — providers.
+
+Load/estimate/optimize/unload go through the Model Control Plane API only (never browser →
+LM Studio). Capability-unsupported controls are disabled with an honest reason. Visual
+fixtures for Screen 1 live in `src/mocks/modelsV2VisualFixture.ts` (TEST ONLY).
 
 The page must distinguish registry presence, provider availability, active routing, residency, READY serving and measured capabilities. Vision/tool/structured-response/reasoning support is only shown as supported when backend capability probes say so.
 
