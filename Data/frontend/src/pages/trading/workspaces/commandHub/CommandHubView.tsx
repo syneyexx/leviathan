@@ -74,9 +74,6 @@ function KpiCard({ kpi, onOpenQueueDrawer }: { kpi: HubKpiCard; onOpenQueueDrawe
 }
 
 function SessionsTable({ rows, kind }: { rows: HubSessionRow[]; kind: "paper" | "research" }) {
-  if (!rows.length) {
-    return <p className="lv-hub-empty">Geen {kind === "paper" ? "paper sessies" : "research sessies"} gevonden.</p>;
-  }
   return (
     <table className="lv-hub-table">
       <thead>
@@ -104,6 +101,13 @@ function SessionsTable({ rows, kind }: { rows: HubSessionRow[]; kind: "paper" | 
             </td>
           </tr>
         ))}
+        {!rows.length ? (
+          <tr>
+            <td colSpan={7} className="lv-hub-empty-cell">
+              Geen {kind === "paper" ? "paper sessies" : "research sessies"} gevonden.
+            </td>
+          </tr>
+        ) : null}
       </tbody>
     </table>
   );
@@ -346,6 +350,35 @@ export function CommandHubView({ ctx }: { ctx: TradingContextState }) {
   return (
     <section className="lv-hub" aria-label="Command Hub" aria-busy={model.loading}>
       <div className="lv-hub__hero">
+        <svg className="lv-hub__hero-art" viewBox="0 0 1200 360" preserveAspectRatio="none" aria-hidden="true">
+          <defs>
+            <linearGradient id="lv-hub-wave-a" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.28" />
+              <stop offset="100%" stopColor="#38bdf8" stopOpacity="0" />
+            </linearGradient>
+            <linearGradient id="lv-hub-wave-b" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#a855f7" stopOpacity="0.22" />
+              <stop offset="100%" stopColor="#a855f7" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          <path
+            d="M0,210 C120,180 220,230 340,205 C460,180 540,230 660,200 C780,170 880,225 1000,195 C1080,175 1140,190 1200,180 L1200,360 L0,360 Z"
+            fill="url(#lv-hub-wave-a)"
+          />
+          <path
+            d="M0,250 C140,230 260,270 400,245 C540,220 620,265 760,240 C880,220 980,260 1100,235 C1150,225 1180,232 1200,228 L1200,360 L0,360 Z"
+            fill="url(#lv-hub-wave-b)"
+          />
+          <g className="lv-hub__hero-leviathan" fill="none" stroke="#67e8f9" strokeWidth="1.4" strokeOpacity="0.55">
+            <path d="M660 150 C700 120 760 108 820 118 C870 126 905 150 918 168 C900 176 872 178 848 172 C820 165 788 150 760 152 C726 154 690 168 660 150 Z" />
+            <path d="M760 152 C778 132 806 118 838 116" strokeOpacity="0.35" />
+            <path d="M700 150 C706 140 718 132 732 130" strokeOpacity="0.3" />
+          </g>
+          <g className="lv-hub__hero-mast" stroke="#94a3b8" strokeOpacity="0.4" strokeWidth="1.2">
+            <line x1="300" y1="70" x2="300" y2="200" />
+            <line x1="255" y1="95" x2="345" y2="95" />
+          </g>
+        </svg>
         <div className="lv-hub__hero-inner">
           <div className="lv-hub__hero-copy">
             <p className="lv-hub__kicker">Autonomous Trading Command Hub</p>
@@ -402,42 +435,45 @@ export function CommandHubView({ ctx }: { ctx: TradingContextState }) {
             <h3>Active Operations</h3>
             <Link to="/trading/strategy-lab?surface=lab">Alle agents bekijken</Link>
           </header>
-          {model.agents.length ? (
-            <table className="lv-hub-table">
-              <thead>
-                <tr>
-                  <th>Agent</th>
-                  <th>Status</th>
-                  <th>Huidige taak</th>
-                  <th>Markt / Symbool</th>
-                  <th>Workload</th>
+          <table className="lv-hub-table">
+            <thead>
+              <tr>
+                <th>Agent</th>
+                <th>Status</th>
+                <th>Huidige taak</th>
+                <th>Markt / Symbool</th>
+                <th>Workload</th>
+              </tr>
+            </thead>
+            <tbody>
+              {model.agents.map((a) => (
+                <tr key={a.id}>
+                  <td>{a.name}</td>
+                  <td>
+                    <span className={`lv-hub-pill lv-hub-tone-${a.statusTone}`}>{a.status}</span>
+                  </td>
+                  <td>{a.task}</td>
+                  <td>{a.market}</td>
+                  <td>
+                    {a.workload != null ? (
+                      <div className="lv-hub-workload">
+                        <div className="lv-hub-workload__bar" style={{ width: `${a.workload}%` }} />
+                      </div>
+                    ) : (
+                      <span className="lv-hub-empty-inline">{UNMEASURED}</span>
+                    )}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {model.agents.map((a) => (
-                  <tr key={a.id}>
-                    <td>{a.name}</td>
-                    <td>
-                      <span className={`lv-hub-pill lv-hub-tone-${a.statusTone}`}>{a.status}</span>
-                    </td>
-                    <td>{a.task}</td>
-                    <td>{a.market}</td>
-                    <td>
-                      {a.workload != null ? (
-                        <div className="lv-hub-workload">
-                          <div className="lv-hub-workload__bar" style={{ width: `${a.workload}%` }} />
-                        </div>
-                      ) : (
-                        <span className="lv-hub-empty-inline">{UNMEASURED}</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <p className="lv-hub-empty">Geen actieve agents gevonden voor de huidige sessie.</p>
-          )}
+              ))}
+              {!model.agents.length ? (
+                <tr>
+                  <td colSpan={5} className="lv-hub-empty-cell">
+                    Geen actieve agents gevonden voor de huidige sessie.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
         </section>
 
         <div className="lv-hub-side">
@@ -530,34 +566,37 @@ export function CommandHubView({ ctx }: { ctx: TradingContextState }) {
             <h3>Wat kijken de agents nu?</h3>
             <span className="lv-hub-panel__badge">Live view</span>
           </header>
-          {model.watching.length ? (
-            <table className="lv-hub-table">
-              <thead>
-                <tr>
-                  <th>Agent</th>
-                  <th>Focus / Symbool</th>
-                  <th>Hypothese</th>
-                  <th>Finding</th>
-                  <th>Confidence</th>
-                  <th>Activiteit</th>
+          <table className="lv-hub-table">
+            <thead>
+              <tr>
+                <th>Agent</th>
+                <th>Focus / Symbool</th>
+                <th>Hypothese</th>
+                <th>Finding</th>
+                <th>Confidence</th>
+                <th>Activiteit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {model.watching.map((w) => (
+                <tr key={w.id}>
+                  <td>{w.agent}</td>
+                  <td>{w.focus}</td>
+                  <td>{w.hypothesis}</td>
+                  <td>{w.finding}</td>
+                  <td>{w.confidence != null ? `${Math.round(w.confidence)}%` : UNMEASURED}</td>
+                  <td>{w.last}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {model.watching.map((w) => (
-                  <tr key={w.id}>
-                    <td>{w.agent}</td>
-                    <td>{w.focus}</td>
-                    <td>{w.hypothesis}</td>
-                    <td>{w.finding}</td>
-                    <td>{w.confidence != null ? `${Math.round(w.confidence)}%` : UNMEASURED}</td>
-                    <td>{w.last}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <p className="lv-hub-empty">Geen agent-activiteit beschikbaar.</p>
-          )}
+              ))}
+              {!model.watching.length ? (
+                <tr>
+                  <td colSpan={6} className="lv-hub-empty-cell">
+                    Geen agent-activiteit beschikbaar.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
         </section>
 
         <div className="lv-hub-side">
@@ -582,6 +621,11 @@ export function CommandHubView({ ctx }: { ctx: TradingContextState }) {
                   </button>
                 </li>
               ))}
+              {!model.attention.length ? (
+                <li className="lv-hub-attn__empty">
+                  <p className="lv-hub-empty">Geen openstaande attention items.</p>
+                </li>
+              ) : null}
             </ul>
           </section>
 
@@ -592,34 +636,37 @@ export function CommandHubView({ ctx }: { ctx: TradingContextState }) {
                 Open queue
               </button>
             </header>
-            {model.queue.length ? (
-              <table className="lv-hub-table lv-hub-table--compact">
-                <thead>
-                  <tr>
-                    <th>Taak</th>
-                    <th>Type</th>
-                    <th>Agent</th>
-                    <th>Prioriteit</th>
-                    <th>Status</th>
+            <table className="lv-hub-table lv-hub-table--compact">
+              <thead>
+                <tr>
+                  <th>Taak</th>
+                  <th>Type</th>
+                  <th>Agent</th>
+                  <th>Prioriteit</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {model.queue.map((q: HubQueueRow) => (
+                  <tr key={q.id}>
+                    <td>{q.task}</td>
+                    <td>{q.type}</td>
+                    <td>{q.agent}</td>
+                    <td>{q.priority}</td>
+                    <td>
+                      <span className={`lv-hub-pill lv-hub-tone-${q.statusTone}`}>{q.status}</span>
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {model.queue.map((q: HubQueueRow) => (
-                    <tr key={q.id}>
-                      <td>{q.task}</td>
-                      <td>{q.type}</td>
-                      <td>{q.agent}</td>
-                      <td>{q.priority}</td>
-                      <td>
-                        <span className={`lv-hub-pill lv-hub-tone-${q.statusTone}`}>{q.status}</span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <p className="lv-hub-empty">Geen items in de promotie / control queue.</p>
-            )}
+                ))}
+                {!model.queue.length ? (
+                  <tr>
+                    <td colSpan={5} className="lv-hub-empty-cell">
+                      Geen items in de promotie / control queue.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
           </section>
         </div>
       </div>

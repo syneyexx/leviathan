@@ -25,15 +25,40 @@
 /* ---------------------------------------------------------------- hero */
 
 .lv-md-hero {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
   gap: 1rem;
   border: 1px solid rgba(71, 85, 105, 0.55);
   border-radius: 0.7rem;
   padding: 1.1rem 1.25rem;
+  overflow: hidden;
   background:
     radial-gradient(130% 90% at 85% 0%, rgba(56, 189, 248, 0.22), transparent 55%),
     linear-gradient(135deg, rgba(15, 23, 42, 0.97), rgba(30, 41, 59, 0.9));
+}
+
+.lv-md-hero__art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  opacity: 0.9;
+  pointer-events: none;
+  animation: lv-md-spin 22s linear infinite;
+  transform-origin: 75% 50%;
+}
+
+@keyframes lv-md-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.lv-md-hero__copy,
+.lv-md-hero__quote {
+  position: relative;
+  z-index: 1;
 }
 
 .lv-md-hero__kicker {

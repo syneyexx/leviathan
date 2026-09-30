@@ -448,6 +448,30 @@ export function MarketDataView({
   return (
     <div className="lv-md-view">
       <section className="lv-md-hero" aria-label="Market Data & Regime Intelligence">
+        <svg className="lv-md-hero__art" viewBox="0 0 800 320" preserveAspectRatio="xMaxYMid slice" aria-hidden="true">
+          <defs>
+            <radialGradient id="lv-md-globe-glow" cx="72%" cy="50%" r="45%">
+              <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.35" />
+              <stop offset="70%" stopColor="#38bdf8" stopOpacity="0.08" />
+              <stop offset="100%" stopColor="#38bdf8" stopOpacity="0" />
+            </radialGradient>
+          </defs>
+          <circle cx="600" cy="160" r="150" fill="url(#lv-md-globe-glow)" />
+          <g fill="none" stroke="#67e8f9" strokeOpacity="0.35" strokeWidth="1">
+            <circle cx="600" cy="160" r="95" />
+            <ellipse cx="600" cy="160" rx="95" ry="32" />
+            <ellipse cx="600" cy="160" rx="95" ry="60" />
+            <line x1="600" y1="65" x2="600" y2="255" />
+            <ellipse cx="600" cy="160" rx="32" ry="95" />
+            <ellipse cx="600" cy="160" rx="60" ry="95" />
+          </g>
+          <g fill="#4ade80" opacity="0.8">
+            <circle cx="560" cy="120" r="2.2" />
+            <circle cx="640" cy="140" r="2.2" />
+            <circle cx="615" cy="200" r="2.2" />
+            <circle cx="570" cy="190" r="2.2" />
+          </g>
+        </svg>
         <div className="lv-md-hero__copy">
           <p className="lv-md-hero__kicker">Market Data &amp; Regime Intelligence</p>
           <p className="lv-md-hero__sub">

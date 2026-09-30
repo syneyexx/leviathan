@@ -26,17 +26,41 @@
 /* ---------------- Hero ---------------- */
 .lv-hub__hero {
   position: relative;
-  border: 1px solid rgba(56, 189, 248, 0.25);
+  border: 1px solid rgba(56, 189, 248, 0.28);
   border-radius: 0.75rem;
   overflow: hidden;
   padding: 1.35rem 1.5rem;
   background:
     radial-gradient(140% 100% at 85% 0%, rgba(56, 189, 248, 0.22), transparent 55%),
     radial-gradient(120% 90% at 10% 100%, rgba(168, 85, 247, 0.14), transparent 60%),
-    linear-gradient(135deg, #0b1220 0%, #0f172a 55%, #0b1220 100%);
+    linear-gradient(135deg, #050a16 0%, #0b1324 45%, #050a16 100%);
+  min-height: 15rem;
+}
+
+.lv-hub__hero-art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  opacity: 0.85;
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+
+.lv-hub__hero-leviathan {
+  animation: lv-hub-drift 14s ease-in-out infinite;
+  transform-origin: 780px 150px;
+}
+
+@keyframes lv-hub-drift {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
 }
 
 .lv-hub__hero-inner {
+  position: relative;
+  z-index: 1;
   display: flex;
   justify-content: space-between;
   gap: 1.5rem;
@@ -300,9 +324,10 @@
 }
 
 .lv-hub-panel {
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  border: 1px solid rgba(56, 189, 248, 0.16);
+  border-top: 1px solid rgba(56, 189, 248, 0.35);
   border-radius: 0.6rem;
-  background: rgba(11, 17, 32, 0.85);
+  background: rgba(9, 14, 26, 0.9);
   padding: 0.75rem 0.9rem;
 }
 
@@ -312,14 +337,16 @@
   align-items: center;
   gap: 0.5rem;
   margin-bottom: 0.6rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(56, 189, 248, 0.14);
 }
 
 .lv-hub-panel h3 {
   margin: 0;
-  font-size: 0.78rem;
-  letter-spacing: 0.04em;
+  font-size: 0.74rem;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #cbd5e1;
+  color: #a5f3fc;
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -374,6 +401,18 @@
   font-size: 0.72rem;
 }
 
+.lv-hub-empty-cell {
+  color: rgba(148, 163, 184, 0.75);
+  font-size: 0.8rem;
+  padding: 0.85rem 0.5rem;
+  text-align: left;
+  border-bottom: none;
+}
+
+.lv-hub-attn__empty {
+  padding: 0.3rem 0.1rem;
+}
+
 /* ---------------- Tables ---------------- */
 .lv-hub-table {
   width: 100%;
@@ -383,18 +422,18 @@
 
 .lv-hub-table th {
   text-align: left;
-  color: rgba(148, 163, 184, 0.9);
-  font-size: 0.66rem;
-  letter-spacing: 0.04em;
+  color: rgba(103, 232, 249, 0.75);
+  font-size: 0.64rem;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   font-weight: 650;
-  padding: 0.3rem 0.5rem;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+  padding: 0.28rem 0.5rem;
+  border-bottom: 1px solid rgba(56, 189, 248, 0.22);
 }
 
 .lv-hub-table td {
-  padding: 0.4rem 0.5rem;
-  border-bottom: 1px solid rgba(51, 65, 85, 0.5);
+  padding: 0.36rem 0.5rem;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.45);
   color: #e2e8f0;
 }
 
