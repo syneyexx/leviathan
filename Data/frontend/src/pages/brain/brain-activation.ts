@@ -22,6 +22,7 @@ export type KnowledgeActivationRequest = {
   conversationId: string | null;
   runId: string | null;
   sequence: number;
+  startedSequence?: number;
   eventId: string;
   phase: KnowledgeActivationPhase;
   hitCount: number | null;
@@ -146,7 +147,7 @@ export function reduceKnowledgeActivation(
   const seenEventIds = new Set(prev.requests.map((r) => r.eventId));
   let maxSeq = Math.max(0, ...prev.requests.map((r) => r.sequence));
 
-  for (const event of events) {
+  for (const event of [...events].sort((a, b) => a.sequence - b.sequence)) {
     if (seenEventIds.has(event.event_id)) continue;
     if (event.sequence < maxSeq - 500) continue; // ignore far-stale reconnect noise lightly
     const parsed = parseKnowledgeActivationEvent(event);
@@ -155,7 +156,7 @@ export function reduceKnowledgeActivation(
     maxSeq = Math.max(maxSeq, parsed.sequence);
     const existing = byRequest.get(parsed.requestId);
     if (existing && existing.sequence > parsed.sequence) continue;
-    byRequest.set(parsed.requestId, parsed);
+    byRequest.set(parsed.requestId, { ...parsed, startedSequence: existing?.startedSequence ?? existing?.sequence ?? parsed.sequence });
   }
 
   const requests = [...byRequest.values()].sort((a, b) => a.sequence - b.sequence);
@@ -169,11 +170,12 @@ export function reduceKnowledgeActivation(
   }
 
   if (!followed && trimmed.length) {
+    const newest = [...trimmed].sort((a, b) => (a.startedSequence ?? a.sequence) - (b.startedSequence ?? b.sequence));
     const preferred = opts?.preferredConversationId;
     const preferMatch = preferred
-      ? [...trimmed].reverse().find((r) => r.conversationId === preferred)
+      ? [...newest].reverse().find((r) => r.conversationId === preferred)
       : null;
-    followed = (preferMatch ?? trimmed[trimmed.length - 1]).requestId;
+    followed = (preferred ? preferMatch : newest[newest.length - 1])?.requestId ?? null;
   }
 
   const active = followed ? trimmed.find((r) => r.requestId === followed) : null;
@@ -191,7 +193,9 @@ export function reduceKnowledgeActivation(
   }
 
   let detail: string;
-  if (active.phase === "retrieving") {
+  if (active.phase === "cancelled" || active.phase === "unavailable") {
+    detail = active.phase === "cancelled" ? "Retrieval geannuleerd." : "Retrieval niet beschikbaar.";
+  } else if (active.phase === "retrieving") {
     detail = "Retrieval loopt — bronnen worden opgehaald.";
   } else if (!active.identifiersAvailable) {
     detail =
@@ -207,7 +211,7 @@ export function reduceKnowledgeActivation(
   return {
     followedRequestId: followed,
     requests: trimmed,
-    activeNodeIds: active.identifiersAvailable ? active.nodeIds : [],
+    activeNodeIds: active.identifiersAvailable && active.phase !== "cancelled" && active.phase !== "unavailable" ? active.nodeIds : [],
     phase: active.phase,
     hitCount: active.hitCount,
     identifiersAvailable: active.identifiersAvailable,

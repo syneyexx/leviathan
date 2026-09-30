@@ -20,7 +20,7 @@ def brain_node_ids_from_hits(
     for item in knowledge_hits or []:
         if not isinstance(item, dict):
             continue
-        doc_id = item.get("id") or item.get("document_id")
+        doc_id = item.get("document_id") or item.get("id")
         if not doc_id:
             continue
         nid = f"knowledge:document:{doc_id}"

@@ -34,6 +34,14 @@ class KnowledgeActivationEventsTests(unittest.TestCase):
             ],
         )
 
+    def test_document_identity_wins_over_chunk_identity(self) -> None:
+        from Data.modules.brain.activation_events import brain_node_ids_from_hits
+
+        self.assertEqual(
+            brain_node_ids_from_hits(knowledge_hits=[{"id": "chunk-9", "document_id": "doc-1"}]),
+            ["knowledge:document:doc-1"],
+        )
+
     def test_emit_without_identifiers_clears_node_ids(self) -> None:
         from Data.modules.brain.activation_events import emit_knowledge_activation
 

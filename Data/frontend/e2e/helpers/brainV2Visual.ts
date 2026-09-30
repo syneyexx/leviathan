@@ -34,9 +34,9 @@ export async function installBrainV2VisualFixture(page: Page): Promise<void> {
     try {
       url = new URL(reqUrl);
     } catch {
-      return route.continue();
+      return route.fallback();
     }
-    if (!isControlPlaneApi(url)) return route.continue();
+    if (!isControlPlaneApi(url)) return route.fallback();
 
     const path = url.pathname;
     const f = BRAIN_V2_VISUAL_FIXTURE;
@@ -57,6 +57,8 @@ export async function installBrainV2VisualFixture(page: Page): Promise<void> {
     if (path === "/api/jobs") {
       return json(route, { jobs: f.workersDashboard.queued_jobs });
     }
+
+    if (path === "/api/events") return json(route, { events: [], latest_sequence: 0 });
 
     // Shared V2 chrome / adjacent pages
     if (path === "/api/conversations" || path.startsWith("/api/conversations/")) {

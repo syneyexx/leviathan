@@ -14,6 +14,12 @@ test.describe("Brain V2 visual", () => {
   test.use({
     viewport: { width: 1664, height: 936 },
     deviceScaleFactor: 1,
+    reducedMotion: "reduce",
+  });
+
+  // Keep screenshot typography independent of external font availability.
+  test.beforeEach(async ({ page }) => {
+    await page.route("https://fonts.googleapis.com/**", route => route.fulfill({contentType: "text/css", body: ""}));
   });
 
   test("brain loads with Research nav expanded and Screen 1 sections", async ({ page }) => {
