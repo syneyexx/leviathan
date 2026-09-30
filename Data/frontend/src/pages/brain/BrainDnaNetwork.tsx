@@ -3,7 +3,7 @@
  * Keeps .lv-v2-dna for existing E2E selectors.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   BRAIN_FILTER_TABS,
   filterNodesByCategory,
@@ -62,7 +62,6 @@ export function BrainDnaNetwork({
   onSelect,
   categoryFilter,
   onCategoryFilterChange,
-  preferredFocalId = null,
   loading = false,
   error = null,
   onRetry,
@@ -72,7 +71,6 @@ export function BrainDnaNetwork({
   onFollowRequest,
   graphTruncated = false,
   graphMaxNodes = null,
-  searchQuery = "",
 }: BrainDnaNetworkProps) {
   const shellRef = useRef<HTMLDivElement>(null);
   const motionOff = reducedMotion ?? prefersReducedMotion();
@@ -93,15 +91,6 @@ export function BrainDnaNetwork({
 
   const filteredNodes = useMemo(() => {
     let list = filterNodesByCategory(nodes, categoryFilter);
-    const q = searchQuery.trim().toLowerCase();
-    if (q) {
-      list = list.filter(
-        (n) =>
-          n.label.toLowerCase().includes(q) ||
-          n.id.toLowerCase().includes(q) ||
-          n.type.toLowerCase().includes(q),
-      );
-    }
     if (scopeFilter !== "all") {
       list = list.filter((n) => {
         const scope = scopeFromNode(n);
@@ -110,7 +99,7 @@ export function BrainDnaNetwork({
       });
     }
     return list;
-  }, [nodes, categoryFilter, searchQuery, scopeFilter]);
+  }, [nodes, categoryFilter, scopeFilter]);
 
   const filteredIds = useMemo(() => new Set(filteredNodes.map((n) => n.id)), [filteredNodes]);
   const filteredEdges = useMemo(
@@ -129,20 +118,19 @@ export function BrainDnaNetwork({
   );
   const gapNodeIds = useMemo(() => new Set(gaps.map((g) => g.nodeId).filter(Boolean)), [gaps]);
 
-  // preferredFocalId: when set and no selection, soft-focus via activation
-  useEffect(() => {
-    if (preferredFocalId && !selectedId) {
-      // no auto-select — only preferred for layout elsewhere
-    }
-  }, [preferredFocalId, selectedId]);
+  const [resetToken, setResetToken] = useState(0);
+  const focused = useRef(false);
+  const visibleActiveCount = [...activeNodeIds].filter((id) => filteredIds.has(id)).length;
 
   const onSelectNode = useCallback(
     (id: string | null) => {
       onSelect(id);
       if (id) {
-        pausePref.current = paused;
+        if (!focused.current) pausePref.current = paused;
+        focused.current = true;
         setPaused(true);
       } else {
+        focused.current = false;
         setPaused(pausePref.current);
       }
     },
@@ -151,6 +139,8 @@ export function BrainDnaNetwork({
 
   const clearFocus = useCallback(() => {
     onSelect(null);
+    focused.current = false;
+    setSelectedEdgeId(null);
     setPaused(pausePref.current);
   }, [onSelect]);
 
@@ -166,16 +156,22 @@ export function BrainDnaNetwork({
   }, []);
 
   const resetView = useCallback(() => {
+    setResetToken((n) => n + 1);
+    focused.current = false;
+    onSelect(null);
+    setSelectedEdgeId(null);
     setSpeed(0.24);
     setTwist(1.6);
     setMode("dna");
     setPaused(motionOff);
     pausePref.current = motionOff;
-  }, [motionOff]);
+  }, [motionOff, onSelect]);
 
   const phaseTitle = (() => {
     if (!activation || activation.phase === "standby") return "Het geheugen wacht op een vraag";
     if (activation.phase === "retrieving") return "Bezig met retrieval";
+    if (activation.phase === "cancelled") return "Retrieval geannuleerd";
+    if (activation.phase === "unavailable") return "Retrieval niet beschikbaar";
     if (!activation.identifiersAvailable) return "Activatie zonder node-ids";
     if (activation.activeNodeIds.length) return "Kennis geactiveerd";
     return "Retrieval afgerond";
@@ -324,6 +320,7 @@ export function BrainDnaNetwork({
           gapNodeIds={gapNodeIds}
           mode={mode}
           paused={paused}
+          resetToken={resetToken}
           speed={speed}
           twist={twist}
           showLabels={showLabels}
@@ -343,6 +340,8 @@ export function BrainDnaNetwork({
           <button
             type="button"
             aria-label={paused ? "Rotatie hervatten" : "Rotatie pauzeren"}
+            disabled={motionOff}
+            title={motionOff ? "Rotatie uit: verminderde beweging ingeschakeld" : undefined}
             aria-pressed={paused}
             onClick={() => {
               setPaused((p) => {
@@ -369,6 +368,8 @@ export function BrainDnaNetwork({
         </div>
         <div>
           <strong>{phaseTitle}</strong>
+          {activation?.connectionNote ? <p>{activation.connectionNote}</p> : null}
+          {activeNodeIds.size > 0 ? <p>{visibleActiveCount} van {activeNodeIds.size} opgehaalde kennisnodes zichtbaar; overige nodes vallen buiten deze graaf of filters.</p> : null}
           <p>{activation?.detail ?? "Stel in /chat een vraag; open /brain parallel om activatie te zien."}</p>
         </div>
         <span className="lv-v2-dna__phase-tag">{phaseTag}</span>
@@ -452,9 +453,11 @@ export function BrainDnaNetwork({
           try {
             if (action === "archive") {
               await api.archiveMemory(memoryId);
+              onRetry?.();
               return { ok: true, message: `Geheugen ${memoryId} gearchiveerd.` };
             }
             await api.revokeMemory(memoryId);
+            onRetry?.();
             return { ok: true, message: `Geheugen ${memoryId} ingetrokken.` };
           } catch (err) {
             return {

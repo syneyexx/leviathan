@@ -136,12 +136,12 @@ export function projectHelix(
 ): HelixPoint {
   const { width: w, height: h, angle, tilt, zoom, twist, range } = cfg;
   const theta = t * TAU * twist + angle + strand * Math.PI;
-  const r = Math.min(h * 0.225, w * 0.18);
+  const r = Math.max(1, Math.min(h * 0.21, w * 0.18));
   const z = Math.sin(theta) * r;
   const depth = 780 / (780 - z);
   const mid = (range[0] + range[1]) / 2;
   const span = Math.max(1e-6, range[1] - range[0]);
-  const x = ((t - mid) / span) * w * 0.83;
+  const x = ((t - mid) / span) * Math.max(1, w - 80) * 0.82;
   const y = Math.cos(theta) * r;
   return {
     x: w * 0.5 + (x * Math.cos(tilt) - y * Math.sin(tilt)) * depth * zoom,
@@ -157,34 +157,33 @@ export function projectLocalNetwork(
   links: readonly HelixLink[],
   cfg: HelixEngineConfig,
 ): HelixPoint {
-  const focusId = cfg.selectedId ?? [...cfg.activeIds][0] ?? allNodes.find((n) => cfg.filter(n))?.id ?? null;
+  return localNetworkPoints(allNodes, links, cfg).get(node.id)!;
+}
+
+function localNetworkPoints(nodes: readonly HelixNode[], links: readonly HelixLink[], cfg: HelixEngineConfig): Map<string, HelixPoint> {
+  const visible = nodes.filter(cfg.filter);
+  const ids = new Set(visible.map((n) => n.id));
+  const focusId = cfg.selectedId && ids.has(cfg.selectedId) ? cfg.selectedId :
+    [...cfg.activeIds].find((id) => ids.has(id)) ?? visible[0]?.id;
   const neighbors = new Set<string>();
-  if (focusId) {
-    for (const e of links) {
-      if (e.source === focusId) neighbors.add(e.target);
-      if (e.target === focusId) neighbors.add(e.source);
-    }
+  for (const e of links) {
+    if (e.source === focusId) neighbors.add(e.target);
+    if (e.target === focusId) neighbors.add(e.source);
   }
-  const w = cfg.width;
-  const h = cfg.height;
-  if (focusId && node.id === focusId) {
-    return { x: w * 0.5, y: h * 0.53, z: 0.6, scale: 1.3 };
+  const points = new Map<string, HelixPoint>();
+  const w = cfg.width, h = cfg.height;
+  if (focusId) points.set(focusId, { x: w / 2, y: h * 0.53, z: 0.6, scale: 1.3 });
+  for (const related of [true, false]) {
+    const group = visible.filter((n) => n.id !== focusId && neighbors.has(n.id) === related)
+      .sort((a, b) => a.id.localeCompare(b.id));
+    const rx = Math.max(1, w / 2 - 30) * (related ? 0.68 : 1);
+    const ry = Math.max(1, h / 2 - 80) * (related ? 0.68 : 1);
+    group.forEach((node, index) => {
+      const phase = index / group.length * TAU - Math.PI / 2;
+      points.set(node.id, { x: w / 2 + Math.cos(phase) * rx, y: h * 0.53 + Math.sin(phase) * ry, z: 0.2, scale: related ? 1.1 : 0.7 });
+    });
   }
-  const related = neighbors.has(node.id);
-  const group = related
-    ? allNodes.filter((n) => neighbors.has(n.id)).sort((a, b) => a.id.localeCompare(b.id))
-    : allNodes
-        .filter((n) => n.id !== focusId && !neighbors.has(n.id))
-        .sort((a, b) => a.id.localeCompare(b.id));
-  const index = Math.max(0, group.findIndex((n) => n.id === node.id));
-  const phase = (index / Math.max(group.length, 1)) * TAU - Math.PI / 2;
-  const radius = related ? Math.min(w * 0.29, h * 0.29) : Math.min(w * 0.42, h * 0.39);
-  return {
-    x: w * 0.5 + Math.cos(phase) * radius * 1.45,
-    y: h * 0.53 + Math.sin(phase) * radius,
-    z: 0.2,
-    scale: related ? 1.1 : 0.7,
-  };
+  return points;
 }
 
 export function lerpPoint(a: HelixPoint, b: HelixPoint, t: number): HelixPoint {
@@ -201,9 +200,10 @@ export function projectNodes(
   links: readonly HelixLink[],
   cfg: HelixEngineConfig,
 ): ProjectedNode[] {
+  const network = cfg.morph > 0 ? localNetworkPoints(nodes, links, cfg) : null;
   return nodes.map((node) => {
     const helix = projectHelix(node.position, node.strand, cfg);
-    const net = projectLocalNetwork(node, nodes, links, cfg);
+    const net = network?.get(node.id) ?? helix;
     const p = lerpPoint(helix, net, cfg.morph);
     return { ...p, node, r: 5.3 };
   });
@@ -215,8 +215,8 @@ export function hitTestNode(
   y: number,
   filter: (node: HelixNode) => boolean,
 ): ProjectedNode | null {
-  for (let i = points.length - 1; i >= 0; i -= 1) {
-    const p = points[i];
+  const frontToBack = [...points].sort((a, b) => b.z - a.z);
+  for (const p of frontToBack) {
     if (!filter(p.node)) continue;
     if (Math.hypot(p.x - x, p.y - y) < Math.max(12, p.r + 5)) return p;
   }

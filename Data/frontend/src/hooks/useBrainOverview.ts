@@ -238,6 +238,7 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
   const [cognitionOk, setCognitionOk] = useState<boolean | null>(null);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const initialGraphSelection = useRef(true);
   const [categoryFilter, setCategoryFilter] = useState<BrainCategoryFilter>("all");
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(true);
@@ -277,8 +278,11 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
           : {}),
       });
       setGraphTruth(data.truth ?? null);
+      const chooseInitialSelection = initialGraphSelection.current;
+      initialGraphSelection.current = false;
       setSelectedId((previous) => {
         if (previous && data.nodes.some((n) => n.id === previous)) return previous;
+        if (!chooseInitialSelection) return null;
         const fixtureOn =
           typeof window !== "undefined" &&
           (window as Window & { __LV_V2_VISUAL_FIXTURE__?: boolean }).__LV_V2_VISUAL_FIXTURE__ === true;

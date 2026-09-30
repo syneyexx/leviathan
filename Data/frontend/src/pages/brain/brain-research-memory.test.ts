@@ -272,3 +272,40 @@ describe("production fallback guard", () => {
     expect((globalThis as { DNADemoData?: unknown }).DNADemoData).toBeUndefined();
   });
 });
+
+describe("network rendering regressions", () => {
+  it("fits all local-network nodes inside narrow and desktop stages", () => {
+    const nodes = assignStableHelixSlots(Array.from({length: 250}, (_, i) => ({id: `doc-${i}`, label: `Document ${i}`, type: 'knowledge.document'})));
+    for (const width of [250, 360, 800]) {
+      const points = projectNodes(nodes, [], {width, height: 320, angle: 0.6, tilt: -0.095, zoom: 1, twist: 1.6, morph: 1, range: [0,1], selectedId: nodes[0].id, activeIds: new Set(), filter: () => true});
+      for (const p of points) {
+        expect(p.x).toBeGreaterThanOrEqual(20);
+        expect(p.x).toBeLessThanOrEqual(width - 20);
+        expect(p.y).toBeGreaterThanOrEqual(70);
+        expect(p.y).toBeLessThanOrEqual(280);
+      }
+    }
+  });
+
+  it("picks the frontmost overlapping node regardless of backend ordering", () => {
+    const nodes = assignStableHelixSlots([{id:'front',label:'Front',type:'concept'}, {id:'back',label:'Back',type:'concept'}]);
+    expect(hitTestNode(nodes.map((node,i) => ({node,x:40,y:40,z:1-i,scale:1,r:5})),40,40,()=>true)?.node.id).toBe('front');
+  });
+
+  it("late completion does not steal auto-follow from the newer request, including newest-first event feeds", () => {
+    const events = [
+      evt({sequence: 1,event_id:'a',payload:{request_id:'old',phase:'retrieving'}}),
+      evt({sequence: 2,event_id:'b',payload:{request_id:'new',phase:'complete',node_ids:['memory:new'],identifiers_available:true}}),
+      evt({sequence: 3,event_id:'c',payload:{request_id:'old',phase:'complete',node_ids:['memory:old'],identifiers_available:true}}),
+    ];
+    const result = reduceKnowledgeActivation(EMPTY_KNOWLEDGE_ACTIVATION, events.reverse(), {followedRequestId:null});
+    expect(result.followedRequestId).toBe('new');
+    expect(result.activeNodeIds).toEqual(['memory:new']);
+  });
+
+  it("cancelled retrieval clears highlights", () => {
+    const result = reduceKnowledgeActivation(EMPTY_KNOWLEDGE_ACTIVATION, [evt({sequence:1,event_id:'cancel',payload:{request_id:'r',phase:'cancelled',node_ids:['memory:old'],identifiers_available:true}})]);
+    expect(result.activeNodeIds).toEqual([]);
+    expect(result.detail).toMatch(/geannuleerd/);
+  });
+});

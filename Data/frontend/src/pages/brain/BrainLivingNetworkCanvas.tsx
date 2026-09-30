@@ -5,7 +5,6 @@
 import {
   useEffect,
   useRef,
-  type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import {
   assignStableHelixSlots,
@@ -34,6 +33,7 @@ export type BrainLivingNetworkCanvasProps = {
   gapNodeIds?: ReadonlySet<string>;
   mode: "dna" | "network";
   paused: boolean;
+  resetToken?: number;
   speed: number;
   twist: number;
   showLabels: boolean;
@@ -83,6 +83,7 @@ export function BrainLivingNetworkCanvas({
   gapNodeIds,
   mode,
   paused,
+  resetToken = 0,
   speed,
   twist,
   showLabels,
@@ -140,8 +141,8 @@ export function BrainLivingNetworkCanvas({
       const wrap = wrapRef.current;
       if (!wrap) return;
       const r = wrap.getBoundingClientRect();
-      eng.w = Math.max(280, r.width);
-      eng.h = Math.max(220, r.height);
+      eng.w = Math.max(1, r.width);
+      eng.h = Math.max(1, r.height);
       const dpr = Math.min(typeof devicePixelRatio === "number" ? devicePixelRatio : 1, 2);
       canvas.width = Math.round(eng.w * dpr);
       canvas.height = Math.round(eng.h * dpr);
@@ -214,7 +215,7 @@ export function BrainLivingNetworkCanvas({
             kind: "tube",
             z: (a.z + b.z) / 2,
             draw: () => {
-              ctx.globalAlpha = (0.35 + (a.z + 1) * 0.25) * (1 - eng.morph * 0.85);
+              ctx.globalAlpha = (0.35 + (a.z + 1) * 0.25) * (1 - eng.morph);
               ctx.strokeStyle = strand ? "#839fed" : "#59e7d0";
               ctx.lineWidth = Math.max(1.2, 2.4 * ((a.scale + b.scale) / 2) * (1 - eng.morph * 0.5));
               ctx.beginPath();
@@ -227,7 +228,7 @@ export function BrainLivingNetworkCanvas({
         }
       }
 
-      eng.points = projectNodes(eng.nodes, eng.links, cfg).filter((p) => eng.filter(p.node));
+      eng.points = projectNodes(eng.nodes.filter(eng.filter), eng.links, cfg).sort((a, b) => a.z - b.z);
       eng.edgeSegments = [];
       const pointMap = new Map(eng.points.map((p) => [p.node.id, p]));
 
@@ -243,9 +244,11 @@ export function BrainLivingNetworkCanvas({
           kind: "edge",
           z: seg.z,
           draw: () => {
-            ctx.globalAlpha = 0.45 + (seg.z + 1) * 0.2;
+            const focused = link.source === eng.selectedId || link.target === eng.selectedId;
+            const active = eng.activeIds.has(link.source) && eng.activeIds.has(link.target);
+            ctx.globalAlpha = selected ? 1 : active ? 0.75 : focused ? 0.45 : 0.08;
             ctx.strokeStyle = selected ? "#fbbf24" : "#67e8f9";
-            ctx.lineWidth = selected ? 2.4 : 1.35;
+            ctx.lineWidth = selected ? 2.4 : 0.9;
             ctx.setLineDash(link.relation.toUpperCase() === "CONTRADICTS" ? [5, 4] : []);
             ctx.beginPath();
             ctx.moveTo(a.x, a.y);
@@ -315,26 +318,29 @@ export function BrainLivingNetworkCanvas({
       items.sort((a, b) => a.z - b.z);
       for (const item of items) item.draw();
 
-      // Labels (bounded)
+      // Reserve screen space for each label; prioritize focus and retrieved nodes.
       if (eng.showLabels) {
-        const labeled = [...eng.points]
-          .filter((p) => eng.filter(p.node))
-          .sort((a, b) => b.z - a.z || b.scale - a.scale)
-          .slice(0, 12);
-        if (eng.selectedId) {
-          const sel = eng.points.find((p) => p.node.id === eng.selectedId);
-          if (sel && !labeled.includes(sel)) labeled.push(sel);
-        }
-        for (const p of labeled) {
+        const boxes: { x: number; y: number; w: number; h: number }[] = [];
+        const candidates = [...eng.points].sort((a, b) =>
+          Number(b.node.id === eng.selectedId) - Number(a.node.id === eng.selectedId) ||
+          Number(eng.activeIds.has(b.node.id)) - Number(eng.activeIds.has(a.node.id)) || b.z - a.z);
+        ctx.font = "10px ui-sans-serif, system-ui, sans-serif";
+        ctx.textAlign = "left";
+        for (const p of candidates) {
+          if (boxes.length >= 12) break;
           if (p.z < -0.35 && p.node.id !== eng.selectedId) continue;
-          ctx.globalAlpha = Math.max(0.35, 0.55 + p.z * 0.35);
-          ctx.fillStyle = "#e2e8f0";
-          ctx.font = "10px ui-sans-serif, system-ui, sans-serif";
-          ctx.textAlign = "center";
-          const label =
-            p.node.label.length > 28 ? `${p.node.label.slice(0, 26)}…` : p.node.label;
-          ctx.fillText(label, p.x, p.y - (p.r * p.scale + 10));
-          ctx.globalAlpha = 1;
+          const label = p.node.label.length > 28 ? `${p.node.label.slice(0, 26)}…` : p.node.label;
+          const width = ctx.measureText(label).width + 10;
+          const x = Math.max(8, Math.min(w - width - 8, p.x - width / 2));
+          const y = p.y - p.r * p.scale - 25;
+          const box = { x, y, w: width, h: 18 };
+          if (y < 70 || y + 18 > h - 48 || p.x < 0 || p.x > w) continue;
+          if (boxes.some((b) => x < b.x + b.w + 5 && x + width + 5 > b.x && y < b.y + b.h + 4 && y + 22 > b.y)) continue;
+          boxes.push(box);
+          ctx.fillStyle = "rgba(2,6,23,0.88)";
+          ctx.fillRect(x, y, width, 18);
+          ctx.fillStyle = p.node.id === eng.selectedId ? "#ffffff" : "#cbd5e1";
+          ctx.fillText(label, x + 5, y + 12);
         }
       }
     };
@@ -363,6 +369,7 @@ export function BrainLivingNetworkCanvas({
     if (wrapRef.current) ro.observe(wrapRef.current);
 
     const onDown = (e: PointerEvent) => {
+      if (e.button !== 0) return;
       eng.drag = { x: e.clientX, y: e.clientY, distance: 0 };
       canvas.setPointerCapture(e.pointerId);
     };
@@ -405,12 +412,11 @@ export function BrainLivingNetworkCanvas({
       eng.zoom = Math.max(0.7, Math.min(1.6, eng.zoom - e.deltaY * 0.0008));
     };
 
+    const onCancel = () => { eng.drag = null; };
     canvas.addEventListener("pointerdown", onDown);
     canvas.addEventListener("pointermove", onMove);
     canvas.addEventListener("pointerup", onUp);
-    canvas.addEventListener("pointercancel", () => {
-      eng.drag = null;
-    });
+    canvas.addEventListener("pointercancel", onCancel);
     canvas.addEventListener("wheel", onWheel, { passive: false });
     frame = requestAnimationFrame(tick);
 
@@ -421,6 +427,7 @@ export function BrainLivingNetworkCanvas({
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerup", onUp);
       canvas.removeEventListener("wheel", onWheel);
+      canvas.removeEventListener("pointercancel", onCancel);
       engine.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only engine
@@ -447,8 +454,9 @@ export function BrainLivingNetworkCanvas({
     }
     eng.nodes = helixNodes;
     eng.links = links;
+    const rawById = new Map(nodes.map((n) => [n.id, n]));
     eng.filter = (n) => {
-      const raw = nodes.find((x) => x.id === n.id);
+      const raw = rawById.get(n.id);
       if (!raw) return false;
       return filterPredicate ? filterPredicate(raw) : true;
     };
@@ -457,12 +465,13 @@ export function BrainLivingNetworkCanvas({
   useEffect(() => {
     const eng = engine.current;
     if (!eng) return;
+    const changed = eng.selectedId !== selectedId;
     eng.selectedId = selectedId;
-    if (selectedId) {
+    eng.targetAngle = null;
+    if (changed && selectedId && paused) {
       const n = eng.nodes.find((x) => x.id === selectedId);
       if (n) {
-        eng.paused = true;
-        const desired = focusAngleForNode(n, eng.twist);
+        const desired = focusAngleForNode(n, twist);
         const diff = shortestAngleDelta(eng.angle, desired);
         eng.targetAngle = eng.angle + diff;
         if (eng.reduced) {
@@ -471,7 +480,7 @@ export function BrainLivingNetworkCanvas({
         }
       }
     }
-  }, [selectedId]);
+  }, [selectedId, paused, twist]);
 
   useEffect(() => {
     const eng = engine.current;
@@ -501,10 +510,8 @@ export function BrainLivingNetworkCanvas({
   useEffect(() => {
     const eng = engine.current;
     if (!eng) return;
-    // Leaving focus restores prior preference via parent paused prop
-    if (!selectedId) eng.paused = paused || eng.reduced;
-    else eng.paused = true;
-  }, [paused, selectedId]);
+    eng.paused = paused || reducedMotion;
+  }, [paused, reducedMotion]);
 
   useEffect(() => {
     const eng = engine.current;
@@ -515,12 +522,14 @@ export function BrainLivingNetworkCanvas({
     eng.reduced = reducedMotion;
   }, [speed, twist, showLabels, reducedMotion]);
 
-  const onListKey = (event: ReactKeyboardEvent, id: string) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      onSelect(id);
-    }
-  };
+  useEffect(() => {
+    const eng = engine.current;
+    if (!eng) return;
+    eng.angle = 0.6;
+    eng.tilt = -0.095;
+    eng.zoom = 1;
+    eng.targetAngle = null;
+  }, [resetToken]);
 
   const visible = nodes.filter((n) => (filterPredicate ? filterPredicate(n) : true));
 
@@ -532,14 +541,13 @@ export function BrainLivingNetworkCanvas({
         aria-label="Draaiende dubbele DNA-helix. Gebruik de kennisindex voor toetsenbordbediening."
       />
       <ul className="lv-v2-dna-a11y-list" aria-label="Kennisindex">
-        {visible.slice(0, 80).map((n) => (
+        {visible.map((n) => (
           <li key={n.id}>
             <button
               type="button"
               className={n.id === selectedId ? "is-selected" : undefined}
               aria-pressed={n.id === selectedId}
               onClick={() => onSelect(n.id)}
-              onKeyDown={(e) => onListKey(e, n.id)}
             >
               {n.label}
               <span className="lv-v2-muted"> · {n.type}</span>

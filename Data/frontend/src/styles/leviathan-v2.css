@@ -1256,8 +1256,25 @@
   text-decoration: underline;
 }
 
+.lv-v2:has(.lv-v2-page--brain) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.lv-v2:has(.lv-v2-page--brain) .lv-body {
+  min-width: 0;
+}
+
 .lv-v2-page--brain {
+  /* The legacy main-slot is display: contents; this main owns scrolling. */
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  height: auto;
   gap: 10px;
+}
+
+.lv-v2-page--brain > * {
+  flex-shrink: 0;
 }
 
 .lv-v2-hero--brain {
@@ -1291,6 +1308,8 @@
 }
 
 .lv-v2-brain-core {
+  flex: none;
+  align-items: start;
   display: grid;
   grid-template-columns: minmax(0, 1.7fr) minmax(280px, 0.75fr);
   gap: var(--lv2-card-gap);
@@ -1333,7 +1352,8 @@
   flex-direction: column;
   flex: 1;
   min-height: 340px;
-  height: 100%;
+  min-width: 0;
+  height: auto;
   position: relative;
   background:
     radial-gradient(ellipse 70% 55% at 50% 48%, rgba(34, 211, 238, 0.08), transparent 70%),
@@ -1375,10 +1395,9 @@
 
 .lv-v2-dna__stage {
   position: relative;
-  flex: 1;
-  min-height: 360px;
-  height: 420px;
-  max-height: 480px;
+  flex: 0 0 auto;
+  min-height: 320px;
+  height: clamp(320px, 32vw, 440px);
   overflow: hidden;
   cursor: grab;
   touch-action: none;
@@ -1742,7 +1761,8 @@
 
 .lv-v2-dna__focus-pill {
   position: absolute;
-  top: 10px;
+  top: 52px;
+  max-width: calc(100% - 24px);
   left: 50%;
   transform: translateX(-50%);
   z-index: 3;

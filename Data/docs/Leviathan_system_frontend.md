@@ -389,9 +389,15 @@ These are intentionally distinct backend concepts.
 
 Current graph views are backed by `/api/brain/graph`; selection/filter state remains under BrainPage / `useBrainOverview` ownership. Hover labels are graph-native (title/type/cluster), not floating marketing chips.
 
+The Brain main owns vertical scrolling because the legacy shell slot uses `display: contents`. The knowledge section must not flex-shrink: its canvas, activation strip and workbench determine the panel height. The mobile shell column uses `minmax(0, 1fr)` to keep the stage inside the viewport. Canvas backing dimensions track the actual panel size and device pixel ratio.
+
+Rotation follows the pause control, including when a node is selected. Reset restores angle, tilt, zoom and display defaults; background graph refreshes preserve an explicitly cleared selection. Labels use bounded collision avoidance, all loaded nodes remain keyboard-selectable, and relation layout is calculated once per frame rather than once per node. Memory mutations refresh the authoritative graph.
+
 ### Chat → Brain knowledge activation
 
 When chat retrieval completes with document/memory ids, the backend emits observability event `brain.knowledge_activation` (`Data/modules/brain/activation_events.py`) with `node_ids` mapped to Brain facade ids (`knowledge:document:…`, `memory:…`), plus `request_id` / `conversation_id` / `run_id` / `hit_count` / `identifiers_available`. Hit counts alone never light nodes — Brain shows “Geen node-identificatie beschikbaar”. Open `/chat` and `/brain` in separate tabs; Brain follows live events without manual refresh. Multiple concurrent requests are selectable in the Kennis Netwerk status strip.
+
+The activation strip reports how many retrieved IDs are visible in the current bounded/filtered graph and shows stream connection status. It does not invent or fetch unrelated nodes to fill gaps. Explicit document IDs take precedence over chunk IDs. Automatic request following uses first observed request sequence, so a late completion cannot take focus from a newer request within the event buffer; cancelled/unavailable requests clear their highlights.
 
 Historical graph snapshots are **not** reconstructed from `created_at`. Workbench history tab states unavailability honestly until a real snapshot contract exists.
 
