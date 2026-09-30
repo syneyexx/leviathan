@@ -1626,6 +1626,12 @@ export const api = {
     );
   },
 
+  retryKnowledgeLibraryIngestionBrain(sourceId: string): Promise<Record<string, unknown>> {
+    return request(`/api/knowledge/library/ingestion/${encodeURIComponent(sourceId)}/brain-retry`, {
+      method: "POST",
+    });
+  },
+
   listFunctions(): Promise<{ functions: unknown[]; loaded?: unknown[]; telemetry?: unknown }> {
     return request("/api/functions");
   },

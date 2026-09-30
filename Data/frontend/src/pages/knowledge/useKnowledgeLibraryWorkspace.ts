@@ -403,6 +403,20 @@ export function useKnowledgeLibraryWorkspace() {
     }
   }, [activeIngestionId, loadIngestion, toast]);
 
+  const onBrainRetryIngestion = useCallback(async () => {
+    if (!activeIngestionId) return;
+    setBusy(true);
+    try {
+      await api.retryKnowledgeLibraryIngestionBrain(activeIngestionId);
+      toast("Brain retry enqueued");
+      await loadIngestion();
+    } catch (err) {
+      toast(errMsg(err, "Brain retry failed"));
+    } finally {
+      setBusy(false);
+    }
+  }, [activeIngestionId, loadIngestion, toast]);
+
   const onDeleteSelected = useCallback(async () => {
     if (!selectedId) return;
     if (!window.confirm("Delete this knowledge document? Related chunks/embeddings will be removed. Shared raw artifacts are not automatically destroyed.")) {
@@ -588,6 +602,7 @@ export function useKnowledgeLibraryWorkspace() {
     onUploadFiles,
     onCancelIngestion,
     onRetryIngestion,
+    onBrainRetryIngestion,
     onDeleteSelected,
     onBulkDelete,
     onBulkTag,

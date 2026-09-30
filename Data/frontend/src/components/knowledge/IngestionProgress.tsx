@@ -51,6 +51,11 @@ export function IngestionProgress({ ws }: { ws: KnowledgeLibraryWorkspace }) {
             <button type="button" onClick={() => void ws.onRetryIngestion()} disabled={ws.busy}>
               Retry
             </button>
+            {typeof ws.activeProgress?.brain_failed === "number" && (ws.activeProgress.brain_failed as number) > 0 ? (
+              <button type="button" onClick={() => void ws.onBrainRetryIngestion()} disabled={ws.busy}>
+                Brain Retry
+              </button>
+            ) : null}
           </div>
         </>
       ) : (
