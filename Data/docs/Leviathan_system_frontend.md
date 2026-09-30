@@ -136,7 +136,7 @@ The “Hades AI” navigation label is UI naming. It does not make `Data/HADES/`
 | `/chat` | `ChatPage` |
 | `/coding` | `CodingPage` |
 | `/models` | `ModelsPage` |
-| `/training` | `TrainingPixelPage` |
+| `/training` | `TrainingPage` (V2) |
 | `/dataset-management` | `DatasetManagementPixelPage` |
 | `/offline-datasets` | `OfflineDatasetsPixelPage` |
 | `/agents` | `AgentsPage` |
@@ -461,9 +461,15 @@ Explicit demo rows are labeled DEMO and are protected from appearing as live inv
 
 # 16. Training and evaluation-facing UI
 
-`/training` currently routes to the production pixel Training page family via `App.tsx`; an older top-level `TrainingPage.tsx` may remain for compatibility/source history, but route truth wins.
+`/training` routes to the Leviathan V2 **Model Training** page (`TrainingPage` + `useTrainingWorkspace` + `src/components/training/*`) under the canonical **LLM → Training** menu ownership (`v2ChildrenFromMainMenu("llm")`). There is no top-level Training rail owner.
 
-Training pages display real jobs/recipes/readiness/candidate versions/evaluation state. A configured recipe must not be shown as “trained” or “GPU completed” without backend evidence.
+Visual language lives only in global `leviathan-v2.css` under `.lv-v2-page--training` / `.lv-v2-training-*` — no Training-specific stylesheet.
+
+Production UI never falls back to mock/demo training state. Screen 1 parity data exists only in `src/mocks/trainingV2VisualFixture.ts` (Playwright). Reference: `docs/ui_reference/training-v2-reference.png`.
+
+The Training Engine card shows **Leviathan Trainer** (PyTorch / Transformers / PEFT / TRL). LM Studio is an inference runtime, not the trainer.
+
+Training pages display real jobs, capabilities, hardware, datasets/versions, trainable models, checkpoints, and metrics. Method badges and readiness come from `/api/training/capabilities` — fixture-only environments are not production-ready. A configured recipe must not be shown as “trained” or “GPU completed” without backend evidence.
 
 Evaluation/analytics data used by Training or model pages should come through central API contracts; no client-side score fabrication.
 

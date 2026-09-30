@@ -56,7 +56,7 @@ test.describe("Training V2 visual", () => {
 
     // Engine is Leviathan Trainer — not LM Studio as trainer.
     const enginePanel = page.locator(".lv-v2-panel", { hasText: "Training Engine" });
-    await expect(enginePanel.getByText("Leviathan Trainer")).toBeVisible();
+    await expect(enginePanel.locator(".lv-v2-select-card__value")).toHaveText("Leviathan Trainer");
     await expect(enginePanel.getByText("LM Studio")).toHaveCount(0);
 
     // Hardware fixture GPUs
@@ -65,9 +65,10 @@ test.describe("Training V2 visual", () => {
     await expect(hardwarePanel.getByText("RTX 3060 Ti")).toBeVisible();
 
     // Trainable models only — GGUF filtered out
-    await expect(page.getByText("Qwen2.5-14B")).toBeVisible();
-    await expect(page.getByText("Llama-3.2-3B")).toBeVisible();
-    await expect(page.getByText("Qwen2.5-14B-Instruct Q4_K_M")).toHaveCount(0);
+    const modelsPanel = page.locator(".lv-v2-panel", { hasText: "Models voor Training" });
+    await expect(modelsPanel.getByRole("button", { name: /Qwen2\.5-14B/ })).toBeVisible();
+    await expect(modelsPanel.getByRole("button", { name: /Llama-3\.2-3B/ })).toBeVisible();
+    await expect(modelsPanel.getByRole("button", { name: /Q4_K_M|gguf/i })).toHaveCount(0);
 
     // Method selector has no fixture option
     const methodSelect = page.locator(".lv-v2-panel", { hasText: "Trainings Parameters" }).locator("select").first();
@@ -120,9 +121,10 @@ test.describe("Training V2 visual", () => {
     await expect(config.getByText("LoRA rank")).toBeVisible();
 
     await page.getByRole("button", { name: "+ Nieuwe training" }).click();
-    await expect(page.getByRole("dialog")).toBeVisible();
-    await expect(page.getByText("Preflight")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Start training" })).toBeVisible();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("heading", { name: /preflight/i })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Start training" })).toBeVisible();
   });
 });
 
