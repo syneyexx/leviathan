@@ -68,6 +68,14 @@ describe("v2Nav Hades AI group", () => {
     expect(isV2NavItemActive(hades, "/agents")).toBe(false);
   });
 
+  it("does not claim Agents child ownership on /agents (LM owns it)", () => {
+    expect(hades).toBeDefined();
+    if (!hades) return;
+    expect(findActiveV2Child(hades, "/agents")).toBeNull();
+    expect(hades.children?.find((c) => c.id === "hades-agents")?.to).toBe("/agents");
+    expect(hades.children?.find((c) => c.id === "hades-agents")?.match).toEqual([]);
+  });
+
   it("auto-expands on /chat and marks Chat child active", () => {
     expect(hades).toBeDefined();
     if (!hades) return;
@@ -126,31 +134,38 @@ describe("v2Nav LM group", () => {
     expect(main).toBeDefined();
     expect(lm.children?.map((c) => c.to)).toEqual(main!.submenu.map((s) => s.to));
     expect(lm.children?.map((c) => c.label)).toContain("Modellen");
+    expect(lm.children?.map((c) => c.label)).toContain("Agents");
   });
 
-  it("only marks LM active on /models — top-level Agents/Training/Data stay route owners", () => {
+  it("marks LM active on /models and /agents — MAIN_MENU owns Agents under LLM", () => {
     expect(lm).toBeDefined();
     if (!lm) return;
     expect(isV2NavItemActive(lm, "/models")).toBe(true);
-    expect(isV2NavItemActive(lm, "/agents")).toBe(false);
+    expect(isV2NavItemActive(lm, "/agents")).toBe(true);
     expect(isV2NavItemActive(lm, "/training")).toBe(false);
     expect(isV2NavItemActive(lm, "/dataset-management")).toBe(false);
     expect(isV2NavItemActive(lm, "/offline-datasets")).toBe(false);
     expect(isV2NavItemActive(lm, "/analytics")).toBe(false);
   });
 
-  it("shouldAutoExpandV2Group expands LM only on /models, not /agents or /training", () => {
+  it("shouldAutoExpandV2Group expands LM on /models and /agents", () => {
     expect(lm).toBeDefined();
     if (!lm) return;
     expect(shouldAutoExpandV2Group(lm, "/models")).toBe(true);
-    expect(shouldAutoExpandV2Group(lm, "/agents")).toBe(false);
+    expect(shouldAutoExpandV2Group(lm, "/agents")).toBe(true);
     expect(shouldAutoExpandV2Group(lm, "/training")).toBe(false);
     expect(shouldAutoExpandV2Group(lm, "/dataset-management")).toBe(false);
   });
 
-  it("findActiveV2Child marks Modellen active on /models", () => {
+  it("findActiveV2Child marks Modellen on /models and Agents on /agents", () => {
     expect(lm).toBeDefined();
     if (!lm) return;
     expect(findActiveV2Child(lm, "/models")?.label).toBe("Modellen");
+    expect(findActiveV2Child(lm, "/agents")?.label).toBe("Agents");
+  });
+
+  it("does not keep a standalone top-level Agents rail owner", () => {
+    expect(V2_PRIMARY_NAV.some((item) => item.id === "agents" && !item.expandable)).toBe(false);
+    expect(V2_PRIMARY_NAV.find((item) => item.id === "agents")).toBeUndefined();
   });
 });
