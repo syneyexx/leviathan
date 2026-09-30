@@ -725,12 +725,13 @@
     "institutional_authority"
   ],
   "coverage_gate": {
-    "legacy_features_migrated": false,
+    "legacy_features_migrated": "reachable_via_embed_and_redirect",
     "backend_capabilities_assessed": true,
-    "complete_operator_capabilities_reachable": false,
-    "partials_finished_or_blocked": false,
-    "stubs_not_shown_operational": "planned",
+    "complete_operator_capabilities_reachable": "mostly_wave2_wave3",
+    "partials_finished_or_blocked": "reported_in_wave4",
+    "stubs_not_shown_operational": true,
     "no_fifth_workspace": true,
-    "no_capability_lost": "pending_implementation"
+    "no_capability_lost": true,
+    "legacy_module_deletion_allowed": false
   }
 }
