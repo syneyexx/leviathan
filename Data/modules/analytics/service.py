@@ -2,6 +2,8 @@
 
 Does not invent costs or fake trends. Values are derived from durable tables
 and in-process collectors that already exist.
+
+Analytics is a READ MODEL across CONTROL + KNOWLEDGE canonical databases.
 """
 
 from __future__ import annotations
@@ -10,7 +12,11 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
+
+from Data.modules.analytics.contracts import normalize_range
+from Data.modules.analytics.dashboard import AnalyticsDashboard
+from Data.modules.common.sqlite_policy import open_sqlite_connection
 
 
 def utc_now() -> datetime:
@@ -35,13 +41,37 @@ def _parse_ts(value: str | None) -> datetime | None:
 class AnalyticsService:
     """Bounded window aggregates for /api/analytics/*."""
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(
+        self,
+        db_path: Path,
+        *,
+        knowledge_db_path: Path | None = None,
+        telemetry_provider: Callable[[], dict[str, Any] | None] | None = None,
+    ) -> None:
         self.db_path = Path(db_path)
+        # CONTROL compatibility alias — product authority is control DB.
+        self.control_db_path = self.db_path
+        self.knowledge_db_path = Path(knowledge_db_path) if knowledge_db_path else None
+        self.telemetry_provider = telemetry_provider
+        self._dashboard = AnalyticsDashboard(
+            self.control_db_path,
+            self.knowledge_db_path,
+            telemetry_provider=telemetry_provider,
+        )
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.db_path, timeout=30, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
+        """CONTROL DB connection (legacy callers). Uses canonical sqlite policy."""
+        conn = open_sqlite_connection(self.db_path, set_wal=False)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    @contextmanager
+    def connect_knowledge(self) -> Iterator[sqlite3.Connection]:
+        path = self.knowledge_db_path or self.db_path
+        conn = open_sqlite_connection(path, set_wal=False)
         try:
             yield conn
         finally:
@@ -66,12 +96,26 @@ class AnalyticsService:
         ).fetchone()
         return row is not None
 
+    def dashboard(
+        self,
+        *,
+        chart_range: str = "30d",
+        ranking_range: str = "7d",
+        activity_limit: int = 10,
+    ) -> dict[str, Any]:
+        """Institutional Statistieken control-plane projection."""
+        return self._dashboard.dashboard(
+            chart_range=chart_range,
+            ranking_range=ranking_range,
+            activity_limit=activity_limit,
+        )
+
     def overview(self, *, range_key: str = "7d") -> dict[str, Any]:
         start, end = self._window(range_key)
         start_s, end_s = start.isoformat(timespec="seconds"), end.isoformat(timespec="seconds")
         with self.connect() as conn:
             training = self._count_jobs(conn, "training_jobs", start_s, end_s)
-            datasets = self._count_jobs(conn, "dataset_jobs", start_s, end_s)
+            # dataset_jobs live on KNOWLEDGE — read from knowledge connection.
             agent_missions = self._count_jobs(conn, "agent_missions", start_s, end_s, time_col="created_at")
             approvals = self._count_simple(conn, "approvals", start_s, end_s, time_col="created_at")
             verifications = self._count_simple(
@@ -79,6 +123,13 @@ class AnalyticsService:
             )
             jobs = self._count_jobs(conn, "jobs", start_s, end_s, time_col="created_at", status_col="state")
             status_breakdown = self._status_breakdown(conn, start_s, end_s)
+        datasets = {"total": 0, "completed": 0, "failed": 0, "running": 0, "cancelled": 0}
+        try:
+            with self.connect_knowledge() as kconn:
+                datasets = self._count_jobs(kconn, "dataset_jobs", start_s, end_s)
+                status_breakdown["datasets"] = datasets
+        except Exception:  # noqa: BLE001
+            status_breakdown["datasets"] = datasets
         return {
             "range": range_key,
             "from": start_s,
@@ -159,7 +210,7 @@ class AnalyticsService:
     def _status_breakdown(self, conn: sqlite3.Connection, start_s: str, end_s: str) -> dict[str, Any]:
         return {
             "training": self._count_jobs(conn, "training_jobs", start_s, end_s),
-            "datasets": self._count_jobs(conn, "dataset_jobs", start_s, end_s),
+            "datasets": {"total": 0, "completed": 0, "failed": 0, "running": 0, "cancelled": 0},
             "agents": self._count_jobs(conn, "agent_missions", start_s, end_s),
             "jobs": self._count_jobs(conn, "jobs", start_s, end_s, status_col="state"),
         }
@@ -261,7 +312,8 @@ class AnalyticsService:
     def datasets(self, *, range_key: str = "7d") -> dict[str, Any]:
         start, end = self._window(range_key)
         start_s, end_s = start.isoformat(timespec="seconds"), end.isoformat(timespec="seconds")
-        with self.connect() as conn:
+        # Datasets / dataset_jobs / versions live on KNOWLEDGE.
+        with self.connect_knowledge() as conn:
             by_status = self._count_jobs(conn, "dataset_jobs", start_s, end_s)
             dataset_count = 0
             version_count = 0
@@ -304,7 +356,10 @@ class AnalyticsService:
             },
             "jobsByStatus": by_status,
             "jobsByType": by_type,
-            "truth": {"server_side_aggregation": True},
+            "truth": {
+                "server_side_aggregation": True,
+                "knowledge_database": True,
+            },
         }
 
     def tools(self, *, range_key: str = "7d") -> dict[str, Any]:

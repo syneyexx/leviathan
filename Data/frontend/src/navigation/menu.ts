@@ -46,7 +46,7 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
       { id: "training", label: "Training", to: "/training" },
       { id: "dataset-management", label: "Dataset Manager", to: "/dataset-management" },
       { id: "offline-datasets", label: "Offline Datasets", to: "/offline-datasets" },
-      { id: "stats", label: "Statestieken", to: "/analytics" },
+      { id: "stats", label: "Statistieken", to: "/analytics" },
     ],
   },
   {

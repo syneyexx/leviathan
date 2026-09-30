@@ -361,7 +361,11 @@ signal_fabric = SignalFabricService(
     ),
 )
 # Canonical MemoryStore only — bind after initialize() in lifespan (F-011).
-analytics_service = AnalyticsService(settings.database_path)
+# Analytics is a READ MODEL across CONTROL + KNOWLEDGE (no analytics DB).
+analytics_service = AnalyticsService(
+    settings.database_path,
+    knowledge_db_path=settings.knowledge_database_path,
+)
 workflow_store = WorkflowStore(settings.database_path)
 workflow_runtime = WorkflowRuntime(
     workflow_store,
@@ -382,6 +386,9 @@ system_telemetry_sampler = SystemTelemetrySampler(
     gpu_interval_s=2.0,
     data_root=DATA_ROOT,
 )
+# Bind live telemetry into Analytics dashboard (system usage / resources).
+analytics_service.telemetry_provider = lambda: system_telemetry_sampler.latest_public()
+analytics_service._dashboard.telemetry_provider = analytics_service.telemetry_provider
 metrics = MetricsCollector()
 timeseries = TimeSeriesStore(max_points_per_series=3_600)
 deep_recall_service._emit = lambda name, payload: observability.emit(  # noqa: SLF001

@@ -86,7 +86,7 @@ describe("v2Nav LLM group", () => {
       "Training",
       "Dataset Manager",
       "Offline Datasets",
-      "Statestieken",
+      "Statistieken",
     ]);
   });
 

@@ -565,13 +565,18 @@ Evaluation/analytics data used by Training or model pages should come through ce
 # 17. Analytics and command surfaces
 
 - `src/pages/CommandPage.tsx` — root command/dashboard;
-- `src/pages/AnalyticsPage.tsx` — LLM/system analytics;
+- `src/pages/AnalyticsPage.tsx` — **LLM / Statistieken** V2 control plane (`AppShell variant="v2"`, title `LLM / Statistieken`);
+- Composition: `useAnalyticsWorkspace` + `src/components/analytics/*` (hero, KPIs, charts, distributions, rankings, bottom telemetry/activity);
+- Additive API: `GET /api/analytics/dashboard` (legacy `/api/analytics/{overview,agents,training,datasets,tools}` remain);
+- Canonical nav label under LLM is **Statistieken** (`MAIN_MENU`); route remains `/analytics`;
+- Visual fixture (test-only): `src/mocks/analyticsV2VisualFixture.ts` + `e2e/helpers/analyticsV2Visual.ts` + `e2e/analytics-v2.visual.spec.ts` (reference: `docs/ui_reference/analytics-v2-reference.png`, 1664×936). Production never falls back to fixture data on API failure;
+- Styles: existing `.lv-an-*` in `analytics.css` extended for dense V2 layout; hero shell in `leviathan-v2.css` under `.lv-v2-page--analytics`;
 - `src/pages/PerformancePage.tsx` — performance/native/DB contention read model;
 - `src/pages/ConsolePage.tsx` — console/operator projection;
 - `src/pages/SectionPage.tsx` — generic section/fallback surface for unfinished submenu destinations.
 - `src/pages/PlaceholderPage.tsx` — **deprecated** re-export of `SectionPage` (WAVE 42 inventory). Do not delete while imports remain; new code must use `SectionPage`.
 
-Operational numbers use backend telemetry. Zero is a measurement only when the backend measured zero.
+Operational numbers use backend telemetry and domain read models. Zero is a measurement only when the backend measured zero. UNMEASURED/stale/partial remain visible; unknown size/provenance is never silently zero.
 
 ---
 
