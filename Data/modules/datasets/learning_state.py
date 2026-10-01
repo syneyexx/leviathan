@@ -176,6 +176,17 @@ class DatasetLearningState:
         }
 
 
+# Align with DatasetService._INDEXABLE_VERSION_KINDS — RAW is never indexable (P1-002).
+_INDEXABLE_VERSION_KINDS = frozenset(
+    {
+        VersionKind.MATERIALIZED,
+        VersionKind.TRANSFORMED,
+        VersionKind.SPLIT,
+        VersionKind.EXPORT,
+    }
+)
+
+
 def _is_rebuild_job(job: DatasetJob) -> bool:
     return bool((job.config or {}).get("rebuild"))
 
@@ -199,32 +210,27 @@ def _latest_ready(indexes: list[DatasetIndex]) -> DatasetIndex | None:
 def _pick_indexable_version(
     versions: list[DatasetVersion],
 ) -> DatasetVersion | None:
-    preferred_kinds = {
-        VersionKind.MATERIALIZED,
-        VersionKind.TRANSFORMED,
-        VersionKind.SPLIT,
-        VersionKind.EXPORT,
-        VersionKind.RAW,
-    }
+    """Prefer READY materialized/transformed/split/export — never RAW."""
     ready = [
         v
         for v in versions
-        if v.status == VersionStatus.READY and v.kind in preferred_kinds
+        if v.status == VersionStatus.READY and v.kind in _INDEXABLE_VERSION_KINDS
     ]
     if not ready:
         return None
-    # Prefer materialized over raw.
-    ready.sort(
-        key=lambda v: (
-            0 if v.kind == VersionKind.MATERIALIZED else 1,
-            v.updated_at or "",
-        ),
-        reverse=False,
-    )
-    # Actually prefer most recently updated among materialized first.
+    # Prefer most recently updated MATERIALIZED first.
     mat = [v for v in ready if v.kind == VersionKind.MATERIALIZED]
     if mat:
         return sorted(mat, key=lambda v: v.updated_at or "", reverse=True)[0]
+    # Then TRANSFORMED / SPLIT / EXPORT by preference order, newest within kind.
+    for kind in (
+        VersionKind.TRANSFORMED,
+        VersionKind.SPLIT,
+        VersionKind.EXPORT,
+    ):
+        group = [v for v in ready if v.kind == kind]
+        if group:
+            return sorted(group, key=lambda v: v.updated_at or "", reverse=True)[0]
     return sorted(ready, key=lambda v: v.updated_at or "", reverse=True)[0]
 
 
@@ -354,11 +360,17 @@ def compute_dataset_learning_state(
         and isinstance(version.validation, dict)
         and version.validation.get("valid") is None
         and version.status == VersionStatus.READY
+        and version.kind in _INDEXABLE_VERSION_KINDS
         and not ready_idx
     ):
         # Version materialized but validation not yet conclusive.
         canonical = DatasetLearningCanonicalState.VALIDATING
-    elif mat_versions or (version and version.status == VersionStatus.READY):
+    elif mat_versions or (
+        version is not None
+        and version.status == VersionStatus.READY
+        and version.kind in _INDEXABLE_VERSION_KINDS
+    ):
+        # RAW-only datasets stay SOURCE_READY — never false READY_FOR_INDEX (P1-002).
         canonical = DatasetLearningCanonicalState.READY_FOR_INDEX
     elif source_state == "SOURCE_READY":
         canonical = DatasetLearningCanonicalState.SOURCE_READY

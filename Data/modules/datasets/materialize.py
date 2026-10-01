@@ -12,9 +12,14 @@ from Data.modules.common.hashing import sha256_text
 
 from .canonicalize import canonical_schema_dict, iter_canonical_from_path, iter_canonical_from_sources
 from .memory_policy import resolve_dataset_memory_policy
+from .scratch import ScratchManager, ScratchSession
 from .streaming_io import iter_bounded_text_lines
 from .types import CanonicalRecord, DatasetError, DetectedFormat
-from .validation import validate_record
+from .validation import (
+    iter_dedupe_identical_ids,
+    open_id_integrity_tracker,
+    validate_record,
+)
 
 
 def write_canonical_jsonl_stream(
@@ -23,26 +28,49 @@ def write_canonical_jsonl_stream(
     *,
     validate: bool = True,
     max_issues: int = 200,
+    check_duplicate_ids: bool = True,
+    scratch: ScratchSession | None = None,
+    scratch_manager: ScratchManager | None = None,
+    scratch_dir: Path | None = None,
+    job_id: str = "materialize-id-integrity",
 ) -> dict[str, Any]:
     """Stream records to canonical JSONL with incremental SHA-256 and atomic publish.
 
     Never builds an in-memory list of the full corpus or a giant joined string.
+    When ``check_duplicate_ids`` is True (default), runs memory-bounded ID
+    integrity: conflicting duplicate ids fail validation; identical duplicates
+    are skipped (deduped) with provenance.
     """
     ensure_dir(dest.parent)
     tmp = dest.with_name(f"{dest.name}.tmp")
     digest = hashlib.sha256()
     row_count = 0
+    written_count = 0
     byte_size = 0
     empty = 0
     all_issues: list[dict[str, Any]] = []
     error_count = 0
     warning_count = 0
+    tracker = None
+    session: ScratchSession | None = None
+    owns_session = False
+    tmp_dir = None
+    scratch_mgr = scratch_manager
+    integrity_summary: dict[str, Any] | None = None
 
     try:
+        if validate and check_duplicate_ids:
+            tracker, session, owns_session, tmp_dir = open_id_integrity_tracker(
+                scratch=scratch,
+                scratch_manager=scratch_mgr,
+                scratch_dir=scratch_dir,
+                job_id=job_id,
+            )
+
         with tmp.open("wb") as handle:
-            for rec in records:
-                if validate:
-                    issues = validate_record(rec, index=row_count)
+            if tracker is not None:
+                stream = iter_dedupe_identical_ids(records, tracker)
+                for rec, issues, keep in stream:
                     if any(i.get("code") == "empty_content" for i in issues):
                         empty += 1
                     for issue in issues:
@@ -52,12 +80,35 @@ def write_canonical_jsonl_stream(
                             error_count += 1
                         if len(all_issues) < max_issues:
                             all_issues.append(issue)
-                line = json.dumps(rec.to_dict(), ensure_ascii=False, sort_keys=True) + "\n"
-                raw = line.encode("utf-8")
-                handle.write(raw)
-                digest.update(raw)
-                byte_size += len(raw)
-                row_count += 1
+                    row_count += 1
+                    if not keep:
+                        continue
+                    line = json.dumps(rec.to_dict(), ensure_ascii=False, sort_keys=True) + "\n"
+                    raw = line.encode("utf-8")
+                    handle.write(raw)
+                    digest.update(raw)
+                    byte_size += len(raw)
+                    written_count += 1
+            else:
+                for rec in records:
+                    if validate:
+                        issues = validate_record(rec, index=row_count)
+                        if any(i.get("code") == "empty_content" for i in issues):
+                            empty += 1
+                        for issue in issues:
+                            if issue.get("severity") == "warning":
+                                warning_count += 1
+                            else:
+                                error_count += 1
+                            if len(all_issues) < max_issues:
+                                all_issues.append(issue)
+                    line = json.dumps(rec.to_dict(), ensure_ascii=False, sort_keys=True) + "\n"
+                    raw = line.encode("utf-8")
+                    handle.write(raw)
+                    digest.update(raw)
+                    byte_size += len(raw)
+                    row_count += 1
+                    written_count += 1
             handle.flush()
             try:
                 os_fsync = getattr(__import__("os"), "fsync", None)
@@ -66,13 +117,31 @@ def write_canonical_jsonl_stream(
             except OSError:
                 pass
         tmp.replace(dest)
+        if tracker is not None:
+            tracker.flush()
+            integrity_summary = tracker.summary()
+            if session is not None:
+                session.write_manifest(
+                    operation="materialize_id_integrity",
+                    stats=dict(integrity_summary),
+                )
+                if scratch_mgr is not None:
+                    scratch_mgr.assert_within_quota(session)
     except Exception:
         tmp.unlink(missing_ok=True)
         raise
+    finally:
+        if tracker is not None:
+            tracker.close()
+            if owns_session and scratch_mgr is not None and session is not None:
+                scratch_mgr.cleanup_session(session.job_id)
+            if tmp_dir is not None:
+                tmp_dir.cleanup()
 
-    validation = {
+    validation: dict[str, Any] = {
         "valid": error_count == 0,
         "rowCount": row_count,
+        "writtenCount": written_count,
         "errorCount": error_count,
         "warningCount": warning_count,
         "emptyContentCount": empty,
@@ -80,11 +149,27 @@ def write_canonical_jsonl_stream(
         "issuesTruncated": error_count + warning_count > len(all_issues),
         "truncated": error_count + warning_count > len(all_issues),
     }
+    if integrity_summary is not None:
+        validation["idIntegrity"] = integrity_summary
+        validation["duplicateIdConflictCount"] = integrity_summary["duplicateIdConflictCount"]
+        validation["identicalDuplicateIdCount"] = integrity_summary["identicalDuplicateIdCount"]
+        validation["uniqueIdCount"] = integrity_summary["uniqueIdCount"]
+        if integrity_summary["identicalDuplicateIdCount"]:
+            validation["provenance"] = {
+                "identicalDuplicateIdsDeduped": integrity_summary["identicalDuplicateIdCount"],
+                "idIntegrity": {
+                    "uniqueIdCount": integrity_summary["uniqueIdCount"],
+                    "identicalDuplicateIdCount": integrity_summary["identicalDuplicateIdCount"],
+                    "duplicateIdConflictCount": integrity_summary["duplicateIdConflictCount"],
+                },
+            }
+
     return {
         "storagePath": str(dest),
         "contentHash": digest.hexdigest(),
         "byteSize": byte_size,
-        "rowCount": row_count,
+        "rowCount": written_count,
+        "inputRowCount": row_count,
         "schema": canonical_schema_dict(),
         "validation": validation,
         "publishState": "PUBLISHED",

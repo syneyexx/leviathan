@@ -5994,9 +5994,51 @@ class DatasetService:
                 json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
             )
             manifest["manifestPath"] = str(manifest_path)
+
+            # P1-001: durable integrity receipt must PASS before IndexStatus.READY.
+            from .indexing import verify_index_integrity
+
+            self.store.update_job(job.job_id, phase="verifying", progress=0.97)
+            integrity_receipt = verify_index_integrity(
+                self.knowledge,
+                dataset_id=job.dataset_id,
+                version_id=ver.version_id,
+                source_fingerprint=str(source_fingerprint or ver.content_hash or ""),
+                index_id=index.index_id,
+                outcome=outcome,
+                manifest=manifest,
+                expected_records=int(ver.row_count)
+                if ver.row_count is not None
+                else int(outcome.get("processedCount") or 0),
+                scope=scope,
+            )
+            receipt_path = (
+                self.corpus.datasets_manifests / f"index-integrity-{index.index_id}.json"
+            )
+            atomic_write_text(
+                receipt_path,
+                json.dumps(integrity_receipt, ensure_ascii=False, indent=2, sort_keys=True)
+                + "\n",
+            )
+            integrity_receipt["receiptPath"] = str(receipt_path)
+            if integrity_receipt.get("verificationStatus") != "PASS":
+                raise DatasetError(
+                    "Index integrity verification failed: "
+                    + "; ".join(integrity_receipt.get("verificationErrors") or ["unknown"]),
+                    code="index_integrity_failed",
+                    http_status=409,
+                    details={
+                        "indexId": index.index_id,
+                        "verificationStatus": integrity_receipt.get("verificationStatus"),
+                        "evidenceClass": integrity_receipt.get("evidenceClass"),
+                        "receiptPath": str(receipt_path),
+                    },
+                )
+
             provenance = {
                 **outcome,
                 "manifest": manifest,
+                "integrityReceipt": integrity_receipt,
                 "offlineOnly": offline_only,
                 "requestedVersionId": requested_version_id,
                 "resolvedVersionId": ver.version_id,
@@ -6046,6 +6088,7 @@ class DatasetService:
                 "indexId": index.index_id,
                 **outcome,
                 "manifest": manifest,
+                "integrityReceipt": integrity_receipt,
                 "supersededIndexIds": superseded,
                 "rebuild": bool(job.config.get("rebuild")),
                 "requestedVersionId": requested_version_id,
@@ -6053,10 +6096,15 @@ class DatasetService:
                 "learnToBrain": bool(job.config.get("learnToBrain")),
             }
         except Exception as exc:
+            failed_prov: dict[str, Any] = {"error": redact_secrets(str(exc))}
+            if isinstance(exc, DatasetError) and getattr(exc, "code", None) == "index_integrity_failed":
+                details = dict(getattr(exc, "details", None) or {})
+                failed_prov["integrityVerification"] = "FAIL"
+                failed_prov["integrityDetails"] = details
             self.store.update_index(
                 index.index_id,
                 status=IndexStatus.FAILED,
-                provenance={"error": redact_secrets(str(exc))},
+                provenance=failed_prov,
             )
             raise
 

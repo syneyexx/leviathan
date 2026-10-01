@@ -5,20 +5,25 @@ Pipeline phases (progress is real counts, not fiction):
 
 Embeddings are reported honestly: semantic only when the provider is semantic;
 hash/null providers are labeled as lexical / non-semantic fallbacks.
+
+Before IndexStatus.READY, a durable integrity receipt must verify (P1-001).
 """
 
 from __future__ import annotations
 
+import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from Data.modules.common.hashing import sha256_text
 from Data.modules.knowledge import KnowledgeStore
 from Data.modules.knowledge.hashing import content_sha256
 from Data.modules.knowledge.types import IngestStatus
 
 from .materialize import iter_materialized_jsonl
-from .knowledge_identity import resolve_index_scope
+from .knowledge_identity import knowledge_source_for_version, resolve_index_scope
 from .relations import (
     RELATION_EXTRACTOR_VERSION,
     build_verified_relation_atoms_for_record,
@@ -27,6 +32,9 @@ from .relations import (
 from .types import CanonicalRecord, DatasetError
 
 ProgressCb = Callable[[dict[str, Any]], None]
+
+# P1-010: never retain unbounded document id lists in memory.
+_DOCUMENT_ID_SAMPLE_LIMIT = 20
 
 
 def _record_document_text(rec: CanonicalRecord) -> str:
@@ -92,6 +100,307 @@ def _progress_rates(started: float, processed: int) -> dict[str, Any]:
     return rates
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def count_documents_for_source(
+    knowledge: KnowledgeStore,
+    source: str,
+    *,
+    status: IngestStatus | None = IngestStatus.READY,
+) -> int:
+    """Exact COUNT of knowledge documents for a canonical source scope."""
+    with knowledge.connect() as conn:
+        if hasattr(knowledge, "_ensure_schema"):
+            knowledge._ensure_schema(conn)  # noqa: SLF001 — shared store helper
+        if status is None:
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM knowledge_documents WHERE source = ?",
+                (source,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM knowledge_documents WHERE source = ? AND status = ?",
+                (source, status.value),
+            ).fetchone()
+    return int(row["c"] if row else 0)
+
+
+def count_chunks_for_source(knowledge: KnowledgeStore, source: str) -> int:
+    """Exact COUNT of chunks belonging to documents for a source scope."""
+    with knowledge.connect() as conn:
+        if hasattr(knowledge, "_ensure_schema"):
+            knowledge._ensure_schema(conn)  # noqa: SLF001
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM knowledge_chunks c
+            JOIN knowledge_documents d ON d.id = c.document_id
+            WHERE d.source = ?
+            """,
+            (source,),
+        ).fetchone()
+    return int(row["c"] if row else 0)
+
+
+def count_relation_atoms_for_source(knowledge: KnowledgeStore, source: str) -> int:
+    """Exact COUNT of relation atoms for documents under a source scope."""
+    with knowledge.connect() as conn:
+        if hasattr(knowledge, "_ensure_schema"):
+            knowledge._ensure_schema(conn)  # noqa: SLF001
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM directional_relation_atoms a
+            JOIN knowledge_documents d ON d.id = a.document_id
+            WHERE d.source = ?
+            """,
+            (source,),
+        ).fetchone()
+    return int(row["c"] if row else 0)
+
+
+def sample_document_ids_for_source(
+    knowledge: KnowledgeStore,
+    source: str,
+    *,
+    limit: int = _DOCUMENT_ID_SAMPLE_LIMIT,
+) -> list[str]:
+    docs = knowledge.list_documents_by_source(source, limit=max(0, int(limit)), offset=0)
+    return [d.document_id for d in docs]
+
+
+def classify_verification_evidence(
+    *,
+    present_docs_exact: bool,
+    present_chunks_exact: bool,
+    relations_exact: bool,
+    sampled_presence: bool = False,
+) -> str:
+    """Honest evidence class: EXACT / SAMPLED / UNMEASURED."""
+    if present_docs_exact and present_chunks_exact and relations_exact:
+        return "EXACT"
+    if sampled_presence or present_docs_exact or present_chunks_exact:
+        return "SAMPLED"
+    return "UNMEASURED"
+
+
+def build_index_integrity_receipt(
+    *,
+    dataset_id: str,
+    version_id: str,
+    source_fingerprint: str,
+    index_id: str,
+    expected_records: int | None,
+    unique_document_count: int | None,
+    present_document_count: int | None,
+    chunk_count: int | None,
+    present_chunk_count: int | None,
+    embedding_mode: str | None,
+    embeddings_semantic: bool | None,
+    relations_accepted: int | None,
+    relations_rejected: int | None,
+    present_relation_count: int | None,
+    manifest_hash: str | None,
+    evidence_class: str,
+    verification_status: str,
+    verification_errors: list[str] | None = None,
+    completed_at: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Durable index integrity receipt (P1-001)."""
+    receipt = {
+        "schemaVersion": 1,
+        "datasetId": dataset_id,
+        "versionId": version_id,
+        "sourceFingerprint": source_fingerprint,
+        "indexId": index_id,
+        "expectedRecords": expected_records,
+        "uniqueDocumentCount": unique_document_count,
+        "presentDocumentCount": present_document_count,
+        "chunkCount": chunk_count,
+        "presentChunkCount": present_chunk_count,
+        "embeddingMode": embedding_mode,
+        "embeddingsSemantic": embeddings_semantic,
+        "relationsAccepted": relations_accepted,
+        "relationsRejected": relations_rejected,
+        "presentRelationCount": present_relation_count,
+        "manifestHash": manifest_hash,
+        "completedAt": completed_at or _utc_now_iso(),
+        "evidenceClass": evidence_class,
+        "verificationStatus": verification_status,
+        "verificationErrors": list(verification_errors or []),
+        "truth": {
+            "ready_requires_verification_pass": True,
+            "evidence_class_must_be_honest": True,
+            "unmeasured_is_not_pass": True,
+            "lexical_is_not_semantic": not bool(embeddings_semantic),
+        },
+    }
+    if extra:
+        receipt["extra"] = dict(extra)
+    return receipt
+
+
+def verify_index_integrity(
+    knowledge: KnowledgeStore,
+    *,
+    dataset_id: str,
+    version_id: str,
+    source_fingerprint: str,
+    index_id: str,
+    outcome: dict[str, Any],
+    manifest: dict[str, Any] | None = None,
+    expected_records: int | None = None,
+    scope: str | None = None,
+    sample_limit: int = _DOCUMENT_ID_SAMPLE_LIMIT,
+) -> dict[str, Any]:
+    """Verify durable index evidence before READY. Failure ⇒ not READY.
+
+    Evidence classification is honest:
+      - EXACT when store COUNTs match indexing outcome
+      - SAMPLED when only sample presence is checked
+      - UNMEASURED when counts cannot be obtained
+    """
+    knowledge.initialize()
+    resolved_scope = scope or knowledge_source_for_version(dataset_id, version_id)
+    unique_docs = int(outcome.get("documentCount") or 0)
+    reported_chunks = int(outcome.get("chunkCount") or 0)
+    relations_accepted = int(outcome.get("relationsAccepted") or 0)
+    relations_rejected = int(outcome.get("relationsRejected") or 0)
+    embedding_mode = outcome.get("embeddingMode")
+    embeddings_semantic = outcome.get("embeddingsSemantic")
+    if expected_records is None:
+        expected_records = int(outcome.get("processedCount") or unique_docs)
+
+    manifest_hash = None
+    if manifest is not None:
+        manifest_hash = sha256_text(
+            json.dumps(manifest, ensure_ascii=False, sort_keys=True, default=str)
+        )
+
+    errors: list[str] = []
+    present_docs: int | None = None
+    present_chunks: int | None = None
+    present_relations: int | None = None
+    docs_exact = False
+    chunks_exact = False
+    relations_exact = False
+    sampled_ok = False
+
+    try:
+        present_docs = count_documents_for_source(knowledge, resolved_scope)
+        docs_exact = True
+        if present_docs != unique_docs:
+            errors.append(
+                f"present_document_count={present_docs} != unique_document_count={unique_docs}"
+            )
+    except Exception as exc:  # noqa: BLE001 — degrade to UNMEASURED honestly
+        errors.append(f"document_count_unmeasured: {exc}")
+
+    try:
+        present_chunks = count_chunks_for_source(knowledge, resolved_scope)
+        chunks_exact = True
+        if present_chunks != reported_chunks:
+            errors.append(
+                f"present_chunk_count={present_chunks} != chunk_count={reported_chunks}"
+            )
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"chunk_count_unmeasured: {exc}")
+
+    try:
+        present_relations = count_relation_atoms_for_source(knowledge, resolved_scope)
+        relations_exact = True
+        # Accepted relations should be present; allow skipped-unchanged to inflate store.
+        if present_relations < relations_accepted:
+            errors.append(
+                f"present_relation_count={present_relations} < relations_accepted={relations_accepted}"
+            )
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"relation_count_unmeasured: {exc}")
+
+    # Bounded sample: confirm at least one reported sample id is present when any docs exist.
+    sample_ids = list(outcome.get("documentIdsSample") or [])[:sample_limit]
+    if sample_ids:
+        missing_sample = 0
+        checked = 0
+        for doc_id in sample_ids:
+            checked += 1
+            doc = knowledge.get_document(doc_id)
+            if doc is None or doc.status != IngestStatus.READY:
+                missing_sample += 1
+        sampled_ok = missing_sample == 0 and checked > 0
+        if missing_sample:
+            errors.append(f"sample_missing_documents={missing_sample}/{checked}")
+    elif unique_docs == 0:
+        sampled_ok = True
+    else:
+        # No sample retained — do not claim sampled presence.
+        sampled_ok = False
+
+    evidence = classify_verification_evidence(
+        present_docs_exact=docs_exact,
+        present_chunks_exact=chunks_exact,
+        relations_exact=relations_exact,
+        sampled_presence=sampled_ok and not (docs_exact and chunks_exact and relations_exact),
+    )
+
+    # UNMEASURED core counts cannot PASS.
+    if not docs_exact or not chunks_exact:
+        if "document_count_unmeasured" in str(errors) or "chunk_count_unmeasured" in str(errors):
+            evidence = "UNMEASURED" if evidence == "UNMEASURED" else evidence
+        if not docs_exact or not chunks_exact:
+            # Force fail-closed when we cannot measure presence.
+            if not any("unmeasured" in e for e in errors):
+                errors.append("core_counts_incomplete")
+            verification_status = "FAIL"
+        else:
+            verification_status = "FAIL" if errors else "PASS"
+    else:
+        verification_status = "FAIL" if errors else "PASS"
+
+    if evidence == "UNMEASURED":
+        verification_status = "FAIL"
+        if not any("unmeasured" in e for e in errors):
+            errors.append("evidence_unmeasured_cannot_pass")
+
+    if not source_fingerprint:
+        errors.append("missing_source_fingerprint")
+        verification_status = "FAIL"
+
+    if not index_id:
+        errors.append("missing_index_id")
+        verification_status = "FAIL"
+
+    receipt = build_index_integrity_receipt(
+        dataset_id=dataset_id,
+        version_id=version_id,
+        source_fingerprint=str(source_fingerprint or ""),
+        index_id=index_id,
+        expected_records=expected_records,
+        unique_document_count=unique_docs,
+        present_document_count=present_docs,
+        chunk_count=reported_chunks,
+        present_chunk_count=present_chunks,
+        embedding_mode=str(embedding_mode) if embedding_mode is not None else None,
+        embeddings_semantic=bool(embeddings_semantic) if embeddings_semantic is not None else None,
+        relations_accepted=relations_accepted,
+        relations_rejected=relations_rejected,
+        present_relation_count=present_relations,
+        manifest_hash=manifest_hash,
+        evidence_class=evidence,
+        verification_status=verification_status,
+        verification_errors=errors,
+        extra={
+            "scope": resolved_scope,
+            "sampleChecked": len(sample_ids),
+            "sampleOk": sampled_ok,
+        },
+    )
+    return receipt
+
+
 def index_records(
     knowledge: KnowledgeStore,
     records: Iterable[CanonicalRecord],
@@ -115,6 +424,9 @@ def index_records(
 
     Knowledge ``source`` is the canonical contract
     ``dataset:<dataset_id>:<version_id>`` (see knowledge_identity.py).
+
+    P1-012: if ``resume_after_record_id`` is set but never found, fails closed
+    instead of silently skipping the whole corpus.
     """
     knowledge.initialize()
     scope = resolve_index_scope(
@@ -123,7 +435,9 @@ def index_records(
         requested_scope=scope,
     )
     embedding_info = _embedding_truth(knowledge)
-    doc_ids: list[str] = []
+    # P1-010: count + bounded sample — never unbounded doc_ids list.
+    document_count = 0
+    document_ids_sample: list[str] = []
     skipped = 0
     indexed = 0
     chunk_total = 0
@@ -135,12 +449,19 @@ def index_records(
     relation_samples: list[dict[str, Any]] = []
     last_record_id: str | None = None
     resume_gate = resume_after_record_id is not None
+    resume_marker_found = resume_after_record_id is None
     batch_size = max(1, int(write_batch_size or 50))
     started = time.monotonic()
     pending_relation_writes: list[
         tuple[str, list[dict[str, Any]], str]
     ] = []  # (document_id, atoms, fingerprint)
     relation_tx_count = 0
+
+    def _note_document(document_id: str) -> None:
+        nonlocal document_count
+        document_count += 1
+        if len(document_ids_sample) < _DOCUMENT_ID_SAMPLE_LIMIT:
+            document_ids_sample.append(document_id)
 
     def _emit(phase: str, **extra: Any) -> None:
         if not progress_cb:
@@ -203,6 +524,7 @@ def index_records(
         if resume_gate:
             if rec.id == resume_after_record_id:
                 resume_gate = False
+                resume_marker_found = True
             resumed_skip += 1
             continue
         if max_records is not None and processed >= max_records:
@@ -228,7 +550,7 @@ def index_records(
             and existing.content_hash == digest
         ):
             skipped += 1
-            doc_ids.append(document_id)
+            _note_document(document_id)
             chunks = knowledge.list_chunks(document_id)
             chunk_total += len(chunks)
             if extract_relations:
@@ -285,7 +607,7 @@ def index_records(
             trust_metadata=trust,
             source_type="dataset",
         )
-        doc_ids.append(doc.document_id)
+        _note_document(doc.document_id)
         indexed += 1
         chunks = knowledge.list_chunks(doc.document_id)
         chunk_total += len(chunks)
@@ -316,11 +638,24 @@ def index_records(
 
     _flush_relation_batch(force=True)
 
+    # P1-012: resume marker missing must fail safe (not skip whole corpus).
+    if resume_after_record_id is not None and not resume_marker_found:
+        raise DatasetError(
+            f"Resume marker not found in corpus: {resume_after_record_id!r}",
+            code="resume_marker_missing",
+            http_status=409,
+            details={
+                "resumeAfterRecordId": resume_after_record_id,
+                "resumedSkipCount": resumed_skip,
+                "processedCount": processed,
+            },
+        )
+
     if progress_cb:
         _emit("verifying")
 
     return {
-        "documentCount": len(doc_ids),
+        "documentCount": document_count,
         "chunkCount": chunk_total,
         "indexedCount": indexed,
         "skippedUnchanged": skipped,
@@ -339,7 +674,7 @@ def index_records(
         "scope": scope,
         "datasetId": dataset_id,
         "versionId": version_id,
-        "documentIdsSample": doc_ids[:20],
+        "documentIdsSample": list(document_ids_sample),
         **_progress_rates(started, processed),
         "phasesCompleted": [
             "parsing",
@@ -354,6 +689,8 @@ def index_records(
             "relations_require_evidence": True,
             "relation_writes_are_batched_transactions": True,
             "unchanged_relation_skip_requires_fingerprint_match": True,
+            "document_ids_are_bounded_sample": True,
+            "resume_marker_missing_fails_closed": True,
         },
     }
 
