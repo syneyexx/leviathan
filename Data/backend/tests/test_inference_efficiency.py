@@ -209,6 +209,18 @@ class AutomaticFallbackContextFitTests(unittest.TestCase):
                     ),
                 ]
 
+            # Context-fit filtering applies under an authorized selector —
+            # registry presence alone never grants execution authority.
+            store.save_router_config(
+                {
+                    "fallback_order": ["small", "large"],
+                    "role_overrides": {},
+                    "cloud_fallback_allowed": False,
+                    "streaming": True,
+                    "stream_provisional_text": True,
+                    "progress_events_enabled": True,
+                }
+            )
             router = ModelRouter(store, gateway, get_models=models)
             decision = router.resolve(
                 ModelRequest(
@@ -217,6 +229,7 @@ class AutomaticFallbackContextFitTests(unittest.TestCase):
                 )
             )
             self.assertEqual(decision.model_id, "large")
+            self.assertTrue(str(decision.reason).startswith("fallback"))
 
 
 class PinnedConstraintOverflowTests(unittest.TestCase):
