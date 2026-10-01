@@ -68,6 +68,7 @@ export function useDatasetActivity(
   const clearedEntryIdsRef = useRef<Set<string>>(new Set());
   const jobsFailRef = useRef(0);
   const pollTimerRef = useRef<number | null>(null);
+  const inFlightRef = useRef(false);
   const onLifecycleChangeRef = useRef(onLifecycleChange);
   onLifecycleChangeRef.current = onLifecycleChange;
   const requestGenRef = useRef(0);
@@ -76,7 +77,9 @@ export function useDatasetActivity(
 
   const loadJobs = useCallback(async () => {
     if (!enabled) return [] as DatasetJob[];
+    if (inFlightRef.current) return [] as DatasetJob[];
     const gen = ++requestGenRef.current;
+    inFlightRef.current = true;
     try {
       const query: ListDatasetJobsParams = { limit };
       if (datasetId) query.datasetId = datasetId;
@@ -118,6 +121,8 @@ export function useDatasetActivity(
       jobsFailRef.current += 1;
       setJobsError(errMsg(err, "Failed to load dataset jobs"));
       return [] as DatasetJob[];
+    } finally {
+      inFlightRef.current = false;
     }
   }, [limit, datasetId, createdAfter, createdBefore, status, jobType, enabled]);
 
@@ -141,16 +146,35 @@ export function useDatasetActivity(
       });
       pollTimerRef.current = window.setTimeout(() => {
         void (async () => {
+          if (typeof document !== "undefined" && document.hidden) {
+            if (!cancelled) schedule();
+            return;
+          }
           await loadJobs();
           if (!cancelled) schedule();
         })();
       }, delay);
     };
 
+    const onVisibility = () => {
+      if (cancelled) return;
+      if (typeof document !== "undefined" && !document.hidden) {
+        void loadJobs().then(() => {
+          if (!cancelled) schedule();
+        });
+      }
+    };
+
     schedule();
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibility);
+    }
     return () => {
       cancelled = true;
       if (pollTimerRef.current != null) window.clearTimeout(pollTimerRef.current);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
     };
   }, [jobs, loadJobs, enabled]);
 

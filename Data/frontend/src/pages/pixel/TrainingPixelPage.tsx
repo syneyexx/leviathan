@@ -452,10 +452,10 @@ export function TrainingPixelPage() {
                 <button type="button" className="lv-px-btn" disabled={busy} onClick={() => void loadJobs()}>
                   Jobs verversen
                 </button>
-                <Link to="/dataset-management" className="lv-px-btn is-gold">
+                <Link to="/datasets" className="lv-px-btn is-gold">
                   Datasets
                 </Link>
-                <Link to="/offline-datasets" className="lv-px-btn">
+                <Link to="/datasets?mode=learning" className="lv-px-btn">
                   Offline
                 </Link>
                 <Link to="/analytics" className="lv-px-btn">
