@@ -811,7 +811,7 @@ Crash forensics are durable and bounded: each process generation gets a unique l
 
 The former standalone source-ingestion design is consolidated into the Worker Fabric `source_ingestion` pool. Canonical entrypoint: `Data.modules.workers.entrypoints.source_ingestion`.
 
-**Hard production boundary (Wave 1):** FastAPI / ResearchService are control-plane only for source ingestion. Heavy work — archive security validation, ZIP/TAR extraction, recursive archive inspection, document/Office/PDF parsing, and Brain retry orchestration — executes exclusively on the `source_ingestion` worker. OCR / Document AI executes exclusively on the `document_ai` worker. There is no production inline fallback when workers are absent (typed `SOURCE_INGESTION_UNAVAILABLE` / `OCR_UNAVAILABLE`).
+**Hard production boundary (Wave 1):** FastAPI / ResearchService are control-plane only for source ingestion. Heavy work — archive security validation, ZIP/TAR/RAR extraction, recursive archive inspection, document/Office/PDF parsing, and Brain retry orchestration — executes exclusively on the `source_ingestion` worker. OCR / Document AI executes exclusively on the `document_ai` worker. There is no production inline fallback when workers are absent (typed `SOURCE_INGESTION_UNAVAILABLE` / `OCR_UNAVAILABLE`).
 
 Topology:
 
