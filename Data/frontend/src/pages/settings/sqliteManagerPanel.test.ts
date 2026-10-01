@@ -15,15 +15,18 @@ const clientSrc = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "../../api/client.ts"),
   "utf8",
 );
-const settingsSrc = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "../SettingsPage.tsx"),
+const settingsCategorySrc = readFileSync(
+  join(
+    dirname(fileURLToPath(import.meta.url)),
+    "../../components/settings/SettingsCategoryContent.tsx",
+  ),
   "utf8",
 );
 
 describe("SqliteManagerPanel contracts", () => {
   it("lives under Settings → Opslag only", () => {
-    expect(settingsSrc).toContain('activeId === "opslag"');
-    expect(settingsSrc).toContain("SqliteManagerPanel");
+    expect(settingsCategorySrc).toContain('activeId === "opslag"');
+    expect(settingsCategorySrc).toContain("SqliteManagerPanel");
   });
 
   it("requires explicit CONTROL/KNOWLEDGE/MARKET domain selection", () => {

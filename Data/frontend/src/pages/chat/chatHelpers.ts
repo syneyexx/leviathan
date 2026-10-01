@@ -3,6 +3,7 @@
  */
 
 import type { Conversation } from "../../types/api";
+import { formatParameterCount } from "../../lib/chat/formatModelParams";
 
 export type ConversationGroupId = "today" | "yesterday" | "week" | "older";
 
@@ -80,25 +81,14 @@ export function formatMessageTime(value: string | null | undefined): string {
   return date.toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" });
 }
 
-/** Format parameter counts for model cards (e.g. 14B). */
+/** Format parameter counts for model cards (e.g. 14B). Delegates to canonical formatter. */
 export function formatModelParams(n: number | null | undefined): string | null {
   if (n == null || !Number.isFinite(n) || n <= 0) return null;
-  if (n >= 1e9) {
-    const v = n / 1e9;
-    return `${Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1)}B`;
-  }
-  if (n >= 1e6) {
-    const v = n / 1e6;
-    return `${Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1)}B`;
-  }
-  if (n >= 1e3) {
-    const v = n / 1e3;
-    return `${Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1)}K`;
-  }
-  return String(n);
+  const formatted = formatParameterCount(n);
+  return formatted === "UNMEASURED" ? null : formatted;
 }
 
-/** @deprecated Prefer formatModelParams — kept as a thin alias. */
+/** @deprecated Prefer formatModelParams — kept as a thin alias until consumers migrate. */
 export function formatParamCount(n: number | null | undefined): string | null {
   return formatModelParams(n);
 }

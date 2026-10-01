@@ -24,3 +24,4 @@ dist/
 *.tsbuildinfo
 leviathan_startup.log
 ModelData/
+Data/backend/data/

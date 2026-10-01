@@ -13,7 +13,7 @@ const metricsSrc = readFileSync(join(here, "../../components/modules/ModulesMetr
 const skillsEntry = readFileSync(join(here, "SkillsPage.tsx"), "utf8");
 const skillsPage = readFileSync(join(here, "skills/SkillsPage.tsx"), "utf8");
 const skillsHook = readFileSync(join(here, "skills/hooks/useSkillsPage.ts"), "utf8");
-const chatSrc = readFileSync(join(here, "..", "ChatPage.tsx"), "utf8");
+const chatTurnSrc = readFileSync(join(here, "..", "chat", "hooks", "useChatTurn.ts"), "utf8");
 const combined = `${modulesSrc}\n${hookSrc}\n${viewSrc}\n${installPanelSrc}\n${metricsSrc}`;
 
 describe("ModulesPage V2 external fabric lifecycle", () => {
@@ -128,10 +128,10 @@ describe("SkillsPage catalog bounds", () => {
 });
 
 describe("ChatPage job SSE labels", () => {
-  it("formats job.* events with shared JobRuntime helpers", () => {
-    expect(chatSrc).toContain("formatJobStateLabel");
-    expect(chatSrc).toContain("normalizeJobStatus");
-    expect(chatSrc).toContain("job.");
-    expect(chatSrc).toContain("onCapabilityEvent");
+  it("formats job.* events with shared JobRuntime helpers via useChatTurn", () => {
+    expect(chatTurnSrc).toContain("formatJobStateLabel");
+    expect(chatTurnSrc).toContain("normalizeJobStatus");
+    expect(chatTurnSrc).toContain("job.");
+    expect(chatTurnSrc).toContain("onCapabilityEvent");
   });
 });

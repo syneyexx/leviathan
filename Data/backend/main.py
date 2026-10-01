@@ -203,6 +203,27 @@ from Data.backend.routes.plugins import build_plugins_router
 from Data.backend.routes.modules import build_modules_router
 from Data.backend.routes.skills import build_skills_router
 from Data.backend.routes.conversations import build_conversations_router
+from Data.backend.routes.chat_control import build_chat_control_router
+from Data.modules.chat import (
+    ChatTurnCoordinator,
+    ChatTurnStore,
+    CancelReason,
+    ResponseOwner,
+    ExecutionPath,
+    FailureClassification,
+    assert_single_response_owner,
+    bounded_tool_calls_for_turn,
+    build_stream_meta,
+    cancel_chat_turn,
+    cognition_owns_final_response,
+    normalize_chat_response,
+    resolve_response_owner_and_path,
+)
+from Data.modules.chat.artifacts_context import (
+    attach_parts_to_history,
+    register_turn_multimodal_session,
+    resolve_artifact_parts,
+)
 from Data.backend.routes.browser import build_browser_router
 from Data.backend.routes.platform import build_platform_router
 from Data.backend.routes.media import build_media_router
@@ -248,6 +269,8 @@ MARKET_DB = settings.market_database_path
 
 db = Database(CONTROL_DB)
 runs = RunStore(settings.database_path)
+chat_turn_store = ChatTurnStore(settings.database_path)
+chat_turn_coordinator = ChatTurnCoordinator(chat_turn_store)
 artifacts = ArtifactStore(settings.database_path, settings.artifacts.root)
 embedding_provider = build_embedding_provider(
     kind=settings.knowledge.embedding_provider,
@@ -2190,6 +2213,25 @@ async def lifespan(_: FastAPI):
             payload={"error": str(exc)},
             level="warning",
         )
+    try:
+        from datetime import datetime, timedelta, timezone
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat(timespec="seconds")
+        interrupted_turns = chat_turn_store.reconcile_stale_running(older_than_iso=cutoff)
+        if interrupted_turns:
+            observability.emit(
+                "chat",
+                "reconcile.interrupted",
+                payload={"count": len(interrupted_turns)},
+                level="warning",
+            )
+    except Exception as exc:  # noqa: BLE001
+        observability.emit(
+            "chat",
+            "reconcile.failed",
+            payload={"error": str(exc)},
+            level="warning",
+        )
     model_plane.bootstrap()
     try:
         await model_plane.reconcile_startup()
@@ -2784,7 +2826,15 @@ app.include_router(
         module_manager=module_manager,
     )
 )
-app.include_router(build_conversations_router(db=db))
+app.include_router(build_conversations_router(db=db, chat_turn_store=chat_turn_store))
+app.include_router(
+    build_chat_control_router(
+        chat_turn_store=chat_turn_store,
+        runs=runs,
+        cognition_runtime=cognition_runtime,
+        team_orchestrator=team_orchestrator,
+    )
+)
 app.include_router(
     build_browser_router(
         settings=settings,
@@ -2910,6 +2960,12 @@ class ChatRequest(BaseModel):
     # Collaboration strategy — orthogonal to reasoning depth. team ≠ maximum.
     collaboration_strategy: str | None = None  # direct|team
     stream: bool = False
+    idempotency_key: str | None = Field(default=None, max_length=128)
+    # Optional artifact refs for multimodal (ArtifactStore IDs — never raw paths).
+    artifact_ids: list[str] | None = None
+    # Per-turn tool policy intent — never grants privileges beyond gateway.
+    tool_policy: str | None = None  # auto|disabled|selected
+    tool_allowlist: list[str] | None = None
 
 
 def _frontend_index() -> FileResponse:
@@ -3142,9 +3198,21 @@ def _build_assistant_telemetry(
     behavior_version = (
         cog.get("behavior_profile_version") or cog.get("behavior_version") or behavior_version
     )
-    brain_hits = int(hits.get("brain") or hits.get("knowledge") or len(knowledge_hits) or 0)
-    memory_n = int(hits.get("memory") or len(memory_hits) or 0)
-    evidence_n = int(hits.get("evidence") or len(evidence_hits or []) or 0)
+    brain_hits = hits.get("brain")
+    if brain_hits is None:
+        brain_hits = hits.get("knowledge")
+    if brain_hits is None and knowledge_hits:
+        brain_hits = len(knowledge_hits)
+    # Absent measurement stays None — never invent zero from missing cognitions.
+    memory_n = hits.get("memory")
+    if memory_n is None and memory_hits:
+        memory_n = len(memory_hits)
+    evidence_n = hits.get("evidence")
+    if evidence_n is None and evidence_hits:
+        evidence_n = len(evidence_hits)
+    knowledge_n = hits.get("knowledge")
+    if knowledge_n is None and knowledge_hits:
+        knowledge_n = len(knowledge_hits)
     tool_calls = list(cog.get("tool_calls") or [])
     if not tool_calls and tools:
         tool_calls = [{"capability_id": t, "status": "INVOKED", "success": None} for t in tools]
@@ -3202,9 +3270,10 @@ def _build_assistant_telemetry(
         "behavior_version": behavior_version,
         "context_budget": cog.get("context_budget"),
         "context_used": context_used,
-        "context_tokens": context_used if context_used is not None else cog.get("context_budget"),
+        # Never alias budget as used — unknown stays null.
+        "context_tokens": context_used,
         "brain_hits": brain_hits,
-        "knowledge_hits": int(hits.get("knowledge") or len(knowledge_hits) or 0),
+        "knowledge_hits": knowledge_n,
         "memory_hits": memory_n,
         "evidence_hits": evidence_n,
         "tools_invoked": tools,
@@ -3224,11 +3293,21 @@ def _build_assistant_telemetry(
         "budgets": cog.get("budgets") if isinstance(cog.get("budgets"), dict) else None,
         "web_used": bool(web_sources)
         or any(t in {"web.search", "web.fetch"} for t in tools),
+        "measurement": {
+            "brain_hits": "MEASURED" if brain_hits is not None else "UNMEASURED",
+            "knowledge_hits": "MEASURED" if knowledge_n is not None else "UNMEASURED",
+            "memory_hits": "MEASURED" if memory_n is not None else "UNMEASURED",
+            "evidence_hits": "MEASURED" if evidence_n is not None else "UNMEASURED",
+            "context_used": "MEASURED" if context_used is not None else "UNMEASURED",
+            "context_budget": "MEASURED" if cog.get("context_budget") is not None else "UNMEASURED",
+        },
         "truth": {
             "telemetry_is_backend_backed": True,
             "no_fabricated_brain_percent": True,
             "no_hidden_cot": True,
             "no_mock_tools_or_agents": True,
+            "unknown_is_not_zero": True,
+            "context_used_is_not_budget": True,
         },
     }
 
@@ -3238,6 +3317,57 @@ async def chat(payload: ChatRequest, request: Request):
     message = payload.message.strip()
     if not message:
         raise HTTPException(status_code=422, detail="Message cannot be empty")
+
+    # Idempotent retry before creating conversation/message pollution.
+    if payload.idempotency_key:
+        prior = chat_turn_store.get_by_idempotency(payload.idempotency_key.strip())
+        if prior is not None and prior.assistant_message_id is not None:
+            assistant = None
+            user_msg = None
+            with db.connect() as conn:
+                row = conn.execute(
+                    "SELECT id, conversation_id, role, content, created_at FROM messages WHERE id = ?",
+                    (prior.assistant_message_id,),
+                ).fetchone()
+                if row:
+                    assistant = dict(row)
+                if prior.user_message_id:
+                    row = conn.execute(
+                        "SELECT id, conversation_id, role, content, created_at FROM messages WHERE id = ?",
+                        (prior.user_message_id,),
+                    ).fetchone()
+                    if row:
+                        user_msg = dict(row)
+            if assistant is not None:
+                return normalize_chat_response(
+                    chat_turn_coordinator.attach_response_turn_fields(
+                        {
+                            "conversation_id": prior.conversation_id,
+                            "user_message": user_msg,
+                            "assistant_message": assistant,
+                            "model": prior.effective_model or "",
+                            "run_id": prior.chat_run_id,
+                            "idempotent_replay": True,
+                            "reasoning": {
+                                "intent": "",
+                                "complexity": "",
+                                "use_knowledge": False,
+                                "steps": [],
+                                "mode": {
+                                    "requested": prior.requested_reasoning_mode,
+                                    "effective": prior.effective_reasoning_mode,
+                                },
+                            },
+                            "knowledge_sources": [],
+                            "provisional": prior.provisional,
+                            "truth": {
+                                "idempotent_replay": True,
+                                "model_output_is_not_evidence": True,
+                            },
+                        },
+                        prior,
+                    )
+                )
 
     if payload.conversation_id:
         conversation = db.get_conversation(payload.conversation_id)
@@ -3288,7 +3418,64 @@ async def chat(payload: ChatRequest, request: Request):
         recent_user_messages=recent_user_texts[:-1] if recent_user_texts else [],
     )
     behavior_profile = behavior_snapshot.profile
-    turn_id = f"{run.run_id}:turn"
+    durable_turn = chat_turn_coordinator.accept(
+        conversation_id=conversation_id,
+        user_message_id=int(user_message["id"]),
+        chat_run_id=run.run_id,
+        requested_model=payload.model_id,
+        requested_reasoning_mode=payload.reasoning_mode,
+        collaboration_strategy=payload.collaboration_strategy or "direct",
+        idempotency_key=(payload.idempotency_key.strip() if payload.idempotency_key else None),
+        behavior_profile_id=getattr(behavior_profile, "id", None),
+        behavior_version=getattr(behavior_snapshot, "version", None),
+        behavior_hash=getattr(behavior_snapshot, "settings_hash", None),
+    )
+    # Multimodal attachments → ArtifactStore IDs only; resolve into ContextBuilder parts.
+    attachment_ctx: dict = {
+        "safe_ids": [],
+        "parts": [],
+        "text_excerpts": [],
+        "vision_parts": 0,
+        "unavailable": [],
+        "sync_id": None,
+        "session_id": None,
+    }
+    if payload.artifact_ids:
+        attachment_ctx = resolve_artifact_parts(
+            artifact_store=artifacts,
+            artifact_ids=list(payload.artifact_ids),
+            conversation_id=conversation_id,
+            run_id=run.run_id,
+        )
+        safe_ids = list(attachment_ctx.get("safe_ids") or [])
+        if safe_ids:
+            import json as _json
+
+            chat_turn_store.update(
+                durable_turn.turn_id,
+                artifact_ids_json=_json.dumps(safe_ids),
+            )
+            durable_turn = chat_turn_store.get(durable_turn.turn_id) or durable_turn
+            attachment_ctx["session_id"] = register_turn_multimodal_session(
+                multimodal_sessions,
+                conversation_id=conversation_id,
+                run_id=run.run_id,
+                user_text=message,
+                parts=list(attachment_ctx.get("parts") or []),
+            )
+            runs.append_event(
+                run.run_id,
+                EventType.ACTIVITY,
+                {
+                    "kind": "chat.attachments",
+                    "artifact_ids": safe_ids,
+                    "part_count": len(attachment_ctx.get("parts") or []),
+                    "vision_parts": attachment_ctx.get("vision_parts") or 0,
+                    "multimodal_session_id": attachment_ctx.get("session_id"),
+                    "unavailable": attachment_ctx.get("unavailable") or [],
+                },
+            )
+    turn_id = durable_turn.turn_id
     request_id = getattr(request.state, "request_id", None) or run.run_id
 
     # --- TEAM collaboration path (orthogonal to reasoning_mode depth) ---
@@ -3473,40 +3660,60 @@ async def chat(payload: ChatRequest, request: Request):
         elif final_run_state == RunState.FAILED:
             emit_operation_terminal(activity, lifecycle=ActivityLifecycle.FAILED)
         team_activity = activity_snapshot(activity)
-        return {
-            "conversation_id": conversation_id,
-            "user_message": user_message,
-            "assistant_message": assistant_message,
-            # Legacy alias retained for older clients; canonical field is assistant_message.
-            "message": assistant_message,
-            "model": "",
-            "run_id": run.run_id,
-            "team_run_id": team_state.run_id,
-            "collaboration_strategy": "team",
-            "collaboration_description": USER_FACING_TEAM_DESCRIPTION,
-            "team": team_state.public_dict(),
-            "provisional": provisional,
-            "knowledge_sources": [],
-            "reasoning": {
-                "intent": "team_collaboration",
-                "complexity": "team",
-                "use_knowledge": False,
-                "steps": [],
-                "mode": {
-                    "requested": payload.reasoning_mode or "auto",
-                    "effective": payload.reasoning_mode or "auto",
-                    "source": "team_collaboration",
-                    "notes": ["collaboration_strategy=team is orthogonal to reasoning depth"],
+        try:
+            durable_turn = chat_turn_coordinator.complete(
+                turn_id,
+                assistant_message_id=int(assistant_message["id"]),
+                effective_model="",
+                effective_reasoning_mode=payload.reasoning_mode or "auto",
+                response_owner=ResponseOwner.TEAM.value,
+                execution_path=ExecutionPath.TEAM.value,
+                team_run_id=team_state.run_id,
+                provisional=provisional,
+                activity_ref=run.run_id,
+                metadata={"team_status": team_state.status.value},
+            )
+        except Exception:  # noqa: BLE001
+            durable_turn = chat_turn_store.get(turn_id)
+        return normalize_chat_response(
+            chat_turn_coordinator.attach_response_turn_fields(
+                {
+                    "conversation_id": conversation_id,
+                    "user_message": user_message,
+                    "assistant_message": assistant_message,
+                    # Legacy alias retained for older clients; canonical field is assistant_message.
+                    "message": assistant_message,
+                    "model": "",
+                    "run_id": run.run_id,
+                    "team_run_id": team_state.run_id,
+                    "collaboration_strategy": "team",
+                    "collaboration_description": USER_FACING_TEAM_DESCRIPTION,
+                    "team": team_state.public_dict(),
+                    "provisional": provisional,
+                    "knowledge_sources": [],
+                    "reasoning": {
+                        "intent": "team_collaboration",
+                        "complexity": "team",
+                        "use_knowledge": False,
+                        "steps": [],
+                        "mode": {
+                            "requested": payload.reasoning_mode or "auto",
+                            "effective": payload.reasoning_mode or "auto",
+                            "source": "team_collaboration",
+                            "notes": ["collaboration_strategy=team is orthogonal to reasoning depth"],
+                        },
+                    },
+                    "activity": team_activity.get("activity"),
+                    "activity_events": team_activity.get("events"),
+                    "truth": {
+                        "model_output_is_not_evidence": True,
+                        "team_provisional": provisional,
+                        "team_is_not_direct": True,
+                    },
                 },
-            },
-            "activity": team_activity.get("activity"),
-            "activity_events": team_activity.get("events"),
-            "truth": {
-                "model_output_is_not_evidence": True,
-                "team_provisional": provisional,
-                "team_is_not_direct": True,
-            },
-        }
+                durable_turn,
+            )
+        )
 
     has_knowledge = bool(knowledge.list_documents(limit=1))
     wm_load = neuro_memory.working.load if neuro_memory.enabled else 0.0
@@ -3529,7 +3736,7 @@ async def chat(payload: ChatRequest, request: Request):
     economy = economy_governor.decide(
         complexity=provisional.complexity,
         intent=provisional.intent,
-        memory_coverage=1.0 if has_knowledge else 0.0,
+        memory_coverage=None,  # UNMEASURED — knowledge existence ≠ coverage
         residual_available=residual_runtime.supports_residuals(),
         deep_recall_enabled=settings.features.deep_recall and behavior_profile.retrieval_deep_recall,
         explicit_deep_recall=any(term in message.lower() for term in ("exact", "cite", "deep recall")),
@@ -3541,7 +3748,7 @@ async def chat(payload: ChatRequest, request: Request):
             has_knowledge,
             deep_recall_enabled=settings.features.deep_recall and behavior_profile.retrieval_deep_recall,
             economy_allow_deep_recall=economy.allow_deep_recall,
-            memory_coverage=1.0 if has_knowledge else 0.0,
+            memory_coverage=None,
             **analyze_kwargs,
         )
         if settings.reasoning_enabled
@@ -3642,6 +3849,11 @@ async def chat(payload: ChatRequest, request: Request):
                 for m in history_rows
                 if m.get("role") in {"user", "assistant"} and m.get("content")
             ]
+            history = attach_parts_to_history(
+                history,
+                parts=list(attachment_ctx.get("parts") or []),
+                text_excerpts=list(attachment_ctx.get("text_excerpts") or []),
+            )
             cognition_meta = cognition_runtime.submit(
                 message,
                 conversation_id=conversation_id,
@@ -3682,13 +3894,9 @@ async def chat(payload: ChatRequest, request: Request):
             }
 
     # ACTIVE cognition owns the answer — skip duplicate retrieval / neuro / model acquire.
-    cognition_early_own = bool(
-        cognition_meta
-        and not cognition_meta.get("shadow")
-        and not settings.features.cognition_shadow
-        and (cognition_meta.get("response") or "").strip()
-        and cognition_meta.get("response_ownership") == "cognition"
-        and not cognition_meta.get("error")
+    cognition_early_own = cognition_owns_final_response(
+        cognition_meta,
+        cognition_shadow_feature=bool(settings.features.cognition_shadow),
     )
 
     runs.transition(
@@ -3752,6 +3960,11 @@ async def chat(payload: ChatRequest, request: Request):
             )
         history_rows = db.get_messages(conversation_id, limit=live_settings().max_history_messages)
         history = [{"role": row["role"], "content": row["content"]} for row in history_rows]
+        history = attach_parts_to_history(
+            history,
+            parts=list(attachment_ctx.get("parts") or []),
+            text_excerpts=list(attachment_ctx.get("text_excerpts") or []),
+        )
     else:
         if plan.use_knowledge:
             # All successful retrieval strategies must converge here:
@@ -3925,6 +4138,11 @@ async def chat(payload: ChatRequest, request: Request):
 
         history_rows = db.get_messages(conversation_id, limit=live_settings().max_history_messages)
         history = [{"role": row["role"], "content": row["content"]} for row in history_rows]
+        history = attach_parts_to_history(
+            history,
+            parts=list(attachment_ctx.get("parts") or []),
+            text_excerpts=list(attachment_ctx.get("text_excerpts") or []),
+        )
         memory_hits = []
         if (
             behavior_profile.memory_enabled
@@ -4280,13 +4498,9 @@ async def chat(payload: ChatRequest, request: Request):
 
     # ACTIVE cognition owns the authoritative answer when it produced one.
     # SHADOW cognition may observe only — chat path remains authoritative.
-    cognition_owns_response = bool(cognition_early_own) or bool(
-        cognition_meta
-        and not cognition_meta.get("shadow")
-        and not settings.features.cognition_shadow
-        and (cognition_meta.get("response") or "").strip()
-        and cognition_meta.get("response_ownership") == "cognition"
-        and not cognition_meta.get("error")
+    cognition_owns_response = cognition_owns_final_response(
+        cognition_meta,
+        cognition_shadow_feature=bool(settings.features.cognition_shadow),
     )
     if cognition_meta is not None:
         cognition_meta = {
@@ -4424,6 +4638,7 @@ async def chat(payload: ChatRequest, request: Request):
             "completed",
             payload={
                 "run_id": run.run_id,
+                "turn_id": turn_id,
                 "model": model,
                 "memory_hits": len(memory_hits),
                 "route": route_meta,
@@ -4441,63 +4656,124 @@ async def chat(payload: ChatRequest, request: Request):
             output=answer,
         )
         snap = activity_snapshot(activity)
-        return {
-            "conversation_id": conversation_id,
-            "run_id": completed.run_id,
-            "run_state": completed.state.value,
-            "user_message": user_message,
-            "assistant_message": assistant_message,
-            "model": model,
-            "routing": route_meta,
-            "reasoning": {
-                **plan.public_summary(),
-                "mode": reasoning_mode.public_dict(),
-            },
-            "activity": snap.get("activity"),
-            "activity_events": snap.get("events"),
-            "behavior": behavior_snapshot.public_dict(include_prompt=False),
-            "language": behavior_snapshot.language.public_dict(),
-            "quality": quality.public_dict(),
-            "knowledge_sources": [
-                {
-                    "id": item["id"],
-                    "title": item["title"],
-                    "source": item["source"],
-                    "chunk_id": item.get("chunk_id"),
-                }
-                for item in knowledge_hits
-            ],
-            "atlas_sources": [
-                {"atlas_id": item.get("atlas_id"), "title": item.get("title")} for item in atlas_hits
-            ],
-            "deep_recall": deep_recall_result.public_dict() if deep_recall_result else None,
-            "economy": economy.public_dict(),
-            "why_sources": [{"id": item.get("id"), "kind": item.get("kind")} for item in why_hits],
-            "memory_sources": [{"memory_id": item["memory_id"]} for item in memory_hits],
-            "neuro": neuro.public_dict() if behavior_profile.diagnostic_visibility else {
-                "enabled": neuro.enabled,
-                "signals": [],
-                "notes": ["diagnostic_visibility=false — raw signals withheld from chat payload"],
-                "truth": neuro.public_dict().get("truth", {}),
-            },
-            "cortex": cortex_report if behavior_profile.diagnostic_visibility else None,
-            "cognition": cognition_meta,
-            "assistant_telemetry": _build_assistant_telemetry(
-                model=model,
-                behavior_snapshot=behavior_snapshot,
-                cognition_meta=cognition_meta,
-                knowledge_hits=knowledge_hits,
-                memory_hits=memory_hits,
-                evidence_hits=[],
-                run_started_at=getattr(run, "started_at", None) or getattr(run, "created_at", None),
-            ),
-            "streamed": use_sse and not cognition_owns_response,
-            "truth": chat_truth(
+        telemetry = _build_assistant_telemetry(
+            model=model,
+            behavior_snapshot=behavior_snapshot,
+            cognition_meta=cognition_meta,
+            knowledge_hits=knowledge_hits,
+            memory_hits=memory_hits,
+            evidence_hits=[],
+            run_started_at=getattr(run, "started_at", None) or getattr(run, "created_at", None),
+        )
+        owner, path = resolve_response_owner_and_path(
+            cognition_meta,
+            cognition_shadow_feature=bool(settings.features.cognition_shadow),
+        )
+        assert_single_response_owner(owner, path)
+        try:
+            durable = chat_turn_coordinator.complete(
+                turn_id,
+                assistant_message_id=int(assistant_message["id"]),
+                effective_model=model,
+                effective_reasoning_mode=reasoning_mode.effective,
+                response_owner=owner,
+                execution_path=path,
+                cognition_run_id=(
+                    str(cognition_meta.get("run_id"))
+                    if isinstance(cognition_meta, dict) and cognition_meta.get("run_id")
+                    else None
+                ),
+                provisional=False,
+                streaming_effective=use_sse and not cognition_owns_response and not streaming_degraded,
                 streaming_degraded=streaming_degraded,
-                residual_implemented=residual_runtime.supports_residuals(),
-                residual_applied=residual_applied_any,
-            ),
-        }
+                knowledge_hit_count=telemetry.get("knowledge_hits"),
+                memory_hit_count=telemetry.get("memory_hits"),
+                evidence_hit_count=telemetry.get("evidence_hits"),
+                knowledge_available=bool(has_knowledge),
+                retrieval_requested=bool(getattr(plan, "use_knowledge", False)),
+                verification_mode=telemetry.get("verification_mode"),
+                verification_passed=telemetry.get("verification_passed"),
+                quality_state="pass" if quality.public_dict().get("pass") else (
+                    "fail" if quality.public_dict().get("pass") is False else None
+                ),
+                tool_receipt_ids=[
+                    str(c.get("receipt_id"))
+                    for c in (telemetry.get("tool_calls") or [])
+                    if isinstance(c, dict) and c.get("receipt_id")
+                ],
+                source_refs=[
+                    {"id": item.get("id"), "title": item.get("title"), "source": item.get("source")}
+                    for item in knowledge_hits
+                ],
+                response_language=behavior_snapshot.language.response_language,
+                latency_ms=telemetry.get("latency_ms"),
+                context_used=telemetry.get("context_used"),
+                context_budget=telemetry.get("context_budget"),
+                activity_ref=run.run_id,
+                metadata={
+                    "tool_calls": bounded_tool_calls_for_turn(telemetry.get("tool_calls")),
+                    # Historic activity only when we have a real snapshot — never invent.
+                    **(
+                        {"activity": snap.get("activity")}
+                        if isinstance(snap.get("activity"), dict)
+                        else {}
+                    ),
+                },
+            )
+        except Exception:  # noqa: BLE001
+            durable = chat_turn_store.get(turn_id)
+        return chat_turn_coordinator.attach_response_turn_fields(
+            {
+                "conversation_id": conversation_id,
+                "run_id": completed.run_id,
+                "run_state": completed.state.value,
+                "user_message": user_message,
+                "assistant_message": assistant_message,
+                "model": model,
+                "routing": route_meta,
+                "reasoning": {
+                    **plan.public_summary(),
+                    "mode": reasoning_mode.public_dict(),
+                },
+                "activity": snap.get("activity"),
+                "activity_events": snap.get("events"),
+                "behavior": behavior_snapshot.public_dict(include_prompt=False),
+                "language": behavior_snapshot.language.public_dict(),
+                "quality": quality.public_dict(),
+                "knowledge_sources": [
+                    {
+                        "id": item["id"],
+                        "title": item["title"],
+                        "source": item["source"],
+                        "chunk_id": item.get("chunk_id"),
+                    }
+                    for item in knowledge_hits
+                ],
+                "atlas_sources": [
+                    {"atlas_id": item.get("atlas_id"), "title": item.get("title")} for item in atlas_hits
+                ],
+                "deep_recall": deep_recall_result.public_dict() if deep_recall_result else None,
+                "economy": economy.public_dict(),
+                "why_sources": [{"id": item.get("id"), "kind": item.get("kind")} for item in why_hits],
+                "memory_sources": [{"memory_id": item["memory_id"]} for item in memory_hits],
+                "neuro": neuro.public_dict() if behavior_profile.diagnostic_visibility else {
+                    "enabled": neuro.enabled,
+                    "signals": [],
+                    "notes": ["diagnostic_visibility=false — raw signals withheld from chat payload"],
+                    "truth": neuro.public_dict().get("truth", {}),
+                },
+                "cortex": cortex_report if behavior_profile.diagnostic_visibility else None,
+                "cognition": cognition_meta,
+                "assistant_telemetry": telemetry,
+                "streamed": use_sse and not cognition_owns_response,
+                "truth": chat_truth(
+                    streaming_degraded=streaming_degraded,
+                    residual_implemented=residual_runtime.supports_residuals(),
+                    residual_applied=residual_applied_any,
+                ),
+            },
+            durable,
+        )
 
     if cognition_owns_response:
         # Cognition already performed the authoritative model call via control plane.
@@ -4515,16 +4791,32 @@ async def chat(payload: ChatRequest, request: Request):
             async def _cognition_sse():
                 yield sse_encode(
                     "meta",
-                    {
-                        "conversation_id": conversation_id,
-                        "run_id": run.run_id,
-                        "user_message": user_message,
-                        "reasoning": plan.public_summary(),
-                        "model": model_name,
-                        "cognition_owns_final_response": True,
-                        "activity": (result.get("activity") or {}),
-                        "truth": result["truth"],
-                    },
+                    build_stream_meta(
+                        conversation_id=conversation_id,
+                        turn_id=turn_id,
+                        chat_run_id=run.run_id,
+                        cognition_run_id=(
+                            str(cognition_meta.get("run_id"))
+                            if isinstance(cognition_meta, dict) and cognition_meta.get("run_id")
+                            else None
+                        ),
+                        user_message=user_message,
+                        effective_model=model_name,
+                        requested_reasoning_mode=payload.reasoning_mode,
+                        effective_reasoning_mode=reasoning_mode.effective,
+                        collaboration_strategy=payload.collaboration_strategy or "direct",
+                        response_owner=ResponseOwner.COGNITION.value,
+                        streaming={
+                            "requested_streaming": True,
+                            "effective_streaming": False,
+                            "streaming_degraded": True,
+                            "degrade_reason": "cognition_buffered_output",
+                        },
+                        reasoning=plan.public_summary(),
+                        activity=(result.get("activity") or {}),
+                        truth=result["truth"],
+                        extra={"cognition_owns_final_response": True},
+                    ),
                 )
                 for frame in _drain_activity_sse():
                     yield frame
@@ -4582,20 +4874,31 @@ async def chat(payload: ChatRequest, request: Request):
             cancel = StreamCancelToken()
             yield sse_encode(
                 "meta",
-                {
-                    "conversation_id": conversation_id,
-                    "run_id": run.run_id,
-                    "user_message": user_message,
-                    "reasoning": plan.public_summary(),
-                    "model": (routed or {}).get("provider_model_id") if routed else None,
-                    "streaming_degraded": streaming_degraded,
-                    "activity": activity_snapshot(activity).get("activity"),
-                    "truth": chat_truth(
+                build_stream_meta(
+                    conversation_id=conversation_id,
+                    turn_id=turn_id,
+                    chat_run_id=run.run_id,
+                    user_message=user_message,
+                    requested_model=payload.model_id,
+                    effective_model=(routed or {}).get("provider_model_id") if routed else None,
+                    requested_reasoning_mode=payload.reasoning_mode,
+                    effective_reasoning_mode=reasoning_mode.effective,
+                    collaboration_strategy=payload.collaboration_strategy or "direct",
+                    response_owner=ResponseOwner.DIRECT.value,
+                    streaming={
+                        "requested_streaming": True,
+                        "effective_streaming": not streaming_degraded,
+                        "streaming_degraded": streaming_degraded,
+                        "degrade_reason": "residual_forward_no_stream" if streaming_degraded else None,
+                    },
+                    reasoning=plan.public_summary(),
+                    activity=activity_snapshot(activity).get("activity"),
+                    truth=chat_truth(
                         streaming_degraded=streaming_degraded,
                         residual_implemented=residual_runtime.supports_residuals(),
                         residual_applied=residual_applied_any,
                     ),
-                },
+                ),
             )
             for frame in _drain_activity_sse():
                 yield frame

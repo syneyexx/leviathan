@@ -235,7 +235,8 @@ Domain route modules live in `Data/backend/routes/`. `main.py` binds shared depe
 | `capabilities.py` | capability catalog/invoke/receipts |
 | `coding.py` | Coding Agent sessions/actions |
 | `cognition.py` | cognition run lifecycle/events/steering |
-| `conversations.py` | conversation CRUD |
+| `conversations.py` | conversation CRUD + cursor search + message pagination + turn hydration |
+| `chat_control.py` | chat turn status / cancel (`/api/chat/turns`, `/api/chat/runs`, `/api/chat/cancel`) |
 | `datasets.py` | dataset lifecycle/index/offline operations |
 | `efficiency.py` | efficiency/resource projections |
 | `evaluation.py` | evaluation platform/harness |
@@ -286,22 +287,35 @@ CORS for native/Vite origins is narrowly scoped and is **not authorization**. Re
 
 ## 7.1 Chat path
 
-`POST /api/chat` remains in `Data/backend/main.py` because it is a composition-level path. The current high-level flow is:
+`POST /api/chat` remains in `Data/backend/main.py` because it is a composition-level path.
+Durable turn metadata is CONTROL-owned via `chat_turns` (`Data/modules/chat/`) — identity and
+references only; Activity/RunStore/ArtifactStore/CognitiveRuntime remain canonical owners.
+
+High-level flow:
 
 ```text
-request
+request (+ optional idempotency_key, artifact_ids)
+ -> create/accept ChatTurn (ChatTurnCoordinator)
  -> effective settings + BehaviorSnapshot
- -> intent/retrieval classification
- -> Brain/Memory/Evidence/Neuro perception as needed
- -> CognitiveRuntime.submit(...)
- -> TaskModel + Perception + BeliefState + WorkingMemory
- -> MetaController + CognitivePlanner + ActionSelector
- -> model / retrieval / capability / agent / verification loop
- -> cognition-owned answer (or compatible fallback path)
- -> persist public assistant turn + telemetry
+ -> ReasoningEngine (lightweight intent/retrieval classification)
+ -> CognitiveRuntime.submit(...) when enabled
+ -> cognition-owned answer OR direct model path (Invariant A: one response owner)
+ -> cancel adapter: POST /api/chat/cancel → RunStore + cognition + TEAM children
+ -> finalize ChatTurn COMPLETED|FAILED|CANCELLED + assistant_message
+ -> SSE meta includes turn_id / chat_run_id / requested+effective runtime
 ```
 
+Conversation catalog: cursor pagination + server search (`GET /api/conversations`).
+Message history: recent window + `before_id` pages; optional `turns` hydration by assistant message id.
+
+Multimodal attachments: client uploads via `POST /api/artifacts` (ArtifactStore). Chat accepts
+`artifact_ids` on `POST /api/chat`, validates via ArtifactStore, persists IDs on `chat_turns`,
+registers a MultimodalSession, and injects typed `parts` + text excerpts into ContextBuilder
+history (no parallel upload pipeline; no raw filesystem paths from the browser).
+
 `Data/modules/reasoning/` is the legacy lightweight intent/retrieval-classification seam. **CognitiveRuntime** in `Data/modules/cognition/` is the deep orchestration owner.
+
+See ADR: `Data/docs/adr/ADR-chat-turn-institutional.md`.
 
 ## 7.2 Core cognition files
 

@@ -4567,6 +4567,92 @@ def _m61_tools_control_plane(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m62_chat_turns(conn: sqlite3.Connection) -> None:
+    """CONTROL-owned durable Chat turn metadata (references RunStore / cognition / artifacts)."""
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS chat_turns (
+            turn_id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            user_message_id INTEGER,
+            assistant_message_id INTEGER,
+            chat_run_id TEXT,
+            cognition_run_id TEXT,
+            team_run_id TEXT,
+            operation_id TEXT,
+            activity_run_id TEXT,
+            requested_model TEXT,
+            effective_model TEXT,
+            requested_reasoning_mode TEXT,
+            effective_reasoning_mode TEXT,
+            collaboration_strategy TEXT,
+            behavior_profile_id TEXT,
+            behavior_version TEXT,
+            behavior_hash TEXT,
+            response_owner TEXT NOT NULL DEFAULT 'unknown',
+            execution_path TEXT NOT NULL DEFAULT 'direct_chat',
+            run_state TEXT NOT NULL DEFAULT 'ACCEPTED',
+            streaming_effective INTEGER NOT NULL DEFAULT 0,
+            streaming_degraded INTEGER NOT NULL DEFAULT 0,
+            provisional INTEGER NOT NULL DEFAULT 0,
+            cancelled INTEGER NOT NULL DEFAULT 0,
+            failure_classification TEXT NOT NULL DEFAULT 'none',
+            knowledge_hit_count INTEGER,
+            memory_hit_count INTEGER,
+            evidence_hit_count INTEGER,
+            retrieval_coverage REAL,
+            knowledge_available INTEGER,
+            retrieval_requested INTEGER,
+            verification_mode TEXT,
+            verification_state TEXT NOT NULL DEFAULT 'UNKNOWN',
+            quality_state TEXT,
+            tool_receipt_ids_json TEXT NOT NULL DEFAULT '[]',
+            decision_receipt_ids_json TEXT NOT NULL DEFAULT '[]',
+            artifact_ids_json TEXT NOT NULL DEFAULT '[]',
+            source_refs_json TEXT NOT NULL DEFAULT '[]',
+            activity_ref TEXT,
+            detected_language TEXT,
+            requested_language TEXT,
+            response_language TEXT,
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            completed_at TEXT,
+            latency_ms REAL,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            total_tokens INTEGER,
+            context_used INTEGER,
+            context_budget INTEGER,
+            idempotency_key TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            error_summary TEXT,
+            FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_turns_conversation "
+        "ON chat_turns(conversation_id, created_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_turns_assistant_message "
+        "ON chat_turns(assistant_message_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_turns_chat_run "
+        "ON chat_turns(chat_run_id)"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_turns_idempotency "
+        "ON chat_turns(idempotency_key) WHERE idempotency_key IS NOT NULL"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_turns_run_state "
+        "ON chat_turns(run_state, created_at)"
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -4704,6 +4790,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=61,
         name="tools_control_plane",
         apply=_m61_tools_control_plane,
+    ),
+    Migration(
+        version=62,
+        name="chat_turns",
+        apply=_m62_chat_turns,
     ),
 )
 

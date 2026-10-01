@@ -38,6 +38,7 @@ CONTROL_TABLES: frozenset[str] = frozenset(
         "behavior_profiles",
         "browser_sessions",
         "capability_call_receipts",
+        "chat_turns",
         "coding_change_plans",
         "coding_patches",
         "coding_semantic_map_cache",

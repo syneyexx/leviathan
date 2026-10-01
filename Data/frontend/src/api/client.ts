@@ -403,12 +403,27 @@ export const api = {
   listConversations(opts?: {
     q?: string;
     limit?: number;
-  }): Promise<{ conversations: Conversation[] }> {
+    cursor?: string;
+    signal?: AbortSignal;
+  }): Promise<{
+    conversations: Conversation[];
+    items?: Conversation[];
+    next_cursor?: string | null;
+    has_more?: boolean;
+    total?: number | null;
+  }> {
     const params = new URLSearchParams();
     if (opts?.q) params.set("q", opts.q);
     if (opts?.limit != null) params.set("limit", String(opts.limit));
+    if (opts?.cursor) params.set("cursor", opts.cursor);
     const q = params.toString();
-    return request<{ conversations: Conversation[] }>(`/api/conversations${q ? `?${q}` : ""}`);
+    return request<{
+      conversations: Conversation[];
+      items?: Conversation[];
+      next_cursor?: string | null;
+      has_more?: boolean;
+      total?: number | null;
+    }>(`/api/conversations${q ? `?${q}` : ""}`, opts?.signal ? { signal: opts.signal } : undefined);
   },
 
   createConversation(title = "New conversation"): Promise<{ conversation: Conversation }> {
@@ -420,10 +435,110 @@ export const api = {
 
   getConversation(
     conversationId: string,
-  ): Promise<{ conversation: Conversation; messages: Message[] }> {
-    return request<{ conversation: Conversation; messages: Message[] }>(
-      `/api/conversations/${encodeURIComponent(conversationId)}`,
+    opts?: {
+      limit?: number;
+      beforeId?: number;
+      afterId?: number;
+      includeTurns?: boolean;
+      signal?: AbortSignal;
+    },
+  ): Promise<{
+    conversation: Conversation;
+    messages: Message[];
+    has_more?: boolean;
+    next_before_id?: number | null;
+    next_after_id?: number | null;
+    message_count?: number;
+    turns?: Record<string, import("../types/api").ChatTurn>;
+  }> {
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    if (opts?.beforeId != null) params.set("before_id", String(opts.beforeId));
+    if (opts?.afterId != null) params.set("after_id", String(opts.afterId));
+    if (opts?.includeTurns === false) params.set("include_turns", "false");
+    const q = params.toString();
+    return request(
+      `/api/conversations/${encodeURIComponent(conversationId)}${q ? `?${q}` : ""}`,
+      opts?.signal ? { signal: opts.signal } : undefined,
     );
+  },
+
+  cancelChat(payload: {
+    turn_id?: string | null;
+    chat_run_id?: string | null;
+    run_id?: string | null;
+    reason?: string;
+  }): Promise<{
+    turn_id?: string | null;
+    chat_run_id?: string | null;
+    run_state: string;
+    cancelled: boolean;
+    already_terminal: boolean;
+    reason: string;
+  }> {
+    return request("/api/chat/cancel", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getChatTurn(turnId: string): Promise<{ turn: import("../types/api").ChatTurn }> {
+    return request(`/api/chat/turns/${encodeURIComponent(turnId)}`);
+  },
+
+  getChatRunStatus(runId: string): Promise<{
+    chat_run_id: string;
+    run: { run_id: string; state: string; conversation_id?: string; error?: string } | null;
+    turn: import("../types/api").ChatTurn | null;
+    truth?: Record<string, boolean>;
+  }> {
+    return request(`/api/chat/runs/${encodeURIComponent(runId)}`);
+  },
+
+  /**
+   * Create an ArtifactStore record from raw bytes (base64 over JSON).
+   * Used by Chat attachments — never invent local filesystem paths.
+   */
+  createArtifactFromBytes(opts: {
+    filename: string;
+    content_type?: string;
+    bytes: number[] | Uint8Array;
+    conversation_id?: string;
+    run_id?: string | null;
+    artifact_type?: string;
+    producer?: string;
+  }): Promise<{
+    artifact: {
+      artifact_id: string;
+      id?: string;
+      artifact_type?: string;
+      size_bytes?: number;
+      declared_mime_type?: string;
+      conversation_id?: string;
+      [key: string]: unknown;
+    };
+  }> {
+    const bytes =
+      opts.bytes instanceof Uint8Array ? opts.bytes : new Uint8Array(opts.bytes);
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    }
+    const content = btoa(binary);
+    return request("/api/artifacts", {
+      method: "POST",
+      body: JSON.stringify({
+        content,
+        content_base64: true,
+        filename: opts.filename,
+        artifact_type: opts.artifact_type || "file",
+        mime_type: opts.content_type || "application/octet-stream",
+        producer: opts.producer || "chat_ui",
+        ...(opts.run_id ? { run_id: opts.run_id } : {}),
+        ...(opts.conversation_id ? { conversation_id: opts.conversation_id } : {}),
+      }),
+    });
   },
 
   updateConversation(
@@ -459,6 +574,9 @@ export const api = {
           ? { collaboration_strategy: options.collaborationStrategy }
           : {}),
         ...(options.stream != null ? { stream: options.stream } : {}),
+        ...(options.idempotencyKey ? { idempotency_key: options.idempotencyKey } : {}),
+        ...(options.artifactIds?.length ? { artifact_ids: options.artifactIds } : {}),
+        ...(options.toolPolicy ? { tool_policy: options.toolPolicy } : {}),
       }),
     });
   },
@@ -500,6 +618,9 @@ export const api = {
         ...(options.collaborationStrategy
           ? { collaboration_strategy: options.collaborationStrategy }
           : {}),
+        ...(options.idempotencyKey ? { idempotency_key: options.idempotencyKey } : {}),
+        ...(options.artifactIds?.length ? { artifact_ids: options.artifactIds } : {}),
+        ...(options.toolPolicy ? { tool_policy: options.toolPolicy } : {}),
       }),
       signal: fetchInit?.signal,
     });

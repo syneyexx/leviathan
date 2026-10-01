@@ -15,9 +15,15 @@ export type ConversationHistoryPanelProps = {
   creating?: boolean;
   searchQuery?: string;
   onSearchChange?: (query: string) => void;
+  /** When true, search is server-owned — do not re-filter locally. */
+  serverSearch?: boolean;
+  hasMore?: boolean;
+  onLoadMore?: () => void;
+  loadingMore?: boolean;
   /** Mobile drawer open — adds is-drawer-open for CSS. */
   drawerOpen?: boolean;
   searchInputRef?: RefObject<HTMLInputElement | null>;
+  panelRef?: RefObject<HTMLElement | null>;
   /** Injected clock (visual tests / frozen now). */
   now?: Date;
 };
@@ -31,8 +37,13 @@ export function ConversationHistoryPanel({
   creating = false,
   searchQuery,
   onSearchChange,
+  serverSearch = false,
+  hasMore = false,
+  onLoadMore,
+  loadingMore = false,
   drawerOpen = false,
   searchInputRef,
+  panelRef,
   now,
 }: ConversationHistoryPanelProps) {
   const [localQuery, setLocalQuery] = useState("");
@@ -40,10 +51,11 @@ export function ConversationHistoryPanel({
   const setQuery = onSearchChange ?? setLocalQuery;
 
   const filtered = useMemo(() => {
+    if (serverSearch) return conversations;
     const q = query.trim().toLowerCase();
     if (!q) return conversations;
     return conversations.filter((item) => item.title.toLowerCase().includes(q));
-  }, [conversations, query]);
+  }, [conversations, query, serverSearch]);
 
   const groups = useMemo(
     () => groupConversationsByDate(filtered, now ?? new Date()),
@@ -52,8 +64,11 @@ export function ConversationHistoryPanel({
 
   return (
     <aside
+      ref={panelRef}
       className={`lv-v2-chat-col lv-v2-chat-col--history${drawerOpen ? " is-drawer-open" : ""}`}
       aria-label="Gesprekshistorie"
+      role={drawerOpen ? "dialog" : undefined}
+      aria-modal={drawerOpen ? true : undefined}
     >
       <div className="lv-v2-chat-col__head">
         <h2 className="lv-v2-chat-col__title">Gesprekshistorie</h2>
@@ -102,38 +117,52 @@ export function ConversationHistoryPanel({
             }
           />
         ) : (
-          groups.map((group) => (
-            <div key={group.id} className="lv-v2-chat-group">
-              <div className="lv-v2-chat-group__label">{group.label}</div>
-              {group.items.map((item) => {
-                const active = item.id === activeId;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={`lv-v2-thread${active ? " is-active" : ""}`}
-                    aria-current={active ? "true" : undefined}
-                    onClick={() => onSelect(item.id)}
-                  >
-                    <span className="lv-v2-thread__icon" aria-hidden="true">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                        <path d="M5 6h14v9H9l-4 4V6z" />
-                      </svg>
-                    </span>
-                    <span>
-                      <span className="lv-v2-thread__title">{item.title || "Zonder titel"}</span>
-                      {item.pinned ? (
-                        <span className="lv-v2-thread__preview">Vastgezet</span>
-                      ) : null}
-                    </span>
-                    <span className="lv-v2-thread__time">
-                      {formatConversationTime(item.updated_at || item.created_at, now ?? new Date())}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          ))
+          <>
+            {groups.map((group) => (
+              <div key={group.id} className="lv-v2-chat-group">
+                <div className="lv-v2-chat-group__label">{group.label}</div>
+                {group.items.map((item) => {
+                  const active = item.id === activeId;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`lv-v2-thread${active ? " is-active" : ""}`}
+                      aria-current={active ? "true" : undefined}
+                      onClick={() => onSelect(item.id)}
+                    >
+                      <span className="lv-v2-thread__icon" aria-hidden="true">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                          <path d="M5 6h14v9H9l-4 4V6z" />
+                        </svg>
+                      </span>
+                      <span>
+                        <span className="lv-v2-thread__title">{item.title || "Zonder titel"}</span>
+                        {item.pinned ? (
+                          <span className="lv-v2-thread__preview">Vastgezet</span>
+                        ) : null}
+                      </span>
+                      <span className="lv-v2-thread__time">
+                        {formatConversationTime(item.updated_at || item.created_at, now ?? new Date())}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+            {hasMore && onLoadMore ? (
+              <div className="lv-v2-chat-history__more">
+                <button
+                  type="button"
+                  className="lv-v2-chat-history__load-more"
+                  disabled={loadingMore || !bootstrapped}
+                  onClick={() => onLoadMore()}
+                >
+                  {loadingMore ? "Laden…" : "Meer gesprekken"}
+                </button>
+              </div>
+            ) : null}
+          </>
         )}
       </div>
     </aside>

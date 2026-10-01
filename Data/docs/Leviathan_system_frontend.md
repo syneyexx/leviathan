@@ -254,7 +254,21 @@ Explicit demo/mock data must use demo/mock labeling. Production route code shoul
 
 # 8. Chat UI
 
-Primary file: `src/pages/ChatPage.tsx`.
+Primary file: `src/pages/ChatPage.tsx` (thin composition shell).
+
+**Ownership (frontend):** Chat workspace state lives under `src/pages/chat/hooks/`:
+
+| Hook | Owns |
+|---|---|
+| `useChatWorkspace` | Composition root — draft New Chat, drawers/menus, send orchestration |
+| `useChatBootstrap` | Health / models / capabilities / agents+coding flags / memory count |
+| `useConversationCatalog` | Server search + cursor pagination + race-safe catalog |
+| `useConversationThread` | Paginated messages + per-turn metadata hydration |
+| `useChatTurn` | Send/stream/cancel (`/api/chat/cancel`), rAF token coalescing, idempotency, reconcile via `GET /api/chat/runs/{id}` |
+| `useChatConfiguration` | Model + reasoning (`auto`/`fast`/`standard`/`deep`) + collaboration + tool policy |
+| `useChatInspectorData` | Derived inspector fields (unknown ≠ zero) |
+
+Shared lib: `src/lib/chat/` (reasoning modes, turn state machine, safe markdown, prompt presets, attachments, error taxonomy, race safety).
 
 Supporting chat code includes:
 
@@ -268,9 +282,16 @@ Supporting chat code includes:
 
 Current Chat surfaces:
 
-- conversation history/input;
-- requested/effective reasoning information when returned;
-- Direct vs TEAM collaboration selector;
+- conversation history with **server-side search** + **load more** (cursor pagination);
+- draft New Chat until first send (no premature `POST /api/conversations`);
+- mobile **Gesprekken** + **Context** drawers (mutually exclusive; Escape/backdrop; focus trap);
+- ArtifactStore attachments with honest vision gating;
+- historic per-assistant-message turn chips (model/mode/owner/hits when measured);
+- historic CapabilityResultCards from durable turn `tool_calls` when present (live telemetry preferred for the active turn);
+- historic ActivityTimeline only when the turn persisted an activity projection (never from `activity_ref` alone);
+- SafeMarkdown rendering (no raw HTML; blocked `javascript:`/`data:`/`vbscript:`/`file:`);
+- requested/effective reasoning information when returned (incl. **standard**);
+- Direct vs TEAM collaboration selector (orthogonal to reasoning depth);
 - model identity/status;
 - Brain/Memory/Evidence/retrieval usage;
 - sources/citations/web usage;
@@ -279,7 +300,8 @@ Current Chat surfaces:
 - verification/quality/completion state;
 - **structured operational activity timeline** (compact / detailed / developer) backed by backend `activity` SSE + `done.activity`;
 - decision receipts when the backend attaches authoritative DecisionPacket/risk projections;
-- Stop/abort for in-flight streams (timeline shows cancellation requested/propagating/cancelled from backend truth).
+- Stop/cancel via `/api/chat/cancel` (timeline shows cancellation from backend truth; CANCELLED ≠ FAILED);
+- optional ArtifactStore attachments (`POST /api/artifacts` + `artifact_ids` on chat) — vision understanding is claimed only when model/capability path confirms it.
 
 Legacy `reasoning.steps` (`understand_request`, `generate_answer`) remain a compatibility fallback only when no activity projection is present. The UI never asks a model to invent operational state. Missing/disconnected activity renders STALE/UNKNOWN — never synthetic COMPLETED.
 
@@ -287,7 +309,9 @@ TEAM quality data is backend-owned. Criterion labels/rations come from `/api/cha
 
 No private chain-of-thought panel exists or should be added. Public plan/event/rationale metadata is acceptable when explicitly emitted by the backend.
 
-Contract tests: `src/pages/chatCodingContracts.test.ts`, `src/lib/activityProjector.test.ts` and chat-specific tests.
+Contract tests: `src/pages/chatCodingContracts.test.ts`, `src/lib/activityProjector.test.ts`, `src/lib/chat/*.test.ts` and chat-specific tests.
+
+ADR: `Data/docs/adr/ADR-chat-turn-institutional.md`.
 
 ---
 
@@ -1070,7 +1094,7 @@ Always inspect the current client function and backend route before adding a pag
 | live events | `src/hooks/useLiveEvents.ts` |
 | shell health | `src/hooks/useShellStatus.ts` |
 | telemetry | `src/hooks/useSystemTelemetry.ts` |
-| Chat | `src/pages/ChatPage.tsx`, `src/pages/chat/`, `chatTelemetry.ts` |
+| Chat | `src/pages/ChatPage.tsx`, `src/pages/chat/hooks/useChatWorkspace.ts`, `src/pages/chat/`, `src/lib/chat/`, `chatTelemetry.ts` |
 | Cognition | `src/pages/CognitionPage.tsx` |
 | Models | `src/pages/ModelsPage.tsx`, `src/pages/models/` |
 | Agents/workers | `src/pages/AgentsPage.tsx`, `src/pages/agents/` |

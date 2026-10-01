@@ -166,7 +166,7 @@ def decide_retrieval(
     deep_recall_enabled: bool = False,
     economy_allow_deep_recall: bool = False,
     memory_enabled: bool = True,
-    memory_coverage: float = 1.0,
+    memory_coverage: float | None = 1.0,
 ) -> RetrievalDecision:
     intent, reason = classify_intent(message)
     word_count = len((message or "").split())
@@ -213,13 +213,15 @@ def decide_retrieval(
     wants_precision = bool(
         re.search(r"(?i)\b(exactly|exact|detail|cite|citation|quote|precise|deep recall|hydrate)\b", message or "")
     )
+    # None coverage = UNMEASURED — do not treat as gap or as complete.
+    coverage_gap = memory_coverage is not None and memory_coverage < 0.35
     use_deep_recall = bool(
         deep_recall_enabled
         and use_knowledge
         and (
             economy_allow_deep_recall
             or wants_precision
-            or (memory_coverage < 0.35 and complexity in {"medium", "high"})
+            or (coverage_gap and complexity in {"medium", "high"})
         )
     )
 
