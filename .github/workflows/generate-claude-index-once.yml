@@ -38,8 +38,8 @@ jobs:
               if p
           }
 
-          # The generated index must describe the final repository state, not
-          # this transient generator workflow. HADES is deliberately excluded.
+          # Describe the final repository state, not this transient generator.
+          # HADES is deliberately excluded from the index.
           paths.discard(transient_workflow)
           paths = {
               p
@@ -107,11 +107,11 @@ jobs:
               missing = sorted(expected - listed_set)
               extra = sorted(listed_set - expected)
               raise SystemExit(f"Index mismatch. missing={missing[:20]!r} extra={extra[:20]!r}")
-          if "Data/HADES" in text or "/Data/HADES/" in text:
-              raise SystemExit("HADES unexpectedly present in generated index")
+          if any(p == "Data/HADES" or p.startswith("Data/HADES/") for p in listed_set):
+              raise SystemExit("HADES link unexpectedly present in generated index")
           if f"Indexed files: **{len(expected)}**" not in text:
               raise SystemExit("Indexed file count does not match expected count")
-          print(f"Validated {len(expected)} indexed files with zero duplicates and no HADES entries.")
+          print(f"Validated {len(expected)} indexed files with zero duplicates and no HADES links.")
           PY
 
       - name: Commit generated index and remove transient workflow
