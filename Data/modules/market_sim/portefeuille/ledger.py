@@ -70,6 +70,7 @@ class PortfolioBook:
     closed_trades_won: int = 0
     closed_trades_lost: int = 0
     closed_trades_flat: int = 0
+    funding_events: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.cash = money(self.cash)
@@ -82,6 +83,95 @@ class PortfolioBook:
     @property
     def available_cash(self) -> Decimal:
         return money(self.cash - self.reserved_cash)
+
+    def apply_funding(
+        self,
+        *,
+        delta: Any,
+        tx_id: str,
+        reason: str,
+        operator_id: str | None = None,
+        kind: str = "TOP_UP",
+        as_of: str | None = None,
+    ) -> dict[str, Any]:
+        """Operator paper capital contribution/withdrawal for a portfolio book.
+
+        CRITICAL: funding MUST NOT alter ``realized_pnl``. Idempotent on ``tx_id``.
+        """
+        tid = str(tx_id or "").strip()
+        if not tid:
+            raise ValueError("funding_tx_id_required")
+        if any(str(e.get("tx_id") or "") == tid for e in self.funding_events):
+            return {
+                "applied": False,
+                "reason": "duplicate_tx_id",
+                "tx_id": tid,
+                "cash_before": str(self.cash),
+                "cash_after": str(self.cash),
+                "delta": "0",
+                "realized_pnl_unchanged": True,
+            }
+        amt = money(delta)
+        if amt == ZERO:
+            return {
+                "applied": False,
+                "reason": "zero_delta",
+                "tx_id": tid,
+                "cash_before": str(self.cash),
+                "cash_after": str(self.cash),
+                "delta": "0",
+                "realized_pnl_unchanged": True,
+            }
+        kind_u = str(kind or "TOP_UP").strip().upper()
+        if amt < ZERO and kind_u in ("TOP_UP", "INITIAL_ALLOCATION", "TRANSFER_IN"):
+            kind_u = "WITHDRAWAL"
+        if amt > ZERO and kind_u in ("WITHDRAWAL", "TRANSFER_OUT"):
+            kind_u = "TOP_UP"
+
+        cash_before = self.cash
+        if amt < ZERO:
+            need = money(-amt)
+            if need > self.available_cash + MONEY_QUANT:
+                raise ValueError(
+                    "insufficient_available_cash_for_withdrawal:"
+                    f"need={need} available={self.available_cash} reserved={self.reserved_cash}"
+                    + ("; flatten_or_reduce_exposure_first" if self.positions else "")
+                )
+            if money(self.cash + amt) < ZERO - MONEY_QUANT:
+                raise ValueError("withdrawal_would_make_cash_negative")
+
+        realized_before = self.realized_pnl
+        self.cash = money(self.cash + amt)
+        if self.cash > self.peak_equity:
+            self.peak_equity = self.cash
+        assert self.realized_pnl == realized_before
+
+        event = {
+            "tx_id": tid,
+            "side": "FUNDING",
+            "funding_kind": kind_u,
+            "cash_before": str(cash_before),
+            "delta": str(amt),
+            "cash_after": str(self.cash),
+            "reason": str(reason or ""),
+            "operator_id": operator_id,
+            "as_of": as_of,
+            "realized_pnl_unchanged": True,
+            "truth": {"funding_is_not_pnl": True, "paper_only": True},
+        }
+        self.funding_events.append(event)
+        return {
+            "applied": True,
+            "tx_id": tid,
+            "funding_kind": kind_u,
+            "cash_before": str(cash_before),
+            "delta": str(amt),
+            "cash_after": str(self.cash),
+            "realized_pnl": str(self.realized_pnl),
+            "realized_pnl_unchanged": True,
+            "reason": str(reason or ""),
+            "operator_id": operator_id,
+        }
 
     def market_value(self, marks: dict[str, Any], *, quote_currencies: dict[str, str] | None = None) -> Decimal:
         """Signed net market value of open positions (long +, short −).
@@ -656,6 +746,7 @@ class PortfolioBook:
             "closed_trades_won": self.closed_trades_won,
             "closed_trades_lost": self.closed_trades_lost,
             "closed_trades_flat": self.closed_trades_flat,
+            "funding_events": list(self.funding_events[-200:]),
             "reservations": {k: str(v) for k, v in self.reservations.items()},
             "positions": {
                 sym: {
@@ -698,6 +789,9 @@ class PortfolioBook:
         )
         for rid, amt in (raw.get("reservations") or {}).items():
             book.reservations[str(rid)] = money(amt)
+        for ev in raw.get("funding_events") or []:
+            if isinstance(ev, dict):
+                book.funding_events.append(dict(ev))
         for sym, p in (raw.get("positions") or {}).items():
             book.positions[sym.upper()] = PositionState(
                 symbol=str(p.get("symbol") or sym).upper(),

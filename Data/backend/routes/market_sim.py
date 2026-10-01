@@ -172,6 +172,16 @@ class PortfolioPatch(BaseModel):
     approvalId: str | None = None
 
 
+class PortfolioFundingRequest(BaseModel):
+    """Paper capital top-up / withdrawal. Never alters trading PnL."""
+
+    delta: float
+    reason: str = Field(min_length=1, max_length=500)
+    idempotencyKey: str = Field(min_length=8, max_length=120)
+    operatorId: str | None = None
+    kind: str | None = None  # TOP_UP | WITHDRAWAL | INITIAL_ALLOCATION | TRANSFER_IN | TRANSFER_OUT
+
+
 class PortfolioOrderRequest(BaseModel):
     symbol: str
     side: str
@@ -915,6 +925,21 @@ def build_market_sim_router(
     def get_portfolio(portfolio_id: str) -> dict:
         try:
             return {"portfolio": service.get_portfolio(portfolio_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/portfolios/{portfolio_id}/funding")
+    def fund_portfolio(portfolio_id: str, payload: PortfolioFundingRequest) -> dict:
+        """Adjust paper capital (top-up / withdrawal). Funding ≠ PnL."""
+        try:
+            return service.fund_portfolio(
+                portfolio_id,
+                delta=payload.delta,
+                reason=payload.reason,
+                idempotency_key=payload.idempotencyKey,
+                operator_id=payload.operatorId,
+                kind=payload.kind,
+            )
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 

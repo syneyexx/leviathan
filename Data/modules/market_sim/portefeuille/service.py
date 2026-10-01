@@ -258,6 +258,132 @@ class PortfolioService:
             raise MarketSimError("PORTFOLIO_NOT_FOUND", portfolio_id, http_status=404)
         return self._public_portfolio(row)
 
+    def fund_portfolio(
+        self,
+        portfolio_id: str,
+        *,
+        delta: float,
+        reason: str,
+        idempotency_key: str,
+        operator_id: str | None = None,
+        kind: str | None = None,
+    ) -> dict[str, Any]:
+        """Adjust paper capital on a portfolio wallet.
+
+        Funding is capital contribution/withdrawal — NEVER trading PnL.
+        Idempotent on ``idempotency_key``. Refuses unsafe withdrawals that would
+        breach available cash / reserved capital; operator must flatten first.
+        """
+        key = str(idempotency_key or "").strip()
+        if not key:
+            raise MarketSimError("IDEMPOTENCY_REQUIRED", "idempotency_key is required", http_status=400)
+        if not str(reason or "").strip():
+            raise MarketSimError("REASON_REQUIRED", "funding reason is required", http_status=400)
+
+        with self._lock(portfolio_id):
+            row = self.store.get_portfolio(portfolio_id)
+            if row is None:
+                raise MarketSimError("PORTFOLIO_NOT_FOUND", portfolio_id, http_status=404)
+
+            book = self._load_book(row)
+            realized_before = money(book.realized_pnl)
+            try:
+                result = book.apply_funding(
+                    delta=delta,
+                    tx_id=key,
+                    reason=str(reason).strip(),
+                    operator_id=operator_id,
+                    kind=kind or ("TOP_UP" if float(delta) >= 0 else "WITHDRAWAL"),
+                    as_of=utc_now(),
+                )
+            except ValueError as exc:
+                msg = str(exc)
+                code = "FUNDING_REJECTED"
+                if "insufficient_available_cash" in msg or "flatten" in msg:
+                    code = "INSUFFICIENT_AVAILABLE_CASH"
+                raise MarketSimError(code, msg, http_status=409) from exc
+
+            if money(book.realized_pnl) != realized_before:
+                raise MarketSimError(
+                    "FUNDING_PNL_INVARIANT",
+                    "funding must not alter realized_pnl",
+                    http_status=500,
+                )
+
+            marks: dict[str, Any] = {}
+            self._persist_book(row, book, marks)
+            # initial_equity tracks original seed only — do not rewrite on top-up.
+            meta = dict(row.get("metadata") or {})
+            funding_log = list(meta.get("funding_events") or [])
+            funding_log.append(
+                {
+                    **{k: result.get(k) for k in (
+                        "tx_id",
+                        "funding_kind",
+                        "cash_before",
+                        "delta",
+                        "cash_after",
+                        "reason",
+                        "operator_id",
+                        "realized_pnl_unchanged",
+                    )},
+                    "at": utc_now(),
+                }
+            )
+            meta["funding_events"] = funding_log[-200:]
+            row["metadata"] = meta
+            self.store.upsert_portfolio(row)
+
+            tx = {
+                "transaction_id": key,
+                "portfolio_id": portfolio_id,
+                "order_id": None,
+                "fill_id": None,
+                "decision_id": None,
+                "symbol": "_FUNDING",
+                "side": "FUNDING",
+                "qty": "0",
+                "price": "0",
+                "gross_notional": "0",
+                "fees": "0",
+                "net_cash_effect": str(result.get("delta") or "0"),
+                "result": result.get("funding_kind") or "FUNDING",
+                "agent_id": None,
+                "orchestra_id": row.get("orchestra_id"),
+                "strategy_id": None,
+                "strategy_version": None,
+                "risk_result": {"ok": True, "funding": True},
+                "timestamp": utc_now(),
+                "metadata": {
+                    "paper_only": True,
+                    "funding_is_not_pnl": True,
+                    "reason": str(reason).strip(),
+                    "operator_id": operator_id,
+                    "idempotency_key": key,
+                    "cash_before": result.get("cash_before"),
+                    "cash_after": result.get("cash_after"),
+                    "realized_pnl_unchanged": True,
+                },
+            }
+            try:
+                self.store.insert_portfolio_transaction(tx)
+            except Exception:
+                # Idempotent replay: book short-circuited on duplicate tx_id; durable
+                # transaction row may already exist from the first successful call.
+                if result.get("applied"):
+                    pass
+
+            self._maybe_snapshot(row, book, marks, reason="funding")
+            return {
+                "portfolio": self._public_portfolio(row),
+                "funding": result,
+                "truth": {
+                    "paper_only": True,
+                    "funding_is_not_pnl": True,
+                    "realized_pnl_unchanged": True,
+                },
+            }
+
     def patch_portfolio(self, portfolio_id: str, patch: dict[str, Any]) -> dict[str, Any]:
         """Atomically patch portfolio. Risk loosening requires prior approval.
 

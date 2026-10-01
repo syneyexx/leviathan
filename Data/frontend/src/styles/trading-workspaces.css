@@ -644,3 +644,305 @@
     font-size: 1.3rem;
   }
 }
+
+/* ===== Agent Overzicht (3-page IA) — lv-ao-* under shared trading workspaces ===== */
+.lv-ao-page {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 0.9rem 1.1rem 1.75rem;
+}
+
+.lv-ao {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.lv-ao__truth {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.lv-ao-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.9fr);
+  gap: 0.85rem;
+  align-items: start;
+}
+
+.lv-ao-registry,
+.lv-ao-detail,
+.lv-ao-panel {
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 0.65rem;
+  background: linear-gradient(180deg, rgba(8, 16, 32, 0.95), rgba(5, 10, 22, 0.98));
+  padding: 0.75rem 0.85rem;
+  min-width: 0;
+}
+
+.lv-ao-panel__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin-bottom: 0.55rem;
+}
+
+.lv-ao-panel__head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #e2e8f0;
+}
+
+.lv-ao-registry__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.lv-ao-search {
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: #e2e8f0;
+  border-radius: 0.4rem;
+  padding: 0.35rem 0.55rem;
+  min-width: 9rem;
+}
+
+.lv-ao-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.55rem;
+}
+
+.lv-ao-tab {
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: transparent;
+  color: #94a3b8;
+  border-radius: 999px;
+  padding: 0.25rem 0.65rem;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.lv-ao-tab.is-active {
+  color: #67e8f9;
+  border-color: rgba(103, 232, 249, 0.45);
+  background: rgba(14, 116, 144, 0.18);
+}
+
+.lv-ao-table-scroll {
+  overflow: auto;
+  max-height: 28rem;
+}
+
+.lv-ao-table tr.is-selected td {
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.lv-ao-table tbody tr {
+  cursor: pointer;
+}
+
+.lv-ao-muted {
+  color: #94a3b8;
+  font-size: 0.72rem;
+}
+
+.lv-ao-empty,
+.lv-ao-notice {
+  color: #94a3b8;
+  font-size: 0.82rem;
+}
+
+.lv-ao-notice {
+  color: #67e8f9;
+}
+
+.lv-ao-detail__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.55rem;
+}
+
+.lv-ao-detail__grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.45rem 0.5rem;
+  border-radius: 0.4rem;
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.lv-ao-detail__grid span {
+  color: #94a3b8;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.lv-ao-detail__grid strong {
+  color: #e2e8f0;
+  font-size: 0.9rem;
+}
+
+.lv-ao-detail__actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  background: transparent !important;
+  padding: 0.25rem 0 !important;
+}
+
+.lv-ao-fund {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.65rem;
+}
+
+.lv-ao-fund label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  color: #94a3b8;
+  font-size: 0.75rem;
+}
+
+.lv-ao-fund input {
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: #e2e8f0;
+  border-radius: 0.4rem;
+  padding: 0.4rem 0.55rem;
+}
+
+.lv-ao-bottom {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.lv-ao-alloc {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.lv-ao-alloc__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: #e2e8f0;
+  font-size: 0.82rem;
+}
+
+.lv-ao-alloc__bar {
+  height: 0.35rem;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.15);
+  overflow: hidden;
+  margin: 0.25rem 0;
+}
+
+.lv-ao-alloc__bar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #22d3ee, #4ade80);
+}
+
+.lv-ao-arch,
+.lv-ao-arch-mini {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+}
+
+.lv-ao-arch-node {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  text-align: left;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 0.45rem;
+  background: rgba(15, 23, 42, 0.55);
+  padding: 0.45rem 0.5rem;
+  color: inherit;
+  cursor: pointer;
+}
+
+.lv-ao-arch-node strong {
+  font-size: 0.72rem;
+  color: #e2e8f0;
+}
+
+.lv-ao-arch-node span {
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.lv-ao-arch-node small {
+  font-size: 0.68rem;
+  opacity: 0.85;
+}
+
+.lv-ao-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  max-height: 16rem;
+  overflow: auto;
+  font-size: 0.78rem;
+  color: #cbd5e1;
+}
+
+.lv-ao-risk {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.lv-ao-risk div {
+  background: rgba(15, 23, 42, 0.55);
+  border-radius: 0.4rem;
+  padding: 0.4rem 0.5rem;
+}
+
+.lv-ao-risk dt {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+}
+
+.lv-ao-risk dd {
+  margin: 0.15rem 0 0;
+  color: #e2e8f0;
+  font-weight: 650;
+}
+
+@media (max-width: 1200px) {
+  .lv-ao-bottom {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .lv-ao-main,
+  .lv-ao-bottom {
+    grid-template-columns: 1fr;
+  }
+}

@@ -3609,6 +3609,26 @@ export const api = {
     return request(`/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}`);
   },
 
+  fundPortfolio(
+    portfolioId: string,
+    payload: {
+      delta: number;
+      reason: string;
+      idempotencyKey: string;
+      operatorId?: string | null;
+      kind?: string | null;
+    },
+  ): Promise<{
+    portfolio: PaperPortfolio;
+    funding: Record<string, unknown>;
+    truth: Record<string, unknown>;
+  }> {
+    return request(`/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}/funding`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
   patchPortfolio(
     portfolioId: string,
     payload: {

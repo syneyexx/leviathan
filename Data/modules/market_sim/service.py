@@ -3146,6 +3146,10 @@ class MarketSimControlPlane:
         self._require_enabled()
         return self.portfolios.get_portfolio(portfolio_id)
 
+    def fund_portfolio(self, portfolio_id: str, **kwargs: Any) -> dict[str, Any]:
+        self._require_enabled()
+        return self.portfolios.fund_portfolio(portfolio_id, **kwargs)
+
     def patch_portfolio(self, portfolio_id: str, patch: dict[str, Any]) -> dict[str, Any]:
         self._require_enabled()
         return self.portfolios.patch_portfolio(portfolio_id, patch)
