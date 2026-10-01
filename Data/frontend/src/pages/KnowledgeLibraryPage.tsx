@@ -157,8 +157,8 @@ export function KnowledgeLibraryPage() {
               Bestand uploaden
             </button>
             <p className="lv-v2-kl-muted">
-              Uploads gaan via SourceIngestionService (gestreamd). ZIP/archieven worden door de
-              source_ingestion worker verwerkt — niet in de browser.
+              Uploads gaan via SourceIngestionService (gestreamd). ZIP/RAR/TAR-archieven worden door
+              de source_ingestion worker verwerkt — niet in de browser.
             </p>
             <section className="lv-v2-kl-bottom" aria-label="Ingestie">
               <IngestionProgress ws={ws} />

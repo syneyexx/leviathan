@@ -56,7 +56,7 @@ class SourceIngestionSettings:
     max_path_depth: int = 64
     max_filename_length: int = 255
     allow_7z: bool = False
-    allow_rar: bool = False
+    allow_rar: bool = True
     allow_unknown_text: bool = True
     secret_policy: str = "quarantine"  # quarantine | skip | redact
     worker_poll_interval: float = 0.5
@@ -184,7 +184,7 @@ def load_source_ingestion_settings(
         max_path_depth=_env_int("LEVIATHAN_SOURCE_INGESTION_MAX_PATH_DEPTH", 64),
         max_filename_length=_env_int("LEVIATHAN_SOURCE_INGESTION_MAX_FILENAME_LENGTH", 255),
         allow_7z=_env_bool("LEVIATHAN_SOURCE_INGESTION_ALLOW_7Z", False),
-        allow_rar=_env_bool("LEVIATHAN_SOURCE_INGESTION_ALLOW_RAR", False),
+        allow_rar=_env_bool("LEVIATHAN_SOURCE_INGESTION_ALLOW_RAR", True),
         allow_unknown_text=_env_bool("LEVIATHAN_SOURCE_INGESTION_ALLOW_UNKNOWN_TEXT", True),
         secret_policy=(
             os.environ.get("LEVIATHAN_SOURCE_INGESTION_SECRET_POLICY") or "quarantine"

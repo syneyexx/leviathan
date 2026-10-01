@@ -20,3 +20,4 @@ pytesseract>=0.3.10,<1
 Pillow>=10.0.0,<12
 pymupdf>=1.24.0,<2
 jsonschema>=4.20,<5
+rarfile>=4.0,<5

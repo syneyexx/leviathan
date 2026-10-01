@@ -131,6 +131,7 @@ MIME_BY_EXT: dict[str, str] = {
     ".yml": "application/yaml",
     ".toml": "application/toml",
     ".zip": "application/zip",
+    ".rar": "application/vnd.rar",
     ".tar": "application/x-tar",
     ".gz": "application/gzip",
     ".tgz": "application/gzip",

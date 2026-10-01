@@ -33,7 +33,7 @@ export const DRAFT_STATUSES = new Set(["draft", "planned", "waiting_for_input", 
 export const FAILED_STATUSES = new Set(["failed", "cancelled", "interrupted"]);
 
 export const UPLOAD_EXT =
-  /\.(pdf|txt|md|markdown|csv|json|jsonl|ndjson|log|rst|ya?ml|toml|docx|xlsx|pptx|py|ts|tsx|js|jsx|zip|tar|tgz|gz)$/i;
+  /\.(pdf|txt|md|markdown|csv|json|jsonl|ndjson|log|rst|ya?ml|toml|docx|xlsx|pptx|py|ts|tsx|js|jsx|zip|rar|tar|tgz|gz)$/i;
 
 export const INGEST_ACTIVE = new Set([
   "queued",
@@ -49,7 +49,7 @@ export const INGEST_ACTIVE = new Set([
 ]);
 
 export const UPLOAD_ACCEPT =
-  ".pdf,.txt,.md,.markdown,.csv,.json,.jsonl,.ndjson,.log,.rst,.yaml,.yml,.toml,.docx,.xlsx,.pptx,.py,.ts,.tsx,.js,.jsx,.zip,.tar,.tgz,.gz";
+  ".pdf,.txt,.md,.markdown,.csv,.json,.jsonl,.ndjson,.log,.rst,.yaml,.yml,.toml,.docx,.xlsx,.pptx,.py,.ts,.tsx,.js,.jsx,.zip,.rar,.tar,.tgz,.gz";
 
 const PHASE_STEP_INDEX: Record<string, number> = {
   idle: 0,

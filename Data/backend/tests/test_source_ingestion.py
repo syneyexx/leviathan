@@ -442,3 +442,127 @@ def test_job_capability_filter(tmp_env):
     # Either None or some other job — never source_ingestion if queued remains
     if stolen is not None:
         assert not stolen.capability_id.startswith("source_ingestion.")
+
+
+# Minimal multi-member RAR (RAR5) fixture — README.md, docs/notes.txt, src/main.py, .env
+_RAR_FIXTURE_B64 = (
+    "UmFyIRoHAQAzkrXlCgEFBgAFAQGAgABopn6MJwIDC4wABIwApIMC9zRKgoAAAQlSRUFETUUubWQKAxNy"
+    "1b5qnLFtESMgSGVsbG8gUkFSCrWUP/UsAgMLkwAEkwCkgwLF6wr7gAABDmRvY3Mvbm90ZXMudHh0CgMT"
+    "ctW+apyxbRFhcmNoaXRlY3R1cmUgbm90ZXMKzyQtDSkCAwuYAASYAKSDAma/1c6AAAELc3JjL21haW4u"
+    "cHkKAxNy1b5qnLFtEWRlZiBydW4oKToKICAgIHJldHVybiAxCt5TT9siAgMLkwAEkwCkgwLsQSYSgAAB"
+    "BC5lbnYKAxNy1b5qnLFtEVNFQ1JFVD1zdXBlcnNlY3JldApu/Cb7HAIDCwABAO2DAYAAAQRkb2NzCgMT"
+    "ctW+apyxbRHtkpEgGwIDCwABAO2DAYAAAQNzcmMKAxNy1b5qnLFtER13VlEDBQQA"
+)
+
+
+def _write_rar_fixture(path: Path) -> Path:
+    import base64
+
+    path.write_bytes(base64.b64decode(_RAR_FIXTURE_B64))
+    return path
+
+
+def test_detection_rar_magic_and_extension():
+    rar = detect_source_type(filename="books.rar", sample=b"Rar!\x1a\x07\x01\x00")
+    assert rar.is_archive is True
+    assert rar.handler_hint == "rar"
+    assert rar.extension == ".rar"
+
+
+def test_rar_disabled_rejected_immediately(tmp_env):
+    from Data.modules.research.types import ResearchError
+
+    service, research, knowledge, tmp_path = tmp_env
+    assert service.source_ingestion is not None
+    service.source_ingestion.settings.allow_rar = False
+    project = service.create_project(title="t", topic="rar-off")
+    rpath = _write_rar_fixture(tmp_path / "books.rar")
+    with open(rpath, "rb") as handle:
+        with pytest.raises(ResearchError) as ei:
+            service.upload_source(
+                project.project_id,
+                filename="books.rar",
+                stream=handle,
+                content_type="application/vnd.rar",
+            )
+    assert ei.value.code == "UNSUPPORTED_SOURCE_TYPE"
+
+
+def test_basic_rar_ingestion(tmp_env):
+    pytest.importorskip("rarfile")
+    from Data.modules.source_ingestion.archives.rar_safe import probe_rar_tool
+
+    probe_rar_tool.cache_clear()
+    probe = probe_rar_tool()
+    if not probe.get("available"):
+        pytest.skip(probe.get("reason") or "RAR tool missing")
+
+    service, research, knowledge, tmp_path = tmp_env
+    assert service.source_ingestion is not None
+    service.source_ingestion.settings.allow_rar = True
+    project = service.create_project(title="t", topic="rar ingest")
+    rpath = _write_rar_fixture(tmp_path / "project.rar")
+    with open(rpath, "rb") as handle:
+        result = service.upload_source(
+            project.project_id,
+            filename="project.rar",
+            stream=handle,
+            content_type="application/vnd.rar",
+        )
+    assert result["source_type"] == "archive"
+    source_id = result["source_id"]
+    for _ in range(8):
+        progress = service.source_ingestion.get_status(source_id)
+        if progress.files_pending == 0 and progress.status.value not in {
+            "queued",
+            "parsing",
+            "expanding",
+            "inspecting",
+            "classifying",
+        }:
+            break
+        if service.source_ingestion.jobs is not None:
+            service.source_ingestion.process_next()
+        else:
+            service.source_ingestion.pipeline().process_source(source_id)
+
+    progress = service.get_ingestion_status(project.project_id, source_id)["progress"]
+    assert progress["status"] in {"completed", "partial"}
+    assert progress["files_discovered"] >= 3
+    assert progress["files_ingested"] >= 2
+    children = service.list_ingestion_children(project.project_id, source_id, limit=200)
+    paths = {m["relative_path"]: m for m in children["members"]}
+    assert "README.md" in paths
+    assert paths["README.md"]["outcome"] == "success"
+    assert "src/main.py" in paths
+    assert paths["src/main.py"]["outcome"] == "success"
+    assert ".env" in paths
+    assert paths[".env"]["outcome"] == "quarantined"
+    docs = knowledge.list_documents(limit=100)
+    for d in docs:
+        assert "supersecret" not in d.content
+
+
+def test_rar_path_traversal_rejected(tmp_path: Path):
+    pytest.importorskip("rarfile")
+    from Data.modules.source_ingestion.archives.rar_safe import inspect_rar, probe_rar_tool
+    from Data.modules.source_ingestion.archives.security import normalize_member_path
+
+    probe_rar_tool.cache_clear()
+    if not probe_rar_tool().get("available"):
+        pytest.skip("RAR tool missing")
+
+    # Synthetic member-name normalization still applies to RAR paths.
+    with pytest.raises(Exception):
+        normalize_member_path("../evil.txt")
+
+    # Declared-size bomb ratio is enforced the same way as ZIP.
+    settings = SourceIngestionSettings(
+        allow_rar=True,
+        max_total_uncompressed_bytes=10_000_000,
+        max_compression_ratio=10.0,
+    )
+    rpath = _write_rar_fixture(tmp_path / "ok.rar")
+    members, meta = inspect_rar(rpath, container_source_id="c", settings=settings)
+    assert meta["archive_type"] == "rar"
+    assert any(m.relative_path == "README.md" for m in members)

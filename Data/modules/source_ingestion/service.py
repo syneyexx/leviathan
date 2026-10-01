@@ -223,13 +223,30 @@ class SourceIngestionService:
         )
 
         # Reject clearly unsupported archives early
-        if detection.extension in {".rar"} and not self.settings.allow_rar:
-            raise ResearchError(
-                "UNSUPPORTED_SOURCE_TYPE",
-                "RAR archives are not supported",
-                http_status=422,
-                details={"filename": safe_name},
-            )
+        if detection.extension in {".rar"} or (
+            detection.is_archive and (detection.handler_hint or "") == "rar"
+        ):
+            if not self.settings.allow_rar:
+                raise ResearchError(
+                    "UNSUPPORTED_SOURCE_TYPE",
+                    "RAR archives are disabled for this deployment",
+                    http_status=422,
+                    details={"filename": safe_name},
+                )
+            from .archives.rar_safe import probe_rar_tool
+
+            rar_probe = probe_rar_tool()
+            if not rar_probe.get("available"):
+                raise ResearchError(
+                    "ARCHIVE_RAR_TOOL_MISSING",
+                    "RAR archives require UnRAR or 7-Zip on this host",
+                    http_status=503,
+                    details={
+                        "filename": safe_name,
+                        "reason": rar_probe.get("reason"),
+                        "hint": "Install UnRAR (rarlab) or 7-Zip, or set LEVIATHAN_UNRAR_TOOL",
+                    },
+                )
         if detection.extension == ".7z" and not self.settings.allow_7z:
             raise ResearchError(
                 "UNSUPPORTED_SOURCE_TYPE",
