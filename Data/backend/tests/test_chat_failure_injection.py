@@ -104,6 +104,35 @@ class ChatCancelRaceTests(unittest.TestCase):
         self.assertEqual(result.cognition_cancel["status"], "CANCELLED")
         self.assertTrue(result.cancelled)
 
+    def test_team_cancel_propagates(self) -> None:
+        run = self.runs.create_run(user_request="x", conversation_id=self.conv["id"])
+        self.runs.transition(run.run_id, RunState.PLANNING)
+        self.runs.transition(run.run_id, RunState.EXECUTING)
+        turn = self.coord.accept(
+            conversation_id=self.conv["id"],
+            user_message_id=self.user["id"],
+            chat_run_id=run.run_id,
+        )
+        self.store.update(turn.turn_id, team_run_id="team-1")
+        team = MagicMock()
+
+        class _State:
+            def public_dict(self):
+                return {"run_id": "team-1", "status": "CANCELLED"}
+
+        team.cancel.return_value = _State()
+        result = cancel_chat_turn(
+            turn_store=self.store,
+            run_store=self.runs,
+            team_orchestrator=team,
+            turn_id=turn.turn_id,
+            reason=CancelReason.USER_CANCEL,
+        )
+        team.cancel.assert_called_once_with("team-1")
+        self.assertEqual(result.team_cancel["status"], "CANCELLED")
+        self.assertTrue(result.cancelled)
+        self.assertEqual(result.run_state, ChatTurnRunState.CANCELLED.value)
+
 
 class CognitionPublicSinkTests(unittest.TestCase):
     def test_drops_private_reasoning(self) -> None:

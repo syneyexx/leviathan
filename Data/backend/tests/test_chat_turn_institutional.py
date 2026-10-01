@@ -210,6 +210,32 @@ class ConversationPaginationTests(unittest.TestCase):
         self.assertEqual([m["id"] for m in older["items"]], [m["id"] for m in older2["items"]])
         self.assertEqual(self.db.count_messages(conv["id"]), 250)
 
+    def test_message_pagination_over_1000(self) -> None:
+        conv = self.db.create_conversation("very-long")
+        for i in range(1100):
+            role = "user" if i % 2 == 0 else "assistant"
+            self.db.add_message(conv["id"], role, f"m-{i}")
+        self.assertEqual(self.db.count_messages(conv["id"]), 1100)
+        recent = self.db.get_messages_page(conv["id"], limit=100)
+        self.assertEqual(len(recent["items"]), 100)
+        self.assertTrue(recent["has_more"])
+        self.assertEqual(recent["items"][-1]["content"], "m-1099")
+        # Walk older pages until exhausted — bounded fetches, no full-table load.
+        before = recent["next_before_id"]
+        seen = {m["id"] for m in recent["items"]}
+        pages = 1
+        while before is not None and pages < 20:
+            page = self.db.get_messages_page(conv["id"], limit=100, before_id=before)
+            pages += 1
+            ids = {m["id"] for m in page["items"]}
+            self.assertFalse(seen & ids)
+            seen |= ids
+            before = page.get("next_before_id")
+            if not page.get("has_more"):
+                break
+        self.assertGreaterEqual(len(seen), 1000)
+        self.assertGreaterEqual(pages, 10)
+
 
 class EconomyCoverageTruthTests(unittest.TestCase):
     def test_unmeasured_coverage_does_not_force_gap(self) -> None:

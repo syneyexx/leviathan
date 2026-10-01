@@ -34,13 +34,20 @@ needed durable recording.
 10. Invariant A: cognition-owned responses skip the authoritative direct model call;
     `ResponseOwner` / `ExecutionPath` stay aligned (`cognition` ↔ `cognition_owned`).
 11. CANCELLED ≠ FAILED end-to-end (durable turn state + UI streaming badge).
+12. Cognition-owned SSE is honest when the runtime buffers the final answer: meta reports
+    `streaming_degraded=true` / `degrade_reason=cognition_buffered_output` and emits a
+    single public token plus operational events — never private CoT. Live incremental
+    cognition tokens require CognitiveRuntime public-sink support when the provider can stream.
+13. Historic turns surface `artifact_ids` as ArtifactStore links (no local filesystem paths).
 
 ## Consequences
 - Old conversations/messages remain readable without turn rows.
-- New turns hydrate per-assistant-message metadata on reload.
+- New turns hydrate per-assistant-message metadata on reload (including artifact refs).
 - Startup reconciles stale ACCEPTED/RUNNING/STREAMING turns → INTERRUPTED.
 - CANCELLED ≠ FAILED is durable and idempotent.
 - Empty New Chat does not create a durable conversation until first Send (or scoped
   attachment requiring identity).
 - Attachment MIME from the browser is treated as untrusted; server stores declared MIME
   as metadata and classifies artifact_type independently.
+- Legacy `chat.css` (`.lv-chat-app`) remains imported for residual V1 chrome only;
+  Chat V2 styles live exclusively in `leviathan-v2.css`.

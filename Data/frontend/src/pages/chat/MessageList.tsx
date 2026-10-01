@@ -13,6 +13,7 @@ import type {
 import { ActivityTimeline } from "../../components/activity/ActivityTimeline";
 import {
   resolveHistoricActivity,
+  resolveHistoricArtifactIds,
   resolveHistoricToolCalls,
   resolveTurnForMessage,
 } from "../../lib/chat/historicTurn";
@@ -353,6 +354,26 @@ export function MessageList({
                 </div>
                 {showTools ? <CapabilityResultCards toolCalls={toolCalls} /> : null}
                 {messageTurn ? <TurnMetaChip turn={messageTurn} /> : null}
+                {(() => {
+                  const artifactIds = resolveHistoricArtifactIds(messageTurn);
+                  if (!artifactIds.length) return null;
+                  return (
+                    <ul className="lv-v2-msg__artifacts" aria-label="Turn artifacts">
+                      {artifactIds.map((id) => (
+                        <li key={id}>
+                          <a
+                            href={`/api/artifacts/${encodeURIComponent(id)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={id}
+                          >
+                            artifact {id.slice(0, 8)}
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  );
+                })()}
                 <div className="lv-v2-msg__meta">
                   {formatMessageTime(message.created_at) ||
                     (message.pending ? "bezig…" : "")}

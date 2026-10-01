@@ -100,3 +100,12 @@ export function resolveHistoricActivity(
   }
   return null;
 }
+
+/** ArtifactStore IDs persisted on the turn — references only, never invent paths. */
+export function resolveHistoricArtifactIds(turn: ChatTurn | null | undefined): string[] {
+  if (!turn) return [];
+  const ids = turn.artifact_ids;
+  if (!Array.isArray(ids)) return [];
+  return ids.map(String).map((s) => s.trim()).filter(Boolean);
+}
+

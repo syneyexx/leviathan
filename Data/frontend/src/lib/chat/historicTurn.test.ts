@@ -6,6 +6,7 @@ import type { ChatTurn } from "../../types/api";
 import type { ChatDisplayMessage } from "../../pages/chat/MessageList";
 import {
   resolveHistoricActivity,
+  resolveHistoricArtifactIds,
   resolveHistoricToolCalls,
   resolveTurnForMessage,
 } from "./historicTurn";
@@ -158,5 +159,15 @@ describe("historic activity", () => {
       activity_ref: "run-123",
     };
     expect(resolveHistoricActivity(turn)).toBeNull();
+  });
+
+  it("surfaces durable artifact_ids without inventing paths", () => {
+    const turn: ChatTurn = {
+      turn_id: "t1",
+      conversation_id: "c1",
+      artifact_ids: ["abc-123-uuid", "  ", "def-456"],
+    };
+    expect(resolveHistoricArtifactIds(turn)).toEqual(["abc-123-uuid", "def-456"]);
+    expect(resolveHistoricArtifactIds(null)).toEqual([]);
   });
 });
