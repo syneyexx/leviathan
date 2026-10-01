@@ -80,7 +80,12 @@ class ExecutionGatewayTests(unittest.TestCase):
     def test_validation_rejects_missing_args(self) -> None:
         result = self.gateway.execute(CapabilityRequest(capability_id="file.read", arguments={}))
         self.assertEqual(result.status, CapabilityStatus.REJECTED)
-        self.assertIn("Missing required argument", result.error or "")
+        err = result.error or ""
+        self.assertTrue(
+            "required" in err.lower() or "Missing required argument" in err,
+            msg=err,
+        )
+        self.assertEqual(result.telemetry.get("reason"), "validation")
 
     def test_write_capability_requires_approval(self) -> None:
         result = self.gateway.execute(

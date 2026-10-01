@@ -84,8 +84,8 @@ class ReleaseGateReport:
 class ReleaseGateRunner:
     """Local release/readiness gates for LEVIATHAN foundation.
 
-    Wave 2: evaluation relevance can BLOCK promotion when configured as BLOCK.
-    Round 10: NOT_APPLICABLE / UNMEASURED never count as PASS.
+    Invariant: ready==true IFF every required BLOCK measurement == PASS.
+    NOT_APPLICABLE is scoped-out (not PASS, does not block).
     """
 
     def __init__(self, checks: list[Callable[[], GateCheck]] | None = None) -> None:
@@ -94,20 +94,28 @@ class ReleaseGateRunner:
     def add(self, check: Callable[[], GateCheck]) -> None:
         self._checks.append(check)
 
+    @staticmethod
+    def _effective_measurement(item: GateCheck) -> GateMeasurement:
+        m = item.measurement
+        if not item.passed and m == GateMeasurement.PASS:
+            return GateMeasurement.FAIL
+        return m
+
     def run(self) -> ReleaseGateReport:
         results = tuple(check() for check in self._checks)
-        blocked = any(
-            measurement_blocks_release(
-                (
-                    item.measurement
-                    if not (not item.passed and item.measurement == GateMeasurement.PASS)
-                    else GateMeasurement.FAIL
-                ),
-                severity=item.severity.value,
-            )
-            or ((not item.passed) and item.severity == GateSeverity.BLOCK)
-            for item in results
-        )
+        blocked = False
+        for item in results:
+            if item.severity != GateSeverity.BLOCK:
+                continue
+            m = self._effective_measurement(item)
+            if m == GateMeasurement.NOT_APPLICABLE:
+                continue
+            if measurement_blocks_release(m, severity=item.severity.value):
+                blocked = True
+                break
+            if m != GateMeasurement.PASS or not item.passed:
+                blocked = True
+                break
         return ReleaseGateReport(
             ready=not blocked,
             checks=results,
@@ -125,7 +133,7 @@ def evaluation_relevance_gate(
 ) -> GateCheck:
     """Map EvaluationStore/Platform.has_relevant_eval → GateCheck (U335).
 
-    UNMEASURED never counts as passed for promotion when require_pass=True.
+    UNMEASURED never counts as passed — soft or hard.
     """
     recorded = bool(relevance.get("recorded"))
     measurement_raw = str(relevance.get("measurement") or "UNMEASURED")
@@ -150,20 +158,24 @@ def evaluation_relevance_gate(
             else GateMeasurement.FAIL
         )
     else:
-        # Recorded + no FAIL is enough for soft relevance; UNMEASURED still fails require_pass.
         if measurement_raw == "FAIL":
             ok, m = False, GateMeasurement.FAIL
         elif measurement_raw == "UNMEASURED":
-            ok, m = True, GateMeasurement.UNMEASURED  # soft ready, not a PASS claim
+            ok, m = False, GateMeasurement.UNMEASURED
+            detail = f"{detail}; UNMEASURED ≠ PASS"
         elif measurement_raw == "PASS":
             ok, m = True, GateMeasurement.PASS
+        elif measurement_raw == "NOT_APPLICABLE":
+            ok, m = True, GateMeasurement.NOT_APPLICABLE
         else:
-            ok, m = True, GateMeasurement.UNMEASURED
+            ok, m = False, GateMeasurement.UNMEASURED
+            detail = f"{detail}; non-PASS measurement is not passed"
 
-    if measurement_raw == "UNMEASURED" and require_pass:
+    if measurement_raw == "UNMEASURED":
         ok = False
         m = GateMeasurement.UNMEASURED
-        detail = f"{detail}; UNMEASURED ≠ PASS"
+        if "UNMEASURED ≠ PASS" not in detail:
+            detail = f"{detail}; UNMEASURED ≠ PASS"
 
     return GateCheck(
         gate_id=gate_id,
@@ -178,20 +190,24 @@ def evaluation_relevance_gate(
 def is_shipable(report: ReleaseGateReport, *, ci_release: bool | None = None) -> bool:
     """Whether a release may ship under local vs CI profiles.
 
-    Local: no BLOCK failures (``report.ready``).
-    CI (``LEVIATHAN_CI_RELEASE``): WARN/BLOCK FAIL and UNMEASURED also block ship.
+    Local must not ship with UNMEASURED BLOCK. CI also blocks WARN UNMEASURED/FAIL.
     NOT_APPLICABLE never counts as PASS and does not by itself block.
     """
     if ci_release is None:
         ci_release = ci_release_mode()
     if not report.ready:
         return False
-    if not ci_release:
-        return True
     for item in report.checks:
         m = item.measurement
         if not item.passed and m == GateMeasurement.PASS:
             m = GateMeasurement.FAIL
+        if item.severity == GateSeverity.BLOCK and m in {
+            GateMeasurement.UNMEASURED,
+            GateMeasurement.FAIL,
+        }:
+            return False
+        if not ci_release:
+            continue
         if m == GateMeasurement.FAIL:
             return False
         if m == GateMeasurement.UNMEASURED and item.severity in {

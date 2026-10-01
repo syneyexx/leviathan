@@ -13,6 +13,12 @@ from .manifest import (
     build_frontier_manifest,
 )
 from .metadata import METADATA_SCHEMA_VERSION, normalize_capability_metadata, schema_hash
+from .schema_validation import (
+    SUPPORTED_JSON_SCHEMA_DRAFT_NAME,
+    SchemaValidationError,
+    validate_args_against_schema,
+)
+from .catalog_reconcile import reconcile_dynamic_catalog
 from .receipts import CapabilityCallReceipt, CapabilityReceiptStore, build_receipt_from_result
 from .types import (
     CapabilityDefinition,
@@ -64,6 +70,10 @@ __all__ = [
     "normalize_capability_metadata",
     "running_in_worker_process",
     "schema_hash",
+    "SUPPORTED_JSON_SCHEMA_DRAFT_NAME",
+    "SchemaValidationError",
+    "validate_args_against_schema",
+    "reconcile_dynamic_catalog",
 ]
 
 from .computer_use import ComputerUseLoop, propose_actions_from_model_text, run_computer_use_loop  # noqa: E402,F401

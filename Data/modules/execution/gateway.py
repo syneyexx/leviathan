@@ -13,7 +13,13 @@ from Data.modules.function_runtime.types import FunctionCallStatus, SideEffect
 
 from .catalog import CapabilityCatalog
 from .idempotency import CapabilityIdempotencyStore, execution_fingerprint
+from .path_params import (
+    LEGACY_PATH_ARGUMENT_KEYS,
+    normalize_path_argument,
+    resolve_path_argument_keys,
+)
 from .receipts import CapabilityReceiptStore, build_receipt_from_result
+from .schema_validation import SchemaValidationError, validate_args_against_schema
 from .types import (
     CapabilityDefinition,
     CapabilityProviderKind,
@@ -22,20 +28,8 @@ from .types import (
     CapabilityStatus,
 )
 
-# Argument keys that name filesystem paths and must stay under filesystem_root.
-_PATH_ARGUMENT_KEYS = frozenset(
-    {
-        "path",
-        "cwd",
-        "workspace_root",
-        "file_path",
-        "source_path",
-        "dest_path",
-        "target",
-        "output_path",
-        "content_path",
-    }
-)
+# Backward-compatible alias — prefer typed schema/metadata path semantics.
+_PATH_ARGUMENT_KEYS = LEGACY_PATH_ARGUMENT_KEYS
 
 # Side effects that may proceed without an approval_id in Phase 9.
 _AUTO_ALLOWED_EFFECTS = frozenset({SideEffect.READ})
@@ -306,7 +300,7 @@ class ExecutionGateway:
         approval_reserved = False
         try:
             self._validate_args(definition, request.arguments)
-            request = self._confine_filesystem_args(request)
+            request = self._confine_filesystem_args(request, definition=definition)
         except GatewayRejection as exc:
             self._fail_idempotent_claim(request, fingerprint=fingerprint, result=None)
             return self._reject(
@@ -782,45 +776,6 @@ class ExecutionGateway:
             result.telemetry["approval_consume_error"] = str(exc)
             result.telemetry["approval_reservation_uncertain"] = True
 
-    def _confine_filesystem_args(self, request: CapabilityRequest) -> CapabilityRequest:
-        """Refuse path escape when filesystem_root is configured (Round 8)."""
-        if self.filesystem_root is None:
-            return request
-        from Data.modules.coding.workspace import confine
-        from Data.modules.common.paths import PathEscapeError
-
-        root = Path(self.filesystem_root)
-        args = dict(request.arguments)
-        changed = False
-        for key in _PATH_ARGUMENT_KEYS:
-            if key not in args or args[key] is None:
-                continue
-            raw = str(args[key]).strip()
-            if not raw:
-                continue
-            try:
-                confined = confine(root, raw)
-            except PathEscapeError as exc:
-                raise GatewayRejection(
-                    f"Path escapes filesystem_root for {key!r}: {exc}",
-                    reason="path_escape",
-                ) from exc
-            args[key] = str(confined)
-            changed = True
-        if not changed:
-            return request
-        return CapabilityRequest(
-            capability_id=request.capability_id,
-            arguments=args,
-            request_id=request.request_id,
-            run_id=request.run_id,
-            job_id=request.job_id,
-            approval_id=request.approval_id,
-            requested_by=request.requested_by,
-            trace_id=request.trace_id,
-            idempotency_key=request.idempotency_key,
-        )
-
     def _enforce_external_workload(
         self, definition: CapabilityDefinition, request: CapabilityRequest
     ) -> None:
@@ -1199,47 +1154,115 @@ class ExecutionGateway:
         return record.public_dict() if hasattr(record, "public_dict") else dict(record)
 
     def _validate_args(self, definition: CapabilityDefinition, args: dict[str, Any]) -> None:
+        """Validate arguments with a bounded Draft 2020-12 JSON Schema validator."""
         schema = definition.input_schema or {}
-        required = schema.get("required", [])
-        properties = schema.get("properties", {})
-        if not isinstance(required, list) or not isinstance(properties, dict):
+        if schema and (not isinstance(schema, dict)):
             raise GatewayRejection("Invalid input_schema on capability definition", reason="bad_schema")
-        for key in required:
-            if key not in args:
-                raise GatewayRejection(f"Missing required argument: {key}", reason="validation")
-        for key, value in args.items():
-            if key not in properties:
-                # Honor JSON Schema additionalProperties when explicitly true.
-                if schema.get("additionalProperties") is True:
-                    continue
-                raise GatewayRejection(f"Unexpected argument: {key}", reason="validation")
-            expected = properties[key].get("type")
-            if expected is None:
-                continue
-            if not self._type_matches(expected, value):
-                raise GatewayRejection(
-                    f"Argument {key!r} expected type {expected}, got {type(value).__name__}",
-                    reason="validation",
-                )
+        try:
+            validate_args_against_schema(
+                schema if isinstance(schema, dict) else {},
+                args,
+                schema_hash=definition.resolved_schema_hash(),
+            )
+        except SchemaValidationError as exc:
+            raise GatewayRejection(str(exc), reason=exc.reason) from exc
 
-    @staticmethod
-    def _type_matches(expected: str, value: Any) -> bool:
-        mapping = {
-            "string": str,
-            "integer": int,
-            "number": (int, float),
-            "boolean": bool,
-            "object": dict,
-            "array": list,
-        }
-        py_type = mapping.get(expected)
-        if py_type is None:
-            return True
-        if expected == "number" and isinstance(value, bool):
-            return False
-        if expected == "integer" and isinstance(value, bool):
-            return False
-        return isinstance(value, py_type)
+    def _path_argument_keys(self, definition: CapabilityDefinition, args: dict[str, Any]) -> set[str]:
+        return resolve_path_argument_keys(
+            input_schema=definition.input_schema,
+            metadata=definition.normalized_metadata(),
+            arguments=args,
+            include_legacy_names=True,
+        )
+
+    def _confine_filesystem_args(
+        self,
+        request: CapabilityRequest,
+        *,
+        definition: CapabilityDefinition | None = None,
+    ) -> CapabilityRequest:
+        """Normalize + confine every typed filesystem path before dispatch."""
+        from Data.modules.common.paths import PathEscapeError
+
+        if self.filesystem_root is None:
+            if definition is None:
+                return request
+            keys = self._path_argument_keys(definition, request.arguments)
+            if not keys:
+                return request
+            args = dict(request.arguments)
+            changed = False
+            for key in keys:
+                if key not in args or args[key] is None:
+                    continue
+                try:
+                    normalized = normalize_path_argument(args[key])
+                except PathEscapeError as exc:
+                    raise GatewayRejection(str(exc), reason="path_escape") from exc
+                if normalized != args[key]:
+                    args[key] = normalized
+                    changed = True
+            if not changed:
+                return request
+            return CapabilityRequest(
+                capability_id=request.capability_id,
+                arguments=args,
+                request_id=request.request_id,
+                run_id=request.run_id,
+                job_id=request.job_id,
+                approval_id=request.approval_id,
+                requested_by=request.requested_by,
+                trace_id=request.trace_id,
+                idempotency_key=request.idempotency_key,
+            )
+
+        from Data.modules.coding.workspace import confine
+
+        root = Path(self.filesystem_root)
+        args = dict(request.arguments)
+        keys = (
+            self._path_argument_keys(definition, args)
+            if definition is not None
+            else set(_PATH_ARGUMENT_KEYS)
+        )
+        for legacy in _PATH_ARGUMENT_KEYS:
+            if legacy in args:
+                keys.add(legacy)
+        changed = False
+        for key in keys:
+            if key not in args or args[key] is None:
+                continue
+            try:
+                normalized = normalize_path_argument(args[key])
+            except PathEscapeError as exc:
+                raise GatewayRejection(
+                    f"Invalid path for {key!r}: {exc}",
+                    reason="path_escape",
+                ) from exc
+            if not normalized:
+                continue
+            try:
+                confined = confine(root, normalized)
+            except PathEscapeError as exc:
+                raise GatewayRejection(
+                    f"Path escapes filesystem_root for {key!r}: {exc}",
+                    reason="path_escape",
+                ) from exc
+            args[key] = str(confined)
+            changed = True
+        if not changed:
+            return request
+        return CapabilityRequest(
+            capability_id=request.capability_id,
+            arguments=args,
+            request_id=request.request_id,
+            run_id=request.run_id,
+            job_id=request.job_id,
+            approval_id=request.approval_id,
+            requested_by=request.requested_by,
+            trace_id=request.trace_id,
+            idempotency_key=request.idempotency_key,
+        )
 
     def _reject(
         self,

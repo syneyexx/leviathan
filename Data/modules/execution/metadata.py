@@ -31,6 +31,7 @@ _CANONICAL_KEYS = (
     "examples",
     "delegates_to",
     "wraps_capability_id",
+    "path_parameters",
 )
 
 
@@ -89,6 +90,12 @@ def normalize_capability_metadata(
     examples = raw.pop("examples", None)
     delegates_to = str(raw.pop("delegates_to", "") or "").strip() or None
     wraps_capability_id = str(raw.pop("wraps_capability_id", "") or "").strip() or None
+    path_parameters_raw = raw.pop("path_parameters", None)
+    path_parameters: list[str] = []
+    if isinstance(path_parameters_raw, (list, tuple, set, frozenset)):
+        path_parameters = [str(x).strip() for x in path_parameters_raw if str(x).strip()]
+    elif isinstance(path_parameters_raw, str) and path_parameters_raw.strip():
+        path_parameters = [path_parameters_raw.strip()]
 
     # Soft domain inference from capability id prefix.
     if not domains and "." in capability_id:
@@ -114,6 +121,7 @@ def normalize_capability_metadata(
         "examples": examples if isinstance(examples, (list, dict)) else None,
         "delegates_to": delegates_to,
         "wraps_capability_id": wraps_capability_id,
+        "path_parameters": path_parameters,
         "search_text": " ".join(
             filter(
                 None,

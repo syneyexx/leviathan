@@ -20,6 +20,7 @@ from typing import Any, Iterator
 from Data.modules.function_runtime.types import SideEffect
 
 from .catalog import CapabilityCatalog
+from .catalog_generation import SCOPE_CUSTOM, CatalogGenerationStore
 from .types import CapabilityDefinition, CapabilityProviderKind
 
 _ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{1,118}$")
@@ -106,6 +107,33 @@ class CustomCapabilityStore:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._generation: CatalogGenerationStore | None = None
+
+    @property
+    def generation_store(self) -> CatalogGenerationStore:
+        if self._generation is None:
+            self._generation = CatalogGenerationStore(self.db_path)
+            self._generation.initialize()
+        return self._generation
+
+    def get_catalog_generation(self) -> int:
+        return self.generation_store.get_generation(SCOPE_CUSTOM)
+
+    def _bump_catalog_generation(self) -> int:
+        payload = [
+            {
+                "capability_id": r.capability_id,
+                "wraps": r.wraps_capability_id,
+                "revision": r.revision,
+                "enabled": r.enabled,
+                "version": r.version,
+            }
+            for r in self.list()
+        ]
+        return self.generation_store.bump(
+            SCOPE_CUSTOM,
+            content_hash=CatalogGenerationStore.hash_payload(payload),
+        )
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -215,6 +243,7 @@ class CustomCapabilityStore:
                     record.revision,
                 ),
             )
+        self._bump_catalog_generation()
         return record
 
     def update(
@@ -280,6 +309,7 @@ class CustomCapabilityStore:
                 raise ValueError(
                     f"Revision conflict: expected {fence_revision}, concurrent update detected"
                 )
+        self._bump_catalog_generation()
         return updated
 
     def delete(self, capability_id: str) -> bool:
@@ -288,7 +318,10 @@ class CustomCapabilityStore:
                 "DELETE FROM custom_capability_definitions WHERE capability_id = ?",
                 (capability_id,),
             )
-            return cur.rowcount > 0
+            deleted = cur.rowcount > 0
+        if deleted:
+            self._bump_catalog_generation()
+        return deleted
 
     def hydrate_into_catalog(self, catalog: CapabilityCatalog) -> int:
         """Register/upsert custom wrappers into CapabilityCatalog."""

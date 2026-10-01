@@ -4811,7 +4811,34 @@ def _m67_mcp_scrub_plaintext_secrets(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m68_capability_catalog_generations(conn: sqlite3.Connection) -> None:
+    """Durable generation counters for custom capability + plugin catalog reconciliation."""
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS capability_catalog_generations (
+            scope TEXT PRIMARY KEY,
+            catalog_generation INTEGER NOT NULL DEFAULT 0,
+            content_hash TEXT,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    for scope in ("custom", "plugins", "global"):
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO capability_catalog_generations(
+                scope, catalog_generation, content_hash, updated_at
+            ) VALUES (?, 0, NULL, ?)
+            """,
+            (scope, now),
+        )
+
+
 MIGRATIONS: Sequence[Migration] = (
+
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
     Migration(version=3, name="knowledge_v2", apply=_m3_knowledge_v2),
@@ -4978,6 +5005,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=67,
         name="mcp_scrub_plaintext_secrets",
         apply=_m67_mcp_scrub_plaintext_secrets,
+    ),
+    Migration(
+        version=68,
+        name="capability_catalog_generations",
+        apply=_m68_capability_catalog_generations,
     ),
 )
 

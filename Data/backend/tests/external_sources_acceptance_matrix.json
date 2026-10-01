@@ -1,6 +1,6 @@
 {
   "program": "LEVIATHAN Universal External Capability Fabric",
-  "generated_at": "2026-09-27",
+  "generated_at": "2026-10-01",
   "baseline_head": "1836d60ebecb52c44c116c70b8630ba6f49a6c38",
   "vocabulary": [
     "PASS",
@@ -9,7 +9,7 @@
     "NOT_APPLICABLE",
     "FAILED"
   ],
-  "notes": "Fixture adapters prove all adapter kinds. Live installs 21/21. Skill packs+catalog PASS. Vibe-Trading MCP 74 tools + ExecutionGateway approval path PASS. Agent-Reach real contract: doctor JSON + SKILL router (no fake search CLI). llm-agent-trader PARTIAL (LLM analyze). GhostTrack PARTIAL: declarative curl argv for audited public APIs (ipwho.is / api.ipify.org); GhostTR.py TUI phone/username remain blocked. COMPOSITE declared CLI ops beat skill-pack name collisions. MCP lazy ensure_ready. Cognition offloads EXTERNAL_REQUIRED MODULE caps via JobRuntime (job.* SSE). capability.discovered emitted on SEARCH. No per-repository wrappers. Closable-gap unit suite covers declared-ops precedence, HTTP 202 accept_statuses, OpenMAIC fail-poll fixture, boot register swallow, route lifecycle+versions, FE versions/logs/jobs contracts. FILE/artifact_globs promote into artifact_refs so cognition emits artifact.created + knowledge.assimilation_queued SSE. ArtifactStore materialize: CLI FILE globs + oversized stdout become artifact_ids (bounded Chat inline). HTTP large body materialize + periodic module idle sweep loop (LEVIATHAN_MODULE_IDLE_SWEEP_SECONDS). Cognition iterative loop returns OBSERVING\u2192REASONING between tools; ActionSelector-driven A\u2192B proven; OwnedProcess stderr flood drain proven. Chat CapabilityResultCards prefer ARTIFACT part names over raw UUID refs; Agent-Reach version/check_update + Fincept stats/fixed_income capabilities declared.",
+  "notes": "Fixture adapters prove all adapter kinds. Live installs 21/21. Skill packs+catalog PASS. Vibe-Trading MCP 74 tools + ExecutionGateway approval path PASS. Agent-Reach real contract: doctor JSON + SKILL router (no fake search CLI). llm-agent-trader PARTIAL (LLM analyze). GhostTrack PARTIAL: declarative curl argv for audited public APIs (ipwho.is / api.ipify.org); GhostTR.py TUI phone/username remain blocked. COMPOSITE declared CLI ops beat skill-pack name collisions. MCP lazy ensure_ready. Cognition offloads EXTERNAL_REQUIRED MODULE caps via JobRuntime (job.* SSE). capability.discovered emitted on SEARCH. No per-repository wrappers. Closable-gap unit suite covers declared-ops precedence, HTTP 202 accept_statuses, OpenMAIC fail-poll fixture, boot register swallow, route lifecycle+versions, FE versions/logs/jobs contracts. FILE/artifact_globs promote into artifact_refs so cognition emits artifact.created + knowledge.assimilation_queued SSE. ArtifactStore materialize: CLI FILE globs + oversized stdout become artifact_ids (bounded Chat inline). HTTP large body materialize + periodic module idle sweep loop (LEVIATHAN_MODULE_IDLE_SWEEP_SECONDS). Cognition iterative loop returns OBSERVING→REASONING between tools; ActionSelector-driven A→B proven; OwnedProcess stderr flood drain proven. Chat CapabilityResultCards prefer ARTIFACT part names over raw UUID refs; Agent-Reach version/check_update + Fincept stats/fixed_income capabilities declared.",
   "sources": [
     {
       "source": "wonderwhy-er/DesktopCommanderMCP",
@@ -32,7 +32,7 @@
         "network"
       ],
       "status": "PASS",
-      "limitations": "Live McpBridge connect/26 tools/list_directory PASS; ExecutionGateway invoke PASS with approval_id (REJECTED without \u2014 expected). Chat cards render artifact/source links."
+      "limitations": "Live McpBridge connect/26 tools/list_directory PASS; ExecutionGateway invoke PASS with approval_id (REJECTED without — expected). Chat cards render artifact/source links."
     },
     {
       "source": "Datalux/Osintgram",
@@ -56,7 +56,7 @@
         "HikerAPI or Instagram session"
       ],
       "status": "PARTIAL",
-      "limitations": "Live GIT+venv install PASS; uvicorn start/ready HTTP 200 PASS; GET / + /api/about + /api/tools + /api/token + /api/balance invoke PASS; stop PASS. Instagram data backend (HikerAPI/session) still required for real OSINT queries."
+      "limitations": "Live GIT+venv install PASS; uvicorn start/ready HTTP 200 PASS; GET / + /api/about + /api/tools + /api/token + /api/balance invoke PASS; stop PASS. Instagram data backend (HikerAPI/session) still required for real OSINT queries. [Phase8: status remains PARTIAL — external blocker irreducible.]"
     },
     {
       "source": "elementalsouls/Claude-OSINT",
@@ -126,7 +126,7 @@
         "network"
       ],
       "status": "PARTIAL",
-      "limitations": "Audited: GhostTR.py remains interactive TUI (5x input()). Machine ops use generic CLI argv to the same public APIs GhostTR calls: ip_lookup\u2192ipwho.is/{ip} JSON, show_ip\u2192api.ipify.org text. Live ModuleManager invoke PASS. Phone/username trackers have no argv contract \u2014 still BLOCKED_EXTERNAL. No GhostTrackWrapper."
+      "limitations": "Audited: GhostTR.py remains interactive TUI (5x input()). Machine ops use generic CLI argv to the same public APIs GhostTR calls: ip_lookup→ipwho.is/{ip} JSON, show_ip→api.ipify.org text. Live ModuleManager invoke PASS. Phone/username trackers have no argv contract — still BLOCKED_EXTERNAL. No GhostTrackWrapper."
     },
     {
       "source": "HKUDS/Vibe-Trading",
@@ -497,7 +497,7 @@
     "COMPOSITE": "PASS",
     "MCP": "PASS"
   },
-  "worktree_head": "d4bb593de7686f96e0bc828e9e0696e401d1435b",
+  "worktree_head": "aee52b94ec86fe3a3a295139ddc782526bb9dea8",
   "live_proofs": {
     "install_pass_module_ids": [
       "agent-reach",
@@ -662,7 +662,7 @@
       "scrollcraft_verify": "PASS",
       "cognition_job_runtime_offload": "PASS",
       "capability_discovered_sse": "PASS",
-      "cli_blocks_api_thread": "NO (EXTERNAL_REQUIRED|PREFERRED MODULE \u2192 JobRuntime)",
+      "cli_blocks_api_thread": "NO (EXTERNAL_REQUIRED|PREFERRED MODULE → JobRuntime)",
       "cognition_iterative_multi_tool": "PASS_UNIT_LOOP",
       "assimilation_enqueue_kwargs": "PASS",
       "cognition_job_idempotency": "PASS",
@@ -804,5 +804,6 @@
     "skills_page": {
       "search_pagination_contracts": "PASS vitest"
     }
-  }
+  },
+  "reverified_note": "Phase 8 re-verification against CURRENT HEAD: PARTIAL rows remain honest external blockers (Instagram/HikerAPI, LLM keys, UE5, provider auth). No PARTIAL→PASS greenwash. Leviathan-owned closable gaps covered by ExternalFabricClosableGapTests; irreducible external deps unchanged."
 }
