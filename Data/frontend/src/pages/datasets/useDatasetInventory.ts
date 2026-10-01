@@ -275,7 +275,32 @@ export function useDatasetInventory(opts: {
   }
 
   const metrics = useMemo(() => {
-    const total = overview?.totalDatasets ?? catalogTotal ?? liveRows.length;
+    // API failure must not project measured zeros — keep UNAVAILABLE / —.
+    const catalogUnavailable =
+      (Boolean(overviewError) && overview == null && catalogTotal == null) ||
+      (Boolean(error) && liveRows.length === 0 && catalogTotal == null && overview == null);
+    if (catalogUnavailable) {
+      return {
+        total: null as number | null,
+        local: null as number | null,
+        external: null as number | null,
+        localPct: null as number | null,
+        externalPct: null as number | null,
+        sizeLabel: "—",
+        sizeUnmeasured: true,
+        indexed: null as number | null,
+        indexedPct: null as number | null,
+        capacityLabel: null as string | null,
+        usedBytes: null as number | null,
+        capacityBytes: null as number | null,
+        inventoryPageSize: 0,
+        catalogTotal: null as number | null,
+        hasMore: false,
+        unavailable: true,
+        unavailableReason: overviewError || error || "Catalog unavailable",
+      };
+    }
+    const total = overview?.totalDatasets ?? catalogTotal ?? (liveRows.length > 0 ? liveRows.length : null);
     const local =
       overview?.localDatasets != null
         ? overview.localDatasets
@@ -287,22 +312,34 @@ export function useDatasetInventory(opts: {
               }
               return sum;
             }, 0)
-          : liveRows.filter((r) => r.sourceKind === "local").length;
+          : liveRows.length > 0
+            ? liveRows.filter((r) => r.sourceKind === "local").length
+            : null;
     const external =
-      overview?.externalDatasets != null ? overview.externalDatasets : Math.max(0, total - local);
-    const sizeBytes = overview?.attributableBytes ?? liveRows.reduce((s, r) => s + (r.byteSize ?? 0), 0);
+      overview?.externalDatasets != null
+        ? overview.externalDatasets
+        : total != null && local != null
+          ? Math.max(0, total - local)
+          : null;
+    const sizeBytes =
+      overview?.attributableBytes ??
+      (liveRows.length > 0 ? liveRows.reduce((s, r) => s + (r.byteSize ?? 0), 0) : null);
     const indexed =
       overview?.indexedDatasets != null
         ? overview.indexedDatasets
-        : liveRows.filter((r) => r.embeddings.kind === "indexed").length;
-    const indexedPct = total > 0 ? Math.round((indexed / total) * 100) : null;
+        : liveRows.length > 0
+          ? liveRows.filter((r) => r.embeddings.kind === "indexed").length
+          : null;
+    const indexedPct =
+      total != null && total > 0 && indexed != null ? Math.round((indexed / total) * 100) : null;
     return {
       total,
       local,
       external,
-      localPct: total > 0 ? Math.round((local / total) * 100) : null,
-      externalPct: total > 0 ? Math.round((external / total) * 100) : null,
-      sizeLabel: formatBytes(sizeBytes),
+      localPct: total != null && total > 0 && local != null ? Math.round((local / total) * 100) : null,
+      externalPct:
+        total != null && total > 0 && external != null ? Math.round((external / total) * 100) : null,
+      sizeLabel: sizeBytes == null ? "—" : formatBytes(sizeBytes),
       sizeUnmeasured: overview ? overview.bytesUnmeasuredDatasets > 0 : liveRows.some((r) => r.byteSize == null),
       indexed,
       indexedPct,
@@ -310,10 +347,12 @@ export function useDatasetInventory(opts: {
       usedBytes: overview?.usedBytes ?? null,
       capacityBytes: overview?.capacityBytes ?? null,
       inventoryPageSize: liveRows.length,
-      catalogTotal: catalogTotal ?? overview?.totalDatasets ?? liveRows.length,
+      catalogTotal: catalogTotal ?? overview?.totalDatasets ?? (liveRows.length > 0 ? liveRows.length : null),
       hasMore,
+      unavailable: false,
+      unavailableReason: null as string | null,
     };
-  }, [overview, liveRows, catalogTotal, hasMore]);
+  }, [overview, overviewError, error, liveRows, catalogTotal, hasMore]);
 
   return {
     loading,

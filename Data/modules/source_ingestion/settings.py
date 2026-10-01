@@ -74,6 +74,9 @@ class SourceIngestionSettings:
         ".parquet",
         ".jsonl",
         ".ndjson",
+        ".csv",
+        ".tsv",
+        ".json",
     )
     code_repo_ignore_defaults: bool = True
     sync_small_files_inline: bool = False  # always prefer job path; keep False

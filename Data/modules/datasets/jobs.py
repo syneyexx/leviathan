@@ -144,6 +144,23 @@ class DatasetJobRunner:
         try:
             if kernel_job.state == JobState.CANCEL_REQUESTED:
                 store.ack_cancel(kernel_job.job_id)
+                # Reconcile domain row — never leave domain QUEUED while kernel is cancelled.
+                domain_id = self._domain_id_from_kernel(kernel_job)
+                if domain_id:
+                    domain = self.store.get_job(domain_id)
+                    if domain is not None and domain.status not in {
+                        DatasetJobStatus.COMPLETED,
+                        DatasetJobStatus.FAILED,
+                        DatasetJobStatus.CANCELLED,
+                    }:
+                        self.store.update_job(
+                            domain_id,
+                            status=DatasetJobStatus.CANCELLED,
+                            finished_at=utc_now(),
+                            error="cancelled via kernel CANCEL_REQUESTED",
+                            worker_pid=None,
+                            phase="cancelled",
+                        )
                 return None
             return self.process_kernel_job(kernel_job)
         finally:
@@ -476,8 +493,15 @@ def _resource_admission_for_domain_job(domain_job: DatasetJob) -> tuple[str, dic
 def enqueue_kernel_for_domain_job(
     job_runtime: JobRuntime,
     domain_job: DatasetJob,
+    *,
+    raise_on_error: bool = False,
 ) -> JobRecord | None:
-    """Enqueue (or reuse) a Job Kernel lease linked to a domain dataset job."""
+    """Enqueue (or reuse) a Job Kernel lease linked to a domain dataset job.
+
+    When ``raise_on_error`` is True (production path with bound JobRuntime),
+    enqueue failures propagate so the caller can refuse a false QUEUED accept.
+    When False (legacy best-effort / recovery probes), returns None on failure.
+    """
     try:
         resource_class, resource_request = _resource_admission_for_domain_job(domain_job)
         metadata: dict[str, Any] = {
@@ -511,5 +535,13 @@ def enqueue_kernel_for_domain_job(
             resource_class=resource_class,
             resource_request=resource_request or None,
         )
-    except Exception:  # noqa: BLE001 — domain queue must remain usable without kernel
+    except Exception as exc:  # noqa: BLE001
+        if raise_on_error:
+            raise
+        logger.warning(
+            "kernel enqueue failed for domain_job=%s: %s",
+            getattr(domain_job, "job_id", None),
+            exc,
+            exc_info=True,
+        )
         return None

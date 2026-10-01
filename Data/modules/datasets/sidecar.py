@@ -248,41 +248,50 @@ def find_sidecars_under_roots(
     *,
     max_files: int = 2000,
 ) -> list[dict[str, Any]]:
-    """Discover sidecar files under allowed roots only."""
+    """Discover sidecar files under allowed roots only.
+
+    P2-001: iterate ``rglob`` lazily and stop at ``max_files`` — never materialize
+    the full recursive listing into memory first.
+    """
     found: list[dict[str, Any]] = []
     seen: set[str] = set()
+    safe_max = max(1, int(max_files))
     for root_id, root in roots:
         root = Path(root)
         if not root.exists() or not root.is_dir():
             continue
         try:
-            candidates = list(root.rglob(SIDECAR_FILENAME))
+            # Lazy iterator — do not list(rglob(...)).
+            candidate_iter = root.rglob(SIDECAR_FILENAME)
         except OSError:
             continue
-        for path in candidates:
-            if len(found) >= max_files:
-                return found
-            try:
-                key = normalize_path_key(str(path.resolve()))
-            except OSError:
-                key = normalize_path_key(str(path))
-            if key in seen:
-                continue
-            seen.add(key)
-            directory = path.parent
-            tomb = tombstone_path_for(directory)
-            payload = read_sidecar(path)
-            found.append(
-                {
-                    "rootId": root_id,
-                    "path": str(path),
-                    "directory": str(directory),
-                    "pathKey": key,
-                    "tombstoned": tomb.is_file(),
-                    "sidecar": payload,
-                    "valid": payload is not None,
-                }
-            )
+        try:
+            for path in candidate_iter:
+                if len(found) >= safe_max:
+                    return found
+                try:
+                    key = normalize_path_key(str(path.resolve()))
+                except OSError:
+                    key = normalize_path_key(str(path))
+                if key in seen:
+                    continue
+                seen.add(key)
+                directory = path.parent
+                tomb = tombstone_path_for(directory)
+                payload = read_sidecar(path)
+                found.append(
+                    {
+                        "rootId": root_id,
+                        "path": str(path),
+                        "directory": str(directory),
+                        "pathKey": key,
+                        "tombstoned": tomb.is_file(),
+                        "sidecar": payload,
+                        "valid": payload is not None,
+                    }
+                )
+        except OSError:
+            continue
     return found
 
 

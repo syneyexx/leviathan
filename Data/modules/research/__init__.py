@@ -20,7 +20,11 @@ from .graph import (
     citation_entailment_check,
 )
 from .independent_verifier import IndependentClaimVerifier, IndependentVerificationReport
-from .local_retrieval import LocalResearchRetriever, build_default_local_retriever
+from .local_retrieval import (
+    LocalResearchRetriever,
+    LocalRetrievalTelemetry,
+    build_default_local_retriever,
+)
 from .planner import apply_plan_edits, build_plan
 from .quality_scorecard import ResearchQualityScorecard, build_quality_scorecard
 from .question_model import ResearchQuestionModel, build_question_model
@@ -81,6 +85,7 @@ __all__ = [
     "GapAnalyzer",
     "HttpWebProvider",
     "LocalResearchRetriever",
+    "LocalRetrievalTelemetry",
     "ReportBuilder",
     "ReproducibilityBundle",
     "ReproducibilityBundleExporter",

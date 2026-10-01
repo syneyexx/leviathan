@@ -1213,6 +1213,65 @@ class KnowledgeStore:
             row = conn.execute("SELECT * FROM knowledge_documents WHERE id = ?", (document_id,)).fetchone()
         return self._row_to_document(row) if row else None
 
+    def get_documents_batch(
+        self,
+        document_ids: list[str] | tuple[str, ...],
+        *,
+        limit: int = 500,
+    ) -> dict[str, DocumentRecord]:
+        """Bounded batch document lookup — avoids N+1 get_document loops."""
+        ids = [str(i) for i in document_ids if i]
+        if not ids:
+            return {}
+        safe_limit = max(1, min(int(limit), 2_000))
+        ids = ids[:safe_limit]
+        placeholders = ",".join("?" for _ in ids)
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            rows = conn.execute(
+                f"SELECT * FROM knowledge_documents WHERE id IN ({placeholders})",
+                ids,
+            ).fetchall()
+        return {str(row["id"]): self._row_to_document(row) for row in rows}
+
+    def count_chunks_for_document(self, document_id: str) -> int:
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM knowledge_chunks WHERE document_id = ?",
+                (document_id,),
+            ).fetchone()
+        return int(row["c"] or 0) if row else 0
+
+    def count_chunks_for_documents(
+        self,
+        document_ids: list[str] | tuple[str, ...],
+        *,
+        limit: int = 500,
+    ) -> dict[str, int]:
+        """Bounded batch chunk counts — avoids loading chunk bodies via list_chunks."""
+        ids = [str(i) for i in document_ids if i]
+        if not ids:
+            return {}
+        safe_limit = max(1, min(int(limit), 2_000))
+        ids = ids[:safe_limit]
+        placeholders = ",".join("?" for _ in ids)
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            rows = conn.execute(
+                f"""
+                SELECT document_id, COUNT(*) AS c
+                FROM knowledge_chunks
+                WHERE document_id IN ({placeholders})
+                GROUP BY document_id
+                """,
+                ids,
+            ).fetchall()
+        out = {doc_id: 0 for doc_id in ids}
+        for row in rows:
+            out[str(row["document_id"])] = int(row["c"] or 0)
+        return out
+
     def list_documents(self, limit: int = 100, *, status: IngestStatus | None = None, offset: int = 0) -> list[DocumentRecord]:
         with self.connect() as conn:
             self._ensure_schema(conn)
@@ -1226,6 +1285,74 @@ class KnowledgeStore:
                     "SELECT * FROM knowledge_documents WHERE status = ? ORDER BY updated_at DESC, id LIMIT ? OFFSET ?",
                     (status.value, limit, max(0, offset)),
                 ).fetchall()
+        return [self._row_to_document(row) for row in rows]
+
+    def remap_document_sources(
+        self,
+        *,
+        from_source: str,
+        to_source: str,
+        limit: int = 5_000,
+    ) -> dict[str, Any]:
+        """Remap Knowledge document ``source`` values (bounded batch).
+
+        Used to migrate legacy ambiguous dataset sources (``dataset:dataset``)
+        to the canonical ``dataset:<id>:<version>`` contract. Does not rewrite
+        chunk content — only the durable source filter field.
+        """
+        if not from_source or not to_source:
+            raise ValueError("from_source and to_source are required")
+        if from_source == to_source:
+            return {"updated": 0, "from": from_source, "to": to_source, "exhausted": True}
+        now = utc_now()
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            rows = conn.execute(
+                """
+                SELECT id FROM knowledge_documents
+                WHERE source = ?
+                ORDER BY updated_at ASC, id
+                LIMIT ?
+                """,
+                (from_source, max(1, int(limit))),
+            ).fetchall()
+            ids = [str(r["id"]) for r in rows]
+            for doc_id in ids:
+                conn.execute(
+                    """
+                    UPDATE knowledge_documents
+                    SET source = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (to_source, now, doc_id),
+                )
+            conn.commit()
+        return {
+            "updated": len(ids),
+            "from": from_source,
+            "to": to_source,
+            "documentIdsSample": ids[:20],
+            "exhausted": len(ids) < max(1, int(limit)),
+        }
+
+    def list_documents_by_source(
+        self,
+        source: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[DocumentRecord]:
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            rows = conn.execute(
+                """
+                SELECT * FROM knowledge_documents
+                WHERE source = ?
+                ORDER BY updated_at DESC, id
+                LIMIT ? OFFSET ?
+                """,
+                (source, limit, max(0, offset)),
+            ).fetchall()
         return [self._row_to_document(row) for row in rows]
 
     @staticmethod

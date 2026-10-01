@@ -14,6 +14,22 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+# P1-008: reserved canonical metadata keys — set_metadata must not clobber these.
+RESERVED_CANONICAL_METADATA_KEYS = frozenset(
+    {
+        "source",
+        "sourcePath",
+        "sourceHash",
+        "datasetId",
+        "versionId",
+        "lineage",
+        "trust",
+    }
+)
+
+# Allowed namespaces for operator/user metadata that would otherwise collide.
+OPERATOR_METADATA_NAMESPACES = frozenset({"user", "operator"})
+
 TransformFn = Callable[[CanonicalRecord], CanonicalRecord | None]
 
 
@@ -88,16 +104,51 @@ def _add_prefix(rec: CanonicalRecord, params: dict[str, Any]) -> CanonicalRecord
     )
 
 
+def _merge_set_metadata(
+    existing: dict[str, Any],
+    extra: dict[str, Any],
+    *,
+    namespace: str = "user",
+) -> dict[str, Any]:
+    """Merge operator metadata without overwriting reserved canonical keys.
+
+    Non-reserved keys are written at the top level. Attempts to set a reserved
+    key are redirected into ``namespace`` (default ``user``; ``operator`` also
+    allowed) so provenance fields stay intact.
+    """
+    ns = (namespace or "user").strip() or "user"
+    if ns not in OPERATOR_METADATA_NAMESPACES:
+        raise DatasetError(
+            f"set_metadata.namespace must be one of {sorted(OPERATOR_METADATA_NAMESPACES)}",
+            code="invalid_transform",
+        )
+    merged = dict(existing)
+    redirected: dict[str, Any] = {}
+    for key, value in extra.items():
+        if key in RESERVED_CANONICAL_METADATA_KEYS or key in OPERATOR_METADATA_NAMESPACES:
+            redirected[key] = value
+        else:
+            merged[key] = value
+    if redirected:
+        bucket = merged.get(ns)
+        if isinstance(bucket, dict):
+            merged[ns] = {**bucket, **redirected}
+        else:
+            merged[ns] = dict(redirected)
+    return merged
+
+
 def _set_metadata(rec: CanonicalRecord, params: dict[str, Any]) -> CanonicalRecord | None:
     extra = params.get("metadata") or {}
     if not isinstance(extra, dict):
         raise DatasetError("set_metadata.metadata must be an object", code="invalid_transform")
+    namespace = str(params.get("namespace") or "user")
     return CanonicalRecord(
         id=rec.id,
         text=rec.text,
         messages=rec.messages,
         labels=rec.labels,
-        metadata={**rec.metadata, **extra},
+        metadata=_merge_set_metadata(dict(rec.metadata), extra, namespace=namespace),
         split=rec.split,
     )
 
@@ -197,10 +248,12 @@ def apply_transforms(
     records: Iterable[CanonicalRecord],
     transforms: list[dict[str, Any]],
 ) -> tuple[list[CanonicalRecord], list[dict[str, Any]]]:
-    """Compatibility wrapper — materializes output list (for small/tests).
+    """List materialization wrapper — retained for small corpora / unit tests (Wave 12).
 
-    Production handlers should stream via ``apply_transforms_streaming`` into
-    ``write_canonical_jsonl_stream`` instead of calling this for large corpora.
+    Proof of retention: called by ``test_dataset_provenance_w8`` transform
+    lineage tests. Production handlers must stream via
+    ``apply_transforms_streaming`` into ``write_canonical_jsonl_stream``.
+    DatasetService must not import this list wrapper.
     """
     it, lineage_fn = apply_transforms_streaming(records, transforms)
     out = list(it)

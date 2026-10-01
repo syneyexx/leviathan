@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -308,19 +309,21 @@ class HfDownloadCheckpoint:
     completed: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "repositoryId": self.repository_id,
-            "revision": self.revision,
-            "filename": self.filename,
-            "bytesDownloaded": self.bytes_downloaded,
-            "totalBytes": self.total_bytes,
-            "etag": self.etag,
-            "attempts": self.attempts,
-            "lastStatus": self.last_status,
-            "rateLimitEvents": self.rate_limit_events,
-            "contentHash": self.content_hash,
-            "completed": self.completed,
-        }
+        return scrub_hf_secrets(
+            {
+                "repositoryId": self.repository_id,
+                "revision": self.revision,
+                "filename": self.filename,
+                "bytesDownloaded": self.bytes_downloaded,
+                "totalBytes": self.total_bytes,
+                "etag": self.etag,
+                "attempts": self.attempts,
+                "lastStatus": self.last_status,
+                "rateLimitEvents": self.rate_limit_events,
+                "contentHash": self.content_hash,
+                "completed": self.completed,
+            }
+        )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "HfDownloadCheckpoint":
@@ -455,10 +458,13 @@ class HfRepoManifest:
     updated_at: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "repositoryId": self.repository_id,
             "revision": self.revision,
             "resolvedRevision": self.resolved_revision,
+            "pinnedRevision": effective_download_revision(
+                revision=self.revision, resolved_revision=self.resolved_revision
+            ),
             "filesTotal": self.files_total,
             "bytesTotal": self.bytes_total,
             "filesCompleted": self.files_completed,
@@ -469,6 +475,7 @@ class HfRepoManifest:
             "phase": self.phase,
             "updatedAt": self.updated_at,
         }
+        return scrub_hf_secrets(payload)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "HfRepoManifest":
@@ -514,6 +521,43 @@ class HfRepoManifest:
         self.bytes_downloaded = downloaded
         self.updated_at = time.time()
 
+    def is_download_complete(self) -> bool:
+        """True only when every planned DATA file is verified complete."""
+        self.recompute()
+        if self.files_total <= 0:
+            return False
+        if self.files_failed > 0:
+            return False
+        if len(self.files) != self.files_total:
+            return False
+        if self.files_completed != self.files_total:
+            return False
+        return all(state.status == "complete" for state in self.files.values())
+
+    def mark_download_completed(self) -> None:
+        """Set phase to download_completed only when the repo is fully complete.
+
+        Incomplete repositories must never be marked COMPLETE/download_completed.
+        """
+        if not self.is_download_complete():
+            self.phase = "failed"
+            raise DatasetError(
+                (
+                    f"HF repository download incomplete: "
+                    f"{self.files_completed}/{self.files_total} files ok; "
+                    f"failed={self.files_failed}"
+                ),
+                code="hf_download_incomplete",
+                http_status=502,
+                details={
+                    "filesCompleted": self.files_completed,
+                    "filesTotal": self.files_total,
+                    "filesFailed": self.files_failed,
+                    "phase": self.phase,
+                },
+            )
+        self.phase = "download_completed"
+
 
 class RateLimitCoordinator:
     """Shared 429 gate so parallel workers do not independently hammer retries."""
@@ -549,6 +593,100 @@ def _parse_retry_after(response: httpx.Response) -> float | None:
         return float(raw)
     except ValueError:
         return None
+
+
+def parse_content_range(value: str | None) -> tuple[int, int, int | None] | None:
+    """Parse ``Content-Range: bytes START-END/TOTAL``.
+
+    Returns ``(start, end, total)`` where ``total`` is ``None`` when the server
+    reports ``*``. Invalid / malformed headers return ``None``.
+    """
+    if not value or not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text.lower().startswith("bytes"):
+        return None
+    body = text[5:].strip()
+    if "/" not in body or "-" not in body:
+        return None
+    try:
+        range_part, total_part = body.split("/", 1)
+        start_s, end_s = range_part.split("-", 1)
+        start = int(start_s.strip())
+        end = int(end_s.strip())
+        if end < start or start < 0:
+            return None
+        total_raw = total_part.strip()
+        if total_raw == "*":
+            return start, end, None
+        total = int(total_raw)
+        # TOTAL is the object size; end is inclusive, so total must be > end.
+        if total < 0 or total <= end:
+            return None
+        return start, end, total
+    except (TypeError, ValueError):
+        return None
+
+
+def effective_download_revision(*, revision: str, resolved_revision: str | None) -> str:
+    """Prefer a pinned commit SHA over a floating branch/tag ref."""
+    pinned = (resolved_revision or "").strip()
+    if pinned:
+        return pinned
+    return (revision or "main").strip() or "main"
+
+
+def scrub_hf_secrets(value: Any) -> Any:
+    """Recursively redact auth tokens / secrets from durable HF payloads."""
+    banned_keys = {
+        "token",
+        "access_token",
+        "accesstoken",
+        "hf_token",
+        "hftoken",
+        "authorization",
+        "api_key",
+        "apikey",
+        "secret",
+        "password",
+        "bearer",
+    }
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            key_l = str(key).lower().replace("-", "_")
+            if key_l in banned_keys or "token" in key_l or "secret" in key_l or "authorization" in key_l:
+                out[key] = "[REDACTED]"
+            elif isinstance(item, str):
+                out[key] = redact_secrets(item)
+            else:
+                out[key] = scrub_hf_secrets(item)
+        return out
+    if isinstance(value, list):
+        return [scrub_hf_secrets(item) for item in value]
+    if isinstance(value, str):
+        return redact_secrets(value)
+    return value
+
+
+def _raise_disk_full(exc: OSError, *, path: Path | str) -> None:
+    raise DatasetError(
+        f"Disk full while writing Hugging Face download: {path}",
+        code="disk_full",
+        http_status=507,
+        details={"errno": getattr(exc, "errno", None), "path": str(path)},
+    ) from exc
+
+
+def _is_disk_full(exc: BaseException) -> bool:
+    if isinstance(exc, OSError):
+        if exc.errno in {errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC)}:
+            return True
+        # Some platforms surface ENOSPC only in the message.
+        msg = str(exc).lower()
+        if "no space left" in msg or "disk full" in msg or "edquot" in msg:
+            return True
+    return False
 
 
 def _auth_headers(token: str | None) -> dict[str, str]:
@@ -749,7 +887,11 @@ def discover_hf_repository(
     token: str | None = None,
     client: httpx.Client | None = None,
 ) -> HfRepoPlan:
-    """Resolve repo, recursively enumerate, classify, and build a download plan."""
+    """Resolve repo, recursively enumerate, classify, and build a download plan.
+
+    When the Hub returns a commit SHA, the plan pins downloads to that revision
+    (``resolved_revision``) so a moving branch tip cannot change mid-transfer.
+    """
     repo = repository_id.strip().strip("/")
     rev = revision.strip() or "main"
     resolved: str | None = None
@@ -760,10 +902,16 @@ def discover_hf_repository(
         api = HfApi(token=tok)
         info = api.dataset_info(repo_id=repo, revision=rev)
         resolved = getattr(info, "sha", None) or getattr(info, "commit_hash", None)
+        if resolved is not None:
+            resolved = str(resolved)
     except Exception:  # noqa: BLE001
         resolved = None
 
-    raw_files = list_hf_dataset_files(repo, revision=rev, token=token, client=client, recursive=True)
+    # Enumerate at the pinned commit when available (revision pinning).
+    list_revision = effective_download_revision(revision=rev, resolved_revision=resolved)
+    raw_files = list_hf_dataset_files(
+        repo, revision=list_revision, token=token, client=client, recursive=True
+    )
     files: list[HfRepoFile] = []
     classification: dict[str, str] = {}
     data_files: list[HfRepoFile] = []
@@ -806,7 +954,7 @@ def discover_hf_repository(
     return HfRepoPlan(
         repository_id=repo,
         revision=rev,
-        resolved_revision=str(resolved) if resolved else None,
+        resolved_revision=resolved,
         files=files,
         classification=classification,
         data_files=data_files,
@@ -858,7 +1006,8 @@ def build_manifest_from_plan(plan: HfRepoPlan, *, existing: HfRepoManifest | Non
 
 def write_repo_manifest(path: Path, manifest: HfRepoManifest) -> None:
     ensure_dir(path.parent)
-    atomic_write_text(path, json.dumps(manifest.to_dict(), indent=2, sort_keys=True) + "\n")
+    payload = scrub_hf_secrets(manifest.to_dict())
+    atomic_write_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
 def load_repo_manifest(path: Path) -> HfRepoManifest | None:
@@ -1070,22 +1219,91 @@ def download_hf_file(
                         )
 
                     # Server ignored Range → restart partial safely (do NOT append).
-                    if response.status_code == 200 and cp.bytes_downloaded > 0:
+                    requested_offset = int(cp.bytes_downloaded or 0)
+                    if response.status_code == 200 and requested_offset > 0:
                         cp.bytes_downloaded = 0
+                        requested_offset = 0
                         if partial.exists():
                             partial.unlink()
                         hasher = hashlib.sha256()
 
-                    total_header = response.headers.get("content-length")
                     content_range = response.headers.get("content-range")
-                    if content_range and "/" in content_range:
-                        try:
-                            cp.total_bytes = int(content_range.split("/")[-1])
-                        except ValueError:
-                            pass
+                    total_header = response.headers.get("content-length")
+                    if response.status_code == 206:
+                        parsed_range = parse_content_range(content_range)
+                        if parsed_range is None:
+                            raise DatasetError(
+                                f"Invalid Content-Range for resume of {safe_name}: {content_range!r}",
+                                code="hf_invalid_content_range",
+                                http_status=502,
+                                details={"contentRange": content_range, "requestedOffset": requested_offset},
+                            )
+                        range_start, range_end, range_total = parsed_range
+                        if range_start != requested_offset:
+                            raise DatasetError(
+                                (
+                                    f"Content-Range start mismatch for {safe_name}: "
+                                    f"got {range_start} expected {requested_offset}"
+                                ),
+                                code="hf_invalid_content_range",
+                                http_status=502,
+                                details={
+                                    "contentRange": content_range,
+                                    "requestedOffset": requested_offset,
+                                    "rangeStart": range_start,
+                                    "rangeEnd": range_end,
+                                },
+                            )
+                        if range_total is not None:
+                            if expected_size is not None and range_total != expected_size:
+                                # Remote object changed under a resume cursor.
+                                cp.bytes_downloaded = 0
+                                cp.etag = None
+                                cp.content_hash = None
+                                if partial.exists():
+                                    partial.unlink()
+                                hasher = hashlib.sha256()
+                                if progress_cb:
+                                    progress_cb(
+                                        {
+                                            "phase": "remote_changed",
+                                            "reason": "content_range_size_mismatch",
+                                            "expectedSize": expected_size,
+                                            "remoteSize": range_total,
+                                            "checkpoint": cp.to_dict(),
+                                            "filename": safe_name,
+                                        }
+                                    )
+                                attempt += 1
+                                continue
+                            cp.total_bytes = range_total
+                    elif content_range:
+                        # Unexpected Content-Range on a non-206 response.
+                        parsed_range = parse_content_range(content_range)
+                        if parsed_range is None:
+                            raise DatasetError(
+                                f"Invalid Content-Range header for {safe_name}: {content_range!r}",
+                                code="hf_invalid_content_range",
+                                http_status=502,
+                                details={"contentRange": content_range},
+                            )
+                        _start, _end, range_total = parsed_range
+                        if range_total is not None:
+                            cp.total_bytes = range_total
                     elif total_header and total_header.isdigit():
                         if response.status_code == 200:
-                            cp.total_bytes = int(total_header)
+                            remote_size = int(total_header)
+                            if expected_size is not None and remote_size != expected_size:
+                                raise DatasetError(
+                                    (
+                                        f"Remote size changed for {safe_name}: "
+                                        f"got {remote_size} expected {expected_size}"
+                                    ),
+                                    code="hf_remote_changed",
+                                    http_status=502,
+                                    details={"expectedSize": expected_size, "remoteSize": remote_size},
+                                )
+                            cp.total_bytes = remote_size
                         elif cp.total_bytes is None:
                             cp.total_bytes = cp.bytes_downloaded + int(total_header)
 
@@ -1094,9 +1312,19 @@ def download_hf_file(
                         new_etag
                         and cp.etag
                         and new_etag != cp.etag
-                        and cp.bytes_downloaded > 0
+                        and requested_offset > 0
                     ):
                         # Remote identity changed under a partial. Restart the file.
+                        if progress_cb:
+                            progress_cb(
+                                {
+                                    "phase": "etag_mismatch",
+                                    "previousEtag": cp.etag,
+                                    "newEtag": new_etag,
+                                    "checkpoint": cp.to_dict(),
+                                    "filename": safe_name,
+                                }
+                            )
                         cp.bytes_downloaded = 0
                         cp.etag = None
                         cp.content_hash = None
@@ -1107,31 +1335,41 @@ def download_hf_file(
                         continue
                     cp.etag = new_etag or cp.etag
                     mode = "ab" if cp.bytes_downloaded > 0 else "wb"
-                    with partial.open(mode) as handle:
-                        for chunk in response.iter_bytes(chunk_size=chunk_size):
-                            if cancel_check():
-                                raise DatasetError(
-                                    "Download cancelled", code="cancelled", http_status=409
-                                )
-                            if not chunk:
-                                continue
-                            handle.write(chunk)
-                            if hasher is not None:
-                                hasher.update(chunk)
-                            cp.bytes_downloaded += len(chunk)
-                            if progress_cb:
-                                progress_cb(
-                                    {
-                                        "phase": "downloading",
-                                        "bytesDownloaded": cp.bytes_downloaded,
-                                        "totalBytes": cp.total_bytes,
-                                        "checkpoint": cp.to_dict(),
-                                        "filename": safe_name,
-                                        "chunkSize": chunk_size,
-                                    }
-                                )
-                        handle.flush()
-                        os.fsync(handle.fileno())
+                    try:
+                        with partial.open(mode) as handle:
+                            for chunk in response.iter_bytes(chunk_size=chunk_size):
+                                if cancel_check():
+                                    raise DatasetError(
+                                        "Download cancelled", code="cancelled", http_status=409
+                                    )
+                                if not chunk:
+                                    continue
+                                try:
+                                    handle.write(chunk)
+                                except OSError as exc:
+                                    if _is_disk_full(exc):
+                                        _raise_disk_full(exc, path=partial)
+                                    raise
+                                if hasher is not None:
+                                    hasher.update(chunk)
+                                cp.bytes_downloaded += len(chunk)
+                                if progress_cb:
+                                    progress_cb(
+                                        {
+                                            "phase": "downloading",
+                                            "bytesDownloaded": cp.bytes_downloaded,
+                                            "totalBytes": cp.total_bytes,
+                                            "checkpoint": cp.to_dict(),
+                                            "filename": safe_name,
+                                            "chunkSize": chunk_size,
+                                        }
+                                    )
+                            handle.flush()
+                            os.fsync(handle.fileno())
+                    except OSError as exc:
+                        if _is_disk_full(exc):
+                            _raise_disk_full(exc, path=partial)
+                        raise
 
                     # Promote partial → final after size check. Handle is closed
                     # first so Windows can replace the partial.
@@ -1141,7 +1379,21 @@ def download_hf_file(
                             code="hf_size_mismatch",
                             http_status=502,
                         )
-                    partial.replace(dest_path)
+                    if cp.total_bytes is not None and cp.bytes_downloaded != cp.total_bytes:
+                        raise DatasetError(
+                            (
+                                f"Incomplete download for {safe_name}: "
+                                f"got {cp.bytes_downloaded} of {cp.total_bytes}"
+                            ),
+                            code="hf_size_mismatch",
+                            http_status=502,
+                        )
+                    try:
+                        partial.replace(dest_path)
+                    except OSError as exc:
+                        if _is_disk_full(exc):
+                            _raise_disk_full(exc, path=dest_path)
+                        raise
                     if hasher is not None:
                         digest = hasher.hexdigest()
                     else:
@@ -1173,7 +1425,11 @@ def download_hf_file(
                         byte_size=size,
                         checkpoint=cp,
                         url=url,
-                        headers={k: v for k, v in response.headers.items() if k.lower() != "authorization"},
+                        headers={
+                            k: v
+                            for k, v in response.headers.items()
+                            if k.lower() != "authorization"
+                        },
                     )
             except DatasetError:
                 raise
@@ -1218,11 +1474,20 @@ def download_hf_file(
                     ) from exc
                 sleep_fn(delay)
 
+        # Honesty: do not label pure 5xx exhaustion as rate-limited (Wave 15 NEW-W15-001).
+        if cp.rate_limit_events > 0:
+            raise DatasetError(
+                f"HF download exhausted retries after {policy.max_attempts} attempts "
+                f"(429 events={cp.rate_limit_events})",
+                code="hf_rate_limited",
+                http_status=429,
+            )
         raise DatasetError(
             f"HF download exhausted retries after {policy.max_attempts} attempts "
-            f"(429 events={cp.rate_limit_events})",
-            code="hf_rate_limited",
-            http_status=429,
+            f"(last HTTP status={cp.last_status})",
+            code="hf_server_error",
+            http_status=502,
+            details={"lastStatus": cp.last_status, "attempts": policy.max_attempts},
         )
     finally:
         if owns_client:
@@ -1268,7 +1533,12 @@ def download_hf_repository(
     chunk_size = chunk_size or hf_download_chunk_bytes()
     ensure_dir(raw_root)
 
+    pinned_revision = effective_download_revision(
+        revision=plan.revision, resolved_revision=plan.resolved_revision
+    )
     manifest = build_manifest_from_plan(plan, existing=manifest)
+    if plan.resolved_revision:
+        manifest.resolved_revision = plan.resolved_revision
     # Disk preflight using remaining bytes
     already = sum(
         int(s.size or s.downloaded or 0)
@@ -1312,21 +1582,24 @@ def download_hf_repository(
             and manifest.bytes_downloaded < manifest.bytes_total
         ):
             eta = (manifest.bytes_total - manifest.bytes_downloaded) / bps
-        payload = {
-            "phase": phase,
-            "filesTotal": manifest.files_total,
-            "filesCompleted": manifest.files_completed,
-            "filesFailed": manifest.files_failed,
-            "bytesTotal": manifest.bytes_total,
-            "bytesDownloaded": manifest.bytes_downloaded,
-            "bytesPerSecond": bps,
-            "etaSeconds": eta,
-            "workers": workers,
-            "chunkSize": chunk_size,
-            "rateLimitEvents": rate_limit.events,
-            "manifest": manifest.to_dict(),
-            **extra,
-        }
+        payload = scrub_hf_secrets(
+            {
+                "phase": phase,
+                "filesTotal": manifest.files_total,
+                "filesCompleted": manifest.files_completed,
+                "filesFailed": manifest.files_failed,
+                "bytesTotal": manifest.bytes_total,
+                "bytesDownloaded": manifest.bytes_downloaded,
+                "bytesPerSecond": bps,
+                "etaSeconds": eta,
+                "workers": workers,
+                "chunkSize": chunk_size,
+                "rateLimitEvents": rate_limit.events,
+                "pinnedRevision": pinned_revision,
+                "manifest": manifest.to_dict(),
+                **extra,
+            }
+        )
         if progress_cb:
             progress_cb(payload)
 
@@ -1345,14 +1618,14 @@ def download_hf_repository(
                         byte_size=size,
                         checkpoint=HfDownloadCheckpoint(
                             repository_id=plan.repository_id,
-                            revision=plan.revision,
+                            revision=pinned_revision,
                             filename=entry.path,
                             bytes_downloaded=size,
                             total_bytes=size,
                             content_hash=state.hash,
                             completed=True,
                         ),
-                        url=resolve_hf_file_url(plan.repository_id, plan.revision, entry.path),
+                        url=resolve_hf_file_url(plan.repository_id, pinned_revision, entry.path),
                     )
                 )
                 continue
@@ -1389,7 +1662,7 @@ def download_hf_repository(
                 repository_id=plan.repository_id,
                 filename=entry.path,
                 dest_path=dest,
-                revision=plan.revision,
+                revision=pinned_revision,
                 token=token,
                 cancel_check=cancel_check,
                 sleep_fn=sleep_fn,
@@ -1415,7 +1688,7 @@ def download_hf_repository(
 
     try:
         if not pending:
-            manifest.phase = "download_completed"
+            manifest.mark_download_completed()
             persist(force=True)
             emit("download_completed")
             elapsed = max(1e-6, time.monotonic() - started)
@@ -1445,7 +1718,7 @@ def download_hf_repository(
                         st.error = redact_secrets(exc.message)
                         st.retry_count += 1
                         persist(force=True)
-                    errors.append(f"{entry.path}: {exc.message}")
+                    errors.append(f"{entry.path}: {redact_secrets(exc.message)}")
                 except Exception as exc:  # noqa: BLE001
                     with lock:
                         st = manifest.files[entry.path]
@@ -1453,12 +1726,12 @@ def download_hf_repository(
                         st.error = redact_secrets(str(exc))
                         st.retry_count += 1
                         persist(force=True)
-                    errors.append(f"{entry.path}: {exc}")
+                    errors.append(f"{entry.path}: {redact_secrets(str(exc))}")
     finally:
         persist(force=True)
 
     manifest.recompute()
-    if errors or manifest.files_failed:
+    if errors or manifest.files_failed or not manifest.is_download_complete():
         manifest.phase = "failed"
         persist(force=True)
         emit("failed")
@@ -1469,7 +1742,7 @@ def download_hf_repository(
             http_status=502,
         )
 
-    manifest.phase = "download_completed"
+    manifest.mark_download_completed()
     persist(force=True)
     elapsed = max(1e-6, time.monotonic() - started)
     transferred = max(0, manifest.bytes_downloaded - bytes_at_start)

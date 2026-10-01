@@ -2323,18 +2323,26 @@ class ResearchService:
             "verified_by": "DatasetService",
             "index_ref": learning.get("index_ref"),
         }
-        scope = f"dataset:{dataset_id}"
-        if resolved_version:
-            scope = f"dataset:{dataset_id}:{resolved_version}"
+        from Data.modules.datasets.knowledge_identity import research_scopes_for_dataset
+
+        scopes_for_ds = research_scopes_for_dataset(
+            dataset_id, version_id=resolved_version
+        )
+        entry["knowledge_scopes"] = list(scopes_for_ds)
+        entry["canonical_knowledge_source"] = scopes_for_ds[0] if scopes_for_ds else None
         datasets = [d for d in project.connected_datasets if d.get("dataset_id") != dataset_id]
         datasets.append(entry)
         project.connected_datasets = datasets
         scopes = list(project.local_scopes)
-        if scope not in scopes:
-            scopes.append(scope)
-        for candidate in (f"dataset:{dataset_id}", "dataset"):
-            if candidate not in scopes:
-                scopes.append(candidate)
+        # Remove ambiguous legacy bare "dataset" and "dataset:dataset" scopes.
+        scopes = [
+            s
+            for s in scopes
+            if s not in {"dataset", "dataset:dataset"}
+        ]
+        for scope in scopes_for_ds:
+            if scope not in scopes:
+                scopes.append(scope)
         project.local_scopes = scopes
         self.store.save_project(project)
         self.store.add_event(

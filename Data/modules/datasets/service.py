@@ -51,7 +51,7 @@ from .checkpoint import (
 )
 from .compute_planner import BackendPlan, ComputeBackend, ComputeBackendPlanner
 from .contamination import scan_contamination
-from .dedupe import exact_dedupe, iter_exact_dedupe_external
+from .dedupe import iter_exact_dedupe_external
 from .export import export_jsonl, preview_jsonl
 from .formats import detect_format
 from .huggingface import (
@@ -70,9 +70,13 @@ from .huggingface import (
 from .importers import copy_immutable_raw, inspect_local_file, reject_traversal_components, resolve_import_path
 from .indexing import index_version_file
 from .jobs import DatasetJobRunner, enqueue_kernel_for_domain_job, kernel_idempotency_key
+from .knowledge_identity import (
+    is_legacy_ambiguous_source,
+    knowledge_source_for_version,
+    resolve_index_scope,
+)
 from .materialize import (
     iter_version_records,
-    load_materialized_jsonl,
     materialize_from_raw,
     materialize_from_sources,
     write_canonical_jsonl,
@@ -104,10 +108,10 @@ from .sidecar import (
     write_sidecar,
     write_tombstone,
 )
-from .splits import deterministic_split, iter_deterministic_split
+from .splits import iter_deterministic_split
 from .store import DatasetStore, utc_now
 from .tokenize_stats import compute_token_stats
-from .transforms import apply_transforms, apply_transforms_streaming
+from .transforms import apply_transforms_streaming
 from .types import (
     CAPABILITY_PROCESS,
     DatasetError,
@@ -329,10 +333,59 @@ class DatasetService:
         self.runner.jobs = job_runtime
 
     def _queue_domain_job(self, **kwargs: Any) -> DatasetJob:
-        """Create domain dataset_jobs row and enqueue linked kernel job when available."""
+        """Create domain dataset_jobs row and link a runnable kernel job when bound.
+
+        Option A (P0-005): when JobRuntime is bound, a QUEUED domain job is only
+        accepted if kernel enqueue succeeds. Enqueue failure marks the domain job
+        FAILED with a truthful execution-unavailable code and raises — never leave
+        an orphan QUEUED domain row without execution authority.
+        """
         job = self.store.create_job(**kwargs)
-        if job.status == DatasetJobStatus.QUEUED and self.jobs is not None:
-            enqueue_kernel_for_domain_job(self.jobs, job)
+        if job.status != DatasetJobStatus.QUEUED:
+            return job
+        if self.jobs is None:
+            # Legacy/test path: domain drain owns execution; no kernel required.
+            return job
+        try:
+            kernel = enqueue_kernel_for_domain_job(self.jobs, job, raise_on_error=True)
+        except Exception as exc:  # noqa: BLE001
+            self.store.update_job(
+                job.job_id,
+                status=DatasetJobStatus.FAILED,
+                error=redact_secrets(
+                    f"[DATASET_EXECUTION_UNAVAILABLE] JobRuntime enqueue failed: {exc}"
+                )[:4000],
+                finished_at=utc_now(),
+                phase="enqueue_failed",
+            )
+            raise DatasetError(
+                "Dataset job accepted but JobRuntime could not enqueue execution; "
+                "refusing false QUEUED success",
+                code="DATASET_EXECUTION_UNAVAILABLE",
+                http_status=503,
+                details={
+                    "datasetJobId": job.job_id,
+                    "reason": "kernel_enqueue_failed",
+                    "error": redact_secrets(str(exc))[:500],
+                },
+            ) from exc
+        if kernel is None:
+            self.store.update_job(
+                job.job_id,
+                status=DatasetJobStatus.FAILED,
+                error="[DATASET_EXECUTION_UNAVAILABLE] JobRuntime enqueue returned no kernel job",
+                finished_at=utc_now(),
+                phase="enqueue_failed",
+            )
+            raise DatasetError(
+                "Dataset job could not obtain a runnable JobKernel lease",
+                code="DATASET_EXECUTION_UNAVAILABLE",
+                http_status=503,
+                details={
+                    "datasetJobId": job.job_id,
+                    "reason": "kernel_enqueue_returned_none",
+                },
+            )
         return job
 
     def _kernel_for_domain(self, domain_job_id: str) -> JobRecord | None:
@@ -1531,6 +1584,69 @@ class DatasetService:
         )
         return state.public_dict()
 
+    def migrate_legacy_knowledge_sources(
+        self,
+        *,
+        dataset_id: str | None = None,
+        limit: int = 5_000,
+    ) -> dict[str, Any]:
+        """Remap legacy ``dataset:dataset`` Knowledge rows to canonical sources.
+
+        Uses each document's ``trust_metadata.datasetId`` / ``versionId``.
+        Documents lacking that provenance are skipped — never remapped blindly
+        across datasets. Safe to re-run (idempotent once sources are canonical).
+        """
+        from Data.modules.knowledge.store import utc_now as knowledge_utc_now
+
+        if self.knowledge is None:
+            return {
+                "migrated": 0,
+                "skipped": 0,
+                "reason": "knowledge_unavailable",
+            }
+        migrated = 0
+        skipped = 0
+        remapped_ids: list[str] = []
+        for legacy in ("dataset:dataset", "dataset"):
+            docs = self.knowledge.list_documents_by_source(legacy, limit=limit)
+            for doc in docs:
+                trust = dict(doc.trust_metadata or {})
+                did = str(trust.get("datasetId") or trust.get("dataset_id") or "")
+                vid = str(trust.get("versionId") or trust.get("version_id") or "")
+                if dataset_id and did and did != dataset_id:
+                    skipped += 1
+                    continue
+                if not did or not vid:
+                    skipped += 1
+                    continue
+                target = knowledge_source_for_version(did, vid)
+                with self.knowledge.connect() as conn:
+                    self.knowledge._ensure_schema(conn)
+                    conn.execute(
+                        "UPDATE knowledge_documents SET source = ?, updated_at = ? WHERE id = ?",
+                        (target, knowledge_utc_now(), doc.document_id),
+                    )
+                    conn.commit()
+                migrated += 1
+                if len(remapped_ids) < 20:
+                    remapped_ids.append(doc.document_id)
+                for idx in self.store.list_indexes(did):
+                    if idx.version_id == vid and (
+                        not idx.knowledge_scope
+                        or is_legacy_ambiguous_source(idx.knowledge_scope)
+                        or idx.knowledge_scope == "dataset"
+                    ):
+                        self.store.update_index(idx.index_id, knowledge_scope=target)
+        return {
+            "migrated": migrated,
+            "skipped": skipped,
+            "documentIdsSample": remapped_ids,
+            "truth": {
+                "canonical_source": "dataset:<dataset_id>:<version_id>",
+                "legacy_dataset_dataset_remapped_via_trust_metadata": True,
+            },
+        }
+
     def brain_status_for_dataset(self, dataset_id: str) -> dict[str, Any]:
         """Map existing index/job state into Brain-ingestion truth for the UI.
 
@@ -2402,9 +2518,101 @@ class DatasetService:
 
                 if kernel.state not in TERMINAL_JOB_STATES:
                     self.jobs.cancel(kernel.job_id, reason="dataset domain cancel")
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                # Domain cancel is durable; record the kernel sync failure honestly
+                # rather than pretending bidirectional cancel succeeded.
+                cancelled = self.store.update_job(
+                    job_id,
+                    error=redact_secrets(
+                        f"domain cancelled; kernel cancel sync failed: {exc}"
+                    )[:4000],
+                    phase="cancel_kernel_sync_failed",
+                )
         return cancelled
+
+    def reconcile_orphan_queued_jobs(self, *, limit: int = 100) -> list[DatasetJob]:
+        """Recover QUEUED domain jobs that lack a runnable kernel lease.
+
+        When JobRuntime is bound, every accepted QUEUED domain job must have a
+        kernel job. Orphans (crash between domain insert and enqueue, or legacy
+        rows) are either re-linked exactly once or marked FAILED truthfully.
+
+        Also reconciles cancel split-brain: kernel CANCELLED/CANCEL_REQUESTED
+        while domain remains non-terminal → domain CANCELLED.
+        """
+        if self.jobs is None:
+            return []
+        from Data.modules.jobs.states import JobState, TERMINAL_JOB_STATES
+
+        recovered: list[DatasetJob] = []
+        for job in self.store.list_jobs(status=DatasetJobStatus.QUEUED, limit=limit):
+            kernel = self._kernel_for_domain(job.job_id)
+            if kernel is not None:
+                if kernel.state == JobState.CANCELLED:
+                    cancelled = self.store.update_job(
+                        job.job_id,
+                        status=DatasetJobStatus.CANCELLED,
+                        cancel_requested=True,
+                        finished_at=utc_now(),
+                        error="reconciled: linked kernel job CANCELLED",
+                        phase="cancelled",
+                        worker_pid=None,
+                    )
+                    recovered.append(cancelled)
+                    continue
+                if kernel.state == JobState.CANCEL_REQUESTED:
+                    cancelled = self.store.update_job(
+                        job.job_id,
+                        status=DatasetJobStatus.CANCELLED,
+                        cancel_requested=True,
+                        finished_at=utc_now(),
+                        error="reconciled: linked kernel job CANCEL_REQUESTED",
+                        phase="cancelled",
+                        worker_pid=None,
+                    )
+                    recovered.append(cancelled)
+                    continue
+                if kernel.state in TERMINAL_JOB_STATES and kernel.state != JobState.CANCELLED:
+                    # COMPLETED/FAILED kernel with QUEUED domain is also split-brain
+                    failed = self.store.update_job(
+                        job.job_id,
+                        status=DatasetJobStatus.FAILED
+                        if kernel.state == JobState.FAILED
+                        else DatasetJobStatus.COMPLETED,
+                        finished_at=utc_now(),
+                        error=f"reconciled: linked kernel already {kernel.state.value}",
+                        phase="reconciled_terminal",
+                        worker_pid=None,
+                    )
+                    recovered.append(failed)
+                    continue
+                continue
+            try:
+                linked = enqueue_kernel_for_domain_job(self.jobs, job, raise_on_error=True)
+            except Exception as exc:  # noqa: BLE001
+                failed = self.store.update_job(
+                    job.job_id,
+                    status=DatasetJobStatus.FAILED,
+                    error=redact_secrets(
+                        f"[DATASET_EXECUTION_UNAVAILABLE] orphan reconcile enqueue failed: {exc}"
+                    )[:4000],
+                    finished_at=utc_now(),
+                    phase="orphan_enqueue_failed",
+                )
+                recovered.append(failed)
+                continue
+            if linked is None:
+                failed = self.store.update_job(
+                    job.job_id,
+                    status=DatasetJobStatus.FAILED,
+                    error="[DATASET_EXECUTION_UNAVAILABLE] orphan reconcile returned no kernel",
+                    finished_at=utc_now(),
+                    phase="orphan_enqueue_failed",
+                )
+                recovered.append(failed)
+            else:
+                recovered.append(job)
+        return recovered
 
     def production_dataset_inline_forbidden(self) -> bool:
         """True when this service must not execute dataset handlers in-process.
@@ -2452,6 +2660,10 @@ class DatasetService:
         try:
             updated.extend(self.reconcile_stale_learning_jobs())
         except Exception:  # noqa: BLE001 — stale learning reconcile must not block
+            pass
+        try:
+            updated.extend(self.reconcile_orphan_queued_jobs())
+        except Exception:  # noqa: BLE001 — orphan reconcile must not block
             pass
         if not include_heavy:
             return updated
@@ -3073,37 +3285,68 @@ class DatasetService:
         )
 
     def enqueue_missing_semantic_profiles(self, *, limit: int = 25) -> dict[str, Any]:
-        """Bounded backfill: enqueue enrich_metadata for datasets lacking semanticProfile."""
+        """Bounded backfill: enqueue enrich_metadata for datasets lacking semanticProfile.
+
+        P2-002: paginate DatasetStore via query_datasets cursor pages instead of
+        ``list_datasets(limit=10_000)``.
+        """
         limit = max(1, min(int(limit), 200))
         enqueued: list[dict[str, Any]] = []
         skipped: list[dict[str, Any]] = []
-        for ds in self.store.list_datasets(limit=10_000):
-            if len(enqueued) >= limit:
-                break
-            meta = ds.metadata if isinstance(ds.metadata, dict) else {}
-            semantic = meta.get("semanticProfile")
-            if isinstance(semantic, dict) and semantic.get("displayName") and semantic.get("primaryCategory"):
-                skipped.append({"datasetId": ds.dataset_id, "reason": "already_enriched"})
-                continue
-            ver = self.pick_usable_version(ds.dataset_id)
-            if ver is None or not ver.storage_path:
-                skipped.append({"datasetId": ds.dataset_id, "reason": "no_usable_version"})
-                continue
-            job = self.enqueue_enrich_metadata(ds.dataset_id, ver.version_id, sync_artifacts=True)
-            enqueued.append(
-                {
-                    "datasetId": ds.dataset_id,
-                    "versionId": ver.version_id,
-                    "jobId": job.job_id,
-                }
+        page_size = 100
+        cursor: str | None = None
+        pages = 0
+        scanned = 0
+        while len(enqueued) < limit:
+            page = self.store.query_datasets(
+                limit=page_size,
+                cursor=cursor,
+                sort="updated_at_desc",
             )
+            items = list(page.get("items") or [])
+            pages += 1
+            if not items:
+                break
+            for ds in items:
+                scanned += 1
+                if len(enqueued) >= limit:
+                    break
+                meta = ds.metadata if isinstance(ds.metadata, dict) else {}
+                semantic = meta.get("semanticProfile")
+                if isinstance(semantic, dict) and semantic.get("displayName") and semantic.get("primaryCategory"):
+                    skipped.append({"datasetId": ds.dataset_id, "reason": "already_enriched"})
+                    continue
+                ver = self.pick_usable_version(ds.dataset_id)
+                if ver is None or not ver.storage_path:
+                    skipped.append({"datasetId": ds.dataset_id, "reason": "no_usable_version"})
+                    continue
+                job = self.enqueue_enrich_metadata(ds.dataset_id, ver.version_id, sync_artifacts=True)
+                enqueued.append(
+                    {
+                        "datasetId": ds.dataset_id,
+                        "versionId": ver.version_id,
+                        "jobId": job.job_id,
+                    }
+                )
+            cursor = page.get("nextCursor")
+            if not cursor:
+                break
+            # Hard safety against pathological catalogs.
+            if pages >= 10_000:
+                break
         return {
             "enqueued": enqueued,
             "enqueuedCount": len(enqueued),
             "skippedCount": len(skipped),
             "skipped": skipped[:50],
             "limit": limit,
-            "truth": {"boundedBackfill": True, "deterministicEnrichment": True},
+            "scanned": scanned,
+            "pages": pages,
+            "truth": {
+                "boundedBackfill": True,
+                "deterministicEnrichment": True,
+                "catalogPaginated": True,
+            },
         }
 
     def rebuild_dataset_catalog(self) -> dict[str, Any]:
@@ -4256,16 +4499,6 @@ class DatasetService:
         fmt_name = job.config.get("format")
         fmt = DetectedFormat(fmt_name) if fmt_name else ds.detected_format
         return self._materialize_dataset(job.dataset_id, raw_path=Path(ds.raw_path), fmt=fmt)
-
-    def _load_version_records(self, version_id: str) -> tuple[DatasetVersion, list]:
-        """Compatibility helper — refused for large files; prefer ``iter_version_records``."""
-        ver = self.get_version(version_id)
-        if not ver.storage_path:
-            raise DatasetError("Version has no storage", code="no_storage")
-        return ver, load_materialized_jsonl(
-            Path(ver.storage_path),
-            max_bytes=self.memory_policy.full_load_refuse_bytes,
-        )
 
     def _write_derived_version_stream(
         self,
@@ -5657,7 +5890,11 @@ class DatasetService:
                 code="storage_not_file",
                 http_status=400,
             )
-        scope = str(job.config.get("scope") or "dataset")
+        scope = resolve_index_scope(
+            dataset_id=job.dataset_id,
+            version_id=ver.version_id,
+            requested_scope=str(job.config.get("scope") or "") or None,
+        )
         max_records = job.config.get("maxRecords")
         offline_only = bool(job.config.get("offlineOnly"))
         source_fingerprint = job.config.get("sourceFingerprint")
@@ -5691,6 +5928,7 @@ class DatasetService:
                 "requestedVersionId": requested_version_id,
                 "resolvedVersionId": ver.version_id,
                 "learnToBrain": bool(job.config.get("learnToBrain")),
+                "canonicalKnowledgeSource": scope,
             },
         )
         try:
@@ -5776,9 +6014,51 @@ class DatasetService:
                 json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
             )
             manifest["manifestPath"] = str(manifest_path)
+
+            # P1-001: durable integrity receipt must PASS before IndexStatus.READY.
+            from .indexing import verify_index_integrity
+
+            self.store.update_job(job.job_id, phase="verifying", progress=0.97)
+            integrity_receipt = verify_index_integrity(
+                self.knowledge,
+                dataset_id=job.dataset_id,
+                version_id=ver.version_id,
+                source_fingerprint=str(source_fingerprint or ver.content_hash or ""),
+                index_id=index.index_id,
+                outcome=outcome,
+                manifest=manifest,
+                expected_records=int(ver.row_count)
+                if ver.row_count is not None
+                else int(outcome.get("processedCount") or 0),
+                scope=scope,
+            )
+            receipt_path = (
+                self.corpus.datasets_manifests / f"index-integrity-{index.index_id}.json"
+            )
+            atomic_write_text(
+                receipt_path,
+                json.dumps(integrity_receipt, ensure_ascii=False, indent=2, sort_keys=True)
+                + "\n",
+            )
+            integrity_receipt["receiptPath"] = str(receipt_path)
+            if integrity_receipt.get("verificationStatus") != "PASS":
+                raise DatasetError(
+                    "Index integrity verification failed: "
+                    + "; ".join(integrity_receipt.get("verificationErrors") or ["unknown"]),
+                    code="index_integrity_failed",
+                    http_status=409,
+                    details={
+                        "indexId": index.index_id,
+                        "verificationStatus": integrity_receipt.get("verificationStatus"),
+                        "evidenceClass": integrity_receipt.get("evidenceClass"),
+                        "receiptPath": str(receipt_path),
+                    },
+                )
+
             provenance = {
                 **outcome,
                 "manifest": manifest,
+                "integrityReceipt": integrity_receipt,
                 "offlineOnly": offline_only,
                 "requestedVersionId": requested_version_id,
                 "resolvedVersionId": ver.version_id,
@@ -5828,6 +6108,7 @@ class DatasetService:
                 "indexId": index.index_id,
                 **outcome,
                 "manifest": manifest,
+                "integrityReceipt": integrity_receipt,
                 "supersededIndexIds": superseded,
                 "rebuild": bool(job.config.get("rebuild")),
                 "requestedVersionId": requested_version_id,
@@ -5835,10 +6116,15 @@ class DatasetService:
                 "learnToBrain": bool(job.config.get("learnToBrain")),
             }
         except Exception as exc:
+            failed_prov: dict[str, Any] = {"error": redact_secrets(str(exc))}
+            if isinstance(exc, DatasetError) and getattr(exc, "code", None) == "index_integrity_failed":
+                details = dict(getattr(exc, "details", None) or {})
+                failed_prov["integrityVerification"] = "FAIL"
+                failed_prov["integrityDetails"] = details
             self.store.update_index(
                 index.index_id,
                 status=IndexStatus.FAILED,
-                provenance={"error": redact_secrets(str(exc))},
+                provenance=failed_prov,
             )
             raise
 
@@ -6054,16 +6340,33 @@ class DatasetService:
         version_id = job.version_id or ""
         records = self.iter_version_records(version_id)
         sealed = list(job.config.get("sealed_cases") or [])
+        threshold = float(job.config.get("threshold") or 0.35)
+        max_retained = int(job.config.get("max_retained_hits") or job.config.get("maxRetainedHits") or 200)
+
+        def cancel() -> bool:
+            return self.runner.is_cancel_requested(job.job_id)
+
+        on_progress = self._throttled_job_progress(job.job_id)
         if not sealed:
             # No reference corpus. The report is UNMEASURED and must not pass as clean.
-            report = scan_contamination(records, [], threshold=float(job.config.get("threshold") or 0.35))
+            report = scan_contamination(
+                records,
+                [],
+                threshold=threshold,
+                max_retained_hits=max_retained,
+                cancel_check=cancel,
+                progress_cb=on_progress,
+            )
             out = report.public_dict()
             out["note"] = "No sealed cases provided — contamination gate not exercised"
             return out
         report = scan_contamination(
             records,
             sealed,
-            threshold=float(job.config.get("threshold") or 0.35),
+            threshold=threshold,
+            max_retained_hits=max_retained,
+            cancel_check=cancel,
+            progress_cb=on_progress,
         )
         return report.public_dict()
 

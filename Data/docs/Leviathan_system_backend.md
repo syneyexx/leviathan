@@ -1095,6 +1095,53 @@ Important dataset concepts:
 
 HTTP: `Data/backend/routes/datasets.py`. Knowledge ingestion: `Data/backend/routes/knowledge.py`. Source ingestion enters through domain APIs but heavy parse/index work is worker-owned.
 
+### Dataset lifecycle (production)
+
+```text
+import / HF download (dataset worker)
+  → canonicalize / materialize (streaming JSONL)
+  → validate (id integrity + content)
+  → INDEX job (Knowledge upsert + integrity receipt)
+  → learning_state LEARNED
+  → Research.connect_dataset → LocalResearchRetriever
+```
+
+- FastAPI validates, creates catalog rows, enqueues, cancels, and reports. It does not download, materialize, validate in full, or index bytes when `LEVIATHAN_DATASET_JOBS_RUNNER=external`.
+- Domain job accept with bound `JobRuntime` is atomic: kernel enqueue failure marks the domain job `FAILED` with `DATASET_EXECUTION_UNAVAILABLE` — never an orphan `QUEUED` without a runnable kernel.
+- HF downloads pin resolved revision SHAs, validate `Content-Range` / ETag / size / hash, map disk-full and timeouts, scrub tokens from manifests, and refuse incomplete `COMPLETE`.
+- Shard ingest and streaming checkpoints re-verify artifacts on resume; missing/corrupt outputs rewind rather than skip. Stale fingerprints refuse resume (no silent duplicate/miss).
+- Source Ingestion routes parquet and large jsonl/csv/tsv/json through `DatasetRouteHandler` → `DatasetService` rather than Brain text materialization.
+
+### Knowledge source identity
+
+Canonical Knowledge `source` written by dataset indexing (`Data/modules/datasets/knowledge_identity.py`):
+
+- Primary: `dataset:<dataset_id>:<version_id>`
+- Compatible Research scope: `dataset:<dataset_id>` (exact filter, not a wildcard)
+- Forbidden for new writes: `dataset:dataset`, bare `dataset`
+
+`resolve_index_scope` replaces opaque legacy defaults. Research `connect_dataset` strips ambiguous legacy scopes from `local_scopes` and records `knowledge_scopes` from `research_scopes_for_dataset`.
+
+### Index verification
+
+Before `IndexStatus.READY`, indexing builds a durable integrity receipt (`build_index_integrity_receipt` / `verify_index_integrity`): expected vs present documents/chunks, embedding mode honesty, relation counts, manifest hash, evidence class (`EXACT` | `SAMPLED`). Verification `FAIL` blocks READY and therefore LEARNED. Resume with a missing `resume_after_record_id` marker fails closed (`resume_marker_missing`) — it does not skip the corpus.
+
+### Learning state
+
+`Data/modules/datasets/learning_state.py` is the single operator-facing Brain readiness ladder (`REGISTERED` → … → `READY_FOR_INDEX` → `INDEXING` → `LEARNED`). RAW versions are never indexable; RAW-only datasets stay `SOURCE_READY`, never false `READY_FOR_INDEX`. Local file presence ≠ learned. `POST /api/datasets/{id}/learn` enqueues INDEX; fleet/activity/reconcile surfaces consume canonical state, not job-list guessing. Stale non-rebuild INDEX jobs against a READY index are reconciled (cancel/interrupt).
+
+### Research retrieval
+
+`ResearchService.connect_dataset` requires `DatasetService.learning_state_for_dataset` usable learned state. Caller `indexed` is advisory only and never grants authority. Retrieval uses `LocalResearchRetriever`: hybrid when semantic embeddings are available, with honest lexical fallback telemetry; multi-scope queries use bounded per-scope candidates + RRF so the first connected dataset cannot starve later scopes.
+
+### Memory limits
+
+`Data/modules/datasets/memory_policy.py` is the resource contract: default memory budget 512 MiB, max record 16 MiB, spill budget, full-load refuse threshold. Format sniffing and shard I/O use bounded `read_prefix` / streaming copy+hash — never whole-file `read_bytes` on large paths. Oversized records raise `RECORD_TOO_LARGE` without retaining the payload. Enforcement is soft/admission-integrated (`hardOsEnforcement: false`); missing throughput/peak metrics stay `UNMEASURED`.
+
+### Cancellation
+
+`DatasetService.cancel_job` sets domain cancel and cancels the linked JobRuntime kernel when non-terminal; kernel sync failure is recorded honestly (`cancel_kernel_sync_failed`). `reconcile_orphan_queued_jobs` closes cancel split-brain (kernel `CANCELLED` / `CANCEL_REQUESTED` → domain `CANCELLED`) and re-links or fails orphan `QUEUED` domain rows. Cooperative `cancel_cb` during index raises `cancelled` (HTTP 409). Lease loss is distinct from operator cancel (`make_lease_bound_checks` / lease fencing) — lost lease fences work rather than reporting false success.
+
 ### Catalog query, overview, jobs, learning, and quality
 
 `GET /api/datasets` supports bounded server-side listing (backward compatible with `limit`-only callers):
@@ -1132,6 +1179,29 @@ Heavy work remains JobRuntime / Worker Fabric owned. FastAPI only validates, enq
 Quality presentation (`Data/modules/datasets/quality_signals.py`) is evidence-based from validation only. Unmeasured quality is never shown as 100%. Formula: `clamp(0,100, 100 - 8*errors - 2*warnings - 1*emptyContent)` with constituents exposed.
 
 Semantic operator overrides remain `PATCH /api/datasets/{id}/semantic`. Brain learn remains `POST …/learn` → INDEX job; local presence ≠ learned. Training consumers must pass immutable `datasetId` + `versionId`.
+
+### Dead / duplicate cleanup ledger (Wave 12)
+
+| Symbol | Disposition | Proof |
+|---|---|---|
+| `DatasetService._load_version_records` | **REMOVED** | Declaration-only; zero call sites in repo; production uses `iter_version_records` |
+| `service.py` imports of `apply_transforms` / `exact_dedupe` / `deterministic_split` | **REMOVED** | Service only uses streaming/external paths; list wrappers were unused imports |
+| `apply_transforms` (transforms.py) | **KEEP (tests)** | `test_dataset_provenance_w8` lineage unit tests; not production handler path |
+| `exact_dedupe` (dedupe.py) | **KEEP (tests)** | `test_dataset_provenance_w8` + `test_native_data_plane_streaming_w142` parity vs spill |
+| `deterministic_split` list wrapper (splits.py) | **REMOVED** | Zero callers (including tests); streaming `iter_deterministic_split` is sole path |
+| `DatasetRouteHandler` / `ERROR_OCR_UNAVAILABLE` | **REMOVED import** | Unused in `dataset_route.py` (ImageHandler uses `ERROR_OCR_REQUIRED` only) |
+| Legacy DM page aliases | **NOT reintroduced** | `/dataset-management` and `/offline-datasets` remain Navigate redirects only |
+
+### Operator UI truth (Wave 13)
+
+Frontend Datasets control plane must not project:
+
+- job queued → learned
+- index row / completed INDEX job → ready without verified READY / `usableIndexId` / learning canonical
+- semantic analyze requested → semantic active when embeddings unavailable
+- API failure → measured zero KPIs
+
+Stale / unknown / error remain explicit. Learning chips use `DatasetLearningCanonicalState` via `datasetLearningState.ts`.
 
 ---
 

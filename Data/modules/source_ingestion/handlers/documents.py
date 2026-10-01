@@ -655,12 +655,18 @@ def _read_text_streaming(
     staging_root: Path | None = None,
     inline_threshold: int = INLINE_TEXT_BYTES,
 ) -> str:
-    """Compatibility wrapper — prefers streaming materialization.
+    """Bounded compatibility helper for small text only.
 
-    Large files are decoded to a file-backed artifact first; the returned string
-    is only loaded when a caller still requires a str. Prefer
-    :func:`materialize_text_content` for new code paths.
+    Files larger than ``inline_threshold`` are refused — callers must use
+    :func:`materialize_text_content` (file-backed ``ContentRef``) or route to
+    DatasetService. Never assemble a multi-hundred-MB Python string.
     """
+    size = path.stat().st_size if path.is_file() else 0
+    if size > inline_threshold:
+        raise ValueError(
+            f"Refusing full-string materialization of {size} byte file "
+            f"(inline_threshold={inline_threshold}); use ContentRef/path or DatasetService"
+        )
     ref, _digest = materialize_text_content(
         path,
         staging_root=staging_root,

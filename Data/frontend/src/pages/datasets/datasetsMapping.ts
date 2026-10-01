@@ -10,6 +10,10 @@ import type {
   DhStatus,
 } from "./constants";
 import type { DatasetJob, DatasetRecord } from "../../types/api";
+import {
+  displayStatusFromLearning,
+  resolveLearningState,
+} from "./datasetLearningState";
 
 export function formatBytes(bytes: number | null | undefined): string {
   if (bytes == null) return "—";
@@ -111,7 +115,8 @@ export function statusLabel(status: DhStatus): string {
 export function rowStatusLabel(row: DhRow): string {
   if (row.embeddings.kind === "indexed" && row.status === "ready") return "Geïndexeerd";
   if (row.embeddings.kind === "indexing") return "Indexeren";
-  if (row.embeddings.kind === "queued") return "Indexeren";
+  // Queued ≠ indexing — keep operator signal distinct.
+  if (row.embeddings.kind === "queued") return "In wachtrij";
   return statusLabel(row.status);
 }
 
@@ -133,36 +138,89 @@ export function mapType(ds: DatasetRecord): string {
   return "Tekst";
 }
 
-export function embeddingsForDataset(ds: DatasetRecord, jobs: DatasetJob[]): DhEmbedding {
-  const related = jobs.filter((j) => j.datasetId === ds.datasetId);
-  const indexing = related.find((j) => {
-    const t = j.jobType.toLowerCase();
-    const s = j.status.toLowerCase();
-    return t.includes("index") && (s === "running" || s === "queued" || s === "pending");
+function hasVerifiedReadyIndex(ds: DatasetRecord): boolean {
+  const indexes = ds.indexes;
+  if (Array.isArray(indexes) && indexes.some((i) => String(i.status || "").toLowerCase() === "ready")) {
+    return true;
+  }
+  const learning = resolveLearningState({
+    learningState: ds.learningState ?? null,
+    brain: ds.brain ?? null,
+    brainStatus: ds.brainStatus,
+    learned: ds.learned,
+    canonicalState: ds.canonicalState,
   });
-  if (indexing) {
-    if (indexing.status.toLowerCase() === "queued" || indexing.status.toLowerCase() === "pending") {
+  if (!learning) return false;
+  const c = String(learning.canonicalState || "").toUpperCase();
+  if (c === "LEARNED" || c === "STALE_JOB") return true;
+  if (c === "REBUILDING" && learning.usableIndexId) return true;
+  if (learning.usableIndexId && learning.learned) return true;
+  return false;
+}
+
+/**
+ * Index / embedding chip truth.
+ *
+ * Never: completed INDEX job alone → indexed.
+ * Never: metadata string containing "index" → indexed.
+ * Prefer DatasetLearningCanonicalState / usableIndexId / READY index rows.
+ */
+export function embeddingsForDataset(ds: DatasetRecord, jobs: DatasetJob[]): DhEmbedding {
+  const learning = resolveLearningState({
+    learningState: ds.learningState ?? null,
+    brain: ds.brain ?? null,
+    brainStatus: ds.brainStatus,
+    learned: ds.learned,
+    canonicalState: ds.canonicalState,
+  });
+  const display = displayStatusFromLearning(learning);
+
+  if (display === "rebuilding" || display === "indexing") {
+    const related = jobs.filter((j) => j.datasetId === ds.datasetId);
+    const indexing = related.find((j) => {
+      const t = j.jobType.toLowerCase();
+      const s = j.status.toLowerCase();
+      return t.includes("index") && (s === "running" || s === "queued" || s === "pending");
+    });
+    if (
+      indexing &&
+      display === "indexing" &&
+      (indexing.status.toLowerCase() === "queued" || indexing.status.toLowerCase() === "pending")
+    ) {
       return { kind: "queued" };
     }
-    if (indexing.progress == null) {
-      // Measured progress unavailable — do not invent a percentage.
+    const progress = learning?.progress;
+    if (progress == null || !Number.isFinite(Number(progress))) {
       return { kind: "indexing", pct: -1 };
     }
     return {
       kind: "indexing",
-      pct: Math.round(Math.min(1, Math.max(0, indexing.progress)) * 100),
+      pct: Math.round(Math.min(1, Math.max(0, Number(progress))) * 100),
     };
   }
-  const done = related.some((j) => {
+
+  if (display === "queued") return { kind: "queued" };
+
+  if (hasVerifiedReadyIndex(ds)) return { kind: "indexed" };
+
+  // Active INDEX job is detail only when canonical is not yet learned — never "learned".
+  const related = jobs.filter((j) => j.datasetId === ds.datasetId);
+  const activeIndex = related.find((j) => {
     const t = j.jobType.toLowerCase();
     const s = j.status.toLowerCase();
-    return t.includes("index") && (s === "completed" || s === "succeeded" || s === "done");
+    return t.includes("index") && (s === "running" || s === "queued" || s === "pending");
   });
-  if (done) return { kind: "indexed" };
-  const meta = ds.metadata as Record<string, unknown> | undefined;
-  const emb = String(meta?.embeddings ?? meta?.indexStatus ?? "").toLowerCase();
-  if (emb.includes("index")) return { kind: "indexed" };
-  if (emb.includes("pending")) return { kind: "pending" };
+  if (activeIndex) {
+    const s = activeIndex.status.toLowerCase();
+    if (s === "queued" || s === "pending") return { kind: "queued" };
+    if (activeIndex.progress == null) return { kind: "indexing", pct: -1 };
+    return {
+      kind: "indexing",
+      pct: Math.round(Math.min(1, Math.max(0, activeIndex.progress)) * 100),
+    };
+  }
+
+  // Completed INDEX job without verified READY / usableIndexId is NOT indexed.
   if (mapStatus(ds.status) === "ready") return { kind: "not_indexed" };
   return { kind: "pending" };
 }
@@ -337,4 +395,34 @@ export function filterIcon(icon: string): string {
 export function measuredProgressPct(job: DatasetJob | undefined): number | null {
   if (!job || job.progress == null) return null;
   return Math.round(Math.min(1, Math.max(0, job.progress)) * 100);
+}
+
+/**
+ * Semantic operator label — never treat "analyze requested" as semantic active
+ * when embeddings are unavailable / lexical-only / review-required without profile.
+ */
+export function semanticOperatorLabel(ds: DatasetRecord): string {
+  const learning = resolveLearningState({
+    learningState: ds.learningState ?? null,
+    brain: ds.brain ?? null,
+    brainStatus: ds.brainStatus,
+    learned: ds.learned,
+    canonicalState: ds.canonicalState,
+  });
+  const mode = String(learning?.embeddingMode || "").toLowerCase();
+  const semanticEmb = learning?.semanticEmbeddings;
+  if (semanticEmb === false || mode === "lexical_only" || mode.includes("non_semantic")) {
+    return "Lexical only (semantic embeddings unavailable)";
+  }
+  if (ds.semanticReviewRequired || ds.semanticProfile?.reviewRequired) {
+    const cat = ds.semanticProfile?.primaryCategory || ds.primaryCategory;
+    return cat ? `Review required · ${cat}` : "Semantic review required";
+  }
+  const cat =
+    ds.semanticProfile?.primaryCategory ||
+    ds.primaryCategory ||
+    ds.semanticProfile?.summary;
+  if (cat) return String(cat);
+  if (semanticEmb === true) return "Semantic embeddings active";
+  return "—";
 }

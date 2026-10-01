@@ -1,10 +1,14 @@
 import { Link } from "react-router-dom";
 import type { ReactNode } from "react";
-import { formatBytes, mapType, statusLabel } from "../../pages/datasets/datasetsMapping";
+import { formatBytes, mapType, semanticOperatorLabel, statusLabel } from "../../pages/datasets/datasetsMapping";
 import { seriesFromPreview } from "../../pages/datasets/previewSeries";
 import { redactSecretUri, recoveryLabel, qualityLabel, previewSampleText, previewSampleTable } from "../../pages/datasets/viewModels";
 import type { DatasetsWorkspace, DetailTab } from "../../pages/datasets/useDatasetsWorkspace";
 import { DatasetActivityConsole } from "../../pages/datasets/DatasetActivityConsole";
+import {
+  learningStatusLabel,
+  resolveLearningState,
+} from "../../pages/datasets/datasetLearningState";
 import { EmptyState, LoadingState } from "../ui";
 import { exportPhaseLabel } from "../../pages/datasets/exportState";
 
@@ -82,9 +86,18 @@ export function DatasetsDetailPanel({ ws }: Props) {
   const columnsKnown =
     ws.detailPreview[0] != null ? Object.keys(ws.detailPreview[0]).length : null;
   const tags = ws.tagChips.length ? ws.tagChips : row.tags ?? record.semanticTags ?? [];
-  const learning =
-    record.learningState ?? record.brain ?? null;
-  const brainStatus = record.brainStatus ?? learning?.brainStatus ?? "—";
+  const learning = resolveLearningState({
+    learningState: record.learningState ?? null,
+    brain: record.brain ?? null,
+    brainStatus: record.brainStatus,
+    learned: record.learned,
+    canonicalState: record.canonicalState,
+  });
+  const learningLabel = learningStatusLabel(learning);
+  const brainStatus = learning?.brainStatus ?? record.brainStatus ?? "—";
+  const canonicalLabel =
+    learning?.canonicalState ?? record.canonicalState ?? "UNKNOWN";
+  const semanticLabel = semanticOperatorLabel(record);
 
   const needsVersion = !ws.selectedVersionId ? "Selecteer eerst een datasetversie" : null;
 
@@ -200,16 +213,15 @@ export function DatasetsDetailPanel({ ws }: Props) {
               </div>
               <div>
                 <dt>LEARNING</dt>
-                <dd>{String(brainStatus)}</dd>
+                <dd>
+                  {learningLabel}
+                  {learning?.stale ? " · STALE" : ""}
+                  {learning?.error ? ` · ERROR` : ""}
+                </dd>
               </div>
               <div>
                 <dt>SEMANTICS</dt>
-                <dd>
-                  {record.semanticProfile?.primaryCategory ||
-                    record.primaryCategory ||
-                    record.semanticProfile?.summary ||
-                    "—"}
-                </dd>
+                <dd>{semanticLabel}</dd>
               </div>
               <div>
                 <dt>Grootte / Records</dt>
@@ -475,17 +487,48 @@ export function DatasetsDetailPanel({ ws }: Props) {
           <div className="lv-v2-ds-analyse">
             <dl className="lv-v2-ds-kv">
               <div>
+                <dt>Operator label</dt>
+                <dd>{learningLabel}</dd>
+              </div>
+              <div>
                 <dt>Brain status</dt>
                 <dd>{String(brainStatus)}</dd>
               </div>
               <div>
                 <dt>Canonical</dt>
-                <dd>{String(record.canonicalState ?? learning?.canonicalState ?? "—")}</dd>
+                <dd>{String(canonicalLabel)}</dd>
+              </div>
+              <div>
+                <dt>Usable index</dt>
+                <dd>{learning?.usableIndexId || "—"}</dd>
+              </div>
+              <div>
+                <dt>Semantic embeddings</dt>
+                <dd>
+                  {learning?.semanticEmbeddings == null
+                    ? "—"
+                    : learning.semanticEmbeddings
+                      ? "active"
+                      : "unavailable"}
+                  {learning?.embeddingMode ? ` · ${learning.embeddingMode}` : ""}
+                </dd>
               </div>
               <div>
                 <dt>Source missing</dt>
                 <dd>{record.sourceMissing || learning?.sourceMissing ? "Ja" : "Nee"}</dd>
               </div>
+              {learning?.error ? (
+                <div>
+                  <dt>Error</dt>
+                  <dd className="lv-v2-warn">{learning.error}</dd>
+                </div>
+              ) : null}
+              {learning?.stale ? (
+                <div>
+                  <dt>Stale</dt>
+                  <dd>Ja — stale job genegeerd t.o.v. READY index</dd>
+                </div>
+              ) : null}
             </dl>
             <div className="lv-v2-ds-action-row">
               <button type="button" className="lv-v2-button lv-v2-button--primary lv-v2-button--sm" disabled={ws.busy} onClick={() => void ws.onLearn()}>

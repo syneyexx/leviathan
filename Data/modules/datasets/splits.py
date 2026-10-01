@@ -21,7 +21,7 @@ def assign_split_label(
     val_ratio: float = 0.1,
     test_ratio: float = 0.1,
 ) -> str:
-    """Record-local split assignment — same semantics as deterministic_split."""
+    """Record-local split assignment — same semantics as ``iter_deterministic_split``."""
     total = train_ratio + val_ratio + test_ratio
     if abs(total - 1.0) > 1e-6:
         raise DatasetError(
@@ -86,22 +86,3 @@ def iter_deterministic_split(
             )
 
     return _gen(), summary
-
-
-def deterministic_split(
-    records: Iterable[CanonicalRecord],
-    *,
-    seed: int = 42,
-    train_ratio: float = 0.8,
-    val_ratio: float = 0.1,
-    test_ratio: float = 0.1,
-) -> tuple[list[CanonicalRecord], dict[str, Any]]:
-    """Compatibility wrapper — materializes output (small/tests). Prefer streaming."""
-    it, summary = iter_deterministic_split(
-        records,
-        seed=seed,
-        train_ratio=train_ratio,
-        val_ratio=val_ratio,
-        test_ratio=test_ratio,
-    )
-    return list(it), summary

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from Data.modules.common.hashing import sha256_text
+from Data.modules.datasets.streaming_io import read_prefix
 
 from ..settings import SourceIngestionSettings
 from ..types import (
@@ -22,7 +23,12 @@ from ..types import (
     SourceKind,
 )
 from .base import HandlerCapabilities
-from .documents import _read_text_streaming
+from .documents import INLINE_TEXT_BYTES, _read_text_streaming
+
+# Formats that become DatasetService-owned above the route threshold.
+_DATASET_ROUTEABLE_EXTS = frozenset(
+    {".json", ".csv", ".tsv", ".jsonl", ".ndjson", ".parquet"}
+)
 
 
 class StructuredDataHandler:
@@ -55,6 +61,48 @@ class StructuredDataHandler:
     def inspect(self, path: Path, *, detection: DetectionResult, settings: SourceIngestionSettings) -> dict[str, Any]:
         return {"handler": "structured", "extension": detection.extension}
 
+    def _route_to_dataset(
+        self,
+        path: Path,
+        *,
+        detection: DetectionResult,
+        relative_path: str,
+        ext: str,
+        size: int,
+        reason: str,
+    ) -> NormalizedArtifact:
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 256)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        return NormalizedArtifact(
+            source_kind=SourceKind.DATASET,
+            title=Path(relative_path).name,
+            relative_path=relative_path,
+            mime_type=detection.mime_type,
+            parser="structured_dataset_route",
+            parser_version=PARSER_VERSION,
+            content_hash=digest.hexdigest(),
+            content=ContentRef(text=""),
+            structured_metadata={
+                "size_bytes": size,
+                "format": ext.lstrip("."),
+                "route_reason": reason,
+            },
+            provenance={
+                "relative_path": relative_path,
+                "raw_path": str(path),
+                "size_bytes": size,
+                "route_reason": reason,
+            },
+            outcome=MemberOutcome.ROUTED,
+            route_target="dataset",
+            skip_reason="routed_to_dataset",
+        )
+
     def ingest(
         self,
         path: Path,
@@ -65,11 +113,41 @@ class StructuredDataHandler:
         staging_root: Path | None = None,
     ) -> NormalizedArtifact:
         ext = detection.extension.lower() or Path(relative_path).suffix.lower()
+        size = path.stat().st_size if path.is_file() else 0
+
+        # Large tabular/JSON must never be fully decoded into Python strings+rows.
+        # Route to DatasetService before dangerous materialization.
+        if ext in _DATASET_ROUTEABLE_EXTS and size >= settings.dataset_route_min_bytes:
+            return self._route_to_dataset(
+                path,
+                detection=detection,
+                relative_path=relative_path,
+                ext=ext,
+                size=size,
+                reason="size_ge_dataset_route_min_bytes",
+            )
+        # Even below route threshold, refuse full in-memory parse above inline bound
+        # for formats that expand into multiple in-memory copies (CSV → text+rows+body).
+        if ext in {".csv", ".tsv", ".json"} and size > INLINE_TEXT_BYTES:
+            return self._route_to_dataset(
+                path,
+                detection=detection,
+                relative_path=relative_path,
+                ext=ext,
+                size=size,
+                reason="size_gt_inline_text_bound",
+            )
+
         try:
             if ext == ".json":
                 return self._json(path, relative_path=relative_path, mime=detection.mime_type)
             if ext in {".csv", ".tsv"}:
-                return self._csv(path, relative_path=relative_path, delim="," if ext == ".csv" else "\t", mime=detection.mime_type)
+                return self._csv(
+                    path,
+                    relative_path=relative_path,
+                    delim="," if ext == ".csv" else "\t",
+                    mime=detection.mime_type,
+                )
             if ext in {".yaml", ".yml"}:
                 return self._yaml(path, relative_path=relative_path)
             if ext == ".toml":
@@ -104,6 +182,8 @@ class StructuredDataHandler:
                 outcome=MemberOutcome.SUCCESS,
             )
         except Exception as exc:  # noqa: BLE001
+            # Error path must never be more dangerous than the success path.
+            sample = read_prefix(path, 1024) if path.is_file() else b""
             return NormalizedArtifact(
                 source_kind=SourceKind.STRUCTURED,
                 title=Path(relative_path).name,
@@ -111,7 +191,7 @@ class StructuredDataHandler:
                 mime_type=detection.mime_type,
                 parser="structured",
                 parser_version=PARSER_VERSION,
-                content_hash=hashlib.sha256(path.read_bytes()[:1024]).hexdigest(),
+                content_hash=hashlib.sha256(sample).hexdigest(),
                 content=ContentRef(text=""),
                 outcome=MemberOutcome.FAILED,
                 error_code="SOURCE_PARSE_FAILED",
@@ -145,7 +225,7 @@ class StructuredDataHandler:
             raise ValueError("CSV contained no rows")
         header = rows[0]
         lines = [delim.join(header) if False else ", ".join(header)]
-        for row_idx, row in enumerate(rows[1:], start=2):
+        for _row_idx, row in enumerate(rows[1:], start=2):
             pairs = []
             for i, cell in enumerate(row):
                 key = header[i] if i < len(header) else f"col_{i}"

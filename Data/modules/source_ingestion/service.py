@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import uuid
 from pathlib import Path
@@ -40,6 +41,8 @@ from .types import (
     IngestionPhase,
     KNOWLEDGE_LIBRARY_OWNER_PROJECT_ID,
 )
+
+_log = logging.getLogger(__name__)
 
 
 class _PeekReplayStream:
@@ -286,7 +289,12 @@ class SourceIngestionService:
         # Dedupe identical full-file re-upload
         stored = self.research.upsert_source(source)
         if stored.source_id != source.source_id:
-            # Existing identical upload — return its status / requeue if needed
+            # P1-004: newly written raw is unreferenced — delete safely (never the kept path).
+            keep_raw = (stored.provenance or {}).get("raw_path")
+            self._safe_delete_unreferenced_raw(
+                raw_path,
+                keep_path=Path(str(keep_raw)) if keep_raw else None,
+            )
             progress = self.get_status(stored.source_id)
             return {
                 "source_id": stored.source_id,
@@ -437,6 +445,40 @@ class SourceIngestionService:
                 "owner_is_not_per_upload_fake_project": True,
             },
         }
+
+    def _safe_delete_unreferenced_raw(
+        self,
+        path: Path,
+        *,
+        keep_path: Path | None = None,
+    ) -> bool:
+        """Delete a newly written raw file that is not referenced by the kept source.
+
+        Only deletes paths under ``sources_root``. Never deletes ``keep_path``.
+        Failures are logged and swallowed — upload idempotency must still succeed.
+        """
+        try:
+            candidate = Path(path).resolve()
+            root = self.sources_root.resolve()
+            if keep_path is not None:
+                try:
+                    if candidate == Path(keep_path).resolve():
+                        return False
+                except OSError:
+                    pass
+            try:
+                candidate.relative_to(root)
+            except ValueError:
+                _log.warning(
+                    "refusing to delete raw outside sources_root: %s", candidate
+                )
+                return False
+            if candidate.is_file():
+                candidate.unlink(missing_ok=True)
+                return True
+        except OSError as exc:
+            _log.warning("failed to delete unreferenced raw %s: %s", path, exc)
+        return False
 
     def _enqueue_process(self, source_id: str, project_id: str) -> str | None:
         if self.jobs is None:
@@ -620,18 +662,30 @@ class SourceIngestionService:
                     self.ingestion.upsert_member(m)
         container = self.ingestion.get_container(source_id)
         project_id = str((container or {}).get("project_id") or "")
+        prior_phase = str((container or {}).get("phase") or "")
         with self.ingestion.connect() as conn:
             conn.execute(
                 "UPDATE source_ingestion_containers SET cancel_requested=0, updated_at=? "
                 "WHERE container_source_id=?",
                 (utc_now(), source_id),
             )
-        self.ingestion.upsert_container(
-            container_source_id=source_id,
-            project_id=project_id,
-            phase=IngestionPhase.QUEUED,
-        )
-        job_id = self._enqueue_process(source_id, project_id)
+        # P1-005: enqueue before QUEUED (same atomicity as accept_upload).
+        # Never leave an orphan QUEUED without a kernel job when enqueue fails.
+        try:
+            job_id = self._enqueue_process(source_id, project_id)
+        except ResearchError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise ResearchError(
+                "SOURCE_INGESTION_UNAVAILABLE",
+                f"Failed to enqueue retry: {exc}"[:400],
+                http_status=503,
+                details={
+                    "source_id": source_id,
+                    "prior_phase": prior_phase,
+                    "queued_without_kernel": False,
+                },
+            ) from exc
         self.ingestion.upsert_container(
             container_source_id=source_id,
             project_id=project_id,
