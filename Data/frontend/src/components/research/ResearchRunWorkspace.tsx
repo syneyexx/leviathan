@@ -70,9 +70,21 @@ export function ResearchRunWorkspace({ ws }: Props) {
             </Link>
           }
         >
-          {ws.sources.length === 0 ? (
+          {ws.artifactsStale || ws.artifactsError ? (
+            <p className="lv-v2-muted" role="status">
+              {ws.artifactsStale ? "STALE — " : ""}
+              {ws.artifactsError || "Artifact refresh failed; showing last known data."}
+            </p>
+          ) : null}
+          {!ws.sourcesState.measured && ws.sourcesState.error ? (
+            <p className="lv-v2-muted">Bronnen UNAVAILABLE</p>
+          ) : ws.sources.length === 0 ? (
             <p className="lv-v2-muted">
-              {ws.diagnosis || "Bronnen verschijnen tijdens ingestion/retrieval."}
+              {!ws.sourcesState.measured
+                ? ws.sourcesState.loading
+                  ? "Bronnen laden…"
+                  : "Bronnen UNKNOWN"
+                : ws.diagnosis || "Bronnen verschijnen tijdens ingestion/retrieval."}
             </p>
           ) : (
             <ul className="lv-v2-research-source-list">

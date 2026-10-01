@@ -181,6 +181,21 @@ WAVE 1 four-workspace architecture (`src/pages/trading/workspaces/`). Discovery 
 |---|---|
 | `/research` | `ResearchPage` |
 | `/brain` | `BrainPage` |
+
+**Research operator truth:** `useResearchWorkspace` uses per-resource
+`ResourceState` (`src/lib/resourceState.ts`) so API failures never become empty
+successful collections. Refresh failures retain last-known data and mark `stale`.
+Queued deferred ops (plan/run/probe/url/report) are classified by
+`src/lib/researchAsyncContracts.ts` — `queued ≠ completed`; web probe must not
+toast “finished” on queue accept.
+
+**Brain operator truth:** `src/lib/statusTruth.ts` classifies component status by
+exact normalized tokens (`NOT_READY` / `UNHEALTHY` never succeed via substring).
+Measured cognition health overrides `reasoning_enabled` configuration. Unknown
+Brain node types map to `unclassified` (`brain-categories.ts`). Catalog paging
+must not invent `catalog_complete` / snapshot consistency. Visible graph counts
+are projection counts, not global corpus totals. Heuristic memory/evidence
+matches are flagged separately from canonical graph edges.
 | `/cognition` | `CognitionPage` |
 | `/memory` | `GeheugenPage` |
 | `/knowledge` | `KnowledgeLibraryPage` |

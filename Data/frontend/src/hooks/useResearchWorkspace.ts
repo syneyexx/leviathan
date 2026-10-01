@@ -20,7 +20,6 @@ import {
   idleWebProbeState,
   isJobTerminal,
   isPollResultCurrent,
-  isQueuedFlag,
   isResearchTerminalStatus,
   jobStateFromRecord,
   mapJobStateToProbePhase,
@@ -1526,6 +1525,7 @@ export function useResearchWorkspace(): ResearchWorkspace {
       const started = await api.runResearchProject(projectId);
       const runOutcome = normalizeRunResponse(started.project);
       setProject(started.project);
+      resetArtifactStates();
       setWorkersState(
         applySettledResource(
           emptyResource<ResearchWorker[]>([]),
@@ -1533,7 +1533,6 @@ export function useResearchWorkspace(): ResearchWorkspace {
           "Workers unavailable",
         ),
       );
-      resetArtifactStates();
       setProjects((prev) => [started.project, ...prev.filter((p) => p.project_id !== projectId)]);
       toast(runOutcome.outcome === "queued" ? "Onderzoek queued" : "Onderzoek gestart");
     } catch (err) {
@@ -1699,7 +1698,17 @@ export function useResearchWorkspace(): ResearchWorkspace {
     conflicts,
     gaps,
     report,
+    sourcesState,
+    evidenceState,
+    claimsState,
+    conflictsState,
+    gapsState,
+    reportState,
+    workersState,
+    artifactsStale,
+    artifactsError,
     webReadiness,
+    webProbeExecution,
     metrics,
     stats7d,
     knowledgeStatus,
