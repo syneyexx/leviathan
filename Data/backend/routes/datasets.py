@@ -232,6 +232,9 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
         tags: str | None = None,
         split: str | None = None,
         sort: str = "created_at_desc",
+        updatedAfter: str | None = None,
+        updatedBefore: str | None = None,
+        cursor: str | None = None,
         includeBrain: bool = True,
         includeQuality: bool = True,
     ) -> dict:
@@ -241,7 +244,34 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
         ``{datasets: [...]}``. When any query/pagination field beyond the
         legacy default is used (or ``offset`` > 0), the response also includes
         ``total``, ``offset``, ``limit``, ``hasMore``, ``nextOffset``.
+        Optional ``cursor`` enables keyset pagination for ``updated_at_desc``.
         """
+        try:
+            limit_i = int(limit)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_limit", "message": "limit must be an integer"},
+            ) from None
+        if limit_i < 0:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_limit", "message": "limit must be >= 0"},
+            )
+        limit_i = max(1, min(limit_i or 100, 500))
+        try:
+            offset_i = int(offset)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_offset", "message": "offset must be an integer"},
+            ) from None
+        if offset_i < 0:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_offset", "message": "offset must be >= 0"},
+            )
+
         source_type = sourceType or source
         detected_format = detectedFormat or type
         # Normalize UI-facing source labels to store enums when possible.
@@ -270,8 +300,8 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
             )
 
         page = service.query_datasets(
-            limit=limit,
-            offset=offset,
+            limit=limit_i,
+            offset=offset_i,
             q=q,
             status=status,
             source_type=source_type,
@@ -282,6 +312,9 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
             tags=tags,
             split=split,
             sort=sort,
+            updated_after=updatedAfter,
+            updated_before=updatedBefore,
+            cursor=cursor,
             include_brain=includeBrain,
             include_quality=includeQuality,
         )
@@ -296,6 +329,7 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
                 "sort": page["sort"],
                 "hasMore": page["hasMore"],
                 "nextOffset": page["nextOffset"],
+                "nextCursor": page.get("nextCursor"),
                 "truth": page["truth"],
             }
         )
@@ -346,18 +380,51 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
 
     @router.get("/api/datasets/learned")
     def list_learned(limit: int = 100) -> dict:
+        try:
+            limit_i = int(limit)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_limit", "message": "limit must be an integer"},
+            ) from None
+        if limit_i < 0:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_limit", "message": "limit must be >= 0"},
+            )
         return {
-            "datasets": service.list_learned_datasets(limit=limit),
+            "datasets": service.list_learned_datasets(limit=max(1, min(limit_i or 100, 500))),
             "truth": {
                 "learned_means_brain_index_ready": True,
                 "local_dataset_is_not_learned_knowledge": True,
             },
         }
 
+    @router.get("/api/datasets/learning/fleet")
+    def learning_fleet(limit: int = 200) -> dict:
+        """Learned + active INDEX jobs with embedded dataset summaries (no N+1)."""
+        try:
+            limit_i = int(limit)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_limit", "message": "limit must be an integer"},
+            ) from None
+        if limit_i < 0:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_limit", "message": "limit must be >= 0"},
+            )
+        return service.learning_fleet_projection(limit=max(1, min(limit_i or 200, 500)))
+
     @router.get("/api/datasets/learning/activity")
     def learning_activity(limit: int = 40) -> dict:
         """Live Dataset Learning activity (real dataset_jobs) for Agents/Dataset UIs."""
-        return service.learning_activity(limit=limit)
+        try:
+            limit_i = max(1, min(int(limit), 200))
+        except (TypeError, ValueError):
+            limit_i = 40
+        return service.learning_activity(limit=limit_i)
 
     @router.post("/api/datasets/learning/reconcile")
     def reconcile_learning_state() -> dict:
@@ -609,9 +676,37 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
         return {"job": service.public_job(job)}
 
     @router.get("/api/datasets/jobs")
-    def list_jobs(datasetId: str | None = None, limit: int = 100) -> dict:
-        jobs = service.store.list_jobs(dataset_id=datasetId, limit=limit)
-        return {"jobs": [service.public_job(j) for j in jobs]}
+    def list_jobs(
+        datasetId: str | None = None,
+        status: str | None = None,
+        jobType: str | None = None,
+        createdAfter: str | None = None,
+        createdBefore: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict:
+        try:
+            limit_i = int(limit)
+            offset_i = int(offset)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_pagination", "message": "limit/offset must be integers"},
+            ) from None
+        if limit_i < 0 or offset_i < 0:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_pagination", "message": "limit/offset must be >= 0"},
+            )
+        return service.query_jobs(
+            dataset_id=datasetId,
+            status=(status.strip().lower() if status else None),
+            job_type=(jobType.strip().lower() if jobType else None),
+            created_after=createdAfter,
+            created_before=createdBefore,
+            limit=max(1, min(limit_i or 100, 500)),
+            offset=offset_i,
+        )
 
     @router.get("/api/datasets/jobs/{job_id}")
     def get_job(job_id: str) -> dict:
@@ -633,7 +728,24 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
 
     @router.post("/api/datasets/jobs/process")
     def process_jobs(maxJobs: int = 10) -> dict:
-        done = service.process_jobs(max_jobs=maxJobs)
+        """Test/dev drain helper. In production (kernel-backed) raises DatasetError 503."""
+        try:
+            max_i = int(maxJobs)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_max_jobs", "message": "maxJobs must be an integer"},
+            ) from None
+        if max_i < 0:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_max_jobs", "message": "maxJobs must be >= 0"},
+            )
+        try:
+            done = service.process_jobs(max_jobs=max(1, min(max_i or 10, 100)))
+        except DatasetError as exc:
+            _raise(exc)
+            raise
         return {"processed": [service.public_job(j) for j in done]}
 
     @router.post("/api/datasets/jobs/reconcile")

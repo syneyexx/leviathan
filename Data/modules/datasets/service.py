@@ -381,6 +381,9 @@ class DatasetService:
         tags: str | None = None,
         split: str | None = None,
         sort: str = "created_at_desc",
+        updated_after: str | None = None,
+        updated_before: str | None = None,
+        cursor: str | None = None,
         include_brain: bool = True,
         include_quality: bool = True,
     ) -> dict[str, Any]:
@@ -400,6 +403,9 @@ class DatasetService:
             tags=tags,
             split=split,
             sort=sort,
+            updated_after=updated_after,
+            updated_before=updated_before,
+            cursor=cursor,
         )
         items = page["items"]
         quality_map: dict[str, dict[str, Any]] = {}
@@ -426,11 +432,17 @@ class DatasetService:
             "offset": page["offset"],
             "sort": page["sort"],
             "nextOffset": next_offset if next_offset < page["total"] else None,
-            "hasMore": next_offset < page["total"],
+            "nextCursor": page.get("nextCursor"),
+            "hasMore": (
+                bool(page.get("nextCursor"))
+                if page.get("cursor") is not None
+                else next_offset < page["total"]
+            ),
             "truth": {
                 "totalIsFilteredCatalogCount": True,
                 "pageSizeDoesNotDefineTotals": True,
                 "qualityRequiresValidationEvidence": True,
+                "keysetWhenCursorAndUpdatedAtDesc": True,
             },
         }
 
@@ -524,6 +536,9 @@ class DatasetService:
             "criticalValidationIssues": stats["criticalValidationIssues"],
             "warningValidationIssues": stats["warningValidationIssues"],
             "versionsWithValidation": stats["versionsWithValidation"],
+            "datasetsWithValidation": stats.get("datasetsWithValidation", stats["versionsWithValidation"]),
+            "datasetsWithoutValidation": stats.get("datasetsWithoutValidation", 0),
+            "readyDatasets": stats.get("readyDatasets", 0),
             "exportVersionCount": stats["exportVersionCount"],
             "byStatus": stats["byStatus"],
             "bySourceType": stats["bySourceType"],
@@ -1788,6 +1803,170 @@ class DatasetService:
             if len(out) >= limit:
                 break
         return out
+
+    def learning_fleet_projection(self, *, limit: int = 200) -> dict[str, Any]:
+        """Learned datasets + active INDEX/learn jobs with embedded dataset summary.
+
+        Avoids frontend N+1 ``getDataset`` calls for the learning fleet panel.
+        """
+        safe_limit = max(1, min(int(limit), 500))
+        learned = self.list_learned_datasets(limit=safe_limit)
+
+        # Batch active INDEX jobs once, then attach dataset summaries.
+        active_jobs: list[DatasetJob] = []
+        for st in (DatasetJobStatus.QUEUED, DatasetJobStatus.RUNNING):
+            active_jobs.extend(
+                self.store.list_jobs(
+                    job_type=DatasetJobType.INDEX,
+                    status=st,
+                    limit=250,
+                )
+            )
+        active_jobs.sort(key=lambda j: j.created_at or "", reverse=True)
+
+        dataset_cache: dict[str, DatasetRecord] = {}
+        for job in active_jobs:
+            if job.dataset_id and job.dataset_id not in dataset_cache:
+                try:
+                    dataset_cache[job.dataset_id] = self.get_dataset(job.dataset_id)
+                except DatasetError:
+                    continue
+
+        active_out: list[dict[str, Any]] = []
+        for job in active_jobs[:safe_limit]:
+            payload = self.public_job(job)
+            ds = dataset_cache.get(job.dataset_id or "")
+            summary: dict[str, Any] | None = None
+            learning_summary: dict[str, Any] | None = None
+            index_stats: dict[str, Any] | None = None
+            if ds is not None:
+                summary = {
+                    "datasetId": ds.dataset_id,
+                    "name": ds.name,
+                    "status": ds.status.value if hasattr(ds.status, "value") else str(ds.status),
+                    "sourceType": ds.source_type.value
+                    if hasattr(ds.source_type, "value")
+                    else str(ds.source_type),
+                    "rowCount": ds.row_count,
+                    "byteSize": ds.byte_size,
+                    "updatedAt": ds.updated_at,
+                }
+                try:
+                    learning_summary = self.learning_ladder_for_dataset(ds.dataset_id)
+                except DatasetError:
+                    learning_summary = None
+                ready_indexes = [
+                    i for i in self.store.list_indexes(ds.dataset_id) if i.status == IndexStatus.READY
+                ]
+                index_stats = {
+                    "readyCount": len(ready_indexes),
+                    "chunkCount": sum(int(i.chunk_count or 0) for i in ready_indexes),
+                    "indexes": [i.public_dict() for i in ready_indexes[:3]],
+                }
+            payload["dataset"] = summary
+            payload["datasetId"] = job.dataset_id
+            payload["name"] = (summary or {}).get("name")
+            payload["learningState"] = learning_summary
+            payload["indexStats"] = index_stats
+            active_out.append(payload)
+
+        # Embed activeJob onto learned rows when matching.
+        active_by_ds: dict[str, dict[str, Any]] = {}
+        for row in active_out:
+            ds_id = row.get("datasetId")
+            if ds_id and ds_id not in active_by_ds:
+                active_by_ds[str(ds_id)] = row
+
+        fleet_rows: list[dict[str, Any]] = []
+        for entry in learned:
+            ds_id = str(entry.get("datasetId") or "")
+            indexes = entry.get("indexes") or []
+            chunk_count = sum(int(i.get("chunkCount") or 0) for i in indexes if isinstance(i, dict))
+            fleet_rows.append(
+                {
+                    "datasetId": ds_id,
+                    "name": entry.get("name") or entry.get("displayName"),
+                    "learningState": entry.get("learningState") or entry.get("brain"),
+                    "activeJob": active_by_ds.get(ds_id),
+                    "indexStats": {
+                        "readyCount": len(indexes),
+                        "chunkCount": chunk_count,
+                        "indexes": indexes[:3],
+                    },
+                    "dataset": {
+                        "datasetId": ds_id,
+                        "name": entry.get("name"),
+                        "status": entry.get("status"),
+                        "sourceType": entry.get("sourceType"),
+                        "rowCount": entry.get("rowCount"),
+                        "byteSize": entry.get("byteSize"),
+                        "updatedAt": entry.get("updatedAt"),
+                    },
+                }
+            )
+
+        # Active jobs for datasets not yet in learned list (still indexing).
+        learned_ids = {r["datasetId"] for r in fleet_rows}
+        for row in active_out:
+            ds_id = str(row.get("datasetId") or "")
+            if not ds_id or ds_id in learned_ids:
+                continue
+            fleet_rows.append(
+                {
+                    "datasetId": ds_id,
+                    "name": row.get("name"),
+                    "learningState": row.get("learningState"),
+                    "activeJob": row,
+                    "indexStats": row.get("indexStats"),
+                    "dataset": row.get("dataset"),
+                }
+            )
+            if len(fleet_rows) >= safe_limit:
+                break
+
+        return {
+            "datasets": fleet_rows[:safe_limit],
+            "learned": learned,
+            "activeJobs": active_out,
+            "total": len(fleet_rows[:safe_limit]),
+            "limit": safe_limit,
+            "truth": {
+                "embedsDatasetSummaryToAvoidNPlusOne": True,
+                "learnedMeansReadyBrainIndex": True,
+                "activeJobsAreIndexQueuedOrRunning": True,
+            },
+        }
+
+    def query_jobs(
+        self,
+        *,
+        dataset_id: str | None = None,
+        status: str | None = None,
+        job_type: str | None = None,
+        created_after: str | None = None,
+        created_before: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        page = self.store.query_jobs(
+            dataset_id=dataset_id,
+            status=status,
+            job_type=job_type,
+            created_after=created_after,
+            created_before=created_before,
+            limit=limit,
+            offset=offset,
+        )
+        jobs = [self.public_job(j) for j in page["items"]]
+        next_offset = page["offset"] + len(jobs)
+        return {
+            "jobs": jobs,
+            "total": page["total"],
+            "limit": page["limit"],
+            "offset": page["offset"],
+            "nextOffset": next_offset if next_offset < page["total"] else None,
+            "hasMore": next_offset < page["total"],
+        }
 
     def offline_brain_preflight(
         self,

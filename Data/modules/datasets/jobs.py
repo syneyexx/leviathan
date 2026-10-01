@@ -13,6 +13,7 @@ Claim ownership
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import traceback
@@ -39,6 +40,8 @@ if TYPE_CHECKING:
 
 
 JobHandler = Callable[[DatasetJob], dict[str, Any]]
+
+logger = logging.getLogger(__name__)
 
 
 class DatasetJobRunner:
@@ -334,7 +337,13 @@ class DatasetJobRunner:
                 else None,
             )
         except Exception:  # noqa: BLE001
-            pass
+            logger.warning(
+                "domain→kernel mirror failed domain_job=%s kernel_job=%s status=%s",
+                getattr(domain, "job_id", None),
+                getattr(kernel_job, "job_id", None),
+                getattr(domain, "status", None),
+                exc_info=True,
+            )
 
     def _fail_kernel(self, kernel_job: JobRecord, error: str) -> None:
         from Data.modules.jobs.states import JobState
@@ -357,7 +366,11 @@ class DatasetJobRunner:
                 retryable=False,
             )
         except Exception:  # noqa: BLE001
-            pass
+            logger.warning(
+                "kernel fail sync failed kernel_job=%s",
+                getattr(kernel_job, "job_id", None),
+                exc_info=True,
+            )
 
     @staticmethod
     def _domain_id_from_kernel(kernel_job: JobRecord) -> str | None:
