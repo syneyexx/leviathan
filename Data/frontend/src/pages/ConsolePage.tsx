@@ -1,1 +1,1 @@
-export { ConsolePage } from "./plugin-runtime/ConsolePage";
+export { ConsolePage } from "./console/ConsolePage";

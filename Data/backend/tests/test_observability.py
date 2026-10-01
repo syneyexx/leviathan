@@ -111,6 +111,85 @@ class ObservabilityHubTests(unittest.TestCase):
         self.assertEqual(e.level, "SUCCESS")
 
 
+class ConsoleStatsTests(unittest.TestCase):
+    def test_console_stats_aggregates_and_shares(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "obs.sqlite", max_rows=500, retention_days=14)
+            store.initialize()
+            import time
+
+            now = time.time() * 1000
+            # 10 info (api), 3 warning (agent), 2 error (mcp) across ~1h
+            for i in range(10):
+                store.append(
+                    {
+                        "event_id": f"i{i}",
+                        "created_at_ms": now - (3_600_000 - i * 60_000),
+                        "level": "INFO",
+                        "category": "http",
+                        "subsystem": "api",
+                        "name": "request",
+                        "message": f"ok-{i}",
+                        "payload": {},
+                        "source": "unit",
+                    }
+                )
+            for i in range(3):
+                store.append(
+                    {
+                        "event_id": f"w{i}",
+                        "created_at_ms": now - i * 30_000,
+                        "level": "WARNING",
+                        "category": "agent",
+                        "subsystem": "agent",
+                        "name": "slow",
+                        "message": f"warn-{i}",
+                        "payload": {},
+                        "source": "unit",
+                    }
+                )
+            for i in range(2):
+                store.append(
+                    {
+                        "event_id": f"e{i}",
+                        "created_at_ms": now - i * 10_000,
+                        "level": "ERROR",
+                        "category": "mcp",
+                        "subsystem": "mcp",
+                        "name": "fail",
+                        "message": f"err-{i}",
+                        "payload": {},
+                        "source": "unit",
+                    }
+                )
+            stats = store.console_stats(
+                since_ms=now - 3_600_000,
+                until_ms=now,
+                bucket_count=12,
+                top_limit=5,
+                recent_errors_limit=5,
+                rate_window_ms=120_000,
+            )
+            self.assertEqual(stats["totals"]["events"], 15)
+            self.assertEqual(stats["totals"]["warning"], 3)
+            self.assertEqual(stats["totals"]["error"], 2)
+            self.assertEqual(len(stats["buckets"]), 12)
+            self.assertGreaterEqual(len(stats["top_components"]), 1)
+            self.assertEqual(stats["top_components"][0]["component"], "api")
+            self.assertAlmostEqual(stats["top_components"][0]["share"], 10 / 15)
+            self.assertEqual(stats["top_components"][0]["share_denominator"], "total_events_in_selected_period")
+            self.assertEqual(len(stats["recent_errors"]), 2)
+            self.assertIsNotNone(stats["log_rate_per_min"])
+            self.assertIn("api", stats["filter_options"]["subsystems"] + ["api"])
+            self.assertTrue(stats["truth"]["measured"])
+
+    def test_hub_console_stats_unmeasured_without_store(self) -> None:
+        hub = ObservabilityHub(capacity=20, persist=False)
+        out = hub.console_stats(since_ms=0)
+        self.assertTrue(out["truth"].get("unmeasured"))
+        self.assertIsNone(out["totals"])
+
+
 class OperatorRegistryTests(unittest.TestCase):
     def test_help_and_unknown_and_shell_rejection(self) -> None:
         reg = OperatorCommandRegistry()

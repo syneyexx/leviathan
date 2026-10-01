@@ -239,6 +239,97 @@ def build_observability_router(
             },
         )
 
+    @router.get("/api/console/overview")
+    def console_overview(
+        window_hours: Annotated[float, Query(ge=0.0833, le=168.0)] = 24.0,
+        bucket_count: Annotated[int, Query(ge=1, le=96)] = 24,
+        top_limit: Annotated[int, Query(ge=1, le=50)] = 8,
+        recent_errors_limit: Annotated[int, Query(ge=1, le=100)] = 12,
+    ) -> dict:
+        """Bounded Console V2 aggregates from ObservabilityHub + product-truth components.
+
+        Not a second telemetry authority — projects EventStore + component_health_fn.
+        """
+        until_ms = time.time() * 1000
+        since_ms = until_ms - (float(window_hours) * 3_600_000.0)
+        stats = observability.console_stats(
+            since_ms=since_ms,
+            until_ms=until_ms,
+            bucket_count=bucket_count,
+            top_limit=top_limit,
+            recent_errors_limit=recent_errors_limit,
+        )
+        components_raw = component_health_fn() if callable(component_health_fn) else []
+        activity = dict(stats.get("activity_rate_by_component") or {})
+        services: list[dict[str, Any]] = []
+        active_count = 0
+        for item in components_raw:
+            if not isinstance(item, dict):
+                continue
+            status = str(item.get("status") or "unmeasured").lower()
+            measured = bool(item.get("measured"))
+            # Active = evidence-backed operational only (never registered/import success).
+            is_active = status == "operational" and measured
+            if is_active:
+                active_count += 1
+            cid = str(item.get("id") or "")
+            name = str(item.get("name") or cid)
+            # Match activity by id/name/type tokens against event component keys.
+            rate = None
+            for key, value in activity.items():
+                token = key.lower()
+                if token in {cid.lower(), name.lower()} or token in cid.lower() or token in name.lower():
+                    rate = float(value)
+                    break
+            services.append(
+                {
+                    "id": cid,
+                    "name": name,
+                    "type": item.get("type"),
+                    "status": status,
+                    "detail": item.get("detail") or "",
+                    "measured": measured,
+                    "events_per_min": rate,
+                    "truth": item.get("truth")
+                    or {
+                        "registered_is_not_running": True,
+                        "unmeasured_is_not_operational": True,
+                    },
+                }
+            )
+
+        totals = stats.get("totals")
+        stream_snap = observability.snapshot()
+        return {
+            "generated_at_ms": until_ms,
+            "window_hours": float(window_hours),
+            "stats": stats,
+            "metrics": {
+                "total_logs_24h": None if totals is None else totals.get("events"),
+                "warnings_24h": None if totals is None else totals.get("warning"),
+                "errors_24h": None if totals is None else totals.get("error"),
+                "info_24h": None if totals is None else totals.get("info"),
+                "success_24h": None if totals is None else totals.get("success"),
+                "log_rate_per_min": stats.get("log_rate_per_min"),
+                "active_services": active_count,
+                "total_services": len(services),
+                "sparklines": stats.get("sparklines") or {},
+            },
+            "services": services,
+            "stream": {
+                "latest_sequence": observability.latest_sequence(),
+                "buffered": stream_snap.get("buffered"),
+                "subscribers": stream_snap.get("subscribers"),
+                "durable": stream_snap.get("durable"),
+            },
+            "truth": {
+                **dict(stats.get("truth") or {}),
+                "active_service_requires_operational_and_measured": True,
+                "components_from_product_truth": True,
+                "no_parallel_console_database": True,
+            },
+        }
+
     @router.get("/api/console/commands")
     def list_operator_commands() -> dict:
         return {"commands": operator.list_commands()}

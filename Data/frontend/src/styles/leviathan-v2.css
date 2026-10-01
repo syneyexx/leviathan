@@ -14402,3 +14402,620 @@ textarea.lv-v2-input {
 .lv-md-table th { font-weight: 650; background: color-mix(in srgb, currentColor 5%, transparent); }
 .lv-v2-composer__tool.is-available { opacity: 1; }
 .lv-v2-composer__tool[disabled] { cursor: default; opacity: 0.7; }
+
+/* ==========================================================================
+   Console V2 — /console (Runtime & Tools / Console)
+   Layout under .lv-v2-page--console. No console-v2.css.
+   Macro @ ~1664×936: 5 KPIs, ~3/4 console + narrow filters/services, bottom 3.
+   ========================================================================== */
+
+.lv-v2-page--console {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 0 10px;
+}
+
+.lv-v2-metrics--console {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.lv-v2-console-metric {
+  min-height: 82px;
+}
+
+.lv-v2-console-sparkline {
+  width: 100%;
+  height: 28px;
+  display: block;
+}
+
+.lv-v2-console-mini-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  width: 72px;
+  height: 28px;
+}
+
+.lv-v2-console-mini-bars i {
+  flex: 1;
+  min-width: 3px;
+  border-radius: 2px 2px 0 0;
+  background: currentColor;
+  opacity: 0.85;
+}
+
+.lv-v2-metric-card__chart--amber { color: #fbbf24; }
+.lv-v2-metric-card__chart--danger { color: #f87171; }
+.lv-v2-metric-card__chart--agents { color: #38bdf8; }
+
+.lv-v2-console-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(280px, 0.92fr);
+  gap: 8px;
+  min-height: 430px;
+  max-height: 500px;
+  align-items: stretch;
+}
+
+.lv-v2-console-side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.lv-v2-console-main-panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.lv-v2-console-main-panel .lv-v2-panel__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  flex: 1;
+  padding-top: 8px;
+}
+
+.lv-v2-console-main-panel__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lv-v2-console-panel-sub {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #94a3b8;
+}
+
+.lv-v2-console-live-badge {
+  letter-spacing: 0.04em;
+}
+
+.lv-v2-console-toolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.lv-v2-console-more {
+  position: relative;
+}
+
+.lv-v2-console-more__menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  min-width: 180px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(8, 15, 32, 0.98);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lv-v2-console-more__menu button {
+  border: 0;
+  background: transparent;
+  color: #e2e8f0;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lv-v2-console-more__menu button:hover {
+  background: rgba(56, 189, 248, 0.12);
+}
+
+.lv-v2-console-filterbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.lv-v2-console-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 180px;
+  flex: 1 1 180px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(2, 8, 23, 0.55);
+  color: #94a3b8;
+}
+
+.lv-v2-console-search input {
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #e2e8f0;
+  font: inherit;
+  font-size: 12px;
+  width: 100%;
+  min-width: 0;
+}
+
+.lv-v2-console-filterbar select,
+.lv-v2-console-filters select,
+.lv-v2-console-filters input:not([type="checkbox"]) {
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(2, 8, 23, 0.55);
+  color: #e2e8f0;
+  font-size: 12px;
+  min-width: 120px;
+}
+
+.lv-v2-console-filters input.is-invalid {
+  border-color: #f87171;
+}
+
+.lv-v2-console-sev-chips,
+.lv-v2-console-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.lv-v2-console-chip {
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(15, 23, 42, 0.7);
+  color: #cbd5e1;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.lv-v2-console-chip.is-active {
+  border-color: rgba(56, 189, 248, 0.55);
+  background: rgba(56, 189, 248, 0.14);
+  color: #67e8f9;
+}
+
+.lv-v2-console-log {
+  position: relative;
+  flex: 1;
+  min-height: 240px;
+  max-height: 340px;
+  overflow: auto;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(2, 6, 18, 0.72);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 11.5px;
+  line-height: 22px;
+}
+
+.lv-v2-console-log.is-paused {
+  outline: 1px solid rgba(251, 191, 36, 0.35);
+}
+
+.lv-v2-console-log__spacer {
+  position: relative;
+  width: 100%;
+}
+
+.lv-v2-console-log__window {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+}
+
+.lv-v2-console-log__row {
+  display: grid;
+  grid-template-columns: 64px 78px 78px 96px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 0 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.06);
+  color: #cbd5e1;
+}
+
+.lv-v2-console-log__row.is-focused {
+  background: rgba(56, 189, 248, 0.1);
+}
+
+.lv-v2-console-log__row .time { color: #64748b; }
+.lv-v2-console-log__row .cat,
+.lv-v2-console-log__row .comp {
+  color: #94a3b8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lv-v2-console-log__row .msg {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #e2e8f0;
+}
+
+.lv-v2-console-sev {
+  justify-self: start;
+  font-size: 10px;
+  padding: 1px 6px;
+}
+
+.lv-v2-console-filters__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.lv-v2-console-filters__label {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.lv-v2-console-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #cbd5e1;
+}
+
+.lv-v2-console-regex-error {
+  margin: 0;
+  font-size: 11px;
+  color: #f87171;
+}
+
+.lv-v2-console-regex-hint {
+  margin: 0;
+  font-size: 11px;
+}
+
+.lv-v2-console-services__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 250px;
+  overflow: auto;
+}
+
+.lv-v2-console-services__row {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) 56px;
+  gap: 8px;
+  align-items: center;
+}
+
+.lv-v2-console-services__copy .name {
+  font-size: 12px;
+  color: #e2e8f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lv-v2-console-services__copy .meta {
+  font-size: 10.5px;
+  color: #64748b;
+}
+
+.lv-v2-console-services__bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.12);
+  overflow: hidden;
+}
+
+.lv-v2-console-services__bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #22d3ee, #34d399);
+}
+
+.lv-v2-console-services__bar i.is-empty {
+  width: 0;
+}
+
+.lv-v2-console-link {
+  border: 0;
+  background: transparent;
+  color: #67e8f9;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.lv-v2-console-link:hover {
+  text-decoration: underline;
+}
+
+.lv-v2-console-analytics {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  min-height: 180px;
+}
+
+.lv-v2-console-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 110px;
+  padding: 4px 2px 0;
+}
+
+.lv-v2-console-bars__col {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+}
+
+.lv-v2-console-bars__stack {
+  width: 100%;
+  display: flex;
+  flex-direction: column-reverse;
+  border-radius: 3px 3px 0 0;
+  overflow: hidden;
+  min-height: 4px;
+}
+
+.lv-v2-console-bars__stack i.is-info,
+.lv-v2-console-bars__legend i.is-info { background: #38bdf8; }
+.lv-v2-console-bars__stack i.is-ok,
+.lv-v2-console-bars__legend i.is-ok { background: #34d399; }
+.lv-v2-console-bars__stack i.is-warn,
+.lv-v2-console-bars__legend i.is-warn { background: #fbbf24; }
+.lv-v2-console-bars__stack i.is-bad,
+.lv-v2-console-bars__legend i.is-bad { background: #f87171; }
+
+.lv-v2-console-bars__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.lv-v2-console-bars__legend i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 4px;
+}
+
+.lv-v2-console-top-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lv-v2-console-top-list li {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 0.9fr) minmax(40px, 1.2fr) 40px;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.lv-v2-console-top-list .rank { color: #64748b; }
+.lv-v2-console-top-list .name {
+  color: #e2e8f0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lv-v2-console-top-list .bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.12);
+  overflow: hidden;
+}
+.lv-v2-console-top-list .bar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #38bdf8, #818cf8);
+}
+.lv-v2-console-top-list .pct {
+  text-align: right;
+  color: #94a3b8;
+  font-variant-numeric: tabular-nums;
+}
+
+.lv-v2-console-errors {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 140px;
+  overflow: auto;
+}
+
+.lv-v2-console-errors button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 58px 88px minmax(0, 1fr);
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  font-size: 11.5px;
+  padding: 6px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.lv-v2-console-errors button:hover {
+  background: rgba(248, 113, 113, 0.08);
+}
+
+.lv-v2-console-errors .time { color: #64748b; }
+.lv-v2-console-errors .src { color: #fca5a5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lv-v2-console-errors .msg { color: #e2e8f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lv-v2-console-errors__foot { margin: 8px 0 0; font-size: 11px; }
+
+.lv-v2-console-cmd-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lv-v2-console-cmd-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.lv-v2-console-cmd-dialog input {
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(2, 8, 23, 0.55);
+  color: #e2e8f0;
+  font: inherit;
+  font-size: 12px;
+  width: 100%;
+}
+
+.lv-v2-console-common {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.lv-v2-console-cmd-history {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.lv-v2-console-cmd-history button {
+  display: flex;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  color: #cbd5e1;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 0;
+  cursor: pointer;
+}
+
+.lv-v2-console-cmd-history .ok { color: #34d399; }
+.lv-v2-console-cmd-history .err { color: #f87171; }
+
+.lv-v2-console-resources-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lv-v2-console-resource-row .head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  margin-bottom: 4px;
+  color: #cbd5e1;
+}
+
+.lv-v2-console-stream-warn {
+  margin: 0;
+  font-size: 11px;
+}
+
+@media (max-width: 1200px) {
+  .lv-v2-metrics--console {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .lv-v2-console-workspace {
+    grid-template-columns: 1fr;
+    max-height: none;
+  }
+  .lv-v2-console-analytics {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .lv-v2-metrics--console {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .lv-v2-console-log__row {
+    grid-template-columns: 58px 70px minmax(0, 1fr);
+  }
+  .lv-v2-console-log__row .cat,
+  .lv-v2-console-log__row .comp { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lv-v2-page--console * {
+    scroll-behavior: auto !important;
+  }
+}
