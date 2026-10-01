@@ -201,6 +201,36 @@ export function phaseLabel(phase: string | null | undefined): string {
   return phase || "Processing";
 }
 
+/** Prefer validation / job error over a misleading "Ready · 100%" when status is failed. */
+export function failedImportDetail(ds: DatasetRecord, job: DatasetJob | undefined): string | null {
+  const quality = ds.quality;
+  if (quality?.measured && (quality.tone === "critical" || quality.tone === "poor")) {
+    const errs = quality.constituents?.errorCount;
+    if (typeof errs === "number") {
+      return `Validatie mislukt · ${errs} fouten · ${quality.label}`;
+    }
+    return `Validatie mislukt · ${quality.label}`;
+  }
+  const result = (job?.result || {}) as Record<string, unknown>;
+  const mat = result.materialized as Record<string, unknown> | undefined;
+  const validation = (mat?.validation || result.validation) as Record<string, unknown> | undefined;
+  if (validation && validation.valid === false) {
+    const errs = typeof validation.errorCount === "number" ? validation.errorCount : null;
+    return errs != null ? `Validatie mislukt · ${errs} fouten` : "Validatie mislukt";
+  }
+  const err = (job?.error || "").trim();
+  if (err) {
+    const firstLine = err.split("\n")[0]?.trim();
+    if (firstLine) return firstLine.slice(0, 180);
+  }
+  const progress = jobProgressDetail(job);
+  // Completed job progress ("Ready · 100%") contradicts failed dataset status — hide it.
+  if (progress && !/^Ready\b/i.test(progress.split(" · ")[0] || "")) {
+    return progress;
+  }
+  return progress && /fail/i.test(progress) ? progress : null;
+}
+
 export function jobProgressDetail(job: DatasetJob | undefined): string | null {
   if (!job) return null;
   const cp = (job.checkpoint || {}) as Record<string, unknown>;
@@ -276,7 +306,7 @@ export function recordToRow(ds: DatasetRecord, jobs: DatasetJob[]): DhRow {
     status === "processing" || status === "validating"
       ? jobProgressDetail(activeJob || latestJob)
       : status === "failed"
-        ? jobProgressDetail(latestJob) || latestJob?.error || null
+        ? failedImportDetail(ds, latestJob)
         : null;
   const seenTags = new Set<string>();
   const tags: string[] = [];

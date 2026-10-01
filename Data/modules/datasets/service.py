@@ -3845,6 +3845,7 @@ class DatasetService:
             mat = self._materialize_dataset(job.dataset_id, raw_path=downloaded.path, fmt=detection.format)
             self.store.update_job(job.job_id, phase="validating", progress=0.97)
             result["materialized"] = mat
+            self._raise_if_materialize_validation_failed(mat)
         return result
 
     def _handle_import_hf_repository(self, job: DatasetJob) -> dict[str, Any]:
@@ -4012,7 +4013,23 @@ class DatasetService:
                 progress_cb=on_progress,
             )
             result["materialized"] = mat
+            self._raise_if_materialize_validation_failed(mat)
         return result
+
+    def _raise_if_materialize_validation_failed(self, mat: dict[str, Any] | None) -> None:
+        """Keep job status aligned with dataset status after materialize validation."""
+        validation = (mat or {}).get("validation") if isinstance(mat, dict) else None
+        if not isinstance(validation, dict) or validation.get("valid") is not False:
+            return
+        errors = validation.get("errorCount", validation.get("errors", 0))
+        empty = validation.get("emptyContentCount", 0)
+        raise DatasetError(
+            f"Import downloaded successfully but record validation failed "
+            f"({errors} errors, {empty} empty-content). "
+            "Common cause: chat schemas using from/value (ShareGPT) or missing text fields.",
+            code="validation_failed",
+            http_status=422,
+        )
 
     def _materialize_dataset(
         self,

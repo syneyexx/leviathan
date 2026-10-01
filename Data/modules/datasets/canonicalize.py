@@ -38,6 +38,59 @@ ID_KEYS = ("id", "uid", "uuid", "example_id", "row_id")
 LABEL_KEYS = ("label", "labels", "target", "output", "answer", "category")
 MESSAGES_KEYS = ("messages", "conversations", "dialogue")
 
+# ShareGPT / Vicuna / many HF chat dumps use from/value instead of role/content.
+_MESSAGE_CONTENT_KEYS = ("content", "text", "value", "message", "body")
+_MESSAGE_ROLE_KEYS = ("role", "from", "speaker", "author")
+_ROLE_ALIASES = {
+    "human": "user",
+    "user": "user",
+    "gpt": "assistant",
+    "assistant": "assistant",
+    "bot": "assistant",
+    "model": "assistant",
+    "system": "system",
+    "tool": "tool",
+    "function": "function",
+}
+
+
+def _message_content(msg: dict[str, Any]) -> str | None:
+    for key in _MESSAGE_CONTENT_KEYS:
+        val = msg.get(key)
+        if isinstance(val, str) and val.strip():
+            return val
+        if val is not None and not isinstance(val, (dict, list)):
+            text = str(val).strip()
+            if text:
+                return text
+    return None
+
+
+def _message_role(msg: dict[str, Any]) -> str:
+    for key in _MESSAGE_ROLE_KEYS:
+        raw = msg.get(key)
+        if raw is None or raw == "":
+            continue
+        key_norm = str(raw).strip().lower()
+        return _ROLE_ALIASES.get(key_norm, str(raw).strip())
+    return ""
+
+
+def normalize_chat_message(msg: dict[str, Any]) -> dict[str, Any]:
+    """Normalize OpenAI and ShareGPT-style message objects to role/content."""
+    out = {k: v for k, v in msg.items() if k not in {*_MESSAGE_ROLE_KEYS, *_MESSAGE_CONTENT_KEYS}}
+    role = _message_role(msg)
+    content = _message_content(msg)
+    if role:
+        out["role"] = role
+    if content is not None:
+        out["content"] = content
+    # Preserve empty content key when the source had an explicit blank string field,
+    # so validation can still flag message_missing_content vs empty string distinctly.
+    elif any(k in msg for k in _MESSAGE_CONTENT_KEYS):
+        out["content"] = ""
+    return out
+
 # Large JSON arrays above this size use streaming ijson.
 _LARGE_JSON_BYTES = 8 * 1024 * 1024
 
@@ -104,7 +157,7 @@ def dict_to_canonical(
     labels_raw = _pick(data, LABEL_KEYS)
 
     if isinstance(messages, list):
-        msgs = [m for m in messages if isinstance(m, dict)]
+        msgs = [normalize_chat_message(m) for m in messages if isinstance(m, dict)]
     else:
         msgs = None
 
@@ -115,7 +168,7 @@ def dict_to_canonical(
         text = str(text_val)
 
     if not text and msgs:
-        # Derive text from last assistant/user message for indexing/token stats.
+        # Derive text from chat turns for indexing/token stats (OpenAI + ShareGPT).
         parts = []
         for msg in msgs:
             role = str(msg.get("role") or "")
