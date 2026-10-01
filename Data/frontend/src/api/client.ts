@@ -154,6 +154,7 @@ import type {
   SettingMutationResult,
   RuntimeEvent,
   EventsListResponse,
+  ConsoleOverviewResponse,
   OperatorCommandResult,
   PerformanceSnapshot,
   InferenceEfficiencySnapshot,
@@ -1081,6 +1082,23 @@ export const api = {
     if (opts?.until_ms != null) params.set("until_ms", String(opts.until_ms));
     const q = params.toString();
     return request<EventsListResponse>(`/api/events${q ? `?${q}` : ""}`);
+  },
+
+  consoleOverview(opts?: {
+    windowHours?: number;
+    bucketCount?: number;
+    topLimit?: number;
+    recentErrorsLimit?: number;
+  }): Promise<ConsoleOverviewResponse> {
+    const params = new URLSearchParams();
+    if (opts?.windowHours != null) params.set("window_hours", String(opts.windowHours));
+    if (opts?.bucketCount != null) params.set("bucket_count", String(opts.bucketCount));
+    if (opts?.topLimit != null) params.set("top_limit", String(opts.topLimit));
+    if (opts?.recentErrorsLimit != null) {
+      params.set("recent_errors_limit", String(opts.recentErrorsLimit));
+    }
+    const q = params.toString();
+    return request<ConsoleOverviewResponse>(`/api/console/overview${q ? `?${q}` : ""}`);
   },
 
   listOperatorCommands(): Promise<{ commands: Array<{ name: string; help: string }> }> {

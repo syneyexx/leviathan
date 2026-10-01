@@ -897,7 +897,12 @@ Skill execution still uses backend capability authority. Catalog presence and en
   (`/workflows`). Production never falls back to mock KPI/fixture rows on API failure.
   Visual fixture: `src/mocks/workflowsV2VisualFixture.ts` + `e2e/workflows-v2.visual.spec.ts`
   (reference: `docs/ui_reference/workflows-v2-reference.png`, 1664×936);
-- `/console` → `src/pages/ConsolePage.tsx`: operator console projection;
+- `/console` → `src/pages/console/ConsolePage.tsx` (+ `useConsoleWorkspace`, `src/components/console/*`):
+  **Runtime & Tools / Console** Leviathan V2 control plane (`AppShell variant="v2"`).
+  Five KPI cards, live virtualized log console, Log Filters, Actieve Services, and bottom
+  analytics project ObservabilityHub / EventStore / product-truth components.
+  Operator commands + resources remain via overflow dialogs (Screen 2 remap).
+  Canonical docs: `Data/docs/frontend/console-v2.md`.
 - `/performance` → `src/pages/PerformancePage.tsx`: performance/native/DB read model.
 
 MCP tool invocation is not a direct browser-to-MCP channel; backend gateway/approval semantics remain authoritative.

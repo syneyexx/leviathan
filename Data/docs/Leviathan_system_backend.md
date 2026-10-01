@@ -1813,6 +1813,14 @@ Rules:
 # 23. Observability, analytics, health, backup and chaos
 
 - `Data/modules/observability/` — event hub, operator registry, telemetry/event stream;
+  - Durable `EventStore` (`observability_events`) + ring buffer + SSE broker;
+  - `GET /api/events` / `GET /api/events/stream` — bounded history + live fan-out (redacted);
+  - `GET /api/console/overview` — bounded Console V2 aggregates (`console_stats`: level totals,
+    histogram buckets, top components with share = count/total_events_in_period, recent errors,
+    trailing log rate, filter options) plus product-truth components for Actieve Services
+    (`operational` **and** `measured` only). Not a second telemetry DB;
+  - `GET/POST /api/console/commands|command` — OperatorCommandRegistry (no shell bypass);
+
 - `Data/modules/observations/` — durable observations;
 - `Data/modules/metrics/` — metric/time-series collection;
 - `Data/modules/analytics/` — analytics **read model** (`AnalyticsService` + `dashboard.py` + `contracts.py`);

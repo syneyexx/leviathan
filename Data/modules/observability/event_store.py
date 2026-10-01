@@ -278,6 +278,287 @@ class EventStore:
             ).fetchall()
         return {str(row["lvl"]): int(row["c"]) for row in rows}
 
+    def console_stats(
+        self,
+        *,
+        since_ms: float,
+        until_ms: float | None = None,
+        bucket_count: int = 24,
+        top_limit: int = 8,
+        recent_errors_limit: int = 12,
+        rate_window_ms: float = 300_000.0,
+    ) -> dict[str, Any]:
+        """Bounded Console aggregates — single coherent read for the V2 page.
+
+        Denominator for component shares: total events in ``[since_ms, until_ms]``.
+        Log rate: events in the trailing ``rate_window_ms`` / minutes (measured).
+        """
+        until = float(until_ms) if until_ms is not None else _now_ms()
+        since = float(since_ms)
+        if until < since:
+            until = since
+        bucket_count = max(1, min(int(bucket_count), 96))
+        top_limit = max(1, min(int(top_limit), 50))
+        recent_errors_limit = max(1, min(int(recent_errors_limit), 100))
+        span_ms = max(1.0, until - since)
+        bucket_ms = span_ms / bucket_count
+
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            rows = conn.execute(
+                """
+                SELECT UPPER(level) AS lvl, COUNT(*) AS c
+                FROM observability_events
+                WHERE created_at_ms >= ? AND created_at_ms <= ?
+                GROUP BY UPPER(level)
+                """,
+                (since, until),
+            ).fetchall()
+            level_counts = {str(row["lvl"]): int(row["c"]) for row in rows}
+
+            total_row = conn.execute(
+                """
+                SELECT COUNT(*) AS c FROM observability_events
+                WHERE created_at_ms >= ? AND created_at_ms <= ?
+                """,
+                (since, until),
+            ).fetchone()
+            total = int(total_row["c"] if isinstance(total_row, sqlite3.Row) else total_row[0])
+
+            # Fixed-width histogram buckets by level family.
+            bucket_rows = conn.execute(
+                """
+                SELECT
+                  CAST((created_at_ms - ?) / ? AS INTEGER) AS b,
+                  UPPER(level) AS lvl,
+                  COUNT(*) AS c
+                FROM observability_events
+                WHERE created_at_ms >= ? AND created_at_ms <= ?
+                GROUP BY b, lvl
+                """,
+                (since, bucket_ms, since, until),
+            ).fetchall()
+
+            top_rows = conn.execute(
+                """
+                SELECT
+                  COALESCE(NULLIF(TRIM(subsystem), ''), NULLIF(TRIM(category), ''), 'unknown') AS component,
+                  COUNT(*) AS c
+                FROM observability_events
+                WHERE created_at_ms >= ? AND created_at_ms <= ?
+                GROUP BY component
+                ORDER BY c DESC
+                LIMIT ?
+                """,
+                (since, until, top_limit),
+            ).fetchall()
+
+            error_rows = conn.execute(
+                """
+                SELECT sequence, event_id, created_at_ms, level, category, subsystem, name, message, source
+                FROM observability_events
+                WHERE created_at_ms >= ? AND created_at_ms <= ?
+                  AND UPPER(level) IN ('ERROR', 'CRITICAL')
+                ORDER BY sequence DESC
+                LIMIT ?
+                """,
+                (since, until, recent_errors_limit),
+            ).fetchall()
+
+            rate_since = max(since, until - float(rate_window_ms))
+            rate_row = conn.execute(
+                """
+                SELECT COUNT(*) AS c FROM observability_events
+                WHERE created_at_ms >= ? AND created_at_ms <= ?
+                """,
+                (rate_since, until),
+            ).fetchone()
+            rate_count = int(rate_row["c"] if isinstance(rate_row, sqlite3.Row) else rate_row[0])
+
+            cat_rows = conn.execute(
+                """
+                SELECT DISTINCT category FROM observability_events
+                WHERE created_at_ms >= ? AND created_at_ms <= ?
+                  AND TRIM(category) != ''
+                ORDER BY category ASC
+                LIMIT 200
+                """,
+                (since, until),
+            ).fetchall()
+            sub_rows = conn.execute(
+                """
+                SELECT DISTINCT subsystem FROM observability_events
+                WHERE created_at_ms >= ? AND created_at_ms <= ?
+                  AND TRIM(subsystem) != ''
+                ORDER BY subsystem ASC
+                LIMIT 200
+                """,
+                (since, until),
+            ).fetchall()
+
+            # Per-component rates over the rate window (events/min).
+            activity_rows = conn.execute(
+                """
+                SELECT
+                  COALESCE(NULLIF(TRIM(subsystem), ''), NULLIF(TRIM(category), ''), 'unknown') AS component,
+                  COUNT(*) AS c
+                FROM observability_events
+                WHERE created_at_ms >= ? AND created_at_ms <= ?
+                GROUP BY component
+                """,
+                (rate_since, until),
+            ).fetchall()
+
+            # Metric-card sparklines: per-bucket totals (+ warning/error series).
+            spark_rows = conn.execute(
+                """
+                SELECT
+                  CAST((created_at_ms - ?) / ? AS INTEGER) AS b,
+                  COUNT(*) AS c,
+                  SUM(CASE WHEN UPPER(level) IN ('WARNING', 'WARN') THEN 1 ELSE 0 END) AS warnings,
+                  SUM(CASE WHEN UPPER(level) IN ('ERROR', 'CRITICAL') THEN 1 ELSE 0 END) AS errors,
+                  SUM(CASE WHEN UPPER(level) = 'SUCCESS' THEN 1 ELSE 0 END) AS success
+                FROM observability_events
+                WHERE created_at_ms >= ? AND created_at_ms <= ?
+                GROUP BY b
+                """,
+                (since, bucket_ms, since, until),
+            ).fetchall()
+
+        buckets: list[dict[str, Any]] = []
+        by_bucket: dict[int, dict[str, int]] = {}
+        for row in bucket_rows:
+            b = int(row["b"])
+            if b < 0 or b >= bucket_count:
+                # Clamp last-edge events into final bucket.
+                b = max(0, min(bucket_count - 1, b))
+            slot = by_bucket.setdefault(
+                b, {"info": 0, "success": 0, "warning": 0, "error": 0, "other": 0}
+            )
+            lvl = str(row["lvl"] or "").upper()
+            c = int(row["c"])
+            if lvl in {"INFO", "DEBUG"}:
+                slot["info"] += c
+            elif lvl == "SUCCESS":
+                slot["success"] += c
+            elif lvl in {"WARNING", "WARN"}:
+                slot["warning"] += c
+            elif lvl in {"ERROR", "CRITICAL"}:
+                slot["error"] += c
+            else:
+                slot["other"] += c
+
+        for i in range(bucket_count):
+            slot = by_bucket.get(i, {"info": 0, "success": 0, "warning": 0, "error": 0, "other": 0})
+            buckets.append(
+                {
+                    "bucket_index": i,
+                    "bucket_start_ms": since + i * bucket_ms,
+                    "bucket_end_ms": since + (i + 1) * bucket_ms,
+                    **slot,
+                    "total": sum(slot.values()),
+                }
+            )
+
+        spark_map = {
+            int(row["b"]): {
+                "total": int(row["c"]),
+                "warnings": int(row["warnings"] or 0),
+                "errors": int(row["errors"] or 0),
+                "success": int(row["success"] or 0),
+            }
+            for row in spark_rows
+        }
+        spark_total = [spark_map.get(i, {}).get("total", 0) for i in range(bucket_count)]
+        spark_warn = [spark_map.get(i, {}).get("warnings", 0) for i in range(bucket_count)]
+        spark_err = [spark_map.get(i, {}).get("errors", 0) for i in range(bucket_count)]
+        spark_ok = [spark_map.get(i, {}).get("success", 0) for i in range(bucket_count)]
+
+        rate_minutes = max(1.0 / 60.0, (until - rate_since) / 60_000.0)
+        log_rate_per_min = rate_count / rate_minutes if rate_minutes > 0 else None
+
+        top_components: list[dict[str, Any]] = []
+        for rank, row in enumerate(top_rows, start=1):
+            count = int(row["c"])
+            share = (count / total) if total > 0 else None
+            top_components.append(
+                {
+                    "rank": rank,
+                    "component": str(row["component"]),
+                    "event_count": count,
+                    "share": share,
+                    "share_denominator": "total_events_in_selected_period",
+                }
+            )
+
+        recent_errors = [
+            {
+                "sequence": int(row["sequence"]),
+                "event_id": row["event_id"],
+                "created_at_ms": float(row["created_at_ms"]),
+                "level": row["level"],
+                "category": row["category"],
+                "subsystem": row["subsystem"],
+                "name": row["name"],
+                "message": (row["message"] or "")[:240],
+                "source": row["source"] or "",
+            }
+            for row in error_rows
+        ]
+
+        activity_by_component = {
+            str(row["component"]): int(row["c"]) / rate_minutes for row in activity_rows
+        }
+
+        def _lvl(name: str) -> int:
+            return int(level_counts.get(name, 0))
+
+        warnings = _lvl("WARNING") + _lvl("WARN")
+        errors = _lvl("ERROR") + _lvl("CRITICAL")
+
+        return {
+            "window": {
+                "since_ms": since,
+                "until_ms": until,
+                "bucket_count": bucket_count,
+                "bucket_ms": bucket_ms,
+                "rate_window_ms": float(rate_window_ms),
+            },
+            "totals": {
+                "events": total,
+                "info": _lvl("INFO") + _lvl("DEBUG"),
+                "success": _lvl("SUCCESS"),
+                "warning": warnings,
+                "error": errors,
+                "by_level": level_counts,
+            },
+            "log_rate_per_min": log_rate_per_min,
+            "log_rate_sample_count": rate_count,
+            "buckets": buckets,
+            "top_components": top_components,
+            "recent_errors": recent_errors,
+            "filter_options": {
+                "categories": [str(r["category"]) for r in cat_rows],
+                "subsystems": [str(r["subsystem"]) for r in sub_rows],
+            },
+            "sparklines": {
+                "total": spark_total,
+                "warning": spark_warn,
+                "error": spark_err,
+                "success": spark_ok,
+                "rate": spark_total,
+            },
+            "activity_rate_by_component": activity_by_component,
+            "truth": {
+                "durable": True,
+                "measured": True,
+                "unmeasured_is_null": True,
+                "share_denominator": "total_events_in_selected_period",
+                "log_rate_is_trailing_window_average": True,
+                "no_fabricated_zeros_when_store_missing": True,
+            },
+        }
+
     def cleanup(self) -> dict[str, int]:
         with self.connect() as conn:
             self._ensure_schema(conn)

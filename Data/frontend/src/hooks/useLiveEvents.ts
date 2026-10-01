@@ -32,6 +32,11 @@ export function useLiveEvents(opts?: {
 
   useEffect(() => {
     pausedRef.current = paused;
+    // On resume, flush the bounded buffer into visible state in sequence order.
+    if (!paused) {
+      setEvents([...bufferRef.current].reverse());
+      setLatestSequence(cursorRef.current);
+    }
   }, [paused]);
 
   const mergeEvents = useCallback(

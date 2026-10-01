@@ -227,6 +227,15 @@ Media Control, Plugin & Runtime, Coding Agent, and other deep links remain regis
 - Toolbar: Nieuwe dataset / Importeren / Externe bron (HF) / Verwerken (bulk materialize) / Indexeren (bulk index). UI does **not** call `POST /api/datasets/jobs/process`. Tags mutate via `PATCH /api/datasets/{id}/semantic`. Download uses export/download DatasetService paths. Delen copies an internal deep link only.
 - Unknown status ≠ Ready. Unmeasured progress ≠ invented %. Capacity unknown ≠ fake 1 TB. Screenshot KPI numbers exist only in test fixtures.
 
+## Console migration
+
+- `/console` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "Runtime & Tools / Console").
+- MAIN_MENU parent remains **Runtime & Tools**; Console child is canonical (`/console`).
+- Composition: `ConsolePage` + `useConsoleWorkspace` + `src/components/console/*` (metrics, panel, filters, services, bottom analytics, modals).
+- No page-local Console CSS; layout lives in `leviathan-v2.css` under `.lv-v2-page--console` / `.lv-v2-console-*`.
+- Backend authority: ObservabilityHub / EventStore (`GET /api/events`, `/api/events/stream`, `/api/console/overview`, `/api/console/command`) + product-truth components for Actieve Services. Pause/clear are client-buffer semantics; durable history is never deleted by Wissen.
+- Visual fixture: `src/mocks/consoleV2VisualFixture.ts` + `e2e/helpers/consoleV2Visual.ts` + `e2e/console-v2.visual.spec.ts` (reference: `docs/ui_reference/console-v2-reference.png` when present). Production never imports fixture defaults.
+
 ## Knowledge Library migration
 
 - `/knowledge` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "Knowledge Library").

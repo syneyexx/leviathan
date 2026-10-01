@@ -303,6 +303,58 @@ class ObservabilityHub:
             snap["level_counts"] = self.store.counts_by_level()
         return snap
 
+    def console_stats(
+        self,
+        *,
+        since_ms: float,
+        until_ms: float | None = None,
+        bucket_count: int = 24,
+        top_limit: int = 8,
+        recent_errors_limit: int = 12,
+        rate_window_ms: float = 300_000.0,
+    ) -> dict[str, Any]:
+        """Bounded Console aggregates from durable store, or truthful UNMEASURED."""
+        if self.store is None:
+            return {
+                "window": {
+                    "since_ms": float(since_ms),
+                    "until_ms": float(until_ms) if until_ms is not None else time.time() * 1000,
+                    "bucket_count": bucket_count,
+                    "bucket_ms": None,
+                    "rate_window_ms": float(rate_window_ms),
+                },
+                "totals": None,
+                "log_rate_per_min": None,
+                "log_rate_sample_count": None,
+                "buckets": [],
+                "top_components": [],
+                "recent_errors": [],
+                "filter_options": {"categories": [], "subsystems": []},
+                "sparklines": {
+                    "total": [],
+                    "warning": [],
+                    "error": [],
+                    "success": [],
+                    "rate": [],
+                },
+                "activity_rate_by_component": {},
+                "truth": {
+                    "durable": False,
+                    "measured": False,
+                    "unmeasured": True,
+                    "unmeasured_is_null": True,
+                    "reason": "event_store_unavailable",
+                },
+            }
+        return self.store.console_stats(
+            since_ms=since_ms,
+            until_ms=until_ms,
+            bucket_count=bucket_count,
+            top_limit=top_limit,
+            recent_errors_limit=recent_errors_limit,
+            rate_window_ms=rate_window_ms,
+        )
+
     def shutdown(self) -> None:
         self.broker.shutdown()
 

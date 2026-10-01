@@ -3795,6 +3795,112 @@ export type EventsListResponse = {
   truth?: Record<string, boolean>;
 };
 
+/** Bounded Console V2 aggregates from ObservabilityHub + product-truth. */
+export type ConsoleOverviewService = {
+  id: string;
+  name: string;
+  type?: string | null;
+  status: string;
+  detail?: string;
+  measured: boolean;
+  events_per_min?: number | null;
+  truth?: Record<string, boolean>;
+};
+
+export type ConsoleOverviewBucket = {
+  bucket_index: number;
+  bucket_start_ms: number;
+  bucket_end_ms: number;
+  info: number;
+  success: number;
+  warning: number;
+  error: number;
+  other: number;
+  total: number;
+};
+
+export type ConsoleTopComponent = {
+  rank: number;
+  component: string;
+  event_count: number;
+  share: number | null;
+  share_denominator: string;
+};
+
+export type ConsoleRecentError = {
+  sequence: number;
+  event_id: string;
+  created_at_ms: number;
+  level: string;
+  category: string;
+  subsystem: string;
+  name: string;
+  message: string;
+  source: string;
+};
+
+export type ConsoleOverviewResponse = {
+  generated_at_ms: number;
+  window_hours: number;
+  stats: {
+    window: {
+      since_ms: number;
+      until_ms: number;
+      bucket_count: number;
+      bucket_ms: number | null;
+      rate_window_ms: number;
+    };
+    totals: {
+      events: number;
+      info: number;
+      success: number;
+      warning: number;
+      error: number;
+      by_level: Record<string, number>;
+    } | null;
+    log_rate_per_min: number | null;
+    log_rate_sample_count: number | null;
+    buckets: ConsoleOverviewBucket[];
+    top_components: ConsoleTopComponent[];
+    recent_errors: ConsoleRecentError[];
+    filter_options: { categories: string[]; subsystems: string[] };
+    sparklines: {
+      total: number[];
+      warning: number[];
+      error: number[];
+      success: number[];
+      rate: number[];
+    };
+    activity_rate_by_component: Record<string, number>;
+    truth?: Record<string, unknown>;
+  };
+  metrics: {
+    total_logs_24h: number | null;
+    warnings_24h: number | null;
+    errors_24h: number | null;
+    info_24h: number | null;
+    success_24h: number | null;
+    log_rate_per_min: number | null;
+    active_services: number;
+    total_services: number;
+    sparklines: {
+      total?: number[];
+      warning?: number[];
+      error?: number[];
+      success?: number[];
+      rate?: number[];
+    };
+  };
+  services: ConsoleOverviewService[];
+  stream: {
+    latest_sequence: number;
+    buffered?: number;
+    subscribers?: number;
+    durable?: boolean;
+  };
+  truth?: Record<string, unknown>;
+};
+
 export type OperatorCommandResult = {
   ok: boolean;
   command: string;
