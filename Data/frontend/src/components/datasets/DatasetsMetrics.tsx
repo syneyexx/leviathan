@@ -37,7 +37,7 @@ export function DatasetsMetrics({ ws }: Props) {
       value: String(m.total),
       sublabel: ws.overviewError
         ? "Overview unavailable"
-        : `Pagina ${m.inventoryPageSize} van ${m.catalogTotal}`,
+        : `${m.inventoryPageSize} op pagina · ${m.catalogTotal} in catalogus`,
       spark: sparkFromValue(m.total),
       variant: "system" as const,
     },

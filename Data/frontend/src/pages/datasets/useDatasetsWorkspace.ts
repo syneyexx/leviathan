@@ -144,9 +144,10 @@ export function useDatasetsWorkspace() {
       return {
         usedLabel: formatBytes(usedBytes),
         capacityLabel: capacity != null ? formatBytes(capacity) : null,
+        // Dataset Opslag bar reflects attributable corpus bytes, not whole-disk usage.
         pct:
-          capacity != null && capacity > 0 && overview.usedBytes != null
-            ? Math.min(100, Math.round((overview.usedBytes / capacity) * 100))
+          capacity != null && capacity > 0
+            ? Math.min(100, Math.round((usedBytes / capacity) * 100))
             : null,
         segments: overview.storageBreakdown.map((row, i) => ({
           id: row.id,
@@ -262,7 +263,7 @@ export function useDatasetsWorkspace() {
             ? "Error"
             : inventory.stale
               ? "Stale"
-              : inventory.loading
+              : inventory.loading && inventory.liveRows.length === 0
                 ? "Loading"
                 : "Ready",
         tone: (inventory.error && !inventory.stale

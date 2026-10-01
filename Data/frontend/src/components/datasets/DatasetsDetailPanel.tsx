@@ -226,9 +226,9 @@ export function DatasetsDetailPanel({ ws }: Props) {
               </div>
               <div className="lv-v2-ds-tags">
                 {tags.length ? (
-                  tags.map((t) => (
+                  tags.map((t, i) => (
                     <button
-                      key={t}
+                      key={`${t.toLowerCase()}-${i}`}
                       type="button"
                       className="lv-v2-ds-tag-chip"
                       onClick={() => ws.onRemoveTagChip(t)}

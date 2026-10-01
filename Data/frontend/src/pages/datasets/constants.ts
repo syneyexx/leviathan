@@ -11,6 +11,7 @@ export type DhSourceKind = "huggingface" | "local" | "curated" | "arxiv" | "ncbi
 
 export type DhStatus =
   | "ready"
+  | "created"
   | "offline"
   | "validating"
   | "processing"
