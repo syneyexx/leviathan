@@ -31,7 +31,7 @@ export function PromptsPage() {
             </p>
             <ul className="lv-v2-list" style={{ listStyle: "none", padding: 0, margin: 0 }}>
               {CHAT_PROMPT_PRESETS.map((item) => (
-                <li key={item.id}>
+                <li key={item.label}>
                   <Link
                     className="lv-v2-list-row"
                     to="/chat"

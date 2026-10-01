@@ -152,4 +152,12 @@ describe("chatTelemetry", () => {
     expect(tel.agent_delegations ?? []).toHaveLength(0);
     expect(tel.web_used).toBe(false);
   });
+
+  it("treats unknown evidence hits as null — never zero", () => {
+    const tel = deriveAssistantTelemetry(baseChat({ model: "m1" }));
+    expect(tel.evidence_hits).toBeNull();
+    expect(tel.truth?.unknown_hits_are_not_zero).toBe(true);
+    const strip = buildDiagnosticStrip(tel);
+    expect(strip.find((s) => s.label === "evidence")?.value).toBe("UNMEASURED");
+  });
 });

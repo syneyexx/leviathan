@@ -26,7 +26,7 @@ export {
 } from "./turnStateMachine";
 export type { ChatTurnUiState } from "./turnStateMachine";
 
-export { formatModelParams, formatParamCount } from "./formatModelParams";
+export { formatModelParams, formatParamCount, formatParameterCount } from "./formatModelParams";
 
 export {
   CHAT_ERROR_CODES,
@@ -50,5 +50,15 @@ export {
   parseSafeMarkdown,
   renderInlineMarkdown,
   isSafeHref,
+  sanitizeHref,
 } from "./safeMarkdown";
 export type { MdBlock, SafeMarkdownProps } from "./safeMarkdown";
+
+export {
+  canAttachFiles,
+  validateLocalFile,
+  uploadChatAttachment,
+  readyArtifactIds,
+  visionClaimAllowed,
+} from "./attachments";
+export type { ChatAttachment, ChatAttachmentState } from "./attachments";

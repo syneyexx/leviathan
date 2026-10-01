@@ -3421,6 +3421,26 @@ async def chat(payload: ChatRequest, request: Request):
         behavior_version=getattr(behavior_snapshot, "version", None),
         behavior_hash=getattr(behavior_snapshot, "settings_hash", None),
     )
+    if payload.artifact_ids:
+        # Validate artifact existence via ArtifactStore — never trust client IDs blindly.
+        safe_ids: list[str] = []
+        for aid in payload.artifact_ids[:20]:
+            aid_s = str(aid or "").strip()
+            if not aid_s:
+                continue
+            try:
+                if artifacts.get(aid_s):
+                    safe_ids.append(aid_s)
+            except Exception:  # noqa: BLE001
+                continue
+        if safe_ids:
+            import json as _json
+
+            chat_turn_store.update(
+                durable_turn.turn_id,
+                artifact_ids_json=_json.dumps(safe_ids),
+            )
+            durable_turn = chat_turn_store.get(durable_turn.turn_id) or durable_turn
     turn_id = durable_turn.turn_id
     request_id = getattr(request.state, "request_id", None) or run.run_id
 

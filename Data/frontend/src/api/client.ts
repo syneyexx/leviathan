@@ -119,12 +119,6 @@ import type {
   CodingMission,
   CodingWorkspaceTreeResponse,
   ChatOptions,
-  ChatCancelRequest,
-  ChatCancelResult,
-  ChatRunStatus,
-  ChatTurn,
-  ConversationDetailPage,
-  ConversationListPage,
   CapabilityListItem,
   ToolsOverview,
   ToolsLibraryItem,
@@ -496,8 +490,55 @@ export const api = {
     chat_run_id: string;
     run: { run_id: string; state: string; conversation_id?: string; error?: string } | null;
     turn: import("../types/api").ChatTurn | null;
+    truth?: Record<string, boolean>;
   }> {
     return request(`/api/chat/runs/${encodeURIComponent(runId)}`);
+  },
+
+  /**
+   * Create an ArtifactStore record from raw bytes (base64 over JSON).
+   * Used by Chat attachments — never invent local filesystem paths.
+   */
+  createArtifactFromBytes(opts: {
+    filename: string;
+    content_type?: string;
+    bytes: number[] | Uint8Array;
+    conversation_id?: string;
+    run_id?: string | null;
+    artifact_type?: string;
+    producer?: string;
+  }): Promise<{
+    artifact: {
+      artifact_id: string;
+      id?: string;
+      artifact_type?: string;
+      size_bytes?: number;
+      declared_mime_type?: string;
+      conversation_id?: string;
+      [key: string]: unknown;
+    };
+  }> {
+    const bytes =
+      opts.bytes instanceof Uint8Array ? opts.bytes : new Uint8Array(opts.bytes);
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    }
+    const content = btoa(binary);
+    return request("/api/artifacts", {
+      method: "POST",
+      body: JSON.stringify({
+        content,
+        content_base64: true,
+        filename: opts.filename,
+        artifact_type: opts.artifact_type || "file",
+        mime_type: opts.content_type || "application/octet-stream",
+        producer: opts.producer || "chat_ui",
+        ...(opts.run_id ? { run_id: opts.run_id } : {}),
+        ...(opts.conversation_id ? { conversation_id: opts.conversation_id } : {}),
+      }),
+    });
   },
 
   updateConversation(

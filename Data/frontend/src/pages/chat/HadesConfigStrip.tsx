@@ -1,14 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CapabilityListItem, ModelDescriptor } from "../../types/api";
-import { formatParameterCount } from "../../lib/chat/formatModelParams";
 import {
   REASONING_MODE_OPTIONS,
   type ReasoningModeId,
 } from "../../lib/chat/reasoningModes";
-import {
-  classifyCapability,
-  isCapabilityActive,
-} from "./chatHelpers";
+import { formatModelParams } from "../../lib/chat/formatModelParams";
+import { classifyCapability, isCapabilityActive } from "./chatHelpers";
 
 export type HadesConfigStripProps = {
   models: ModelDescriptor[];
@@ -24,8 +21,6 @@ export type HadesConfigStripProps = {
 };
 
 type OpenMenu = "model" | "agent" | "reason" | "tools" | null;
-
-const REASONING_OPTIONS = REASONING_MODE_OPTIONS;
 
 const AGENT_OPTIONS: Array<{
   id: "direct" | "team";
@@ -62,7 +57,7 @@ function Chevron() {
 
 function modelMetaLine(model: ModelDescriptor): string {
   const family = model.family || model.providerId || "Model";
-  const params = formatParameterCount(model.parameterCount);
+  const params = formatModelParams(model.parameterCount);
   const quant = model.quantization?.trim();
   const bits = [family, params].filter(Boolean).join(" / ");
   if (quant) return `${bits} • ${quant}`;
@@ -97,7 +92,7 @@ export function HadesConfigStrip({
 
   const agent = AGENT_OPTIONS.find((o) => o.id === collaborationStrategy) ?? AGENT_OPTIONS[0];
   const reasoning =
-    REASONING_OPTIONS.find((o) => o.id === reasoningMode) ?? REASONING_OPTIONS[0];
+    REASONING_MODE_OPTIONS.find((o) => o.id === reasoningMode) ?? REASONING_MODE_OPTIONS[0];
 
   const activeCount = capabilities.filter(isCapabilityActive).length;
   const totalCount = capabilities.length;
@@ -270,7 +265,7 @@ export function HadesConfigStrip({
         <Chevron />
         {open === "reason" ? (
           <div className="lv-v2-select-card__menu" role="listbox" aria-label="Reasoning modus">
-            {REASONING_OPTIONS.map((option) => (
+            {REASONING_MODE_OPTIONS.map((option) => (
               <button
                 key={option.id}
                 type="button"

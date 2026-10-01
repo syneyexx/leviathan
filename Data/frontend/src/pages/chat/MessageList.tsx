@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import { media } from "../../assets/media";
 import type {
   AssistantTurnTelemetry,
+  ChatTurn,
   ReasoningSummary,
 } from "../../types/api";
 import type {
@@ -13,13 +14,16 @@ import { ActivityTimeline } from "../../components/activity/ActivityTimeline";
 import { SafeMarkdown } from "../../lib/chat/safeMarkdown";
 import { formatMessageTime } from "./chatHelpers";
 import { CapabilityResultCards } from "./CapabilityResultCards";
+import type { ThreadMessage } from "./hooks/useConversationThread";
 
 export type ChatDisplayMessage = {
+  id?: number;
   role: "user" | "assistant";
   content: string;
   created_at: string | null;
   pending?: boolean;
   error?: boolean;
+  turn?: ChatTurn | null;
 };
 
 export type MessageListLastTurn = {
@@ -36,36 +40,18 @@ export type MessageListLastTurn = {
 };
 
 export type MessageListProps = {
-  messages: ChatDisplayMessage[];
+  messages: Array<ChatDisplayMessage | ThreadMessage>;
   lastTurn?: MessageListLastTurn | null;
+  /** Per-assistant-message turn metadata (message id → turn). */
+  turnsByMessageId?: Record<string, ChatTurn>;
   emptyTitle?: string;
   emptyDetail?: string;
+  hasMoreOlder?: boolean;
+  loadingOlder?: boolean;
+  onLoadOlder?: () => void;
   onActivityModeChange?: (mode: ActivityDisplayMode) => void;
+  onOpenInspector?: () => void;
 };
-
-/** Minimal safe inline formatting: **bold** + newlines. No HTML injection. */
-function renderPlainContent(content: string): ReactNode {
-  const lines = content.split("\n");
-  return lines.map((line, lineIdx) => {
-    const parts: ReactNode[] = [];
-    const re = /\*\*(.+?)\*\*/g;
-    let last = 0;
-    let match: RegExpExecArray | null;
-    let key = 0;
-    while ((match = re.exec(line)) != null) {
-      if (match.index > last) parts.push(line.slice(last, match.index));
-      parts.push(<strong key={`b-${lineIdx}-${key++}`}>{match[1]}</strong>);
-      last = match.index + match[0].length;
-    }
-    if (last < line.length) parts.push(line.slice(last));
-    return (
-      <span key={`l-${lineIdx}`}>
-        {lineIdx > 0 ? "\n" : null}
-        {parts.length ? parts : line}
-      </span>
-    );
-  });
-}
 
 /**
  * Legacy fallback when the backend has not yet emitted ActivityEvents.
@@ -161,17 +147,35 @@ function ActivityOrLegacy({
   return <LegacyReasoningFallback lastTurn={lastTurn} />;
 }
 
+function TurnMetaChip({ turn }: { turn: ChatTurn }) {
+  const model = turn.effective_model || turn.requested_model;
+  const mode = turn.effective_reasoning_mode || turn.requested_reasoning_mode;
+  const state = turn.run_state;
+  const bits = [model, mode, state].filter(Boolean);
+  if (!bits.length) return null;
+  return (
+    <div className="lv-v2-msg__meta" style={{ opacity: 0.75 }}>
+      {bits.join(" · ")}
+    </div>
+  );
+}
+
 export function MessageList({
   messages,
   lastTurn = null,
+  turnsByMessageId = {},
   emptyTitle = "Hades AI is gereed.",
   emptyDetail = "Start een gesprek. Persistente chat, reasoning en knowledge retrieval zijn gekoppeld aan de backend.",
+  hasMoreOlder = false,
+  loadingOlder = false,
+  onLoadOlder,
   onActivityModeChange,
 }: MessageListProps) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [nearBottom, setNearBottom] = useState(true);
   const hydratedRef = useRef(false);
   const prevLenRef = useRef(0);
+  const conversationKeyRef = useRef<string>("");
 
   function measureNearBottom(el: HTMLDivElement): boolean {
     return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -184,11 +188,20 @@ export function MessageList({
     setNearBottom(true);
   }
 
+  // Reset hydration when message identity changes (new conversation).
+  useEffect(() => {
+    const key = messages[0] ? `${messages[0].id ?? 0}:${messages[0].created_at ?? ""}` : "empty";
+    if (key !== conversationKeyRef.current) {
+      conversationKeyRef.current = key;
+      hydratedRef.current = false;
+      prevLenRef.current = 0;
+    }
+  }, [messages]);
+
   useEffect(() => {
     const el = scrollerRef.current;
     if (!el) return;
 
-    // First paint of a loaded conversation: keep top so user+assistant share the viewport.
     if (!hydratedRef.current && messages.length > 0) {
       hydratedRef.current = true;
       prevLenRef.current = messages.length;
@@ -214,6 +227,19 @@ export function MessageList({
         setNearBottom(measureNearBottom(e.currentTarget));
       }}
     >
+      {hasMoreOlder ? (
+        <div style={{ display: "flex", justifyContent: "center", padding: "8px 0" }}>
+          <button
+            type="button"
+            className="lv-v2-topbar__action-btn"
+            disabled={loadingOlder}
+            onClick={() => onLoadOlder?.()}
+          >
+            {loadingOlder ? "Oudere berichten laden…" : "Oudere berichten laden"}
+          </button>
+        </div>
+      ) : null}
+
       {messages.length === 0 ? (
         <div className="lv-v2-chat-empty" role="status">
           <strong>{emptyTitle}</strong>
@@ -222,6 +248,10 @@ export function MessageList({
       ) : (
         messages.map((message, index) => {
           const isLast = index === messages.length - 1;
+          const messageTurn =
+            message.turn ||
+            (message.id != null ? turnsByMessageId[String(message.id)] : null) ||
+            null;
           const showReasoning =
             message.role === "assistant" &&
             isLast &&
@@ -235,7 +265,7 @@ export function MessageList({
 
           return (
             <article
-              key={`${message.role}-${index}-${message.created_at ?? "pending"}`}
+              key={`${message.role}-${message.id ?? index}-${message.created_at ?? "pending"}`}
               className={`lv-v2-msg lv-v2-msg--${message.role}`}
               data-pending={message.pending ? "true" : undefined}
               data-error={message.error ? "true" : undefined}
@@ -262,15 +292,16 @@ export function MessageList({
                     message.error ? " is-error" : ""
                   }`}
                 >
-                  {message.role === "assistant" && !message.pending ? (
-                    <SafeMarkdown content={message.content} className="lv-md" />
+                  {message.pending && message.content === "Thinking…" ? (
+                    message.content
                   ) : (
-                    renderPlainContent(message.content)
+                    <SafeMarkdown content={message.content} />
                   )}
                 </div>
                 {showTools ? (
                   <CapabilityResultCards toolCalls={lastTurn?.telemetry?.tool_calls} />
                 ) : null}
+                {messageTurn ? <TurnMetaChip turn={messageTurn} /> : null}
                 <div className="lv-v2-msg__meta">
                   {formatMessageTime(message.created_at) ||
                     (message.pending ? "bezig…" : "")}
@@ -287,7 +318,7 @@ export function MessageList({
           className="lv-v2-chat-jump"
           onClick={() => scrollToBottom("smooth")}
         >
-          Naar beneden
+          Jump to latest
         </button>
       ) : null}
     </div>

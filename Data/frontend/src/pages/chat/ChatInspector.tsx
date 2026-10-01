@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type RefObject } from "react";
 import { Link } from "react-router-dom";
 import type {
   AssistantTurnTelemetry,
@@ -23,6 +23,7 @@ export type ChatInspectorProps = {
   lastTurnTelemetry?: AssistantTurnTelemetry | null;
   /** Mobile drawer open — adds is-drawer-open for CSS. */
   drawerOpen?: boolean;
+  panelRef?: RefObject<HTMLElement | null>;
 };
 
 function trustTone(verification: string | null | undefined): {
@@ -118,6 +119,7 @@ export function ChatInspector({
   systemTelemetry = null,
   lastTurnTelemetry = null,
   drawerOpen = false,
+  panelRef,
 }: ChatInspectorProps) {
   const [showSources, setShowSources] = useState(true);
 
@@ -155,6 +157,7 @@ export function ChatInspector({
 
   return (
     <aside
+      ref={panelRef as RefObject<HTMLElement | null> | undefined}
       className={`lv-v2-chat-col lv-v2-chat-col--inspector lv-v2-inspector${
         drawerOpen ? " is-drawer-open" : ""
       }`}

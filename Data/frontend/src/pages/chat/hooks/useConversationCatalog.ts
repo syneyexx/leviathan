@@ -15,8 +15,8 @@ export type ConversationCatalogState = {
   loadingMore: boolean;
   selectedId: string | null;
   selectConversation: (id: string | null) => void;
-  refresh: () => Promise<void>;
-  loadMore: () => Promise<void>;
+  refresh: () => Promise<Conversation[]>;
+  loadMore: () => Promise<Conversation[]>;
   upsertConversation: (c: Conversation) => void;
   removeConversation: (id: string) => void;
 };
@@ -45,7 +45,7 @@ export function useConversationCatalog(opts?: {
   }, [searchQuery, debounceMs]);
 
   const fetchPage = useCallback(
-    async (mode: "reset" | "more") => {
+    async (mode: "reset" | "more"): Promise<Conversation[]> => {
       const gen = ++genRef.current;
       abortRef.current?.abort();
       const abort = new AbortController();
@@ -59,20 +59,22 @@ export function useConversationCatalog(opts?: {
           cursor: mode === "more" ? cursor ?? undefined : undefined,
           signal: abort.signal,
         });
-        if (gen !== genRef.current) return; // stale
+        if (gen !== genRef.current) return [];
         const items = result.conversations ?? result.items ?? [];
         setConversations((prev) => (mode === "more" ? [...prev, ...items] : items));
         setHasMore(Boolean(result.has_more));
         setCursor(result.next_cursor ?? null);
         if (mode === "reset") setTotal(result.total ?? null);
+        return items;
       } catch (err) {
-        if ((err as { name?: string })?.name === "AbortError") return;
-        if (gen !== genRef.current) return;
+        if ((err as { name?: string })?.name === "AbortError") return [];
+        if (gen !== genRef.current) return [];
         if (mode === "reset") {
           setConversations([]);
           setHasMore(false);
           setCursor(null);
         }
+        return [];
       } finally {
         if (gen === genRef.current) {
           setLoading(false);
