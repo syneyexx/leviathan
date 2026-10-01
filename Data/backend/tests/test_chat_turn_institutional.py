@@ -239,6 +239,94 @@ class ResponseContractTests(unittest.TestCase):
         self.assertIn("_compatibility", out)
 
 
+class ResponseOwnerInvariantTests(unittest.TestCase):
+    def test_cognition_owned_path_excludes_direct(self) -> None:
+        from Data.modules.chat import (
+            assert_single_response_owner,
+            cognition_owns_final_response,
+            resolve_response_owner_and_path,
+        )
+
+        meta = {
+            "response": "owned answer",
+            "response_ownership": "cognition",
+            "shadow": False,
+        }
+        self.assertTrue(cognition_owns_final_response(meta))
+        owner, path = resolve_response_owner_and_path(meta)
+        self.assertEqual(owner, ResponseOwner.COGNITION.value)
+        self.assertEqual(path, ExecutionPath.COGNITION_OWNED.value)
+        assert_single_response_owner(owner, path)
+        # Shadow / feature shadow / empty response must not own.
+        self.assertFalse(cognition_owns_final_response({**meta, "shadow": True}))
+        self.assertFalse(
+            cognition_owns_final_response(meta, cognition_shadow_feature=True)
+        )
+        self.assertFalse(cognition_owns_final_response({**meta, "response": "  "}))
+        direct_owner, direct_path = resolve_response_owner_and_path(
+            {**meta, "shadow": True}
+        )
+        self.assertEqual(direct_owner, ResponseOwner.DIRECT.value)
+        self.assertEqual(direct_path, ExecutionPath.DIRECT_CHAT.value)
+        with self.assertRaises(AssertionError):
+            assert_single_response_owner(
+                ResponseOwner.DIRECT.value, ExecutionPath.COGNITION_OWNED.value
+            )
+
+    def test_public_dict_surfaces_bounded_tool_calls(self) -> None:
+        from Data.modules.chat import bounded_tool_calls_for_turn
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "control.sqlite"
+            db = Database(path)
+            db.initialize()
+            MigrationRunner(path).apply_all()
+            store = ChatTurnStore(path)
+            coord = ChatTurnCoordinator(store)
+            conv = db.create_conversation("Tools")
+            user = db.add_message(conv["id"], "user", "hi")
+            turn = coord.accept(
+                conversation_id=conv["id"],
+                user_message_id=user["id"],
+                chat_run_id="run-tools",
+            )
+            asst = db.add_message(conv["id"], "assistant", "done")
+            done = coord.complete(
+                turn.turn_id,
+                assistant_message_id=asst["id"],
+                response_owner=ResponseOwner.DIRECT.value,
+                execution_path=ExecutionPath.DIRECT_CHAT.value,
+                tool_receipt_ids=["rcpt-1"],
+                metadata={
+                    "tool_calls": bounded_tool_calls_for_turn(
+                        [
+                            {
+                                "capability_id": "web.search",
+                                "status": "COMPLETED",
+                                "success": True,
+                                "receipt_id": "rcpt-1",
+                                "duration_ms": 11,
+                            }
+                        ]
+                    )
+                },
+            )
+            pub = done.public_dict()
+            self.assertIn("tool_calls", pub)
+            self.assertEqual(pub["tool_calls"][0]["capability_id"], "web.search")
+            self.assertEqual(pub["tool_receipt_ids"], ["rcpt-1"])
+        bounded = bounded_tool_calls_for_turn(
+            [
+                {
+                    "capability_id": "x",
+                    "status": "OK",
+                    "parts": [{"kind": "SOURCE", "title": "t"}] * 20,
+                }
+            ]
+        )
+        self.assertEqual(len(bounded[0]["parts"]), 8)
+
+
 class MigrationHeadTests(unittest.TestCase):
     def test_migration_head_is_62(self) -> None:
         self.assertEqual(MIGRATIONS[-1].version, 62)

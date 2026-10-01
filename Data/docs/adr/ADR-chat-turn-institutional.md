@@ -26,8 +26,14 @@ needed durable recording.
    typed parts). Vision understanding is claimed only when a vision-capable path exists.
 8. Historic assistant messages hydrate per-message `ChatTurn` metadata; live Activity
    remains on the active turn. Missing metrics stay UNMEASURED (never coerced to zero).
+   Bounded `tool_calls` summaries may be stored on turn metadata for historic
+   CapabilityResultCards; Activity is only re-shown when an activity projection was
+   persisted (activity_ref alone does not invent a timeline).
 9. Mobile drawers (history + inspector) are mutually exclusive, Escape/backdrop close,
    focus enters the panel, Tab is trapped, focus restores to the trigger.
+10. Invariant A: cognition-owned responses skip the authoritative direct model call;
+    `ResponseOwner` / `ExecutionPath` stay aligned (`cognition` ↔ `cognition_owned`).
+11. CANCELLED ≠ FAILED end-to-end (durable turn state + UI streaming badge).
 
 ## Consequences
 - Old conversations/messages remain readable without turn rows.

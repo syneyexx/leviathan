@@ -24,8 +24,7 @@ export {
   isBusyChatTurn,
   chatTurnToStreamingBadge,
 } from "./turnStateMachine";
-export type { ChatTurnUiState } from "./turnStateMachine";
-export type { ChatStreamingBadge } from "./turnStateMachine";
+export type { ChatTurnUiState, ChatStreamingBadge } from "./turnStateMachine";
 
 export { formatModelParams, formatParamCount, formatParameterCount } from "./formatModelParams";
 

@@ -14,6 +14,11 @@ describe("turn cancel/busy semantics", () => {
     expect(tryTransitionChatTurn("CANCELLING", "CANCELLED")).toBe("CANCELLED");
     expect(isBusyChatTurn("CANCELLING")).toBe(true);
     expect(chatTurnToStreamingBadge("CANCELLED")).toBe("cancelled");
+    expect(chatTurnToStreamingBadge("FAILED")).toBe("failed");
+  });
+
+  it("keeps CANCELLED terminal against late streaming", () => {
+    expect(tryTransitionChatTurn("CANCELLED", "STREAMING")).toBe("CANCELLED");
   });
 
   it("ignores late streaming events after terminal", () => {

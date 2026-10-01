@@ -1,5 +1,15 @@
 /* ============================================================
-   LEVIATHAN — Chat page (fluid)
+   LEVIATHAN — Chat page (legacy V1 fluid layout)
+
+   SCOPE NOTE (institutional Chat V2):
+   - All selectors here are scoped to `.lv-chat-app` / `.lv-chat-*` (V1 chrome).
+   - Chat V2 (`ChatPage` + `.lv-v2-page--chat` / `.lv-v2-chat-*`) lives in
+     `leviathan-v2.css` and does NOT depend on these rules.
+   - AppShell V2 currently does not set `chatApp`, so these rules are inert for
+     the active Chat surface. Keep this file imported for any residual V1
+     consumers; do not retarget V1 selectors onto V2 class names.
+   - Do not delete wholesale without confirming no route still mounts V1 chat
+     chrome under `.lv-chat-app`.
    ============================================================ */
 
 .lv-chat-app .lv-body {
