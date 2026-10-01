@@ -159,6 +159,14 @@ class PluginRegistry:
             error=item.error if status == PluginStatus.ERROR else None,
         )
         self._plugins[plugin_id] = updated
+        # Durability: persist status transitions when a store is attached or
+        # the record was already marked durable / hydrated from CONTROL.
+        if self._store is not None and (
+            bool((item.metadata or {}).get("durable"))
+            or bool((item.metadata or {}).get("hydrated_from_store"))
+            or bool((item.metadata or {}).get("persist"))
+        ):
+            self.persist(plugin_id)
         return updated
 
     def replace_bindings(
@@ -195,8 +203,37 @@ class PluginRegistry:
         self._plugins[plugin_id] = updated
         return updated
 
-    def unregister(self, plugin_id: str) -> bool:
-        return self._plugins.pop(plugin_id, None) is not None
+    def unregister(self, plugin_id: str, *, owner: str | None = None) -> bool:
+        """Remove plugin from memory and durable store when owned/attached.
+
+        Ownership-aware: when ``owner`` is provided it must match metadata.owner
+        (or metadata.owned_by). System/config-owned plugins refuse without force
+        via metadata.force_unregister.
+        """
+        item = self._plugins.get(plugin_id)
+        if item is None:
+            return False
+        meta = dict(item.metadata or {})
+        recorded_owner = str(meta.get("owner") or meta.get("owned_by") or "")
+        if owner is not None and recorded_owner and recorded_owner != owner:
+            raise PermissionError(
+                f"plugin {plugin_id} owned by {recorded_owner!r}; cannot unregister as {owner!r}"
+            )
+        if meta.get("system_protected") and not meta.get("force_unregister"):
+            raise PermissionError(f"plugin {plugin_id} is system-protected")
+        removed = self._plugins.pop(plugin_id, None) is not None
+        if removed and self._store is not None and hasattr(self._store, "delete_plugin_binding"):
+            try:
+                self._store.delete_plugin_binding(plugin_id)
+            except Exception:  # noqa: BLE001 — memory removal already done
+                pass
+        # Drop stub capability when it was only registered for this plugin.
+        if removed and plugin_id == "mcp-echo-stub" and hasattr(self.catalog, "unregister"):
+            try:
+                self.catalog.unregister("plugin.echo_search")
+            except Exception:  # noqa: BLE001
+                pass
+        return removed
 
     def resolve_capability(self, plugin_id: str, external_name: str) -> str | None:
         """Map external tool name → capability id if plugin is ENABLED."""

@@ -495,7 +495,16 @@ module_manager = ModuleManager(
     execute_timeout_seconds=120.0,
 )
 plugin_registry = PluginRegistry(capability_catalog)
-plugin_registry.register_echo_mcp_stub()
+# Dev/test MCP echo stub — OFF by default on production boot.
+import os as _os
+
+if str(_os.environ.get("LEVIATHAN_FEATURE_MCP_ECHO_STUB", "")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}:
+    plugin_registry.register_echo_mcp_stub()
 mcp_store = McpStore(settings.database_path)
 mcp_bridge = McpBridge(
     store=mcp_store,

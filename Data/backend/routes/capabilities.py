@@ -248,14 +248,24 @@ def build_capabilities_router(
         record = custom_capability_store.get(capability_id)
         if record is None:
             raise HTTPException(status_code=404, detail="Custom capability not found")
+        meta = dict(record.metadata or {})
+        if meta.get("system_protected") and not meta.get("force_unregister"):
+            raise HTTPException(status_code=403, detail="Custom capability is system-protected")
         custom_capability_store.delete(capability_id)
-        # Soft-remove from catalog availability rather than inventing unregister API.
-        capability_catalog.set_availability(
-            capability_id,
-            available=False,
-            reason="Custom capability deleted",
-        )
-        return {"ok": True, "capability_id": capability_id}
+        # True catalog removal (ownership-aware unregister), not soft-unavailable.
+        if hasattr(capability_catalog, "unregister"):
+            capability_catalog.unregister(capability_id)
+        else:
+            capability_catalog.set_availability(
+                capability_id,
+                available=False,
+                reason="Custom capability deleted",
+            )
+        return {
+            "ok": True,
+            "capability_id": capability_id,
+            "truth": {"catalog_unregistered": True, "soft_unavailable_is_not_removal": True},
+        }
 
     @router.get("/api/capabilities/{capability_id}")
     def get_capability(

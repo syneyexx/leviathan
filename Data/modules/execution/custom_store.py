@@ -24,6 +24,44 @@ from .types import CapabilityDefinition, CapabilityProviderKind
 
 _ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{1,118}$")
 
+# Metadata keys reserved for system provenance — clients cannot overwrite.
+PROTECTED_CUSTOM_METADATA_KEYS = frozenset(
+    {
+        "origin",
+        "wraps_capability_id",
+        "delegates_to",
+        "version",
+        "revision",
+        "capability_id",
+        "created_at",
+        "updated_at",
+        "owner",
+        "owned_by",
+        "system_protected",
+    }
+)
+
+
+def _sanitize_custom_metadata(
+    incoming: dict[str, Any] | None,
+    *,
+    existing: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Merge metadata while refusing protected key overwrites from clients."""
+    base = dict(existing or {})
+    for key, value in dict(incoming or {}).items():
+        key_s = str(key)
+        if key_s in PROTECTED_CUSTOM_METADATA_KEYS:
+            continue
+        base[key_s] = value
+    # Strip any protected keys that somehow landed in client payload copies.
+    for protected in PROTECTED_CUSTOM_METADATA_KEYS:
+        if protected in base and protected not in (existing or {}):
+            # Allow system to set origin etc. via existing; drop fresh client injects.
+            if protected not in {"origin"}:  # origin may be set by hydrate, not create path
+                pass
+    return base
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -137,6 +175,7 @@ class CustomCapabilityStore:
             )
         if not wraps_capability_id.strip():
             raise ValueError("wraps_capability_id is required")
+        clean_meta = _sanitize_custom_metadata(metadata)
         record = CustomCapabilityRecord(
             capability_id=cid,
             name=(name or cid).strip(),
@@ -146,7 +185,7 @@ class CustomCapabilityStore:
             enabled=bool(enabled),
             created_at=now,
             updated_at=now,
-            metadata=dict(metadata or {}),
+            metadata=clean_meta,
             revision=1,
         )
         with self.connect() as conn:
@@ -196,6 +235,11 @@ class CustomCapabilityStore:
             raise ValueError(
                 f"Revision conflict: expected {expected_revision}, got {current.revision}"
             )
+        next_meta = (
+            _sanitize_custom_metadata(metadata, existing=current.metadata)
+            if metadata is not None
+            else dict(current.metadata)
+        )
         updated = CustomCapabilityRecord(
             capability_id=current.capability_id,
             name=(name if name is not None else current.name).strip(),
@@ -205,16 +249,20 @@ class CustomCapabilityStore:
             enabled=current.enabled if enabled is None else bool(enabled),
             created_at=current.created_at,
             updated_at=_utc_now(),
-            metadata=dict(metadata) if metadata is not None else dict(current.metadata),
+            metadata=next_meta,
             revision=current.revision + 1,
         )
         with self.connect() as conn:
-            conn.execute(
+            # Optimistic concurrency: atomic UPDATE WHERE revision=?
+            fence_revision = (
+                int(expected_revision) if expected_revision is not None else int(current.revision)
+            )
+            cur = conn.execute(
                 """
                 UPDATE custom_capability_definitions
                 SET name = ?, description = ?, version = ?, enabled = ?,
                     updated_at = ?, metadata_json = ?, revision = ?
-                WHERE capability_id = ?
+                WHERE capability_id = ? AND revision = ?
                 """,
                 (
                     updated.name,
@@ -225,8 +273,13 @@ class CustomCapabilityStore:
                     json.dumps(updated.metadata),
                     updated.revision,
                     updated.capability_id,
+                    fence_revision,
                 ),
             )
+            if cur.rowcount != 1:
+                raise ValueError(
+                    f"Revision conflict: expected {fence_revision}, concurrent update detected"
+                )
         return updated
 
     def delete(self, capability_id: str) -> bool:
