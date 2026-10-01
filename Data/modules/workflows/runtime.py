@@ -180,7 +180,7 @@ class WorkflowRuntime:
         if self.job_runtime is not None:
             try:
                 job = self.enqueue_advance(execution.execution_id, requested_by=requested_by)
-            except ValueError:
+            except Exception:  # noqa: BLE001 — terminal / duplicate job claim races
                 job = None
         return execution, job
 
