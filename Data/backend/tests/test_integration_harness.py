@@ -69,7 +69,8 @@ class IntegrationHarnessTests(unittest.TestCase):
                 run_id="run-int",
             )
         )
-        self.assertEqual(denied.status, CapabilityStatus.REJECTED)
+        self.assertEqual(denied.status, CapabilityStatus.APPROVAL_REQUIRED)
+        self.assertEqual(denied.telemetry.get("reason"), "approval_required")
 
         pending = self.approvals.request(
             capability_id="artifact.create_text",

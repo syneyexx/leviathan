@@ -619,7 +619,16 @@ export function McpPage() {
   }
 
   async function onConnect(server: McpServerPublic) {
-    await withBusy(server.server_id, () => api.mcpConnectServer(server.server_id).then(() => undefined), `${server.display_name} verbonden`);
+    await withBusy(
+      server.server_id,
+      async () => {
+        const res = await api.mcpConnectServer(server.server_id);
+        if (res.queued) {
+          toast(`${server.display_name} connect queued (${String(res.job_id ?? "").slice(0, 10)})`);
+        }
+      },
+      `${server.display_name} verbonden`,
+    );
   }
 
   async function onDisconnect(server: McpServerPublic) {
@@ -635,6 +644,10 @@ export function McpPage() {
       server.server_id,
       async () => {
         const res = await api.mcpRefreshTools(server.server_id);
+        if (res.queued) {
+          toast(`Tool refresh queued (${String(res.job_id ?? "").slice(0, 10)})`);
+          return;
+        }
         setTools((prev) => {
           const others = prev.filter((t) => t.server_id !== server.server_id);
           return [...others, ...(res.tools ?? [])];
@@ -778,8 +791,24 @@ export function McpPage() {
         capability_id: invokeCapabilityId,
         arguments: parsed.value,
       });
-      setInvokeResult(JSON.stringify(res.result ?? res, null, 2));
-      toast("Tool call completed");
+      if (res.queued) {
+        setInvokeResult(
+          JSON.stringify(
+            {
+              queued: true,
+              job_id: res.job_id,
+              poll: res.job_id ? `/api/jobs/${res.job_id}` : null,
+              result: res.result,
+            },
+            null,
+            2,
+          ),
+        );
+        toast(`Tool call queued (${String(res.job_id ?? "").slice(0, 10)})`);
+      } else {
+        setInvokeResult(JSON.stringify(res.result ?? res, null, 2));
+        toast("Tool call completed");
+      }
       const callsRes = await api.mcpCalls(100).catch(() => null);
       if (callsRes) setCalls(callsRes.calls ?? []);
     } catch (err) {

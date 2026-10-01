@@ -354,9 +354,9 @@ class ResponseOwnerInvariantTests(unittest.TestCase):
 
 
 class MigrationHeadTests(unittest.TestCase):
-    def test_migration_head_is_62(self) -> None:
-        self.assertEqual(MIGRATIONS[-1].version, 62)
-        self.assertEqual(MIGRATIONS[-1].name, "chat_turns")
+    def test_migration_head_is_65(self) -> None:
+        self.assertEqual(MIGRATIONS[-1].version, 68)
+        self.assertEqual(MIGRATIONS[-1].name, "capability_catalog_generations")
 
 
 class UpgradeMigrationWithExistingMessagesTests(unittest.TestCase):

@@ -4,6 +4,7 @@ import uuid
 from typing import Any
 
 from Data.modules.execution.catalog import CapabilityCatalog
+from Data.modules.execution.catalog_generation import SCOPE_PLUGINS, CatalogGenerationStore
 from Data.modules.execution.types import CapabilityDefinition, CapabilityProviderKind
 from Data.modules.function_runtime.types import SideEffect
 
@@ -24,10 +25,37 @@ class PluginRegistry:
         self.catalog = catalog
         self._plugins: dict[str, PluginRecord] = {}
         self._store: Any = None
+        self._generation: CatalogGenerationStore | None = None
 
     def attach_store(self, store: Any) -> None:
         """Attach CONTROL persistence (ExternalCapabilityStore). Not a second loader."""
         self._store = store
+        db_path = getattr(store, "db_path", None)
+        if db_path is not None:
+            self._generation = CatalogGenerationStore(db_path)
+            self._generation.initialize()
+
+    def get_catalog_generation(self) -> int:
+        if self._generation is None:
+            return 0
+        return self._generation.get_generation(SCOPE_PLUGINS)
+
+    def _bump_catalog_generation(self) -> int | None:
+        if self._generation is None:
+            return None
+        payload = [
+            {
+                "plugin_id": p.plugin_id,
+                "status": p.status.value,
+                "version": p.version,
+                "bindings": [b.capability_id for b in p.bindings],
+            }
+            for p in self.list()
+        ]
+        return self._generation.bump(
+            SCOPE_PLUGINS,
+            content_hash=CatalogGenerationStore.hash_payload(payload),
+        )
 
     def hydrate_from_store(self) -> int:
         """Reload durable plugin binding configs. Does not imply runtime readiness."""
@@ -141,6 +169,7 @@ class PluginRegistry:
         self._plugins[record.plugin_id] = record
         if (metadata or {}).get("durable"):
             self.persist(record.plugin_id)
+        self._bump_catalog_generation()
         return record
 
     def set_status(self, plugin_id: str, status: PluginStatus) -> PluginRecord:
@@ -159,6 +188,15 @@ class PluginRegistry:
             error=item.error if status == PluginStatus.ERROR else None,
         )
         self._plugins[plugin_id] = updated
+        # Durability: persist status transitions when a store is attached or
+        # the record was already marked durable / hydrated from CONTROL.
+        if self._store is not None and (
+            bool((item.metadata or {}).get("durable"))
+            or bool((item.metadata or {}).get("hydrated_from_store"))
+            or bool((item.metadata or {}).get("persist"))
+        ):
+            self.persist(plugin_id)
+        self._bump_catalog_generation()
         return updated
 
     def replace_bindings(
@@ -193,10 +231,48 @@ class PluginRegistry:
             error=item.error if (status or item.status) == PluginStatus.ERROR else None,
         )
         self._plugins[plugin_id] = updated
+        if self._store is not None and (
+            bool((updated.metadata or {}).get("durable"))
+            or bool((updated.metadata or {}).get("hydrated_from_store"))
+            or bool((updated.metadata or {}).get("persist"))
+        ):
+            self.persist(plugin_id)
+        self._bump_catalog_generation()
         return updated
 
-    def unregister(self, plugin_id: str) -> bool:
-        return self._plugins.pop(plugin_id, None) is not None
+    def unregister(self, plugin_id: str, *, owner: str | None = None) -> bool:
+        """Remove plugin from memory and durable store when owned/attached.
+
+        Ownership-aware: when ``owner`` is provided it must match metadata.owner
+        (or metadata.owned_by). System/config-owned plugins refuse without force
+        via metadata.force_unregister.
+        """
+        item = self._plugins.get(plugin_id)
+        if item is None:
+            return False
+        meta = dict(item.metadata or {})
+        recorded_owner = str(meta.get("owner") or meta.get("owned_by") or "")
+        if owner is not None and recorded_owner and recorded_owner != owner:
+            raise PermissionError(
+                f"plugin {plugin_id} owned by {recorded_owner!r}; cannot unregister as {owner!r}"
+            )
+        if meta.get("system_protected") and not meta.get("force_unregister"):
+            raise PermissionError(f"plugin {plugin_id} is system-protected")
+        removed = self._plugins.pop(plugin_id, None) is not None
+        if removed and self._store is not None and hasattr(self._store, "delete_plugin_binding"):
+            try:
+                self._store.delete_plugin_binding(plugin_id)
+            except Exception:  # noqa: BLE001 — memory removal already done
+                pass
+        # Drop stub capability when it was only registered for this plugin.
+        if removed and plugin_id == "mcp-echo-stub" and hasattr(self.catalog, "unregister"):
+            try:
+                self.catalog.unregister("plugin.echo_search")
+            except Exception:  # noqa: BLE001
+                pass
+        if removed:
+            self._bump_catalog_generation()
+        return removed
 
     def resolve_capability(self, plugin_id: str, external_name: str) -> str | None:
         """Map external tool name → capability id if plugin is ENABLED."""

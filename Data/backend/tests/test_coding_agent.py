@@ -195,8 +195,9 @@ class CodingAgentTests(unittest.TestCase):
                 arguments={"path": str(self.workspace / "a.py"), "content": "x\n"},
             )
         )
-        self.assertEqual(result.status, CapabilityStatus.REJECTED)
+        self.assertEqual(result.status, CapabilityStatus.APPROVAL_REQUIRED)
         self.assertIn("approval", (result.error or "").lower())
+        self.assertEqual(result.telemetry.get("reason"), "approval_required")
 
     def test_04_write_with_approval_completed(self) -> None:
         path = self.workspace / "b.py"

@@ -25,19 +25,30 @@ from .types import (
 
 
 class McpCatalogSync:
+    """Reconcile tools/list into durable McpStore (+ optional in-process catalog).
+
+    Store is the durable source of truth. CapabilityCatalog remains the canonical
+    in-process registry and is projected from the store via
+    ``project_server_into_catalog`` / ``hydrate_from_store``.
+    """
+
     def __init__(
         self,
         *,
-        catalog: CapabilityCatalog,
+        catalog: CapabilityCatalog | None,
         store: McpStore,
         plugin_registry: PluginRegistry | None = None,
         limits: McpLimits | None = None,
+        observability: Any | None = None,
     ) -> None:
         self.catalog = catalog
         self.store = store
         self.plugin_registry = plugin_registry
         self.limits = limits or McpLimits()
+        self.observability = observability
         self.schema_change_events: list[dict[str, Any]] = []
+        self.sync_issues: list[dict[str, Any]] = []
+        self.last_catalog_generation: int = 0
 
     def sync_tools(
         self,
@@ -49,6 +60,7 @@ class McpCatalogSync:
         available: bool = True,
     ) -> list[McpToolRecord]:
         now = utc_now()
+        self.sync_issues = []
         records: list[McpToolRecord] = []
         for raw in tools:
             try:
@@ -60,20 +72,32 @@ class McpCatalogSync:
                     available=available,
                     now=now,
                 )
-            except McpError:
-                # Best-effort: one invalid schema must not discard siblings.
+            except McpError as exc:
+                # Structured issue — do not poison valid siblings.
+                tool_name = ""
+                if isinstance(raw, dict):
+                    tool_name = str(raw.get("name") or "").strip()
+                issue = {
+                    "tool_name": tool_name or None,
+                    "error_code": exc.code,
+                    "message": exc.message,
+                    "degraded": True,
+                    "server_id": config.server_id,
+                }
+                self.sync_issues.append(issue)
+                self._emit_sync_issue(issue)
                 continue
             previous = self.store.get_tool(record.capability_id)
             if previous and previous.schema_hash != record.schema_hash:
-                self.schema_change_events.append(
-                    {
-                        "capability_id": record.capability_id,
-                        "server_id": config.server_id,
-                        "old_hash": previous.schema_hash,
-                        "new_hash": record.schema_hash,
-                        "at": now,
-                    }
-                )
+                event = {
+                    "capability_id": record.capability_id,
+                    "server_id": config.server_id,
+                    "old_hash": previous.schema_hash,
+                    "new_hash": record.schema_hash,
+                    "at": now,
+                }
+                self.schema_change_events.append(event)
+                self._emit_schema_change(event)
             self.store.upsert_tool(record)
             self._upsert_capability(record, config)
             records.append(record)
@@ -101,7 +125,40 @@ class McpCatalogSync:
                     self._upsert_capability(updated, config)
 
         self._sync_plugin_bindings(config, records)
+        generation = self.bump_catalog_generation(config.server_id)
+        self.store.replace_sync_issues(
+            config.server_id,
+            self.sync_issues,
+            catalog_generation=generation,
+        )
         return records
+
+    def bump_catalog_generation(self, server_id: str) -> int:
+        generation = self.store.bump_catalog_generation(server_id)
+        self.last_catalog_generation = generation
+        return generation
+
+    def project_server_into_catalog(self, server_id: str) -> list[McpToolRecord]:
+        """Project durable store tools for one server into CapabilityCatalog (+ plugins)."""
+        config = self.store.get_server(server_id)
+        if config is None:
+            return []
+        tools = self.store.list_tools(server_id=server_id)
+        for tool in tools:
+            self._upsert_capability(tool, config)
+        available = [t for t in tools if t.availability == McpToolAvailability.AVAILABLE]
+        self._sync_plugin_bindings(config, available)
+        self.last_catalog_generation = self.store.get_catalog_generation(server_id)
+        return tools
+
+    def hydrate_from_store(self, *, server_id: str | None = None) -> int:
+        """Rehydrate CapabilityCatalog + PluginRegistry from durable McpStore."""
+        if server_id:
+            return len(self.project_server_into_catalog(server_id))
+        total = 0
+        for config in self.store.list_servers():
+            total += len(self.project_server_into_catalog(config.server_id))
+        return total
 
     def mark_unavailable(self, config: McpServerConfig) -> None:
         now = utc_now()
@@ -122,6 +179,7 @@ class McpCatalogSync:
                 protocol_version=tool.protocol_version,
             )
             self._upsert_capability(updated, config)
+        self._sync_plugin_bindings(config, [])
 
     def _normalize_tool(
         self,
@@ -165,6 +223,8 @@ class McpCatalogSync:
         )
 
     def _upsert_capability(self, record: McpToolRecord, config: McpServerConfig) -> None:
+        if self.catalog is None:
+            return
         effects = tuple(SideEffect(item) for item in record.semantic_effects)
         definition = CapabilityDefinition(
             id=record.capability_id,
@@ -191,9 +251,28 @@ class McpCatalogSync:
         self.catalog.upsert(definition)
 
     def _sync_plugin_bindings(self, config: McpServerConfig, records: list[McpToolRecord]) -> None:
-        if self.plugin_registry is None or not records:
+        if self.plugin_registry is None:
             return
         plugin_id = f"mcp:{config.server_id}"
+        if not records:
+            # Zero-tool results must clear / disable stale plugin bindings.
+            existing = self.plugin_registry.get(plugin_id)
+            if existing is not None:
+                try:
+                    self.plugin_registry.replace_bindings(
+                        plugin_id,
+                        name=config.display_name,
+                        bindings=(),
+                        metadata={
+                            "server_id": config.server_id,
+                            "declarative_only": True,
+                            "cleared_zero_tools": True,
+                        },
+                        status=PluginStatus.DISABLED,
+                    )
+                except Exception:  # noqa: BLE001 — fall back to unregister
+                    self.plugin_registry.unregister(plugin_id)
+            return
         bindings = tuple(
             PluginCapabilityBinding(
                 external_name=item.external_name,
@@ -232,3 +311,27 @@ class McpCatalogSync:
             },
             status=PluginStatus.ENABLED if config.enabled else PluginStatus.DISABLED,
         )
+
+    def _emit_sync_issue(self, issue: dict[str, Any]) -> None:
+        if self.observability is None:
+            return
+        try:
+            self.observability.emit(
+                "external_capability",
+                "mcp.sync_issue",
+                payload=dict(issue),
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _emit_schema_change(self, event: dict[str, Any]) -> None:
+        if self.observability is None:
+            return
+        try:
+            self.observability.emit(
+                "external_capability",
+                "mcp.schema_change",
+                payload=dict(event),
+            )
+        except Exception:  # noqa: BLE001
+            pass

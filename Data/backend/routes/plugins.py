@@ -74,11 +74,21 @@ def build_plugins_router(
             payload={"plugin_id": plugin_id, "capability_id": capability_id, "status": result.status.value},
         )
         status_code = 200
-        if result.status == CapabilityStatus.REJECTED:
+        if result.status == CapabilityStatus.APPROVAL_REQUIRED:
+            status_code = 403
+        elif result.status == CapabilityStatus.REJECTED:
             reason = (result.telemetry or {}).get("reason")
             status_code = 403 if reason in {"approval_required", "approval_denied"} else 422
+        elif result.status == CapabilityStatus.QUEUED:
+            status_code = 202
         elif result.status == CapabilityStatus.FAILED:
             status_code = 500
+        if status_code == 202:
+            return {
+                "capability_id": capability_id,
+                "result": result.public_dict(),
+                "truth": {"discoverable_capability_is_not_authorized_capability": True},
+            }
         if status_code != 200:
             raise HTTPException(status_code=status_code, detail=result.public_dict())
         return {

@@ -121,21 +121,38 @@ class FunctionRuntime:
                     duration_ms=(time.perf_counter() - started) * 1000,
                 )
 
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(self._invoke, fn, args, cancel_flag)
+            # Never use ``with ThreadPoolExecutor`` — on timeout its __exit__
+            # calls shutdown(wait=True) and blocks forever on hung work.
+            # Threads cannot be force-killed; report TIMEOUT as uncertain
+            # containment and abandon the pool without waiting.
+            pool = ThreadPoolExecutor(max_workers=1)
+            future = pool.submit(self._invoke, fn, args, cancel_flag)
+            try:
+                output = future.result(timeout=definition.timeout_seconds)
+            except FuturesTimeout:
+                cancel_flag.set()
+                self.telemetry["timeouts"] += 1
                 try:
-                    output = future.result(timeout=definition.timeout_seconds)
-                except FuturesTimeout:
-                    cancel_flag.set()
-                    self.telemetry["timeouts"] += 1
-                    return FunctionResult(
-                        call_id=call_id,
-                        function_id=function_id,
-                        status=FunctionCallStatus.TIMEOUT,
-                        error=f"Timed out after {definition.timeout_seconds}s",
-                        duration_ms=(time.perf_counter() - started) * 1000,
-                        telemetry={"lazy_loaded": lazy_loaded},
-                    )
+                    pool.shutdown(wait=False, cancel_futures=True)
+                except TypeError:
+                    pool.shutdown(wait=False)
+                return FunctionResult(
+                    call_id=call_id,
+                    function_id=function_id,
+                    status=FunctionCallStatus.TIMEOUT,
+                    error=f"Timed out after {definition.timeout_seconds}s",
+                    duration_ms=(time.perf_counter() - started) * 1000,
+                    telemetry={
+                        "lazy_loaded": lazy_loaded,
+                        "timeout_seconds": definition.timeout_seconds,
+                        "containment": "thread_cancel_signaled_uncertain",
+                        "work_may_continue": True,
+                        "uncertain": True,
+                        "thread_pool_timeout_is_not_hard_kill": True,
+                    },
+                )
+            else:
+                pool.shutdown(wait=True)
 
             if cancel_flag.is_set():
                 self.telemetry["cancellations"] += 1

@@ -30,8 +30,12 @@ class CapabilityStatus(str, Enum):
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     REJECTED = "REJECTED"
+    # Distinct from REJECTED: gated capability needs an approval before side effects.
+    APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
     CANCELLED = "CANCELLED"
     TIMEOUT = "TIMEOUT"
+    # Durable job accepted; poll /api/jobs/{job_id}. Not a terminal outcome.
+    QUEUED = "QUEUED"
 
 
 @dataclass(frozen=True)

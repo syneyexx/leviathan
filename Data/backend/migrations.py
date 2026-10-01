@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -4665,7 +4666,179 @@ def _m63_dataset_query_indexes(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m64_mcp_catalog_generation(conn: sqlite3.Connection) -> None:
+    """Durable MCP catalog generation + structured sync issues for worker reconciliation."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(mcp_servers)").fetchall()}
+    if cols and "catalog_generation" not in cols:
+        conn.execute(
+            "ALTER TABLE mcp_servers ADD COLUMN catalog_generation INTEGER NOT NULL DEFAULT 0"
+        )
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS mcp_sync_issues (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id TEXT NOT NULL,
+            tool_name TEXT,
+            error_code TEXT NOT NULL,
+            message TEXT NOT NULL,
+            degraded INTEGER NOT NULL DEFAULT 1,
+            catalog_generation INTEGER,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(server_id) REFERENCES mcp_servers(server_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mcp_sync_issues_server
+            ON mcp_sync_issues(server_id, created_at DESC);
+        """
+    )
+
+
+def _m65_capability_idempotency(conn: sqlite3.Connection) -> None:
+    """Request-bound durable idempotency records for the execution gateway."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS capability_idempotency (
+            idempotency_key TEXT PRIMARY KEY,
+            fingerprint TEXT NOT NULL,
+            capability_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            request_id TEXT NOT NULL,
+            result_json TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_capability_idempotency_capability "
+        "ON capability_idempotency(capability_id, status)"
+    )
+
+def _m66_workflow_execution_idempotency(conn: sqlite3.Connection) -> None:
+    """First-class workflow execution idempotency_key + active unique index."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS workflow_executions (
+            execution_id TEXT PRIMARY KEY,
+            workflow_id TEXT NOT NULL,
+            workflow_version INTEGER NOT NULL,
+            state TEXT NOT NULL,
+            trigger_source TEXT NOT NULL DEFAULT 'MANUAL',
+            requested_by TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            started_at TEXT,
+            ended_at TEXT,
+            duration_ms INTEGER,
+            current_node_id TEXT,
+            node_results_json TEXT NOT NULL DEFAULT '[]',
+            error TEXT,
+            root_job_id TEXT,
+            child_job_ids_json TEXT NOT NULL DEFAULT '[]',
+            run_id TEXT,
+            input_snapshot_json TEXT NOT NULL DEFAULT '{}',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            cursor_json TEXT NOT NULL DEFAULT '{}',
+            name_snapshot TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(workflow_executions)").fetchall()}
+    if cols and "idempotency_key" not in cols:
+        conn.execute("ALTER TABLE workflow_executions ADD COLUMN idempotency_key TEXT")
+    try:
+        rows = conn.execute(
+            "SELECT execution_id, metadata_json FROM workflow_executions "
+            "WHERE idempotency_key IS NULL"
+        ).fetchall()
+        for row in rows:
+            try:
+                meta = json.loads(row["metadata_json"] or "{}")
+            except Exception:  # noqa: BLE001
+                continue
+            key = meta.get("idempotency_key") if isinstance(meta, dict) else None
+            if key:
+                conn.execute(
+                    "UPDATE workflow_executions SET idempotency_key = ? WHERE execution_id = ?",
+                    (str(key), row["execution_id"]),
+                )
+    except Exception:  # noqa: BLE001
+        pass
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_wf_exec_idempotency_active
+        ON workflow_executions(workflow_id, idempotency_key)
+        WHERE idempotency_key IS NOT NULL
+          AND state NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+        """
+    )
+
+
+def _m67_mcp_scrub_plaintext_secrets(conn: sqlite3.Connection) -> None:
+    """Scrub plaintext secrets from mcp_servers.env_public_json into secret_refs.
+
+    Report (via observability pragma note) lists key *names* only — never values.
+    """
+    from Data.modules.mcp.secrets import scrub_mcp_server_secrets
+
+    report = scrub_mcp_server_secrets(conn)
+    # Persist a non-secret audit row if schema_migrations notes are unavailable —
+    # store counts on a one-shot marker table so operators can inspect scrub volume.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mcp_secret_scrub_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now')),
+            servers_scanned INTEGER NOT NULL,
+            servers_scrubbed INTEGER NOT NULL,
+            keys_scrubbed INTEGER NOT NULL,
+            scrubbed_key_names_json TEXT NOT NULL DEFAULT '[]'
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO mcp_secret_scrub_reports(
+            servers_scanned, servers_scrubbed, keys_scrubbed, scrubbed_key_names_json
+        ) VALUES (?, ?, ?, ?)
+        """,
+        (
+            int(report.get("servers_scanned") or 0),
+            int(report.get("servers_scrubbed") or 0),
+            int(report.get("keys_scrubbed") or 0),
+            json.dumps(list(report.get("scrubbed_key_names") or [])),
+        ),
+    )
+
+
+def _m68_capability_catalog_generations(conn: sqlite3.Connection) -> None:
+    """Durable generation counters for custom capability + plugin catalog reconciliation."""
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS capability_catalog_generations (
+            scope TEXT PRIMARY KEY,
+            catalog_generation INTEGER NOT NULL DEFAULT 0,
+            content_hash TEXT,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    for scope in ("custom", "plugins", "global"):
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO capability_catalog_generations(
+                scope, catalog_generation, content_hash, updated_at
+            ) VALUES (?, 0, NULL, ?)
+            """,
+            (scope, now),
+        )
+
+
 MIGRATIONS: Sequence[Migration] = (
+
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
     Migration(version=3, name="knowledge_v2", apply=_m3_knowledge_v2),
@@ -4812,6 +4985,31 @@ MIGRATIONS: Sequence[Migration] = (
         version=63,
         name="dataset_query_indexes",
         apply=_m63_dataset_query_indexes,
+    ),
+    Migration(
+        version=64,
+        name="mcp_catalog_generation",
+        apply=_m64_mcp_catalog_generation,
+    ),
+    Migration(
+        version=65,
+        name="capability_idempotency",
+        apply=_m65_capability_idempotency,
+    ),
+    Migration(
+        version=66,
+        name="workflow_execution_idempotency",
+        apply=_m66_workflow_execution_idempotency,
+    ),
+    Migration(
+        version=67,
+        name="mcp_scrub_plaintext_secrets",
+        apply=_m67_mcp_scrub_plaintext_secrets,
+    ),
+    Migration(
+        version=68,
+        name="capability_catalog_generations",
+        apply=_m68_capability_catalog_generations,
     ),
 )
 

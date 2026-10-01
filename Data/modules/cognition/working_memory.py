@@ -6,10 +6,17 @@ This is the Cognitive Runtime workspace — not durable exact Memory.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
 from .types import EpistemicType
+
+
+def _stable_constraint_id(text: str) -> str:
+    """Stable in-run constraint id — never use builtin hash() (process-randomized)."""
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+    return f"wm-constraint-{digest}"
 
 
 @dataclass
@@ -166,7 +173,7 @@ class WorkingMemory:
                     relevance=1.0,
                     authority=1.0,
                     task_linkage=1.0,
-                    item_id=f"wm-constraint-{abs(hash(c)) % 10_000_000}",
+                    item_id=_stable_constraint_id(c),
                 )
             )
         return pinned

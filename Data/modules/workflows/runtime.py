@@ -29,6 +29,57 @@ from .types import (
 )
 from .variables import build_execution_context, eval_predicate, resolve_value
 
+import hashlib
+import json
+
+
+def _args_fingerprint(arguments: dict | None) -> str:
+    payload = json.dumps(arguments or {}, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _is_secret_ref(value) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, dict):
+        ref = value.get("ref") or value.get("secret_ref") or value.get("secret")
+        if isinstance(ref, str) and (
+            ref.startswith("secret:") or ref.startswith("env:") or ref.startswith("{{")
+        ):
+            return True
+        if value.get("secret") is True and isinstance(ref, str) and ref.strip():
+            return True
+        return False
+    text = str(value).strip()
+    return text.startswith("secret:") or text.startswith("env:")
+
+
+def validate_secret_variables(variables, *, inputs=None) -> None:
+    inputs = inputs or {}
+    for var in variables:
+        secret = bool(getattr(var, "secret", False))
+        if not secret:
+            type_value = getattr(var, "type_value", None) or str(getattr(var, "var_type", "") or "")
+            if str(type_value) != "secret_ref":
+                continue
+            secret = True
+        if not secret:
+            continue
+        name = str(getattr(var, "name", "") or "")
+        required = bool(getattr(var, "required", False))
+        provided = inputs.get(name) if name in inputs else getattr(var, "default", None)
+        if provided in (None, "", {}):
+            if required:
+                raise ValueError(
+                    f"VARIABLE_VALIDATION_FAILED: required secret {name} missing resolvable secret ref"
+                )
+            continue
+        if not _is_secret_ref(provided):
+            raise ValueError(
+                f"VARIABLE_VALIDATION_FAILED: secret variable {name} must use a secret ref "
+                f"(secret:… / env:…), never plaintext"
+            )
+
 
 class WorkflowRuntime:
     """Execute workflow graphs/steps through the shared Execution Gateway.
@@ -83,69 +134,54 @@ class WorkflowRuntime:
         definition = self.store.get_definition(workflow_id)
         if definition is None:
             raise KeyError(f"Unknown workflow definition: {workflow_id}")
-        # Manual run of inactive is allowed; automatic triggers must check ACTIVE.
         if definition.status == WorkflowDefinitionStatus.ARCHIVED:
             raise ValueError("WORKFLOW_INVALID: archived workflows cannot run")
         if definition.status == WorkflowDefinitionStatus.TEMPLATE:
             raise ValueError("WORKFLOW_INVALID: templates must be duplicated before run")
-        # Concurrency limit
+
+        validate_secret_variables(definition.variables, inputs=inputs)
+
         max_concurrent = int((definition.config or {}).get("max_concurrent_executions") or 0)
-        if max_concurrent > 0:
-            running = self.store.count_executions(
-                workflow_id=workflow_id,
-                states=[
-                    WorkflowExecutionState.QUEUED.value,
-                    WorkflowExecutionState.STARTING.value,
-                    WorkflowExecutionState.RUNNING.value,
-                    WorkflowExecutionState.WAITING.value,
-                    WorkflowExecutionState.WAITING_APPROVAL.value,
-                    WorkflowExecutionState.CANCELLING.value,
-                ],
-            )
-            if running >= max_concurrent:
-                raise ValueError("WORKFLOW_INVALID: max concurrent executions reached")
-        meta: dict[str, Any] = {}
-        if idempotency_key:
-            # Reuse in-flight execution with same key if present.
-            recent = self.store.list_executions(workflow_id=workflow_id, limit=20)
-            for item in recent:
-                if (item.metadata or {}).get("idempotency_key") == idempotency_key:
-                    if item.state not in {
-                        WorkflowExecutionState.COMPLETED,
-                        WorkflowExecutionState.FAILED,
-                        WorkflowExecutionState.CANCELLED,
-                    }:
-                        job = None
-                        if self.job_runtime is not None:
-                            try:
-                                job = self.enqueue_advance(item.execution_id, requested_by=requested_by)
-                            except ValueError:
-                                job = None
-                        return item, job
-            meta["idempotency_key"] = idempotency_key
-        # Resolve input snapshot from variable defaults + inputs (non-secret).
+        key = (idempotency_key or "").strip() or None
+
         snapshot: dict[str, Any] = {}
         for var in definition.variables:
-            if var.secret:
-                snapshot[var.name] = {"secret": True, "ref": var.default}
+            if var.secret or str(var.type_value) == "secret_ref":
+                raw = (inputs or {}).get(var.name, var.default)
+                if raw in (None, "", {}):
+                    if var.required:
+                        raise ValueError(f"VARIABLE_VALIDATION_FAILED: missing required {var.name}")
+                    continue
+                if not _is_secret_ref(raw):
+                    raise ValueError(
+                        f"VARIABLE_VALIDATION_FAILED: secret variable {var.name} must use a secret ref"
+                    )
+                snapshot[var.name] = (
+                    raw if isinstance(raw, dict) else {"secret": True, "ref": str(raw)}
+                )
             elif var.name in (inputs or {}):
                 snapshot[var.name] = (inputs or {})[var.name]
             elif var.default is not None:
                 snapshot[var.name] = var.default
             elif var.required:
                 raise ValueError(f"VARIABLE_VALIDATION_FAILED: missing required {var.name}")
-        for key, value in (inputs or {}).items():
-            snapshot.setdefault(key, value)
+        for snap_key, value in (inputs or {}).items():
+            snapshot.setdefault(snap_key, value)
+
         execution = self.store.create_execution(
             workflow_id=workflow_id,
             trigger_source=trigger_source,
             requested_by=requested_by,
             input_snapshot=snapshot,
-            metadata=meta,
+            idempotency_key=key,
+            max_concurrent=max_concurrent,
         )
         job = None
         if self.job_runtime is not None:
-            job = self.enqueue_advance(execution.execution_id, requested_by=requested_by)
+            try:
+                job = self.enqueue_advance(execution.execution_id, requested_by=requested_by)
+            except Exception:  # noqa: BLE001 — terminal / duplicate job claim races
+                job = None
         return execution, job
 
     def enqueue_advance(
@@ -300,6 +336,118 @@ class WorkflowRuntime:
         # Pure legacy path without execution row (should be rare post-migration).
         return self._advance_legacy_record(workflow_id)
 
+    def resume_with_approval(
+        self,
+        execution_id: str,
+        *,
+        approval_id: str | None = None,
+        decision: str = "approved",
+        requested_by: str = "api",
+    ) -> WorkflowRecord:
+        """Resume a WAITING_APPROVAL execution after operator approve/reject."""
+        execution = self.store.get_execution(execution_id)
+        if execution is None:
+            raise KeyError(f"Unknown execution: {execution_id}")
+        if execution.state != WorkflowExecutionState.WAITING_APPROVAL:
+            raise ValueError(
+                f"WORKFLOW_INVALID: execution is not WAITING_APPROVAL ({execution.state.value})"
+            )
+        meta = dict(execution.metadata or {})
+        pending = dict(meta.get("pending_approval") or {})
+        if not pending:
+            raise ValueError("WORKFLOW_INVALID: missing pending_approval binding")
+
+        decision_norm = str(decision or "approved").strip().lower()
+        if decision_norm in {"rejected", "deny", "denied", "reject"}:
+            meta["wait_reason"] = None
+            meta["approval_decision"] = "rejected"
+            meta["approval_decided_at"] = utc_now()
+            execution.metadata = meta
+            execution.state = WorkflowExecutionState.FAILED
+            execution.error = "APPROVAL_REJECTED"
+            self.store.save_execution(execution)
+            return self.store.get(execution.execution_id)  # type: ignore[return-value]
+
+        if not approval_id:
+            raise ValueError("WORKFLOW_INVALID: approval_id required to resume")
+
+        if pending.get("node_id") and execution.current_node_id not in {
+            None,
+            pending.get("node_id"),
+        }:
+            raise ValueError("WORKFLOW_INVALID: pending approval node no longer current")
+        if pending.get("node_id") and not execution.current_node_id:
+            execution.current_node_id = str(pending["node_id"])
+
+        meta["resume_approval_id"] = str(approval_id)
+        meta["approval_decision"] = "approved"
+        meta["approval_decided_at"] = utc_now()
+        meta["wait_reason"] = None
+        execution.metadata = meta
+        execution.state = WorkflowExecutionState.RUNNING
+        self.store.save_execution(execution)
+
+        record = self._advance_execution(execution)
+        if self.job_runtime is not None:
+            wait = str((record.metadata or {}).get("wait_reason") or "")
+            if record.state == WorkflowState.RUNNING and wait not in {
+                "WAITING_APPROVAL",
+                "WAITING_DELAY",
+                "WAITING_CHILD",
+            }:
+                try:
+                    self.enqueue_advance(
+                        execution_id,
+                        requested_by=requested_by,
+                        generation=f"approval-resume:{approval_id}:{execution.current_node_id}",
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+        return record
+
+    def _resume_delay(
+        self,
+        execution: WorkflowExecution,
+        graph: WorkflowGraph,
+        meta: dict[str, Any],
+    ) -> WorkflowRecord:
+        """Idempotent delay wake-up: advance past the delay node after deadline."""
+        if not meta.get("delay_schedule_id") and self.job_runtime is not None:
+            execution.state = WorkflowExecutionState.FAILED
+            execution.error = "DELAY_WAKEUP_UNAVAILABLE: missing delay_schedule_id"
+            meta["wait_reason"] = None
+            execution.metadata = meta
+            self.store.save_execution(execution)
+            return self.store.get(execution.execution_id)  # type: ignore[return-value]
+        resume_at = meta.get("delay_resume_at")
+        if resume_at:
+            try:
+                when = datetime.fromisoformat(str(resume_at).replace("Z", "+00:00"))
+            except ValueError:
+                when = None
+            if when is not None and datetime.now(timezone.utc) < when:
+                return self.store.get(execution.execution_id)  # type: ignore[return-value]
+        sched_id = meta.get("delay_schedule_id")
+        if sched_id and self.schedule_store is not None and str(sched_id) != "foreground":
+            try:
+                from Data.modules.schedules.types import ScheduleStatus
+
+                self.schedule_store.set_status(str(sched_id), ScheduleStatus.DISABLED)
+            except Exception:  # noqa: BLE001
+                pass
+        meta["wait_reason"] = None
+        meta["delay_resume_at"] = None
+        meta["delay_wakeup_consumed_at"] = utc_now()
+        execution.metadata = meta
+        execution.state = WorkflowExecutionState.RUNNING
+        delay_node = meta.get("delay_node_id")
+        if delay_node and execution.current_node_id == delay_node:
+            self._move_to_next(execution, graph, handle=None)
+        elif not delay_node:
+            self._move_to_next(execution, graph, handle=None)
+        self.store.save_execution(execution)
+        return self.store.get(execution.execution_id)  # type: ignore[return-value]
+
     def _advance_execution(self, execution: WorkflowExecution) -> WorkflowRecord:
         if execution.state in {
             WorkflowExecutionState.COMPLETED,
@@ -330,22 +478,7 @@ class WorkflowRuntime:
             return self.store.get(execution.execution_id)  # type: ignore[return-value]
 
         if wait == "WAITING_DELAY":
-            resume_at = meta.get("delay_resume_at")
-            if resume_at:
-                try:
-                    when = datetime.fromisoformat(str(resume_at).replace("Z", "+00:00"))
-                except ValueError:
-                    when = None
-                if when is not None and datetime.now(timezone.utc) < when:
-                    return self.store.get(execution.execution_id)  # type: ignore[return-value]
-            meta["wait_reason"] = None
-            meta["delay_resume_at"] = None
-            execution.metadata = meta
-            execution.state = WorkflowExecutionState.RUNNING
-            # Advance past delay node
-            self._move_to_next(execution, graph, handle=None)
-            self.store.save_execution(execution)
-            return self.store.get(execution.execution_id)  # type: ignore[return-value]
+            return self._resume_delay(execution, graph, meta)
 
         if execution.state in {WorkflowExecutionState.QUEUED, WorkflowExecutionState.STARTING}:
             execution.state = WorkflowExecutionState.RUNNING
@@ -448,6 +581,7 @@ class WorkflowRuntime:
         node: WorkflowNodeDef,
         ctx: dict[str, Any],
     ) -> WorkflowRecord:
+        """Loop semantics — max_iterations is a safety ceiling when while/until would continue."""
         cfg = dict(node.config or {})
         max_iterations = int(cfg.get("max_iterations") or 0)
         if max_iterations < 1:
@@ -458,10 +592,11 @@ class WorkflowRuntime:
         cursor = dict(execution.cursor or {})
         counters = dict(cursor.get("loop_counters") or {})
         count = int(counters.get(node.node_id) or 0)
-        # Termination predicate optional.
+
         terminate = cfg.get("until") or cfg.get("while")
-        should_continue = count < max_iterations
-        if should_continue and isinstance(terminate, dict):
+        has_predicate = isinstance(terminate, dict)
+        predicate_continue = True
+        if has_predicate:
             try:
                 pred = eval_predicate(terminate, ctx)
             except ValueError as exc:
@@ -470,41 +605,63 @@ class WorkflowRuntime:
                 self.store.save_execution(execution)
                 return self.store.get(execution.execution_id)  # type: ignore[return-value]
             if cfg.get("until"):
-                should_continue = (not pred) and count < max_iterations
+                predicate_continue = not bool(pred)
             else:
-                should_continue = pred and count < max_iterations
-        if count >= max_iterations and should_continue:
-            execution.state = WorkflowExecutionState.FAILED
-            execution.error = "LOOP_LIMIT_EXCEEDED"
-            self.store.save_execution(execution)
-            return self.store.get(execution.execution_id)  # type: ignore[return-value]
-        if should_continue:
-            counters[node.node_id] = count + 1
-            cursor["loop_counters"] = counters
-            execution.cursor = cursor
-            # Body handle "body" or default edge; exit via "done"/"false"
+                predicate_continue = bool(pred)
+
+        def _exit_done(*, reason: str) -> WorkflowRecord:
             self._append_node_result(
                 execution,
                 node,
-                status="RUNNING",
-                output={"iteration": count + 1, "max_iterations": max_iterations},
+                status="COMPLETED",
+                output={
+                    "iteration": count,
+                    "max_iterations": max_iterations,
+                    "done": True,
+                    "exit_reason": reason,
+                },
             )
-            moved = self._move_to_next(execution, graph, handle="body")
+            moved = self._move_to_next(execution, graph, handle="done")
             if not moved:
-                moved = self._move_to_next(execution, graph, handle=None)
+                moved = self._move_to_next(execution, graph, handle="false")
+            if not moved:
+                execution.state = WorkflowExecutionState.COMPLETED
             self.store.save_execution(execution)
             return self.store.get(execution.execution_id)  # type: ignore[return-value]
+
+        if has_predicate and not predicate_continue:
+            return _exit_done(reason="predicate_false")
+
+        if count >= max_iterations:
+            if has_predicate and predicate_continue:
+                execution.state = WorkflowExecutionState.FAILED
+                execution.error = "LOOP_LIMIT_EXCEEDED"
+                self._append_node_result(
+                    execution,
+                    node,
+                    status="FAILED",
+                    output={
+                        "iteration": count,
+                        "max_iterations": max_iterations,
+                        "error": "LOOP_LIMIT_EXCEEDED",
+                    },
+                )
+                self.store.save_execution(execution)
+                return self.store.get(execution.execution_id)  # type: ignore[return-value]
+            return _exit_done(reason="max_iterations_reached")
+
+        counters[node.node_id] = count + 1
+        cursor["loop_counters"] = counters
+        execution.cursor = cursor
         self._append_node_result(
             execution,
             node,
-            status="COMPLETED",
-            output={"iteration": count, "max_iterations": max_iterations, "done": True},
+            status="RUNNING",
+            output={"iteration": count + 1, "max_iterations": max_iterations},
         )
-        moved = self._move_to_next(execution, graph, handle="done")
+        moved = self._move_to_next(execution, graph, handle="body")
         if not moved:
-            moved = self._move_to_next(execution, graph, handle="false")
-        if not moved:
-            execution.state = WorkflowExecutionState.COMPLETED
+            moved = self._move_to_next(execution, graph, handle=None)
         self.store.save_execution(execution)
         return self.store.get(execution.execution_id)  # type: ignore[return-value]
 
@@ -532,44 +689,80 @@ class WorkflowRuntime:
             self.store.save_execution(execution)
             return self.store.get(execution.execution_id)  # type: ignore[return-value]
 
-        resume_at = (datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)).isoformat(timespec="seconds")
+        resume_at = (datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)).isoformat(
+            timespec="seconds"
+        )
+        delay_i = max(1, int(delay_seconds))
+
+        # Foreground test helper (no job_runtime): complete delay inline.
+        if self.schedule_store is None and self.job_runtime is None:
+            self._append_node_result(
+                execution,
+                node,
+                status="COMPLETED",
+                output={"delay_seconds": delay_seconds, "resume_at": resume_at, "foreground": True},
+            )
+            moved = self._move_to_next(execution, graph, handle=None)
+            if not moved:
+                execution.state = WorkflowExecutionState.COMPLETED
+            self.store.save_execution(execution)
+            return self.store.get(execution.execution_id)  # type: ignore[return-value]
+
+        if self.schedule_store is None:
+            execution.state = WorkflowExecutionState.FAILED
+            execution.error = "DELAY_WAKEUP_UNAVAILABLE: schedule_store not bound"
+            self.store.save_execution(execution)
+            return self.store.get(execution.execution_id)  # type: ignore[return-value]
+
+        try:
+            from Data.modules.schedules.types import ScheduleTargetKind
+
+            sched = self.schedule_store.create(
+                name=f"wf-delay:{execution.execution_id}:{node.node_id}",
+                target_kind=ScheduleTargetKind.JOB,
+                target_ref="workflow.advance",
+                interval_seconds=max(delay_i, 86_400 * 365),
+                start_after_seconds=delay_i,
+                target_payload={"workflow_id": execution.execution_id},
+                metadata={
+                    "one_shot": True,
+                    "workflow_execution_id": execution.execution_id,
+                    "delay_node_id": node.node_id,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            execution.state = WorkflowExecutionState.FAILED
+            execution.error = f"DELAY_WAKEUP_UNAVAILABLE: {exc}"
+            self.store.save_execution(execution)
+            return self.store.get(execution.execution_id)  # type: ignore[return-value]
+
         meta = dict(execution.metadata or {})
         meta["wait_reason"] = "WAITING_DELAY"
         meta["delay_resume_at"] = resume_at
         meta["delay_node_id"] = node.node_id
+        meta["delay_schedule_id"] = sched.schedule_id
         execution.metadata = meta
         execution.state = WorkflowExecutionState.WAITING
         self._append_node_result(
             execution,
             node,
             status="WAITING",
-            output={"delay_seconds": delay_seconds, "resume_at": resume_at},
+            output={
+                "delay_seconds": delay_seconds,
+                "resume_at": resume_at,
+                "schedule_id": sched.schedule_id,
+            },
         )
-        # Durable resume via canonical ScheduleStore when available.
-        if self.schedule_store is not None:
+        try:
+            self.store.save_execution(execution)
+        except Exception:
             try:
-                from Data.modules.schedules.types import ScheduleTargetKind
+                from Data.modules.schedules.types import ScheduleStatus
 
-                delay_i = max(1, int(delay_seconds))
-                sched = self.schedule_store.create(
-                    name=f"wf-delay:{execution.execution_id}:{node.node_id}",
-                    target_kind=ScheduleTargetKind.JOB,
-                    target_ref="workflow.advance",
-                    interval_seconds=max(delay_i, 86_400 * 365),  # effectively one-shot
-                    start_after_seconds=delay_i,
-                    target_payload={"workflow_id": execution.execution_id},
-                    metadata={
-                        "one_shot": True,
-                        "workflow_execution_id": execution.execution_id,
-                        "delay_node_id": node.node_id,
-                    },
-                )
-                meta["delay_schedule_id"] = sched.schedule_id
-                execution.metadata = meta
+                self.schedule_store.set_status(sched.schedule_id, ScheduleStatus.DISABLED)
             except Exception:  # noqa: BLE001
-                # Schedule unavailable — worker re-enqueue path still polls wait.
                 pass
-        self.store.save_execution(execution)
+            raise
         return self.store.get(execution.execution_id)  # type: ignore[return-value]
 
     def _run_capability_node(
@@ -587,7 +780,8 @@ class WorkflowRuntime:
             self.store.save_execution(execution)
             return self.store.get(execution.execution_id)  # type: ignore[return-value]
         arguments = resolve_value(dict(cfg.get("arguments") or {}), ctx)
-        approval_id = cfg.get("approval_id")
+        meta = dict(execution.metadata or {})
+        approval_id = meta.get("resume_approval_id") or cfg.get("approval_id")
 
         cap_meta = None
         try:
@@ -603,7 +797,6 @@ class WorkflowRuntime:
             capability_id,
             metadata=cap_meta if isinstance(cap_meta, dict) else None,
         )
-        meta = dict(execution.metadata or {})
 
         if external and self.job_runtime is not None:
             existing = meta.get("pending_child_job_id")
@@ -661,18 +854,40 @@ class WorkflowRuntime:
             )
         )
         status_value = getattr(result.status, "value", str(result.status))
-        if status_value in {"PENDING_APPROVAL", "APPROVAL_REQUIRED", "WAITING_APPROVAL"}:
+        if (
+            result.status == CapabilityStatus.APPROVAL_REQUIRED
+            or status_value in {"PENDING_APPROVAL", "APPROVAL_REQUIRED", "WAITING_APPROVAL"}
+            or (
+                result.status == CapabilityStatus.REJECTED
+                and (result.telemetry or {}).get("reason") == "approval_required"
+            )
+        ):
+            fingerprint = _args_fingerprint(dict(arguments or {}))
             meta["wait_reason"] = "WAITING_APPROVAL"
+            meta["pending_approval"] = {
+                "node_id": node.node_id,
+                "capability_id": capability_id,
+                "args_fingerprint": fingerprint,
+                "requested_at": utc_now(),
+                "gateway_request_id": result.request_id,
+                "gateway_reason": (result.telemetry or {}).get("reason") or "approval_required",
+            }
+            meta.pop("resume_approval_id", None)
             execution.metadata = meta
             execution.state = WorkflowExecutionState.WAITING_APPROVAL
             self._append_node_result(
                 execution,
                 node,
                 status="WAITING_APPROVAL",
-                output={"result": result.public_dict()},
+                output={"result": result.public_dict(), "args_fingerprint": fingerprint},
             )
             self.store.save_execution(execution)
             return self.store.get(execution.execution_id)  # type: ignore[return-value]
+
+        if meta.get("resume_approval_id"):
+            meta.pop("resume_approval_id", None)
+            meta.pop("pending_approval", None)
+            execution.metadata = meta
 
         # Bounded receipt — avoid stuffing giant payloads into workflow JSON.
         public = result.public_dict()
@@ -853,6 +1068,7 @@ class WorkflowRuntime:
         return self._advance_execution(execution)
 
     def _advance_legacy_record(self, workflow_id: str) -> WorkflowRecord:
+        """Compat adapter for rare pre-migration rows without an execution projection.\n\n        Production traffic always has ``workflow_executions`` rows. New orchestration\n        features live only on the execution path — do not extend this adapter.\n        """
         record = self.store.get(workflow_id)
         if record is None:
             raise KeyError(f"Unknown workflow: {workflow_id}")
@@ -1057,7 +1273,7 @@ class WorkflowRuntime:
         execution.error = "Cancelled by request"
         # Disable one-shot delay schedule if present.
         sched_id = meta.get("delay_schedule_id")
-        if sched_id and self.schedule_store is not None:
+        if sched_id and self.schedule_store is not None and str(sched_id) != "foreground":
             try:
                 from Data.modules.schedules.types import ScheduleStatus
 

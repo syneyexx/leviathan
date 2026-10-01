@@ -7,6 +7,7 @@ from .ci import (
     ci_release_mode,
     default_leviathan_ci_plan,
     interpret_command_result,
+    measurement_blocks_release,
     measurement_counts_as_success,
 )
 from .gates import (
@@ -31,5 +32,6 @@ __all__ = [
     "evaluation_relevance_gate",
     "interpret_command_result",
     "is_shipable",
+    "measurement_blocks_release",
     "measurement_counts_as_success",
 ]

@@ -50,6 +50,10 @@ class CapabilityCatalog:
         self._items[capability_id] = updated
         return updated
 
+    def unregister(self, capability_id: str) -> bool:
+        """True catalog removal — drops the definition identity."""
+        return self._items.pop(capability_id, None) is not None
+
     def get(self, capability_id: str) -> CapabilityDefinition | None:
         return self._items.get(capability_id)
 

@@ -131,7 +131,16 @@ class ExternalCapabilityModule:
             return ModuleResult(module_id=self._manifest.module_id, operation=operation, status="COMPLETED", output=out if isinstance(out, dict) else {"result": out})
         if operation == "ensure_ready" and operation not in declared_ops:
             out = self._adapter.ensure_ready()
-            return ModuleResult(module_id=self._manifest.module_id, operation=operation, status="COMPLETED", output=out if isinstance(out, dict) else {"result": out})
+            ready_ok = True
+            if isinstance(out, dict) and out.get("ready") is False:
+                ready_ok = False
+            return ModuleResult(
+                module_id=self._manifest.module_id,
+                operation=operation,
+                status="COMPLETED" if ready_ok else "FAILED",
+                output=out if isinstance(out, dict) else {"result": out},
+                error=None if ready_ok else str((out or {}).get("code") or (out or {}).get("detail") or "not_ready"),
+            )
         if operation == "start" and operation not in declared_ops:
             out = self._adapter.start()
             return ModuleResult(module_id=self._manifest.module_id, operation=operation, status="COMPLETED", output=out if isinstance(out, dict) else {"result": out})
@@ -203,10 +212,18 @@ class ExternalCapabilityModule:
 
     def stop(self, *, expected_generation: int | None = None) -> dict[str, Any]:
         assert self._adapter is not None
+        import inspect
+
+        stop_fn = self._adapter.stop
         try:
-            return self._adapter.stop(expected_generation=expected_generation)  # type: ignore[call-arg]
-        except TypeError:
-            return self._adapter.stop()
+            sig = inspect.signature(stop_fn)
+            if "expected_generation" in sig.parameters or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            ):
+                return stop_fn(expected_generation=expected_generation)  # type: ignore[call-arg]
+        except (TypeError, ValueError):
+            pass
+        return stop_fn()
 
     def restart(self) -> dict[str, Any]:
         assert self._adapter is not None

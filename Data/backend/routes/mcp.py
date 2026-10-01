@@ -5,9 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from Data.modules.execution import CapabilityRequest, ExecutionGateway
+from Data.modules.execution import CapabilityRequest, CapabilityStatus, ExecutionGateway
 from Data.modules.mcp import McpBridge, McpError
 
 
@@ -122,8 +123,14 @@ def _queue_mcp_live_op(
         "truth": {
             "fastapi_does_not_spawn_mcp_stdio": True,
             "fastapi_does_not_perform_live_mcp_handshake": True,
+            "control_plane_does_not_poll_mcp_jobs": True,
         },
     }
+
+
+def _accepted(payload: dict[str, Any]) -> JSONResponse:
+    """HTTP 202 Accepted — durable job queued; poll /api/jobs/{job_id}."""
+    return JSONResponse(status_code=202, content=payload)
 
 
 def build_mcp_router(
@@ -192,9 +199,9 @@ def build_mcp_router(
             raise_mcp_error(exc)
 
     @router.delete("/api/mcp/servers/{server_id}")
-    def delete_server(server_id: str) -> dict:
+    def delete_server(server_id: str, force: bool = Query(False)) -> dict:
         try:
-            bridge.unregister_server(server_id)
+            bridge.unregister_server(server_id, force=force)
         except McpError as exc:
             raise_mcp_error(exc)
         return {"ok": True, "server_id": server_id}
@@ -216,17 +223,19 @@ def build_mcp_router(
             raise_mcp_error(exc)
 
     @router.post("/api/mcp/servers/{server_id}/connect")
-    def connect_server(server_id: str) -> dict:
+    def connect_server(server_id: str):
         try:
             bridge.require_server(server_id)
         except McpError as exc:
             raise_mcp_error(exc)
         if _mcp_externalize_enabled():
-            return _queue_mcp_live_op(
-                job_runtime=jobs,
-                capability_id="mcp.connect",
-                server_id=server_id,
-                arguments={"expand_tools": True},
+            return _accepted(
+                _queue_mcp_live_op(
+                    job_runtime=jobs,
+                    capability_id="mcp.connect",
+                    server_id=server_id,
+                    arguments={"expand_tools": True},
+                )
             )
         # Test / developer mode only — production externalize defaults on.
         try:
@@ -248,17 +257,19 @@ def build_mcp_router(
         return {"server": bridge.get_server_public(server_id), "runtime": disconnected.public_dict()}
 
     @router.post("/api/mcp/servers/{server_id}/refresh-tools")
-    def refresh_tools(server_id: str) -> dict:
+    def refresh_tools(server_id: str):
         try:
             bridge.require_server(server_id)
         except McpError as exc:
             raise_mcp_error(exc)
         if _mcp_externalize_enabled():
-            return _queue_mcp_live_op(
-                job_runtime=jobs,
-                capability_id="mcp.list_tools",
-                server_id=server_id,
-                arguments={"force_refresh": True, "expand_tools": True},
+            return _accepted(
+                _queue_mcp_live_op(
+                    job_runtime=jobs,
+                    capability_id="mcp.list_tools",
+                    server_id=server_id,
+                    arguments={"force_refresh": True, "expand_tools": True},
+                )
             )
         try:
             tools = bridge.refresh_tools(server_id)
@@ -273,7 +284,23 @@ def build_mcp_router(
         except McpError as exc:
             raise_mcp_error(exc)
         tools = bridge.list_tools(server_id=server_id)
-        return {"tools": [item.public_dict() for item in tools]}
+        return {
+            "tools": [item.public_dict() for item in tools],
+            "catalog_generation": bridge.store.get_catalog_generation(server_id),
+            "sync_issues": bridge.store.list_sync_issues(server_id),
+        }
+
+    @router.get("/api/mcp/servers/{server_id}/sync-issues")
+    def server_sync_issues(server_id: str) -> dict:
+        try:
+            bridge.require_server(server_id)
+        except McpError as exc:
+            raise_mcp_error(exc)
+        return {
+            "server_id": server_id,
+            "sync_issues": bridge.store.list_sync_issues(server_id),
+            "catalog_generation": bridge.store.get_catalog_generation(server_id),
+        }
 
     @router.get("/api/mcp/servers/{server_id}/health")
     def server_health(server_id: str) -> dict:
@@ -286,7 +313,22 @@ def build_mcp_router(
     @router.get("/api/mcp/tools")
     def list_tools(server_id: str | None = None) -> dict:
         tools = bridge.list_tools(server_id=server_id)
-        return {"tools": [item.public_dict() for item in tools]}
+        payload: dict[str, Any] = {"tools": [item.public_dict() for item in tools]}
+        if server_id:
+            payload["catalog_generation"] = bridge.store.get_catalog_generation(server_id)
+            payload["sync_issues"] = bridge.store.list_sync_issues(server_id)
+        return payload
+
+    @router.post("/api/mcp/reconcile-catalog")
+    def reconcile_catalog(server_id: str | None = None) -> dict:
+        """Rehydrate CapabilityCatalog from durable McpStore (post-worker sync)."""
+        try:
+            if server_id:
+                bridge.require_server(server_id)
+            result = bridge.reconcile_catalog_from_store(server_id)
+        except McpError as exc:
+            raise_mcp_error(exc)
+        return {"reconcile": result}
 
     @router.get("/api/mcp/calls")
     def list_calls(
@@ -297,8 +339,12 @@ def build_mcp_router(
         return {"calls": [item.public_dict() for item in calls]}
 
     @router.post("/api/mcp/call")
-    def call_tool(payload: McpCallRequest) -> dict:
-        """Manual operator invoke — MUST go through ExecutionGateway."""
+    def call_tool(payload: McpCallRequest):
+        """Manual operator invoke — MUST go through ExecutionGateway.
+
+        Externalized path: gateway enqueues mcp.call and returns QUEUED → HTTP 202.
+        Never blocks the FastAPI thread polling worker completion.
+        """
         # approved_by_user is intentionally ignored for authorization.
         result = gateway.execute(
             CapabilityRequest(
@@ -309,13 +355,32 @@ def build_mcp_router(
                 run_id=payload.run_id,
             )
         )
-        return {
+        body = {
             "result": result.public_dict(),
             "truth": {
                 "manual_mcp_call_uses_execution_gateway": True,
                 "approved_by_user_is_not_authority": True,
                 "mcp_output_is_not_evidence": True,
+                "control_plane_does_not_poll_mcp_jobs": True,
             },
         }
+        if result.status == CapabilityStatus.QUEUED or bool((result.output or {}).get("queued")):
+            job_id = (result.output or {}).get("job_id") or (result.telemetry or {}).get("job_id")
+            body["queued"] = True
+            body["job_id"] = job_id
+            return _accepted(body)
+        if result.status == CapabilityStatus.APPROVAL_REQUIRED:
+            raise HTTPException(status_code=403, detail=body)
+        if result.status == CapabilityStatus.REJECTED:
+            reason = (result.telemetry or {}).get("reason")
+            code = 403 if reason in {"approval_required", "approval_denied"} else 422
+            raise HTTPException(status_code=code, detail=body)
+        if result.status == CapabilityStatus.TIMEOUT:
+            raise HTTPException(status_code=504, detail=body)
+        if result.status == CapabilityStatus.CANCELLED:
+            raise HTTPException(status_code=409, detail=body)
+        if result.status == CapabilityStatus.FAILED:
+            raise HTTPException(status_code=500, detail=body)
+        return body
 
     return router

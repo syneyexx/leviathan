@@ -14,7 +14,10 @@ def _handler(ctx, job):
         from Data.modules.mcp.execution import McpExecutionExecutor
 
         db_path = str(getattr(ctx.get("settings"), "database_path", "") or "")
-        executor = McpExecutionExecutor(db_path=db_path or None)
+        executor = McpExecutionExecutor(
+            db_path=db_path or None,
+            artifact_store=ctx.get("artifact_store"),
+        )
         ctx["mcp_execution_executor"] = executor
         atexit.register(executor.close)
     ctx["worker_id"] = ctx.get("worker_id") or os.environ.get("LEVIATHAN_WORKER_ID") or (

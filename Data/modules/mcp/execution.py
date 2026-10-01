@@ -27,18 +27,27 @@ from Data.modules.mcp.types import McpCallStatus, McpServerState
 class McpExecutionExecutor:
     """Ephemeral per-job MCP session for tools/call (HTTP or stdio)."""
 
-    def __init__(self, *, db_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        db_path: str | Path | None = None,
+        artifact_store: Any | None = None,
+    ) -> None:
         from Data.modules.common.database_domains import resolve_control_database_path
 
         path = resolve_control_database_path(explicit=db_path)
         self.db_path = path
         self.store = McpStore(path)
         self.store.initialize()
+        self.artifact_store = artifact_store
         allow = (os.environ.get("LEVIATHAN_NETWORK_ALLOW_OUTBOUND") or "").strip().lower()
         self.allow_outbound = allow in {"1", "true", "yes", "on"}
 
     def close(self) -> None:
         return None
+
+    def _resolve_artifact_store(self, ctx: dict[str, Any]) -> Any | None:
+        return self.artifact_store or ctx.get("artifact_store")
 
     def execute_job(self, ctx: dict[str, Any], job: Any) -> dict[str, Any]:
         store = ctx["job_store"]
@@ -176,6 +185,7 @@ class McpExecutionExecutor:
             config=config,
             limits=DEFAULT_MCP_LIMITS,
             allow_outbound=self.allow_outbound,
+            artifact_store=self._resolve_artifact_store(ctx),
         )
         try:
             session.connect()
@@ -189,6 +199,7 @@ class McpExecutionExecutor:
                 "content": result.content,
                 "is_error": result.is_error,
                 "truncated": result.truncated,
+                "artifact_ref": result.artifact_ref,
                 "error_code": result.error_code,
                 "error_message": result.error_message,
                 "duration_ms": result.duration_ms,
@@ -342,11 +353,20 @@ class McpExecutionExecutor:
             config=config,
             limits=DEFAULT_MCP_LIMITS,
             allow_outbound=self.allow_outbound,
+            artifact_store=self._resolve_artifact_store(ctx),
         )
         try:
             runtime = session.connect()
             tools: list[dict[str, Any]] = []
-            if capability == "mcp.list_tools" or bool(args.get("expand_tools", True)):
+            protocol_version = getattr(runtime, "protocol_version", None)
+            server_version = getattr(runtime, "server_version", None)
+            should_list = capability == "mcp.list_tools" or bool(args.get("expand_tools", True))
+            reconciled = False
+            catalog_generation = self.store.get_catalog_generation(server_id)
+            sync_issues: list[dict[str, Any]] = []
+            schema_changes: list[dict[str, Any]] = []
+
+            if should_list:
                 listed = session.list_tools(force_refresh=bool(args.get("force_refresh", True)))
                 for tool in listed or []:
                     if hasattr(tool, "public_dict"):
@@ -355,6 +375,53 @@ class McpExecutionExecutor:
                         tools.append(tool)
                     else:
                         tools.append({"name": getattr(tool, "name", str(tool))})
+                # Durable reconciliation — worker path must persist schemas/hashes.
+                from Data.modules.mcp.catalog_sync import McpCatalogSync
+
+                try:
+                    sync = McpCatalogSync(
+                        catalog=None,
+                        store=self.store,
+                        plugin_registry=None,
+                        limits=DEFAULT_MCP_LIMITS,
+                    )
+                    sync.sync_tools(
+                        config,
+                        tools,
+                        protocol_version=protocol_version,
+                        server_version=server_version,
+                        available=True,
+                    )
+                    catalog_generation = sync.last_catalog_generation or self.store.get_catalog_generation(
+                        server_id
+                    )
+                    sync_issues = list(sync.sync_issues)
+                    schema_changes = list(sync.schema_change_events)
+                    reconciled = True
+                except Exception as exc:  # noqa: BLE001 — reconciliation failure fails the job
+                    code = getattr(exc, "code", None) or "MCP_CATALOG_RECONCILE_FAILED"
+                    message = getattr(exc, "message", None) or str(exc)
+                    payload = {
+                        "status": "failed",
+                        "error": {"code": str(code), "message": str(message)[:500]},
+                        "server_id": server_id,
+                        "tools": tools,
+                        "tool_count": len(tools),
+                        "reconciled": False,
+                        "worker_pid": os.getpid(),
+                        "capability_id": capability,
+                    }
+                    fenced_transition(
+                        store,
+                        job.job_id,
+                        JobState.FAILED,
+                        worker_id=worker_id,
+                        ctx=ctx,
+                        error=str(code),
+                        result=payload,
+                    )
+                    return payload
+
             out = {
                 "status": "succeeded",
                 "server_id": server_id,
@@ -365,6 +432,10 @@ class McpExecutionExecutor:
                 },
                 "tools": tools,
                 "tool_count": len(tools),
+                "catalog_generation": catalog_generation,
+                "sync_issues": sync_issues,
+                "schema_changes": schema_changes,
+                "reconciled": reconciled,
                 "worker_pid": os.getpid(),
                 "capability_id": capability,
             }

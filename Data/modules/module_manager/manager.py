@@ -6,7 +6,7 @@ import logging
 import threading
 import time
 import traceback
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,7 +20,7 @@ from .errors import (
     scrub_error_text,
     unknown_module_error,
 )
-from .subprocess_exec import SubprocessModuleExecutor
+from .killable_exec import KillableModuleExecutor
 from .types import (
     ILeviathanModule,
     ModuleContext,
@@ -30,6 +30,16 @@ from .types import (
     ModuleResult,
     ModuleStatus,
 )
+
+# Side effects that force killable process containment (never ThreadPool timeout).
+_MUTATING_SIDE_EFFECTS = {
+    "WRITE",
+    "EXECUTE",
+    "DELETE",
+    "DESTRUCTIVE",
+    "NETWORK",
+    "EXTERNAL_SIDE_EFFECT",
+}
 
 logger = logging.getLogger("leviathan.module_manager")
 
@@ -93,6 +103,9 @@ class ManagedModule:
     last_result: ModuleResult | None = None
     desired_state: str | None = None
     active_jobs: list[str] = field(default_factory=list)
+    # Active generation / fencing — protects jobs across staged reload.
+    generation: int = 1
+    activation_fence: str | None = None
     # Cached measured health — never refreshed by public_dict / GET /api/modules.
     last_health: dict[str, Any] | None = None
     last_health_at: str | None = None
@@ -311,6 +324,8 @@ class ManagedModule:
             "adapter": adapter,
             "error": self.error,
             "active_jobs": list(self.active_jobs),
+            "generation": int(self.generation),
+            "activation_fence": self.activation_fence,
             "last_result": self.last_result.public_dict() if self.last_result else None,
             # Snapshot health is cached only — never fans out to live probes.
             "health": self._cached_health_public(),
@@ -481,8 +496,19 @@ class ModuleManager:
         module_id: str,
         operation: str,
         arguments: Mapping[str, Any] | None = None,
+        *,
+        cancel_check: Callable[[], bool] | None = None,
+        expected_generation: int | None = None,
     ) -> ModuleResult:
         managed = self._require(module_id)
+        if expected_generation is not None and int(managed.generation) != int(expected_generation):
+            raise ModuleManagerError(
+                f"stale generation fence: expected {expected_generation}, active {managed.generation}",
+                code="UPDATE_BLOCKED_ACTIVE",
+                module_id=module_id,
+                action="execute",
+                detail=f"stale generation fence: expected {expected_generation}, active {managed.generation}",
+            )
         if managed.instance is None or managed.status not in _READY_STATUSES | {
             ModuleStatus.STOPPED,
             ModuleStatus.DISABLED,
@@ -500,16 +526,17 @@ class ModuleManager:
         managed.status = ModuleStatus.EXECUTING
         started = time.perf_counter()
         args = dict(arguments or {})
+        timeout = self._resolve_execute_timeout(managed)
+        lease_token = uuid.uuid4().hex
+        use_killable = self._requires_killable_process(managed)
 
-        # Phase 50: optional subprocess isolation for untrusted plugins.
-        if (
-            managed.manifest.isolation == ModuleIsolation.SUBPROCESS
-            and self.allow_subprocess_isolation
-        ):
-            self.telemetry["subprocess_executes"] += 1
-            executor = SubprocessModuleExecutor(timeout_seconds=self.execute_timeout_seconds)
+        # Killable process boundary for SUBPROCESS isolation and untrusted/mutating work.
+        # Never use ThreadPoolExecutor.result(timeout=...) — threads keep running after timeout.
+        if use_killable:
+            self.telemetry["subprocess_executes"] = int(self.telemetry.get("subprocess_executes", 0)) + 1
+            executor = KillableModuleExecutor(timeout_seconds=timeout)
             ctx = self._last_context or ModuleContext()
-            raw = executor.execute(
+            raw_result = executor.execute(
                 entrypoint=managed.manifest.entrypoint,
                 operation=operation,
                 arguments=args,
@@ -519,45 +546,67 @@ class ModuleManager:
                     "feature_flags": dict(ctx.feature_flags),
                     "metadata": dict(ctx.metadata),
                 },
+                cancel_check=cancel_check,
+                lease_token=lease_token,
             )
-            status = str(raw.get("status") or "FAILED")
+            status = str(raw_result.status or "FAILED")
+            payload = raw_result.payload if isinstance(raw_result.payload, dict) else {}
+            output = payload.get("output") if isinstance(payload.get("output"), dict) else payload
             result = ModuleResult(
                 module_id=module_id,
                 operation=operation,
                 status=status,
-                output=raw.get("output") if isinstance(raw.get("output"), dict) else raw,
-                error=raw.get("error"),
+                output=output if isinstance(output, dict) else {"result": output},
+                error=raw_result.error or payload.get("error"),
                 duration_ms=(time.perf_counter() - started) * 1000,
             )
             managed.last_result = result
-            managed.status = ModuleStatus.READY if status in {"COMPLETED", "OK", "SUCCESS"} else ModuleStatus.ERROR
+            if status == "TIMEOUT":
+                managed.status = ModuleStatus.ERROR
+                managed.error = raw_result.error or f"execute timeout after {timeout}s"
+                self.telemetry["execute_failures"] += 1
+                self.telemetry["errors"] += 1
+                raise ModuleManagerError(
+                    managed.error,
+                    code="TIMEOUT",
+                    module_id=module_id,
+                    action="execute",
+                    detail=managed.error,
+                )
+            if status == "CANCELLED":
+                managed.status = previous if previous in _READY_STATUSES else ModuleStatus.READY
+                self.telemetry["execute_failures"] += 1
+                raise ModuleManagerError(
+                    raw_result.error or "cancelled",
+                    code="CANCELLED",
+                    module_id=module_id,
+                    action="execute",
+                    detail=raw_result.error or "cancelled",
+                )
+            managed.status = (
+                ModuleStatus.READY if status in {"COMPLETED", "OK", "SUCCESS"} else ModuleStatus.ERROR
+            )
             if managed.status == ModuleStatus.ERROR:
                 self.telemetry["execute_failures"] += 1
             return result
 
-        def _call() -> ModuleResult:
-            assert managed.instance is not None
-            return managed.instance.execute(operation, args)
-
-        # External modules may declare longer timeouts in manifest.
-        timeout = self.execute_timeout_seconds
-        external = (managed.manifest.metadata or {}).get("external")
-        if isinstance(external, dict):
-            runtime = external.get("runtime") or {}
-            if isinstance(runtime, dict) and runtime.get("timeout_seconds"):
-                try:
-                    timeout = max(timeout, float(runtime["timeout_seconds"]))
-                except (TypeError, ValueError):
-                    pass
-
+        # Pure trusted INLINE_SAFE — in-process on the live instance (adapters own
+        # their own process kill when they spawn children). No ThreadPool timeout.
         try:
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(_call)
-                result = future.result(timeout=timeout)
+            assert managed.instance is not None
+            if callable(cancel_check) and cancel_check():
+                managed.status = previous if previous in _READY_STATUSES else ModuleStatus.READY
+                raise ModuleManagerError(
+                    "cancelled",
+                    code="CANCELLED",
+                    module_id=module_id,
+                    action="execute",
+                    detail="cancelled",
+                )
+            result = managed.instance.execute(operation, args)
             if not isinstance(result, ModuleResult):
                 raise ModuleManagerError("Module execute must return ModuleResult")
             managed.last_result = result
-            # Restore prior semantic state for long-lived modules (RUNNING etc.).
             if previous in {ModuleStatus.RUNNING, ModuleStatus.READY, ModuleStatus.INSTALLED}:
                 managed.status = previous if previous != ModuleStatus.EXECUTING else ModuleStatus.READY
             else:
@@ -565,26 +614,8 @@ class ModuleManager:
             if result.status.upper() not in {"COMPLETED", "OK", "SUCCESS"}:
                 self.telemetry["execute_failures"] += 1
             return result
-        except FuturesTimeout as exc:
-            managed.status = ModuleStatus.ERROR
-            managed.error = f"execute timeout after {self.execute_timeout_seconds}s"
-            self.telemetry["execute_failures"] += 1
-            self.telemetry["errors"] += 1
-            result = ModuleResult(
-                module_id=module_id,
-                operation=operation,
-                status="TIMEOUT",
-                error=managed.error,
-                duration_ms=(time.perf_counter() - started) * 1000,
-            )
-            managed.last_result = result
-            raise ModuleManagerError(
-                managed.error,
-                code="TIMEOUT",
-                module_id=module_id,
-                action="execute",
-                detail=managed.error,
-            ) from exc
+        except ModuleManagerError:
+            raise
         except Exception as exc:  # noqa: BLE001 — containment boundary
             managed.status = ModuleStatus.ERROR
             managed.error = f"execute crashed: {exc}"
@@ -612,30 +643,269 @@ class ModuleManager:
         managed.instance = None
         return managed
 
+    def _resolve_execute_timeout(self, managed: ManagedModule) -> float:
+        timeout = float(self.execute_timeout_seconds)
+        external = (managed.manifest.metadata or {}).get("external")
+        if isinstance(external, dict):
+            runtime = external.get("runtime") or {}
+            if isinstance(runtime, dict) and runtime.get("timeout_seconds"):
+                try:
+                    timeout = max(timeout, float(runtime["timeout_seconds"]))
+                except (TypeError, ValueError):
+                    pass
+        return timeout
+
+    def _requires_killable_process(self, managed: ManagedModule) -> bool:
+        """True when timed work must cross a killable process boundary.
+
+        Trusted INLINE_SAFE first-party modules stay in-process. External adapters
+        that already own live process state also stay on the live instance (their
+        adapters terminate children). Untrusted SUBPROCESS isolation and mutating
+        non-external INPROC plugins use KillableModuleExecutor.
+        """
+        if managed.manifest.isolation == ModuleIsolation.SUBPROCESS:
+            return True
+        if self.allow_subprocess_isolation and managed.manifest.isolation != ModuleIsolation.INPROC:
+            return True
+        meta = managed.manifest.metadata or {}
+        if meta.get("inline_safe") is True:
+            return False
+        if str(meta.get("execution_class") or "").upper() == "INLINE_SAFE":
+            return False
+        # External modules keep live adapter state (OwnedProcess, etc.).
+        if meta.get("external") or managed._has_lifecycle_adapter():
+            return False
+        effects = {str(e).upper() for e in (managed.manifest.side_effects or ())}
+        for cap in managed.manifest.capabilities or ():
+            effects.update(str(e).upper() for e in (cap.side_effects or ()))
+        if effects & _MUTATING_SIDE_EFFECTS:
+            # Mutating first-party without INLINE_SAFE mark → killable process.
+            return True
+        # Default trusted READ-only INPROC remains inline.
+        return False
+
     def reload(self, module_id: str, ctx: ModuleContext | None = None) -> ManagedModule:
+        """True staged reload — never shut down the active generation before activation.
+
+        Steps:
+        1. resolve new manifest/version
+        2. stage new instance separately
+        3. initialize
+        4. readiness/health validation
+        5. acquire activation fence
+        6. atomically switch active generation
+        7. retire old generation
+        Failure before activation → old untouched.
+        Failure after activation → explicit rollback.
+        """
         self.telemetry["reload_attempts"] += 1
         managed = self._require(module_id)
         if not managed.manifest.hot_reload:
             raise ModuleManagerError(f"Module does not allow hot_reload: {module_id}")
+
         previous = managed
+        previous_generation = int(previous.generation)
+        context = ctx or self._last_context or ModuleContext()
+
+        # 1. Resolve new manifest (disk refresh when possible) — do not replace active yet.
         try:
-            if managed.instance is not None:
-                self.shutdown(module_id)
-            # Re-read manifest from disk when possible.
-            if managed.manifest.source_path:
-                refreshed = load_manifest_file(Path(managed.manifest.source_path))
-                with self._lock:
-                    self._modules[module_id] = ManagedModule(manifest=refreshed, status=ModuleStatus.DISCOVERED)
-            self.load(module_id)
-            return self.initialize(module_id, ctx)
+            if previous.manifest.source_path:
+                new_manifest = load_manifest_file(Path(previous.manifest.source_path))
+            else:
+                new_manifest = previous.manifest
         except Exception as exc:
-            # Restore previous ready state if we still have a usable snapshot — honest failure.
-            with self._lock:
-                self._modules[module_id] = previous
-                previous.status = ModuleStatus.ERROR
-                previous.error = f"reload failed: {exc}"
+            raise ModuleManagerError(
+                f"reload failed resolving manifest: {exc}",
+                code="INVALID_RESULT",
+                module_id=module_id,
+                action="reload",
+                detail=str(exc),
+            ) from exc
+
+        # 2–3. Stage + initialize separately (active slot still holds previous).
+        staged = ManagedModule(
+            manifest=new_manifest,
+            status=ModuleStatus.DISCOVERED,
+            generation=previous_generation + 1,
+            active_jobs=[],
+            desired_state=previous.desired_state,
+        )
+        try:
+            factory = self._resolve_factory(staged.manifest.entrypoint)
+            instance = self._call_factory(factory, staged.manifest)
+            for attr in ("manifest", "initialize", "execute", "shutdown", "health"):
+                if not hasattr(instance, attr):
+                    raise ModuleManagerError(f"Module missing ILeviathanModule attribute: {attr}")
+            staged.instance = instance
+            staged.status = ModuleStatus.LOADED
+            staged.status = ModuleStatus.INITIALIZING
+            instance.initialize(context)
+            if hasattr(instance, "runtime_state"):
+                try:
+                    rt = str(instance.runtime_state()).upper()
+                    staged.status = ModuleStatus[rt] if rt in ModuleStatus.__members__ else ModuleStatus.READY
+                except Exception:  # noqa: BLE001
+                    staged.status = ModuleStatus.READY
+            else:
+                staged.status = ModuleStatus.READY
+            staged.error = None
+        except Exception as exc:
+            # 8. Failure before activation → old untouched.
+            try:
+                if staged.instance is not None:
+                    staged.instance.shutdown()
+            except Exception:  # noqa: BLE001
+                pass
             self.telemetry["errors"] += 1
-            raise ModuleManagerError(previous.error) from exc
+            raise ModuleManagerError(
+                f"reload staging failed: {exc}",
+                code="START_FAILED",
+                module_id=module_id,
+                action="reload",
+                detail=str(exc),
+            ) from exc
+
+        # 4. Readiness / health validation on staged instance only.
+        try:
+            health = staged.instance.health()  # type: ignore[union-attr]
+            health_status = getattr(health, "status", None)
+            status_value = (
+                health_status.value if isinstance(health_status, ModuleStatus) else str(health_status or "")
+            ).upper()
+            if status_value in {"ERROR", "FAILED", "UNHEALTHY", "SHUTDOWN"}:
+                raise ModuleManagerError(
+                    f"staged health not ready: {status_value}",
+                    code="HEALTH_FAILED",
+                    module_id=module_id,
+                    action="reload",
+                    detail=f"staged health not ready: {status_value}",
+                )
+            if isinstance(health, ModuleHealth):
+                staged.last_health = health.public_dict()
+                staged.last_health_at = _utc_now()
+        except ModuleManagerError:
+            try:
+                if staged.instance is not None:
+                    staged.instance.shutdown()
+            except Exception:  # noqa: BLE001
+                pass
+            self.telemetry["errors"] += 1
+            raise
+        except Exception as exc:
+            try:
+                if staged.instance is not None:
+                    staged.instance.shutdown()
+            except Exception:  # noqa: BLE001
+                pass
+            self.telemetry["errors"] += 1
+            raise ModuleManagerError(
+                f"reload health validation failed: {exc}",
+                code="HEALTH_FAILED",
+                module_id=module_id,
+                action="reload",
+                detail=str(exc),
+            ) from exc
+
+        # 5. Acquire activation fence — refuse when active jobs still bind old generation.
+        fence = uuid.uuid4().hex
+        with self._lock:
+            live = self._modules.get(module_id)
+            if live is None or live is not previous:
+                try:
+                    if staged.instance is not None:
+                        staged.instance.shutdown()
+                except Exception:  # noqa: BLE001
+                    pass
+                raise ModuleManagerError(
+                    "reload activation refused: active module changed during staging",
+                    code="UPDATE_BLOCKED_ACTIVE",
+                    module_id=module_id,
+                    action="reload",
+                    detail="active module changed during staging",
+                )
+            if live.active_jobs:
+                try:
+                    if staged.instance is not None:
+                        staged.instance.shutdown()
+                except Exception:  # noqa: BLE001
+                    pass
+                raise ModuleManagerError(
+                    f"cannot activate reload while jobs active: {', '.join(live.active_jobs[:5])}",
+                    code="UPDATE_BLOCKED_ACTIVE",
+                    module_id=module_id,
+                    action="reload",
+                    detail=f"cannot activate reload while jobs active: {', '.join(live.active_jobs[:5])}",
+                )
+            if int(live.generation) != previous_generation:
+                try:
+                    if staged.instance is not None:
+                        staged.instance.shutdown()
+                except Exception:  # noqa: BLE001
+                    pass
+                raise ModuleManagerError(
+                    "reload activation refused: generation advanced during staging",
+                    code="UPDATE_BLOCKED_ACTIVE",
+                    module_id=module_id,
+                    action="reload",
+                    detail="generation advanced during staging",
+                )
+            staged.activation_fence = fence
+            staged.generation = previous_generation + 1
+            # Carry desired state; jobs list starts empty for the new generation.
+            staged.active_jobs = []
+            staged.desired_state = live.desired_state
+
+            # 6. Atomic switch of active generation.
+            self._modules[module_id] = staged
+            activated = True
+
+        # 7. Retire old generation (best-effort). On failure → explicit rollback.
+        if activated:
+            try:
+                if previous.instance is not None:
+                    previous.instance.shutdown()
+                previous.status = ModuleStatus.SHUTDOWN
+                previous.instance = None
+                previous.activation_fence = None
+                self.telemetry["initialized"] += 1
+                self._last_context = context
+                return staged
+            except Exception as exc:
+                # 9. Failure after activation → explicit rollback to previous generation.
+                self.telemetry["errors"] += 1
+                with self._lock:
+                    # Re-attach previous if still usable; otherwise mark error.
+                    try:
+                        if previous.instance is None and previous.manifest.entrypoint:
+                            # Previous already shut down — cannot fully restore instance.
+                            staged.status = ModuleStatus.ERROR
+                            staged.error = f"reload retire failed after activation: {exc}"
+                            raise ModuleManagerError(
+                                staged.error,
+                                code="ROLLBACK_PARTIAL",
+                                module_id=module_id,
+                                action="reload",
+                                detail=str(exc),
+                            ) from exc
+                        self._modules[module_id] = previous
+                        previous.status = ModuleStatus.ERROR
+                        previous.error = f"reload rollback after activation: {exc}"
+                        try:
+                            if staged.instance is not None:
+                                staged.instance.shutdown()
+                        except Exception:  # noqa: BLE001
+                            pass
+                    except ModuleManagerError:
+                        raise
+                raise ModuleManagerError(
+                    f"reload rollback after activation: {exc}",
+                    code="ROLLBACK_PARTIAL",
+                    module_id=module_id,
+                    action="reload",
+                    detail=str(exc),
+                ) from exc
+
+        return staged
 
     def discover_load_initialize_all(self, ctx: ModuleContext | None = None) -> list[ManagedModule]:
         """Discover and initialize modules.
@@ -786,10 +1056,20 @@ class ModuleManager:
         managed.desired_state = "STOPPED"
         try:
             if hasattr(managed.instance, "stop"):
+                import inspect
+
+                stop_fn = managed.instance.stop
                 try:
-                    result = managed.instance.stop(expected_generation=expected_generation)
-                except TypeError:
-                    result = managed.instance.stop()
+                    sig = inspect.signature(stop_fn)
+                    accepts_gen = "expected_generation" in sig.parameters or any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+                    )
+                except (TypeError, ValueError):
+                    accepts_gen = False
+                if accepts_gen:
+                    result = stop_fn(expected_generation=expected_generation)
+                else:
+                    result = stop_fn()
             else:
                 result = {"status": "STOPPED", "detail": "stop_noop"}
             if not isinstance(result, dict):

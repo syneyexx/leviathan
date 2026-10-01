@@ -25,9 +25,13 @@ def measurement_counts_as_success(state: GateMeasurement) -> bool:
 
 
 def measurement_blocks_release(state: GateMeasurement, *, severity: str) -> bool:
+    """BLOCK severity fails closed on FAIL and UNMEASURED.
+
+    NOT_APPLICABLE is scoped-out: distinct from PASS, does not by itself block.
+    """
     if severity != "BLOCK":
         return False
-    return state == GateMeasurement.FAIL
+    return state in {GateMeasurement.FAIL, GateMeasurement.UNMEASURED}
 
 
 def ci_release_mode() -> bool:

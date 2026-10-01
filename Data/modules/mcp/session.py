@@ -49,6 +49,7 @@ class McpServerSession:
     limits: McpLimits
     allow_outbound: bool = False
     secret_overrides: dict[str, str] = field(default_factory=dict)
+    artifact_store: Any | None = None
     runtime: McpServerRuntime = field(init=False)
     _id_counter: itertools.count = field(default_factory=lambda: itertools.count(1), init=False, repr=False)
     _pending: dict[int | str, Future[dict[str, Any]]] = field(default_factory=dict, init=False, repr=False)
@@ -275,21 +276,20 @@ class McpServerSession:
         self._tools_cache = None
 
     def _spill_tool_result(self, raw: bytes) -> str | None:
-        """Spill oversized MCP tool JSON to ArtifactStore; return artifact id or None."""
-        try:
-            from Data.modules.artifacts.store import ArtifactStore
-            from pathlib import Path
-            import tempfile
+        """Spill oversized MCP tool JSON to canonical ArtifactStore (CONTROL DB).
 
-            # Prefer CONTROL artifact root when available via env; else temp.
-            root = Path(
-                __import__("os").environ.get("LEVIATHAN_ARTIFACT_ROOT")
-                or tempfile.gettempdir()
-            ) / "mcp_tool_results"
-            root.mkdir(parents=True, exist_ok=True)
-            db = root / "artifacts.db"
-            store = ArtifactStore(db, root)
-            store.initialize()
+        Never creates an ad-hoc sidecar artifacts database — that would be a
+        fourth product DB. Metadata remains durable and retrievable after restart.
+        """
+        store = self.artifact_store
+        if store is None:
+            return None
+        try:
+            if hasattr(store, "initialize"):
+                try:
+                    store.initialize()
+                except Exception:  # noqa: BLE001
+                    pass
             record = store.create_from_bytes(
                 data=raw,
                 artifact_type="mcp_tool_result",

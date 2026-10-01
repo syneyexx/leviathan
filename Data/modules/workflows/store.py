@@ -186,6 +186,19 @@ class WorkflowStore:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_wf_versions_workflow ON workflow_versions(workflow_id, version DESC)"
         )
+        self._ensure_columns(
+            conn,
+            "workflow_executions",
+            {"idempotency_key": "TEXT"},
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_wf_exec_idempotency_active
+            ON workflow_executions(workflow_id, idempotency_key)
+            WHERE idempotency_key IS NOT NULL
+              AND state NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+            """
+        )
 
     @staticmethod
     def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
@@ -757,6 +770,15 @@ class WorkflowStore:
     # Executions
     # ------------------------------------------------------------------
 
+    _ACTIVE_EXECUTION_STATES = (
+        WorkflowExecutionState.QUEUED.value,
+        WorkflowExecutionState.STARTING.value,
+        WorkflowExecutionState.RUNNING.value,
+        WorkflowExecutionState.WAITING.value,
+        WorkflowExecutionState.WAITING_APPROVAL.value,
+        WorkflowExecutionState.CANCELLING.value,
+    )
+
     def create_execution(
         self,
         *,
@@ -768,25 +790,116 @@ class WorkflowStore:
         input_snapshot: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
         execution_id: str | None = None,
+        idempotency_key: str | None = None,
+        max_concurrent: int = 0,
     ) -> WorkflowExecution:
+        """Create an execution with transactional idempotency reuse + concurrency admission."""
         definition = self.get_definition(workflow_id)
         if definition is None:
             raise KeyError(workflow_id)
         ver = int(version or definition.current_version)
         if self.get_version(workflow_id, ver) is None:
             raise KeyError(f"Unknown workflow version {ver}")
-        execution = self._new_execution(
-            definition=definition,
-            version=ver,
-            trigger_source=trigger_source,
-            requested_by=requested_by,
-            run_id=run_id,
-            input_snapshot=input_snapshot,
-            metadata=metadata,
-            execution_id=execution_id,
-        )
-        self._upsert_execution(execution)
-        return execution
+        key = (idempotency_key or "").strip() or None
+        meta = dict(metadata or {})
+        if key:
+            meta["idempotency_key"] = key
+
+        from Data.modules.common.sqlite_policy import open_sqlite_connection
+
+        conn = open_sqlite_connection(self.db_path, set_wal=False)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            if key:
+                row = conn.execute(
+                    """
+                    SELECT * FROM workflow_executions
+                    WHERE workflow_id = ? AND idempotency_key = ?
+                      AND state NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+                    LIMIT 1
+                    """,
+                    (workflow_id, key),
+                ).fetchone()
+                if row is not None:
+                    conn.commit()
+                    return self._execution_from_row(row)
+
+            if max_concurrent > 0:
+                placeholders = ",".join("?" for _ in self._ACTIVE_EXECUTION_STATES)
+                count_row = conn.execute(
+                    f"""
+                    SELECT COUNT(*) AS c FROM workflow_executions
+                    WHERE workflow_id = ? AND state IN ({placeholders})
+                    """,
+                    (workflow_id, *self._ACTIVE_EXECUTION_STATES),
+                ).fetchone()
+                running = int(
+                    count_row[0] if not isinstance(count_row, sqlite3.Row) else count_row["c"]
+                )
+                if running >= max_concurrent:
+                    conn.rollback()
+                    raise ValueError("WORKFLOW_INVALID: max concurrent executions reached")
+
+            execution = self._new_execution(
+                definition=definition,
+                version=ver,
+                trigger_source=trigger_source,
+                requested_by=requested_by,
+                run_id=run_id,
+                input_snapshot=input_snapshot,
+                metadata=meta,
+                execution_id=execution_id,
+                idempotency_key=key,
+            )
+            try:
+                self._insert_execution_conn(conn, execution, replace=False)
+            except sqlite3.IntegrityError:
+                if key:
+                    row = conn.execute(
+                        """
+                        SELECT * FROM workflow_executions
+                        WHERE workflow_id = ? AND idempotency_key = ?
+                          AND state NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+                        LIMIT 1
+                        """,
+                        (workflow_id, key),
+                    ).fetchone()
+                    if row is not None:
+                        conn.commit()
+                        return self._execution_from_row(row)
+                conn.rollback()
+                raise
+            conn.commit()
+            return execution
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+            raise
+        finally:
+            conn.close()
+
+    def find_active_by_idempotency(
+        self,
+        *,
+        workflow_id: str,
+        idempotency_key: str,
+    ) -> WorkflowExecution | None:
+        key = (idempotency_key or "").strip()
+        if not key:
+            return None
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM workflow_executions
+                WHERE workflow_id = ? AND idempotency_key = ?
+                  AND state NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+                LIMIT 1
+                """,
+                (workflow_id, key),
+            ).fetchone()
+        return self._execution_from_row(row) if row else None
 
     def get_execution(self, execution_id: str) -> WorkflowExecution | None:
         with self.connect() as conn:
@@ -1046,6 +1159,7 @@ class WorkflowStore:
         metadata: dict[str, Any] | None = None,
         execution_id: str | None = None,
         graph: WorkflowGraph | None = None,
+        idempotency_key: str | None = None,
     ) -> WorkflowExecution:
         now = utc_now()
         if graph is None:
@@ -1077,6 +1191,7 @@ class WorkflowStore:
                 "loop_counters": {},
             },
             name_snapshot=definition.name,
+            idempotency_key=idempotency_key,
         )
 
     def _record_from_execution(
@@ -1223,14 +1338,16 @@ class WorkflowStore:
     ) -> None:
         if replace:
             conn.execute("DELETE FROM workflow_executions WHERE execution_id = ?", (execution.execution_id,))
+        self._ensure_columns(conn, "workflow_executions", {"idempotency_key": "TEXT"})
         conn.execute(
             """
             INSERT INTO workflow_executions(
                 execution_id, workflow_id, workflow_version, state, trigger_source,
                 requested_by, created_at, updated_at, started_at, ended_at, duration_ms,
                 current_node_id, node_results_json, error, root_job_id, child_job_ids_json,
-                run_id, input_snapshot_json, metadata_json, cursor_json, name_snapshot
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                run_id, input_snapshot_json, metadata_json, cursor_json, name_snapshot,
+                idempotency_key
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 execution.execution_id,
@@ -1254,6 +1371,7 @@ class WorkflowStore:
                 json.dumps(execution.metadata),
                 json.dumps(execution.cursor),
                 getattr(execution, "name_snapshot", "") or "",
+                getattr(execution, "idempotency_key", None),
             ),
         )
 
@@ -1352,9 +1470,16 @@ class WorkflowStore:
             input_snapshot=json.loads(row["input_snapshot_json"] or "{}"),
             metadata=json.loads(row["metadata_json"] or "{}"),
             cursor=json.loads(row["cursor_json"] or "{}"),
+            idempotency_key=(
+                row["idempotency_key"] if "idempotency_key" in keys else None
+            ),
         )
         if "name_snapshot" in keys:
             setattr(execution, "name_snapshot", row["name_snapshot"] or "")
+        if not execution.idempotency_key:
+            meta_key = (execution.metadata or {}).get("idempotency_key")
+            if meta_key:
+                execution.idempotency_key = str(meta_key)
         return execution
 
     # Keep old static helper name used by tests/tools

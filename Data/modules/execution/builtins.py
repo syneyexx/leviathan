@@ -2064,7 +2064,53 @@ def build_default_catalog() -> CapabilityCatalog:
         # External control caps are also registered at FastAPI startup; catalog
         # build must still include them for EXTERNAL_WORKER_CAPABILITIES drift.
         pass
+    _annotate_catalog_path_semantics(catalog)
     return catalog
+
+
+def _annotate_catalog_path_semantics(catalog: CapabilityCatalog) -> None:
+    """Stamp explicit path semantics onto builtin schemas (not name-heuristic only)."""
+    from .path_params import LEGACY_PATH_ARGUMENT_KEYS, annotate_schema_paths
+    from .types import CapabilityDefinition
+
+    for item in list(catalog.list()):
+        props = (item.input_schema or {}).get("properties") or {}
+        if not isinstance(props, dict):
+            continue
+        path_keys = [k for k in props if k in LEGACY_PATH_ARGUMENT_KEYS]
+        if not path_keys:
+            continue
+        roles = {}
+        for key in path_keys:
+            lowered = key.lower()
+            if any(token in lowered for token in ("dest", "out", "output", "target")):
+                roles[key] = "dest"
+            elif any(token in lowered for token in ("cwd", "workspace", "dir", "root")):
+                roles[key] = "cwd"
+            else:
+                roles[key] = "source"
+        meta = dict(item.metadata or {})
+        existing = list(meta.get("path_parameters") or [])
+        merged = list(dict.fromkeys([*existing, *path_keys]))
+        meta["path_parameters"] = merged
+        catalog.upsert(
+            CapabilityDefinition(
+                id=item.id,
+                name=item.name,
+                description=item.description,
+                side_effects=item.side_effects,
+                provider_kind=item.provider_kind,
+                provider_ref=item.provider_ref,
+                input_schema=annotate_schema_paths(item.input_schema, path_keys, roles=roles),
+                output_schema=item.output_schema,
+                required_permissions=item.required_permissions,
+                available=item.available,
+                availability_reason=item.availability_reason,
+                enabled=item.enabled,
+                schema_hash=item.schema_hash,
+                metadata=meta,
+            )
+        )
 
 
 def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:

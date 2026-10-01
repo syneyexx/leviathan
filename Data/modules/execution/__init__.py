@@ -5,6 +5,7 @@ from Data.modules.function_runtime.types import SideEffect
 from .builtins import build_default_catalog
 from .catalog import CapabilityCatalog
 from .gateway import EffectRecord, ExecutionGateway, GatewayRejection
+from .idempotency import CapabilityIdempotencyStore, execution_fingerprint
 from .manifest import (
     FrontierCapabilityManifest,
     ManifestAvailability,
@@ -12,6 +13,12 @@ from .manifest import (
     build_frontier_manifest,
 )
 from .metadata import METADATA_SCHEMA_VERSION, normalize_capability_metadata, schema_hash
+from .schema_validation import (
+    SUPPORTED_JSON_SCHEMA_DRAFT_NAME,
+    SchemaValidationError,
+    validate_args_against_schema,
+)
+from .catalog_reconcile import reconcile_dynamic_catalog
 from .receipts import CapabilityCallReceipt, CapabilityReceiptStore, build_receipt_from_result
 from .types import (
     CapabilityDefinition,
@@ -36,6 +43,7 @@ __all__ = [
     "CapabilityCallReceipt",
     "CapabilityCatalog",
     "CapabilityDefinition",
+    "CapabilityIdempotencyStore",
     "CapabilityProviderKind",
     "CapabilityReceiptStore",
     "CapabilityRequest",
@@ -56,11 +64,16 @@ __all__ = [
     "classify_capability",
     "classify_request_workload",
     "execution_class_metadata",
+    "execution_fingerprint",
     "externalize_api_enabled",
     "is_external_required",
     "normalize_capability_metadata",
     "running_in_worker_process",
     "schema_hash",
+    "SUPPORTED_JSON_SCHEMA_DRAFT_NAME",
+    "SchemaValidationError",
+    "validate_args_against_schema",
+    "reconcile_dynamic_catalog",
 ]
 
 from .computer_use import ComputerUseLoop, propose_actions_from_model_text, run_computer_use_loop  # noqa: E402,F401

@@ -248,14 +248,24 @@ def build_capabilities_router(
         record = custom_capability_store.get(capability_id)
         if record is None:
             raise HTTPException(status_code=404, detail="Custom capability not found")
+        meta = dict(record.metadata or {})
+        if meta.get("system_protected") and not meta.get("force_unregister"):
+            raise HTTPException(status_code=403, detail="Custom capability is system-protected")
         custom_capability_store.delete(capability_id)
-        # Soft-remove from catalog availability rather than inventing unregister API.
-        capability_catalog.set_availability(
-            capability_id,
-            available=False,
-            reason="Custom capability deleted",
-        )
-        return {"ok": True, "capability_id": capability_id}
+        # True catalog removal (ownership-aware unregister), not soft-unavailable.
+        if hasattr(capability_catalog, "unregister"):
+            capability_catalog.unregister(capability_id)
+        else:
+            capability_catalog.set_availability(
+                capability_id,
+                available=False,
+                reason="Custom capability deleted",
+            )
+        return {
+            "ok": True,
+            "capability_id": capability_id,
+            "truth": {"catalog_unregistered": True, "soft_unavailable_is_not_removal": True},
+        }
 
     @router.get("/api/capabilities/{capability_id}")
     def get_capability(
@@ -322,15 +332,21 @@ def build_capabilities_router(
             level="info" if result.status.value == "COMPLETED" else "warn",
         )
         status_code = 200
-        if result.status == CapabilityStatus.REJECTED:
+        if result.status == CapabilityStatus.APPROVAL_REQUIRED:
+            status_code = 403
+        elif result.status == CapabilityStatus.REJECTED:
             reason = (result.telemetry or {}).get("reason")
             status_code = 403 if reason in {"approval_required", "approval_denied"} else 422
+        elif result.status == CapabilityStatus.QUEUED:
+            status_code = 202
         elif result.status == CapabilityStatus.TIMEOUT:
             status_code = 504
         elif result.status == CapabilityStatus.CANCELLED:
             status_code = 409
         elif result.status == CapabilityStatus.FAILED:
             status_code = 500
+        if status_code == 202:
+            return {"result": result.public_dict()}
         if status_code != 200:
             raise HTTPException(status_code=status_code, detail=result.public_dict())
         return {"result": result.public_dict()}

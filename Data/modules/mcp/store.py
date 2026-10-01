@@ -90,10 +90,26 @@ class McpStore:
                 last_seen_at TEXT,
                 last_error_code TEXT,
                 last_error_message TEXT,
+                catalog_generation INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 UNIQUE(source_kind, source_key)
             );
+
+            CREATE TABLE IF NOT EXISTS mcp_sync_issues (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                server_id TEXT NOT NULL,
+                tool_name TEXT,
+                error_code TEXT NOT NULL,
+                message TEXT NOT NULL,
+                degraded INTEGER NOT NULL DEFAULT 1,
+                catalog_generation INTEGER,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(server_id) REFERENCES mcp_servers(server_id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_mcp_sync_issues_server
+                ON mcp_sync_issues(server_id, created_at DESC);
 
             CREATE TABLE IF NOT EXISTS mcp_tools (
                 capability_id TEXT PRIMARY KEY,
@@ -138,6 +154,12 @@ class McpStore:
                 ON mcp_tool_calls(started_at DESC);
             """
         )
+        # Existing DBs created before catalog_generation: additive upgrade.
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(mcp_servers)").fetchall()}
+        if "catalog_generation" not in cols:
+            conn.execute(
+                "ALTER TABLE mcp_servers ADD COLUMN catalog_generation INTEGER NOT NULL DEFAULT 0"
+            )
 
     # --- servers ---
 
@@ -373,6 +395,95 @@ class McpStore:
         with self.connect() as conn:
             self._ensure_schema(conn)
             conn.execute("DELETE FROM mcp_tools WHERE server_id = ?", (server_id,))
+
+    def bump_catalog_generation(self, server_id: str) -> int:
+        """Atomically increment durable catalog generation for cross-process detect."""
+        now = utc_now()
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            conn.execute(
+                """
+                UPDATE mcp_servers
+                SET catalog_generation = catalog_generation + 1, updated_at = ?
+                WHERE server_id = ?
+                """,
+                (now, server_id),
+            )
+            row = conn.execute(
+                "SELECT catalog_generation FROM mcp_servers WHERE server_id = ?",
+                (server_id,),
+            ).fetchone()
+            return int(row["catalog_generation"]) if row else 0
+
+    def get_catalog_generation(self, server_id: str) -> int:
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                "SELECT catalog_generation FROM mcp_servers WHERE server_id = ?",
+                (server_id,),
+            ).fetchone()
+            if row is None:
+                return 0
+            try:
+                return int(row["catalog_generation"] or 0)
+            except (KeyError, IndexError, TypeError):
+                return 0
+
+    def replace_sync_issues(
+        self,
+        server_id: str,
+        issues: list[dict[str, Any]],
+        *,
+        catalog_generation: int | None = None,
+    ) -> None:
+        """Replace durable sync-issue rows for a server (last successful reconcile)."""
+        now = utc_now()
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            conn.execute("DELETE FROM mcp_sync_issues WHERE server_id = ?", (server_id,))
+            for item in issues:
+                conn.execute(
+                    """
+                    INSERT INTO mcp_sync_issues(
+                        server_id, tool_name, error_code, message, degraded,
+                        catalog_generation, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        server_id,
+                        item.get("tool_name"),
+                        str(item.get("error_code") or "MCP_SYNC_ISSUE"),
+                        str(item.get("message") or ""),
+                        1 if item.get("degraded", True) else 0,
+                        catalog_generation,
+                        now,
+                    ),
+                )
+
+    def list_sync_issues(self, server_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            rows = conn.execute(
+                """
+                SELECT tool_name, error_code, message, degraded, catalog_generation, created_at
+                FROM mcp_sync_issues
+                WHERE server_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (server_id, limit),
+            ).fetchall()
+            return [
+                {
+                    "tool_name": row["tool_name"],
+                    "error_code": row["error_code"],
+                    "message": row["message"],
+                    "degraded": bool(row["degraded"]),
+                    "catalog_generation": row["catalog_generation"],
+                    "created_at": row["created_at"],
+                }
+                for row in rows
+            ]
 
     # --- calls ---
 
