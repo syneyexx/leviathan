@@ -392,6 +392,9 @@ class HFTransformersResidualAdapter:
                 "weights_loaded_required_for_supports_residuals": True,
                 "residual_injection_is_not_authority": True,
                 "high_memory_dev_only_weight_load": True,
+                "hash_delta_is_synthetic_steering": True,
+                "hash_delta_is_not_learned_neural_memory": True,
+                "experimental_non_production": True,
             },
         }
 
@@ -1176,10 +1179,36 @@ def build_residual_runtime(
     load_weights: bool = False,
     selected_layers: tuple[int, ...] | None = None,
     server_url: str | None = None,
+    allow_deterministic_toy: bool | None = None,
 ) -> Any:
-    """Factory for residual runtimes. Unknown kinds fall back to Unsupported."""
+    """Factory for residual runtimes. Unknown kinds fall back to Unsupported.
+
+    Deterministic/toy runtimes are test/dev only and never become a silent
+    production fallback. Allow via ``allow_deterministic_toy=True``,
+    ``LEVIATHAN_NEURO_ALLOW_DETERMINISTIC_TOY=1``, or an active pytest session.
+    """
+    import os
+    import sys
+
     normalized = (kind or "unsupported").strip().lower()
     if normalized in {"deterministic", "toy", "deterministic_toy"}:
+        allow = allow_deterministic_toy
+        if allow is None:
+            env = (os.environ.get("LEVIATHAN_NEURO_ALLOW_DETERMINISTIC_TOY") or "").strip().lower()
+            allow = env in {"1", "true", "yes", "on"} or bool(
+                os.environ.get("PYTEST_CURRENT_TEST")
+            ) or ("pytest" in sys.modules)
+        if not allow:
+            from .residual import UnsupportedResidualRuntime
+
+            runtime = UnsupportedResidualRuntime()
+            # Annotate refusal reason without changing the public protocol.
+            info = runtime.runtime_info()
+            info.setdefault("truth", {})
+            info["truth"]["deterministic_toy_refused_in_production"] = True
+            info["truth"]["requested_kind"] = normalized
+            runtime._runtime_info_override = info  # type: ignore[attr-defined]
+            return runtime
         return DeterministicResidualRuntime(n_layers=n_layers, hidden_size=hidden_size)
     if normalized in {"hf", "transformers", "huggingface"}:
         return HFTransformersResidualAdapter(

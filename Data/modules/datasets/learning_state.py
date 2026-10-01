@@ -335,7 +335,8 @@ def compute_dataset_learning_state(
             phase = rebuild_any[0].phase or "rebuild_queued"
             progress = rebuild_any[0].progress
     elif ready_idx and stale:
-        canonical = DatasetLearningCanonicalState.LEARNED
+        # Prior READY index remains usable, but a non-rebuild job is stale noise.
+        canonical = DatasetLearningCanonicalState.STALE_JOB
     elif ready_idx:
         canonical = DatasetLearningCanonicalState.LEARNED
     elif primary_job is not None and primary_job.status == DatasetJobStatus.RUNNING:
@@ -348,6 +349,15 @@ def compute_dataset_learning_state(
         canonical = DatasetLearningCanonicalState.FAILED
     elif dataset.status == DatasetStatus.MATERIALIZING:
         canonical = DatasetLearningCanonicalState.MATERIALIZING
+    elif (
+        version is not None
+        and isinstance(version.validation, dict)
+        and version.validation.get("valid") is None
+        and version.status == VersionStatus.READY
+        and not ready_idx
+    ):
+        # Version materialized but validation not yet conclusive.
+        canonical = DatasetLearningCanonicalState.VALIDATING
     elif mat_versions or (version and version.status == VersionStatus.READY):
         canonical = DatasetLearningCanonicalState.READY_FOR_INDEX
     elif source_state == "SOURCE_READY":

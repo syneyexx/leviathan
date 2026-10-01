@@ -524,11 +524,24 @@ class HybridRetriever:
             fusion_used = f"{fusion_used}+rerank"
 
         if query.relation_class:
-            allowed = {
-                atom.chunk_id
-                for atom in self.store.list_relation_atoms(limit=500)
-                if atom.relation_class.value == query.relation_class and atom.chunk_id
-            }
+            # Indexed filter by relation_class — do not truncate semantic truth at 500.
+            allowed: set[str] = set()
+            page = 500
+            offset = 0
+            while True:
+                batch = self.store.list_relation_atoms(
+                    relation_class=query.relation_class,
+                    limit=page,
+                    offset=offset,
+                )
+                for atom in batch:
+                    if atom.chunk_id:
+                        allowed.add(atom.chunk_id)
+                if len(batch) < page:
+                    break
+                offset += page
+                if offset > 100_000:
+                    break
             if allowed:
                 hits = [h for h in hits if h.chunk_id in allowed]
 

@@ -5,7 +5,12 @@
 
 import type { LiveBrainNode } from "./brain-live";
 
-export type BrainSemanticCategory = "entity" | "concept" | "document" | "agent";
+export type BrainSemanticCategory =
+  | "entity"
+  | "concept"
+  | "document"
+  | "agent"
+  | "unclassified";
 
 export type BrainCategoryFilter = "all" | BrainSemanticCategory;
 
@@ -21,14 +26,20 @@ export const BRAIN_CATEGORY_META: readonly BrainCategoryMeta[] = [
   { id: "concept", label: "Concept", token: "var(--lv2-viz-concept)" },
   { id: "document", label: "Document", token: "var(--lv2-viz-document)" },
   { id: "agent", label: "Agent", token: "var(--lv2-viz-agent)" },
+  { id: "unclassified", label: "Ongeclassificeerd", token: "var(--lv2-viz-unclassified)" },
 ] as const;
 
-/** Resolved hex for SVG paint (CSS vars are unreliable in SVG presentation attrs). */
+/**
+ * Hex fallbacks resolved from V2 tokens (`--lv2-viz-*`) for SVG/canvas paint
+ * when CSS custom properties cannot be used as presentation attributes.
+ * Prefer `categoryColor` / `resolveCategoryPaint` in DOM contexts.
+ */
 export const BRAIN_CATEGORY_HEX: Record<BrainSemanticCategory, string> = {
-  entity: "#3b82f6",
-  concept: "#a855f7",
-  document: "#22d3ee",
-  agent: "#f59e0b",
+  entity: "#3b82f6", // --lv2-viz-entity
+  concept: "#a855f7", // --lv2-viz-concept
+  document: "#22d3ee", // --lv2-viz-document
+  agent: "#f59e0b", // --lv2-viz-agent
+  unclassified: "#94a3b8", // --lv2-viz-unclassified
 };
 
 export const BRAIN_FILTER_TABS: readonly { id: BrainCategoryFilter; label: string }[] = [
@@ -37,58 +48,59 @@ export const BRAIN_FILTER_TABS: readonly { id: BrainCategoryFilter; label: strin
   { id: "concept", label: "Concepten" },
   { id: "document", label: "Documenten" },
   { id: "agent", label: "Agents" },
+  { id: "unclassified", label: "Ongeclassificeerd" },
 ] as const;
+
+function matchesKnown(type: string, exact: string): boolean {
+  return type === exact || type.startsWith(`${exact}.`);
+}
 
 /**
  * Map a backend node type string to a Screen 1 semantic category.
- * Explicit and stable — do not invent new backend types.
+ * Explicit known-type mapping only — unknown types stay unclassified.
  */
 export function categoryForNodeType(type: string): BrainSemanticCategory {
-  const t = type.toLowerCase();
+  const t = type.toLowerCase().trim();
+  if (!t) return "unclassified";
 
-  if (
-    t === "agent" ||
-    t.startsWith("agent.") ||
-    t.includes("agent") ||
-    t.includes("orchestrator") ||
-    t === "module" ||
-    t.includes("runtime.agent")
-  ) {
+  if (matchesKnown(t, "agent") || matchesKnown(t, "module")) {
     return "agent";
   }
 
   if (
     t === "knowledge.document" ||
-    t === "document" ||
-    t.includes("document") ||
-    t === "dataset" ||
-    t.startsWith("dataset.") ||
-    t === "evidence" ||
-    t.startsWith("evidence.") ||
-    t.includes("source") ||
-    t === "atlas"
+    matchesKnown(t, "document") ||
+    matchesKnown(t, "dataset") ||
+    matchesKnown(t, "evidence") ||
+    matchesKnown(t, "atlas")
   ) {
     return "document";
   }
 
   if (
-    t === "concept" ||
-    t.startsWith("concept.") ||
-    t === "memory" ||
-    t.startsWith("memory.") ||
-    t.includes("hypothesis") ||
-    t.includes("finding") ||
-    t.includes("strategy") ||
-    t.includes("model") ||
-    t === "capability" ||
-    t === "workflow" ||
+    matchesKnown(t, "concept") ||
+    matchesKnown(t, "memory") ||
+    matchesKnown(t, "capability") ||
+    matchesKnown(t, "workflow") ||
+    matchesKnown(t, "model") ||
     t.startsWith("mcp.")
   ) {
     return "concept";
   }
 
-  // Default: entity (research projects, conversations, runs, tools, unknowns)
-  return "entity";
+  if (
+    t === "research.project" ||
+    t.startsWith("research.") ||
+    matchesKnown(t, "conversation") ||
+    matchesKnown(t, "run") ||
+    matchesKnown(t, "tool") ||
+    matchesKnown(t, "project") ||
+    matchesKnown(t, "code")
+  ) {
+    return "entity";
+  }
+
+  return "unclassified";
 }
 
 export function categoryForNode(node: Pick<LiveBrainNode, "type">): BrainSemanticCategory {
@@ -97,7 +109,22 @@ export function categoryForNode(node: Pick<LiveBrainNode, "type">): BrainSemanti
 
 export function categoryColor(category: BrainSemanticCategory): string {
   const meta = BRAIN_CATEGORY_META.find((row) => row.id === category);
-  return meta?.token ?? "var(--lv2-cyan)";
+  return meta?.token ?? "var(--lv2-viz-unclassified)";
+}
+
+/** Resolve a paint color from V2 CSS vars when possible; fall back to documented hex. */
+export function resolveCategoryPaint(
+  category: BrainSemanticCategory,
+  el?: Element | null,
+): string {
+  const token = categoryColor(category);
+  const match = /^var\((--[^)]+)\)$/.exec(token);
+  if (match && typeof window !== "undefined" && typeof window.getComputedStyle === "function") {
+    const probe = el ?? document.querySelector(".lv-v2") ?? document.documentElement;
+    const resolved = window.getComputedStyle(probe).getPropertyValue(match[1]).trim();
+    if (resolved) return resolved;
+  }
+  return BRAIN_CATEGORY_HEX[category];
 }
 
 export function categoryLabel(category: BrainSemanticCategory): string {

@@ -188,7 +188,7 @@ class CognitivePlanner:
                     objective="Acquire sources and extract claims",
                     expected_observation="research evidence/claims",
                     acceptance_condition="sources recorded",
-                    likely_capabilities=("research.advance", "research.retrieve"),
+                    likely_capabilities=("research.advance",),
                     risk_class=RiskClass.MEDIUM,
                 ),
                 PlanStep(

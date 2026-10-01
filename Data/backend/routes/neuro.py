@@ -129,12 +129,20 @@ def build_neuro_router(
     def neuro_residual_status() -> dict:
         hooks = [item.public_dict() for item in residual_runtime.list_hook_points()]
         info = residual_runtime.runtime_info() if hasattr(residual_runtime, "runtime_info") else {}
+        runtime_production = bool(info.get("production_grade")) if isinstance(info, dict) else False
+        # Feature flag alone is never production grade — runtime must also claim it.
+        production_grade = bool(
+            settings.features.residual_production
+            and residual_runtime.supports_residuals()
+            and runtime_production
+        )
         return {
             "supports_residuals": residual_runtime.supports_residuals(),
             "hook_points": hooks,
             "runtime": info,
             "kind": settings.neuro_runtime.residual_kind,
             "residual_production": settings.features.residual_production,
+            "production_grade": production_grade,
             "residual_orchestrator": settings.features.neuro_residual_orchestrator,
             "load_weights": settings.neuro_runtime.residual_load_weights,
             "hook_layers": list(settings.neuro_runtime.residual_hook_layers),
@@ -147,6 +155,10 @@ def build_neuro_router(
                 "unsupported_is_not_success": True,
                 "unapplied_is_not_success": True,
                 "discoverable_is_not_authorized": True,
+                "supports_residuals_is_not_production_grade": True,
+                "feature_flag_is_not_production_grade": True,
+                "production_grade": production_grade,
+                "runtime_production_grade": runtime_production,
                 "model_output_is_not_evidence": True,
                 "unsupported_is_not_failure_of_core": True,
             },

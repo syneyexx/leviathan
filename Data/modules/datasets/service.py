@@ -1554,6 +1554,8 @@ class DatasetService:
 
         READY Brain index dominates: a leftover queued auto-index must not keep
         surfaces stuck on INDEXING after a successful learn.
+
+        Traverses the full catalog in bounded pages — no permanent first-500 starvation.
         """
         from .learning_state import stale_index_jobs_to_reconcile
         from .store import utc_now
@@ -1562,7 +1564,19 @@ class DatasetService:
         if dataset_id:
             dataset_ids = [dataset_id]
         else:
-            dataset_ids = [d.dataset_id for d in self.store.list_datasets(limit=500)]
+            dataset_ids = []
+            page = 200
+            offset = 0
+            while True:
+                result = self.store.query_datasets(limit=page, offset=offset)
+                items = list(result.get("items") or [])
+                for d in items:
+                    dataset_ids.append(d.dataset_id)
+                if len(items) < page:
+                    break
+                offset += page
+                if offset > 100_000:
+                    break
         for ds_id in dataset_ids:
             indexes = self.store.list_indexes(ds_id)
             jobs = self.store.list_jobs(dataset_id=ds_id, limit=80)

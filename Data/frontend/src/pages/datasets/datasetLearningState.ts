@@ -131,8 +131,11 @@ export function mapBrainStatusToCanonical(brainStatus: string | null | undefined
   if (s === "indexing") return "INDEXING";
   if (s === "queued") return "INDEX_QUEUED";
   if (s === "failed") return "FAILED";
-  if (s === "not_learned") return "READY_FOR_INDEX";
-  return "REGISTERED";
+  // Legacy not_learned collapses REGISTERED / SOURCE_READY / READY_FOR_INDEX / etc.
+  // Never invent READY_FOR_INDEX readiness from this ambiguous token.
+  if (s === "not_learned") return "LEGACY_NOT_LEARNED";
+  if (!s) return "UNKNOWN";
+  return "UNKNOWN";
 }
 
 export function displayStatusFromLearning(
@@ -148,12 +151,15 @@ export function displayStatusFromLearning(
   if (c === "SOURCE_MISSING") return "source_missing";
   if (c === "CANCELLED") return "cancelled";
   if (c === "READY_FOR_INDEX") return "ready_for_index";
+  if (c === "LEGACY_NOT_LEARNED" || c === "UNKNOWN") return "unknown";
   if (state.learned) return "learned";
   const b = (state.brainStatus || "").toLowerCase();
   if (b === "learned") return "learned";
   if (b === "indexing") return "indexing";
   if (b === "queued") return "queued";
   if (b === "failed") return "failed";
+  // Legacy not_learned without canonical state: conservative unknown, not ready_for_index.
+  if (b === "not_learned") return "unknown";
   return "not_learned";
 }
 

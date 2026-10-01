@@ -678,6 +678,7 @@ export type NeuroResidualStatus = {
   runtime?: unknown;
   kind?: string;
   residual_production?: boolean;
+  production_grade?: boolean;
   residual_orchestrator?: boolean;
   load_weights?: boolean;
   hook_layers?: number[];
@@ -2126,14 +2127,37 @@ export type ResearchWebReadiness = {
   truth?: Record<string, unknown>;
 };
 
+/** Probe execution status — QUEUED/RUNNING are accept/progress; OK/FAILED/… are terminal. */
+export type ResearchWebProbeStatus =
+  | "QUEUED"
+  | "RUNNING"
+  | "OK"
+  | "DEGRADED"
+  | "FAILED"
+  | "UNAVAILABLE"
+  | "UNKNOWN"
+  | string;
+
 export type ResearchWebProbe = {
-  status: string;
+  status: ResearchWebProbeStatus;
   query?: string;
   search?: { count: number; results: Array<Record<string, unknown>> } | null;
   fetch?: Record<string, unknown> | null;
   provider?: string;
   error_code?: string;
   error?: string;
+  truth?: Record<string, unknown>;
+};
+
+/**
+ * Discriminated async accept vs completed envelopes for research heavy ops.
+ * Prefer these over treating every 200/202 body as a finished artifact.
+ */
+export type ResearchAsyncQueuedFields = {
+  queued: true;
+  job_id?: string | null;
+  job?: JobRecord | Record<string, unknown> | null;
+  status?: string;
   truth?: Record<string, unknown>;
 };
 

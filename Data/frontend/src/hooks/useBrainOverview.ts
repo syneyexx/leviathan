@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import { loadBrainCatalog } from "../pages/brain/brain-catalog";
 import type { SidebarStatusRow } from "../components/layout/AppSidebarV2";
+import { classifyRawStatus, mapMeasuredComponentStatus } from "../lib/statusTruth";
 import type {
   EvidenceRecord,
   HealthResponse,
@@ -32,6 +33,8 @@ const GRAPH_INTERVAL_MS = 60_000;
 const QUEUE_INTERVAL_MS = 12_000;
 const HEALTH_INTERVAL_MS = 20_000;
 const ACTIVITY_INTERVAL_MS = 45_000;
+const EVIDENCE_FETCH_LIMIT = 200;
+const MEMORY_FETCH_LIMIT = 100;
 
 export type BrainStatusTone = SidebarStatusRow["tone"];
 
@@ -98,6 +101,12 @@ export type BrainOverview = {
   graphTruth: Record<string, boolean> | null;
   graphError: string | null;
   graphLoading: boolean;
+  /** Counts in the current filtered projection (search/root). */
+  visible_node_count: number;
+  visible_edge_count: number;
+  /** Counts from the loaded catalog before local filters. */
+  catalog_node_count: number | null;
+  catalog_edge_count: number | null;
 
   selectedId: string | null;
   setSelectedId: (id: string | null) => void;
@@ -107,8 +116,12 @@ export type BrainOverview = {
   relevancePct: number;
   linkedMemories: number | null;
   linkedMemoriesAvailable: boolean;
+  /** True when count comes from tag/label heuristic, not graph/meta linkage. */
+  linkedMemoriesHeuristic: boolean;
   evidenceForNode: number | null;
   evidenceForNodeAvailable: boolean;
+  /** True when count comes from claim/label heuristic, not graph/meta linkage. */
+  evidenceForNodeHeuristic: boolean;
   selectedConfidence: number | null;
   selectedConfidenceLabel: "Confidence" | "Relevantie" | null;
 
@@ -202,8 +215,14 @@ function activityBadge(type: string): string {
   const cat = categoryForNode({ type });
   if (cat === "document") return "Document";
   if (cat === "agent") return "Agent";
-  if (cat === "concept") return type.toLowerCase().includes("memory") ? "Geheugen" : "Concept";
-  return "Entiteit";
+  if (cat === "concept") return type.toLowerCase().startsWith("memory") ? "Geheugen" : "Concept";
+  if (cat === "entity") return "Entiteit";
+  return "Ongeclassificeerd";
+}
+
+function boundedLoadedLabel(count: number, limit: number): string {
+  if (count >= limit) return `≥${count} geladen`;
+  return `${count} geladen`;
 }
 
 function statusFromBool(ok: boolean | null | undefined, readyLabel: string, offlineLabel = "Offline"): {
@@ -227,6 +246,8 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
   const [graphTruth, setGraphTruth] = useState<Record<string, boolean> | null>(null);
   const [graphError, setGraphError] = useState<string | null>(null);
   const [graphLoading, setGraphLoading] = useState(true);
+  const [catalogNodeCount, setCatalogNodeCount] = useState<number | null>(null);
+  const [catalogEdgeCount, setCatalogEdgeCount] = useState<number | null>(null);
 
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
@@ -261,14 +282,23 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
     setGraphError(null);
     try {
       const catalog = useCache && catalogCache.current ? catalogCache.current : await loadBrainCatalog((cursor, signal) => api.brainCatalog(cursor, signal), controller.signal,
-        (partialNodes, partialEdges) => {
+        (partialNodes, partialEdges, partialTruth) => {
           if (controller.signal.aborted) return;
           setNodes(partialNodes);
           setEdges(partialEdges);
-          setGraphTruth({ paged_catalog: true, catalog_complete: false, bounded_projection: true });
+          setCatalogNodeCount(partialNodes.length);
+          setCatalogEdgeCount(partialEdges.length);
+          // pagination_complete is client paging state; preserve backend catalog_complete / bounded_projection as-is.
+          setGraphTruth({
+            ...partialTruth,
+            paged_catalog: true,
+            pagination_complete: false,
+          });
         });
       if (controller.signal.aborted) return;
       catalogCache.current = catalog;
+      setCatalogNodeCount(catalog.nodes.length);
+      setCatalogEdgeCount(catalog.edges.length);
       const query = qRef.current.trim().toLowerCase();
       let visibleNodes = catalog.nodes.filter(n => !query || `${n.label} ${n.id} ${n.type}`.toLowerCase().includes(query));
       if (root) {
@@ -287,8 +317,18 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
       const data = { nodes: visibleNodes };
       setNodes(visibleNodes);
       setEdges(visibleEdges);
-      setStats({ node_count: visibleNodes.length, edge_count: visibleEdges.length, by_type: byType, by_relation: byRelation });
-      setGraphTruth({ paged_catalog: true, catalog_complete: true, bounded_projection: false });
+      // Visible projection counts — not global Brain corpus totals.
+      setStats({
+        node_count: visibleNodes.length,
+        edge_count: visibleEdges.length,
+        by_type: byType,
+        by_relation: byRelation,
+      });
+      setGraphTruth({
+        ...catalog.truth,
+        paged_catalog: true,
+        pagination_complete: catalog.truth.pagination_complete !== false,
+      });
       const chooseInitialSelection = initialGraphSelection.current;
       initialGraphSelection.current = false;
       setSelectedId((previous) => {
@@ -312,7 +352,9 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
       if (controller.signal.aborted) return;
       setGraphError(reasonMessage(err, "Brain graph unavailable"));
       setStats(null);
-      setGraphTruth({ paged_catalog: true, catalog_complete: false, bounded_projection: true });
+      setCatalogNodeCount(null);
+      setCatalogEdgeCount(null);
+      setGraphTruth({ paged_catalog: true, pagination_complete: false });
     } finally {
       if (!controller.signal.aborted) { setGraphLoading(false); graphAbort.current = null; }
     }
@@ -322,8 +364,8 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
     const settled = await Promise.allSettled([
       api.health(),
       api.getWorkersDashboard(),
-      api.listEvidence({ limit: 200 }),
-      api.listMemory({ limit: 100, status: "ACTIVE" }),
+      api.listEvidence({ limit: EVIDENCE_FETCH_LIMIT }),
+      api.listMemory({ limit: MEMORY_FETCH_LIMIT, status: "ACTIVE" }),
       api.cognitionHealth(),
     ]);
 
@@ -361,7 +403,14 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
 
     if (settled[4].status === "fulfilled") {
       const cog = settled[4].value.cognition as { ok?: boolean; status?: string } | undefined;
-      setCognitionOk(cog?.ok === true || String(cog?.status || "").toLowerCase() === "ok");
+      const classified = classifyRawStatus(cog?.status);
+      if (cog?.ok === true || classified.kind === "success") {
+        setCognitionOk(true);
+      } else if (cog?.ok === false || classified.kind === "danger") {
+        setCognitionOk(false);
+      } else {
+        setCognitionOk(null);
+      }
     } else {
       setCognitionOk(null);
     }
@@ -525,6 +574,13 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
             ? null
             : 0;
 
+  const linkedMemoriesHeuristic =
+    !(typeof selected?.meta?.linked_memories === "number") &&
+    linkedMemoryIds.length === 0 &&
+    memory != null &&
+    selected != null &&
+    (linkedMemories ?? 0) > 0;
+
   const evidenceNodeIds = useMemo(() => {
     if (!selected) return [];
     return selectedEdges
@@ -549,6 +605,13 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
           : evidence == null
             ? null
             : 0;
+
+  const evidenceForNodeHeuristic =
+    !(typeof selected?.meta?.evidence_items === "number") &&
+    evidenceNodeIds.length === 0 &&
+    evidence != null &&
+    selected != null &&
+    (evidenceForNode ?? 0) > 0;
 
   const clusters = useMemo(() => buildClusters(nodes, edges), [nodes, edges]);
 
@@ -677,14 +740,21 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
   }, [evidence]);
 
   const healthGauges = useMemo((): BrainHealthGauge[] => {
-    const graphOk = graphError == null && (stats != null || nodes.length > 0);
+    const graphLoaded = graphError == null && (stats != null || nodes.length > 0);
     const brainService = health?.ok === true;
     return [
       {
         id: "knowledge-graph",
         label: "Knowledge Graph",
         value: null,
-        statusLabel: graphLoading && !initialLoaded ? "…" : graphOk ? "Goed" : graphError ? "Fout" : "UNKNOWN",
+        statusLabel:
+          graphLoading && !initialLoaded
+            ? "…"
+            : graphError
+              ? "Fout"
+              : graphLoaded
+                ? "AVAILABLE"
+                : "UNKNOWN",
         available: !graphLoading || initialLoaded,
       },
       {
@@ -693,7 +763,7 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
         value: null,
         statusLabel:
           health?.neuro?.associative_memory === true
-            ? "Goed"
+            ? "CONFIGURED"
             : health?.neuro?.enabled === false
               ? "Offline"
               : health
@@ -709,9 +779,9 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
           memoryError
             ? "Fout"
             : memory != null
-              ? "Goed"
+              ? "LOADED"
               : health?.neuro?.memory_tiers === true
-                ? "Goed"
+                ? "CONFIGURED"
                 : health
                   ? "UNMEASURED"
                   : "UNKNOWN",
@@ -722,15 +792,18 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
         label: "Reasoning Engine",
         value: null,
         statusLabel:
-          cognitionOk === true || health?.reasoning_enabled
-            ? "Goed"
-            : cognitionOk === false
-              ? "Offline"
-              : health
-                ? health.reasoning_enabled
-                  ? "Goed"
-                  : "Offline"
-                : "UNKNOWN",
+          // Measured unhealthy always wins over configured/enabled flags.
+          cognitionOk === false
+            ? "Offline"
+            : cognitionOk === true
+              ? "Goed"
+              : health?.reasoning_enabled === true
+                ? "CONFIGURED"
+                : health?.reasoning_enabled === false
+                  ? "Offline"
+                  : health
+                    ? "UNMEASURED"
+                    : "UNKNOWN",
         available: health != null || cognitionOk != null,
       },
     ];
@@ -752,22 +825,13 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
       fallback: { value: string; tone: BrainStatusTone },
     ): { value: string; tone: BrainStatusTone } => {
       if (!comp) return fallback;
-      if (comp.measured === false) return { value: "UNMEASURED", tone: "muted" };
-      const s = (comp.status || "").toLowerCase();
-      if (s.includes("ready") || s.includes("running") || s.includes("ok") || s.includes("healthy")) {
-        return { value: s.includes("running") ? "Running" : "Ready", tone: "success" };
-      }
-      if (s.includes("degraded")) return { value: "Degraded", tone: "warning" };
-      if (s.includes("offline") || s.includes("down") || s.includes("fail")) {
-        return { value: "Offline", tone: "danger" };
-      }
-      return { value: comp.status || "UNKNOWN", tone: "muted" };
+      return mapMeasuredComponentStatus(comp.status, comp.measured);
     };
 
     const vector = mapComp(
       findComp((id, name) => id.includes("vector") || name.includes("vector")),
       health?.neuro?.associative_memory === true
-        ? { value: "Ready", tone: "success" }
+        ? { value: "CONFIGURED", tone: "muted" }
         : health
           ? { value: "UNMEASURED", tone: "muted" }
           : { value: "UNKNOWN", tone: "muted" },
@@ -777,7 +841,7 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
       graphError
         ? { value: "Offline", tone: "danger" }
         : stats != null || nodes.length > 0
-          ? { value: "Ready", tone: "success" }
+          ? { value: "LOADED", tone: "info" }
           : graphLoading
             ? { value: "…", tone: "muted" }
             : { value: "UNKNOWN", tone: "muted" },
@@ -785,7 +849,7 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
     const embed = mapComp(
       findComp((id, name) => id.includes("embed") || name.includes("embed")),
       health?.neuro?.enabled === true
-        ? { value: "Ready", tone: "success" }
+        ? { value: "CONFIGURED", tone: "muted" }
         : health
           ? { value: "UNMEASURED", tone: "muted" }
           : { value: "UNKNOWN", tone: "muted" },
@@ -793,7 +857,7 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
     const inference = mapComp(
       findComp((id, name) => id.includes("infer") || id.includes("llm") || name.includes("infer") || name.includes("llm")),
       health?.llm?.available === true
-        ? { value: "Ready", tone: "success" }
+        ? { value: "AVAILABLE", tone: "info" }
         : health?.llm?.available === false
           ? { value: "Offline", tone: "danger" }
           : { value: "UNKNOWN", tone: "muted" },
@@ -839,19 +903,28 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
       activeNodes: {
         value: stillLoading ? null : nodeCount,
         sublabel:
-          graphTruth?.stats_are_not_global_unless_corpus_fits_bound
-            ? "bounded projectie"
-            : nodeCount != null
-              ? "in projectie"
-              : graphError
-                ? "UNAVAILABLE"
-                : "—",
+          nodeCount == null
+            ? graphError
+              ? "UNAVAILABLE"
+              : "—"
+            : catalogNodeCount != null && catalogNodeCount !== nodeCount
+              ? `zichtbaar · ${catalogNodeCount} geladen`
+              : graphTruth?.bounded_projection || graphTruth?.stats_are_not_global_unless_corpus_fits_bound
+                ? boundedLoadedLabel(nodeCount, nodeCount)
+                : `${nodeCount} geladen`,
         available: nodeCount != null,
         loading: stillLoading || graphLoading,
       },
       knowledgeLinks: {
         value: stillLoading ? null : edgeCount,
-        sublabel: edgeCount != null ? "semantische connecties" : graphError ? "UNAVAILABLE" : "—",
+        sublabel:
+          edgeCount == null
+            ? graphError
+              ? "UNAVAILABLE"
+              : "—"
+            : catalogEdgeCount != null && catalogEdgeCount !== edgeCount
+              ? `zichtbaar · ${catalogEdgeCount} geladen`
+              : `${edgeCount} geladen`,
         available: edgeCount != null,
         loading: stillLoading || graphLoading,
       },
@@ -859,7 +932,7 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
         value: stillLoading ? null : clusterCount,
         sublabel:
           clusterCount != null
-            ? `${clusters.length} type-clusters`
+            ? `${clusters.length} geladen type-clusters`
             : graphError
               ? "UNAVAILABLE"
               : "—",
@@ -880,8 +953,10 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
       evidenceItems: {
         value: stillLoading ? null : evidenceCount,
         sublabel:
-          evidenceSources.available
-            ? `van ${evidenceSources.rows.reduce((s, r) => s + r.count, 0) ? evidenceSources.rows.length : 0} bron-typen`
+          evidence != null
+            ? stats?.evidence_count != null
+              ? `${evidenceCount} (catalogus)`
+              : boundedLoadedLabel(evidence.length, EVIDENCE_FETCH_LIMIT)
             : evidenceError
               ? "UNAVAILABLE"
               : "—",
@@ -901,8 +976,9 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
     reasoningJobs,
     graphTruth,
     graphLoading,
-    evidenceSources,
     evidenceError,
+    catalogNodeCount,
+    catalogEdgeCount,
   ]);
 
   const online: boolean | null =
@@ -920,6 +996,10 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
     graphTruth,
     graphError,
     graphLoading,
+    visible_node_count: nodes.length,
+    visible_edge_count: edges.length,
+    catalog_node_count: catalogNodeCount,
+    catalog_edge_count: catalogEdgeCount,
     selectedId,
     setSelectedId,
     selected,
@@ -928,8 +1008,10 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
     relevancePct,
     linkedMemories: linkedMemoriesAvailable ? linkedMemories : null,
     linkedMemoriesAvailable,
+    linkedMemoriesHeuristic,
     evidenceForNode: evidenceForNodeAvailable ? evidenceForNode : null,
     evidenceForNodeAvailable,
+    evidenceForNodeHeuristic,
     selectedConfidence,
     selectedConfidenceLabel,
     categoryFilter,
