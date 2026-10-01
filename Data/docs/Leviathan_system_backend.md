@@ -822,7 +822,7 @@ FastAPI / Research API / operator UI
 JobRuntime (durable)
     v
 source_ingestion worker  (source_ingestion.process / brain_retry)
-    |-- detection, archive security, ZIP/TAR extract, recursion
+    |-- detection, archive security, ZIP/TAR/RAR extract, recursion
     |-- document / Office / PDF / code / structured parse
     |-- when OCR genuinely required:
             durable child job (ocr.extract / document_ai.ocr)
