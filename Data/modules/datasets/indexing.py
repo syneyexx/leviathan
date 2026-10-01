@@ -456,6 +456,8 @@ def index_records(
         tuple[str, list[dict[str, Any]], str]
     ] = []  # (document_id, atoms, fingerprint)
     relation_tx_count = 0
+    # P1-011: buffer records and resolve documents/chunk counts in bounded batches.
+    pending_records: list[CanonicalRecord] = []
 
     def _note_document(document_id: str) -> None:
         nonlocal document_count
@@ -504,36 +506,19 @@ def index_records(
                 },
             )
 
-    if progress_cb:
-        progress_cb(
-            {
-                "phase": "parsing",
-                "processed": 0,
-                "indexed": 0,
-                "chunkCount": 0,
-                "embeddingMode": embedding_info["mode"],
-                "embeddingsSemantic": embedding_info["is_semantic"],
-                **_progress_rates(started, 0),
-            }
-        )
-
-    for rec in records:
-        if cancel_cb is not None and cancel_cb():
-            _flush_relation_batch(force=True)
-            raise DatasetError("cancelled", code="cancelled", http_status=409)
-        if resume_gate:
-            if rec.id == resume_after_record_id:
-                resume_gate = False
-                resume_marker_found = True
-            resumed_skip += 1
-            continue
-        if max_records is not None and processed >= max_records:
-            break
+    def _process_record(
+        rec: CanonicalRecord,
+        *,
+        existing_docs: dict[str, Any],
+        chunk_counts: dict[str, int],
+    ) -> None:
+        nonlocal skipped, indexed, chunk_total, processed, last_record_id
+        nonlocal relations_accepted, relations_rejected, relations_skipped_unchanged
         processed += 1
         last_record_id = rec.id
         text = _record_document_text(rec)
         if not text.strip():
-            continue
+            return
         # Stable document id ties knowledge row to dataset record
         document_id = f"dataset:{dataset_id}:{version_id}:{rec.id}"
         digest = content_sha256(text)
@@ -543,7 +528,9 @@ def index_records(
             dataset_id=dataset_id,
             version_id=version_id,
         )
-        existing = knowledge.get_document(document_id)
+        existing = existing_docs.get(document_id)
+        if existing is None:
+            existing = knowledge.get_document(document_id)
         if (
             existing is not None
             and existing.status == IngestStatus.READY
@@ -551,8 +538,7 @@ def index_records(
         ):
             skipped += 1
             _note_document(document_id)
-            chunks = knowledge.list_chunks(document_id)
-            chunk_total += len(chunks)
+            chunk_total += int(chunk_counts.get(document_id) or knowledge.count_chunks_for_document(document_id))
             if extract_relations:
                 prior_fp = (existing.trust_metadata or {}).get("relationInputFingerprint")
                 atom_count = knowledge.count_relation_atoms_for_document(document_id)
@@ -578,7 +564,7 @@ def index_records(
                     _flush_relation_batch(force=False)
             if progress_cb and processed % batch_size == 0:
                 _emit("indexing")
-            continue
+            return
 
         if progress_cb and indexed == 0 and processed == 1:
             _emit("indexing")
@@ -609,8 +595,7 @@ def index_records(
         )
         _note_document(doc.document_id)
         indexed += 1
-        chunks = knowledge.list_chunks(doc.document_id)
-        chunk_total += len(chunks)
+        chunk_total += knowledge.count_chunks_for_document(doc.document_id)
 
         if extract_relations:
             if progress_cb and indexed % batch_size == 1:
@@ -636,6 +621,60 @@ def index_records(
         if progress_cb and (indexed % batch_size == 0 or processed % (batch_size * 2) == 0):
             _emit("indexing")
 
+    def _flush_record_batch(*, force: bool = False) -> None:
+        if not pending_records:
+            return
+        if not force and len(pending_records) < batch_size:
+            return
+        batch = pending_records[:]
+        pending_records.clear()
+        doc_ids = [f"dataset:{dataset_id}:{version_id}:{rec.id}" for rec in batch]
+        existing_docs = knowledge.get_documents_batch(doc_ids, limit=len(doc_ids) or 1)
+        ready_ids = [
+            doc_id
+            for doc_id, doc in existing_docs.items()
+            if doc is not None and doc.status == IngestStatus.READY
+        ]
+        chunk_counts = (
+            knowledge.count_chunks_for_documents(ready_ids, limit=len(ready_ids) or 1)
+            if ready_ids
+            else {}
+        )
+        for rec in batch:
+            if cancel_cb is not None and cancel_cb():
+                _flush_relation_batch(force=True)
+                raise DatasetError("cancelled", code="cancelled", http_status=409)
+            _process_record(rec, existing_docs=existing_docs, chunk_counts=chunk_counts)
+
+    if progress_cb:
+        progress_cb(
+            {
+                "phase": "parsing",
+                "processed": 0,
+                "indexed": 0,
+                "chunkCount": 0,
+                "embeddingMode": embedding_info["mode"],
+                "embeddingsSemantic": embedding_info["is_semantic"],
+                **_progress_rates(started, 0),
+            }
+        )
+
+    for rec in records:
+        if cancel_cb is not None and cancel_cb():
+            _flush_relation_batch(force=True)
+            raise DatasetError("cancelled", code="cancelled", http_status=409)
+        if resume_gate:
+            if rec.id == resume_after_record_id:
+                resume_gate = False
+                resume_marker_found = True
+            resumed_skip += 1
+            continue
+        if max_records is not None and (processed + len(pending_records)) >= max_records:
+            break
+        pending_records.append(rec)
+        _flush_record_batch(force=False)
+
+    _flush_record_batch(force=True)
     _flush_relation_batch(force=True)
 
     # P1-012: resume marker missing must fail safe (not skip whole corpus).
@@ -691,6 +730,8 @@ def index_records(
             "unchanged_relation_skip_requires_fingerprint_match": True,
             "document_ids_are_bounded_sample": True,
             "resume_marker_missing_fails_closed": True,
+            "document_lookups_are_batched": True,
+            "chunk_counts_avoid_list_chunks": True,
         },
     }
 

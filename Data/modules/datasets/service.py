@@ -3286,37 +3286,68 @@ class DatasetService:
         )
 
     def enqueue_missing_semantic_profiles(self, *, limit: int = 25) -> dict[str, Any]:
-        """Bounded backfill: enqueue enrich_metadata for datasets lacking semanticProfile."""
+        """Bounded backfill: enqueue enrich_metadata for datasets lacking semanticProfile.
+
+        P2-002: paginate DatasetStore via query_datasets cursor pages instead of
+        ``list_datasets(limit=10_000)``.
+        """
         limit = max(1, min(int(limit), 200))
         enqueued: list[dict[str, Any]] = []
         skipped: list[dict[str, Any]] = []
-        for ds in self.store.list_datasets(limit=10_000):
-            if len(enqueued) >= limit:
-                break
-            meta = ds.metadata if isinstance(ds.metadata, dict) else {}
-            semantic = meta.get("semanticProfile")
-            if isinstance(semantic, dict) and semantic.get("displayName") and semantic.get("primaryCategory"):
-                skipped.append({"datasetId": ds.dataset_id, "reason": "already_enriched"})
-                continue
-            ver = self.pick_usable_version(ds.dataset_id)
-            if ver is None or not ver.storage_path:
-                skipped.append({"datasetId": ds.dataset_id, "reason": "no_usable_version"})
-                continue
-            job = self.enqueue_enrich_metadata(ds.dataset_id, ver.version_id, sync_artifacts=True)
-            enqueued.append(
-                {
-                    "datasetId": ds.dataset_id,
-                    "versionId": ver.version_id,
-                    "jobId": job.job_id,
-                }
+        page_size = 100
+        cursor: str | None = None
+        pages = 0
+        scanned = 0
+        while len(enqueued) < limit:
+            page = self.store.query_datasets(
+                limit=page_size,
+                cursor=cursor,
+                sort="updated_at_desc",
             )
+            items = list(page.get("items") or [])
+            pages += 1
+            if not items:
+                break
+            for ds in items:
+                scanned += 1
+                if len(enqueued) >= limit:
+                    break
+                meta = ds.metadata if isinstance(ds.metadata, dict) else {}
+                semantic = meta.get("semanticProfile")
+                if isinstance(semantic, dict) and semantic.get("displayName") and semantic.get("primaryCategory"):
+                    skipped.append({"datasetId": ds.dataset_id, "reason": "already_enriched"})
+                    continue
+                ver = self.pick_usable_version(ds.dataset_id)
+                if ver is None or not ver.storage_path:
+                    skipped.append({"datasetId": ds.dataset_id, "reason": "no_usable_version"})
+                    continue
+                job = self.enqueue_enrich_metadata(ds.dataset_id, ver.version_id, sync_artifacts=True)
+                enqueued.append(
+                    {
+                        "datasetId": ds.dataset_id,
+                        "versionId": ver.version_id,
+                        "jobId": job.job_id,
+                    }
+                )
+            cursor = page.get("nextCursor")
+            if not cursor:
+                break
+            # Hard safety against pathological catalogs.
+            if pages >= 10_000:
+                break
         return {
             "enqueued": enqueued,
             "enqueuedCount": len(enqueued),
             "skippedCount": len(skipped),
             "skipped": skipped[:50],
             "limit": limit,
-            "truth": {"boundedBackfill": True, "deterministicEnrichment": True},
+            "scanned": scanned,
+            "pages": pages,
+            "truth": {
+                "boundedBackfill": True,
+                "deterministicEnrichment": True,
+                "catalogPaginated": True,
+            },
         }
 
     def rebuild_dataset_catalog(self) -> dict[str, Any]:
@@ -6320,16 +6351,33 @@ class DatasetService:
         version_id = job.version_id or ""
         records = self.iter_version_records(version_id)
         sealed = list(job.config.get("sealed_cases") or [])
+        threshold = float(job.config.get("threshold") or 0.35)
+        max_retained = int(job.config.get("max_retained_hits") or job.config.get("maxRetainedHits") or 200)
+
+        def cancel() -> bool:
+            return self.runner.is_cancel_requested(job.job_id)
+
+        on_progress = self._throttled_job_progress(job.job_id)
         if not sealed:
             # No reference corpus. The report is UNMEASURED and must not pass as clean.
-            report = scan_contamination(records, [], threshold=float(job.config.get("threshold") or 0.35))
+            report = scan_contamination(
+                records,
+                [],
+                threshold=threshold,
+                max_retained_hits=max_retained,
+                cancel_check=cancel,
+                progress_cb=on_progress,
+            )
             out = report.public_dict()
             out["note"] = "No sealed cases provided — contamination gate not exercised"
             return out
         report = scan_contamination(
             records,
             sealed,
-            threshold=float(job.config.get("threshold") or 0.35),
+            threshold=threshold,
+            max_retained_hits=max_retained,
+            cancel_check=cancel,
+            progress_cb=on_progress,
         )
         return report.public_dict()
 

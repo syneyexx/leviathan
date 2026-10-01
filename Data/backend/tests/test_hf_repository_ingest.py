@@ -185,8 +185,10 @@ class ParallelDownloadTests(unittest.TestCase):
         def handler(request: httpx.Request) -> httpx.Response:
             nonlocal active, max_active
             path = request.url.path
-            # .../resolve/main/data/shard-XXX.jsonl
-            rel = path.split("/resolve/main/", 1)[-1]
+            # .../resolve/<rev>/data/shard-XXX.jsonl — revision may be pinned SHA.
+            if "/resolve/" not in path:
+                return httpx.Response(404, request=request)
+            rel = path.split("/resolve/", 1)[-1].split("/", 1)[-1]
             body = files[rel]
             with lock:
                 active += 1
