@@ -3,28 +3,32 @@ import {
   TRADING_LEGACY_REDIRECTS,
   TRADING_WORKSPACES,
   getTradingWorkspace,
+  resolveTradingRedirect,
   resolveWorkspaceSurface,
 } from "./workspaceConfig";
 
-describe("Trading Center WAVE 1 workspace config", () => {
-  it("exposes exactly four workspaces", () => {
-    expect(TRADING_WORKSPACES).toHaveLength(4);
+describe("Trading Center 3-page workspace config", () => {
+  it("exposes exactly three primary workspaces", () => {
+    expect(TRADING_WORKSPACES).toHaveLength(3);
     expect(TRADING_WORKSPACES.map((w) => w.id)).toEqual([
-      "command_hub",
-      "strategy_lab",
-      "trading_desk",
-      "market_data",
+      "agent_overview",
+      "live_agents",
+      "research_center",
     ]);
   });
 
-  it("keeps unique routes under /trading/*", () => {
+  it("keeps unique canonical routes under /trading/*", () => {
     const routes = TRADING_WORKSPACES.map((w) => w.route);
-    expect(new Set(routes).size).toBe(4);
-    expect(routes.every((r) => r.startsWith("/trading/"))).toBe(true);
+    expect(new Set(routes).size).toBe(3);
+    expect(routes).toEqual(["/trading/agents", "/trading/live-agents", "/trading/research"]);
   });
 
-  it("maps every legacy trading route into a workspace surface", () => {
-    const legacy = [
+  it("maps former four workspaces and legacy nine routes", () => {
+    const required = [
+      "/trading/command-hub",
+      "/trading/trading-desk",
+      "/trading/strategy-lab",
+      "/trading/market-data",
       "/trading/simulatie",
       "/trading/strategieen",
       "/trading/marktdata",
@@ -35,35 +39,37 @@ describe("Trading Center WAVE 1 workspace config", () => {
       "/trading/lab",
       "/trading/control-room",
     ];
-    for (const path of legacy) {
+    for (const path of required) {
       expect(TRADING_LEGACY_REDIRECTS[path]).toBeTruthy();
       expect(TRADING_LEGACY_REDIRECTS[path].startsWith("/trading/")).toBe(true);
     }
+    expect(resolveTradingRedirect("/trading/command-hub")).toBe("/trading/agents");
+    expect(resolveTradingRedirect("/trading/trading-desk")).toBe("/trading/live-agents");
+    expect(resolveTradingRedirect("/trading/strategy-lab")).toBe("/trading/research");
+    expect(resolveTradingRedirect("/trading/market-data")).toBe(
+      "/trading/research?section=market-data",
+    );
+    expect(resolveTradingRedirect("/trading/portefeuille")).toBe(
+      "/trading/agents?section=portfolio",
+    );
+    expect(resolveTradingRedirect("/trading/control-room")).toBe(
+      "/trading/agents?drawer=control-room",
+    );
   });
 
   it("resolves surface query with workspace default fallback", () => {
-    const hub = getTradingWorkspace("command_hub");
-    expect(resolveWorkspaceSurface(hub, null).id).toBe("overview");
-    const lab = getTradingWorkspace("strategy_lab");
-    expect(resolveWorkspaceSurface(lab, null).id).toBe("lab");
-    // WAVE 5+: unknown surfaces fall back to the single native default.
-    expect(resolveWorkspaceSurface(lab, "simulation").id).toBe("lab");
-    expect(resolveWorkspaceSurface(lab, "missing").id).toBe("lab");
+    const agents = getTradingWorkspace("agent_overview");
+    expect(resolveWorkspaceSurface(agents, null).id).toBe("overview");
+    const live = getTradingWorkspace("live_agents");
+    expect(resolveWorkspaceSurface(live, "missing").id).toBe("live");
+    const research = getTradingWorkspace("research_center");
+    expect(resolveWorkspaceSurface(research, null).id).toBe("research");
   });
 
   it("keeps exactly one PRIMARY surface per native workspace", () => {
     for (const ws of TRADING_WORKSPACES) {
       expect(ws.surfaces).toHaveLength(1);
       expect(ws.surfaces[0]?.level).toBe("PRIMARY");
-    }
-  });
-
-  it("tags surfaces with progressive disclosure levels", () => {
-    for (const ws of TRADING_WORKSPACES) {
-      expect(ws.surfaces.length).toBeGreaterThan(0);
-      expect(ws.surfaces.every((s) => ["PRIMARY", "SECONDARY", "ADVANCED"].includes(s.level))).toBe(
-        true,
-      );
     }
   });
 });

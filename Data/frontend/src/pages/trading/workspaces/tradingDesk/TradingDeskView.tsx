@@ -440,7 +440,7 @@ export function TradingDeskView({
             <button type="button" className="lv-td-btn" onClick={onOpenCreatePortfolio}>
               Open portfolio create
             </button>
-            <Link className="lv-td-btn lv-td-btn--ghost" to="/trading/command-hub">
+            <Link className="lv-td-btn lv-td-btn--ghost" to="/trading/agents">
               Command Hub
             </Link>
           </div>

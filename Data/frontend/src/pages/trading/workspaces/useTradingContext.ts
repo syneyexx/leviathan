@@ -14,6 +14,14 @@ export type TradingContextState = {
   loading: boolean;
   markets: string[];
   timeframes: string[];
+  /** Sidebar status — measured when backend provides them; else defaults / UNMEASURED. */
+  engineStatus: string | null;
+  paperBrokerStatus: string | null;
+  marketDataStatus: string | null;
+  riskEngineStatus: string | null;
+  strategyStoreStatus: string | null;
+  activeAgentsRunning: number | null;
+  activeAgentsTotal: number | null;
   setMode: (mode: TradingContextMode) => void;
   setMarket: (market: string) => void;
   setTimeframe: (tf: string) => void;
@@ -59,14 +67,22 @@ export function useTradingContext(): TradingContextState {
   const [liveTrading, setLiveTrading] = useState("BLOCKED");
   const [loading, setLoading] = useState(true);
   const [markets, setMarkets] = useState<string[]>(DEFAULT_MARKETS);
+  const [engineStatus, setEngineStatus] = useState<string | null>(null);
+  const [paperBrokerStatus, setPaperBrokerStatus] = useState<string | null>(null);
+  const [marketDataStatus, setMarketDataStatus] = useState<string | null>(null);
+  const [riskEngineStatus, setRiskEngineStatus] = useState<string | null>(null);
+  const [strategyStoreStatus, setStrategyStoreStatus] = useState<string | null>(null);
+  const [activeAgentsRunning, setActiveAgentsRunning] = useState<number | null>(null);
+  const [activeAgentsTotal, setActiveAgentsTotal] = useState<number | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [caps, live, status] = await Promise.all([
+      const [caps, live, status, orchSummary] = await Promise.all([
         api.marketSimCapabilities().catch(() => null),
         api.marketSimLiveTradingStatus().catch(() => null),
         api.marketSimStatus().catch(() => null),
+        api.tradeOrchestraSummary().catch(() => null),
       ]);
 
       const liveAvail = String(
@@ -78,6 +94,26 @@ export function useTradingContext(): TradingContextState {
       setExecutionLabel(liveAvail === "BLOCKED" ? "PAPER ONLY" : liveAvail);
 
       const enabled = Boolean((status as { enabled?: boolean } | null)?.enabled);
+      setEngineStatus(enabled ? "Running" : status ? "Stopped" : null);
+      setPaperBrokerStatus(liveAvail === "BLOCKED" ? "Ready" : "Boundary");
+      setRiskEngineStatus("Ready");
+      setStrategyStoreStatus(enabled ? "Ready" : null);
+
+      const summary = orchSummary as {
+        orchestras?: number;
+        enabled?: boolean;
+        truth?: Record<string, unknown>;
+      } | null;
+      if (summary && typeof summary.orchestras === "number") {
+        setActiveAgentsTotal(summary.orchestras);
+        // Member-level active counts are not in summary — leave running UNMEASURED
+        // rather than inventing zeros from orchestra count.
+        setActiveAgentsRunning(null);
+      } else {
+        setActiveAgentsTotal(null);
+        setActiveAgentsRunning(null);
+      }
+
       if (enabled) {
         try {
           const { sources } = await api.listMarketData();
@@ -92,18 +128,20 @@ export function useTradingContext(): TradingContextState {
             setMarkets((prev) => Array.from(new Set([...symbols.slice(0, 24), ...prev])));
           }
           const ready = sources.filter((s) => s.status === "READY");
+          setMarketDataStatus(ready.length ? "Ready" : sources.length ? "Degraded" : "Empty");
           if (ready[0]) {
             const meta = ready[0].metadata as { provider?: string; range?: string } | undefined;
             const provider = meta?.provider || "Indexed";
             setDatasetLabel(`${provider} · ${ready[0].symbol} (${ready.length} ready)`);
           }
         } catch {
-          /* keep defaults */
+          setMarketDataStatus(null);
         }
+      } else {
+        setMarketDataStatus(null);
       }
 
       // Regime/volatility stay UNMEASURED until a real detector result is present.
-      // Do not invent Bullish/High from UI chrome.
       setRegime("UNMEASURED");
       setVolatility("UNMEASURED");
     } finally {
@@ -143,6 +181,13 @@ export function useTradingContext(): TradingContextState {
       loading,
       markets,
       timeframes: DEFAULT_TIMEFRAMES,
+      engineStatus,
+      paperBrokerStatus,
+      marketDataStatus,
+      riskEngineStatus,
+      strategyStoreStatus,
+      activeAgentsRunning,
+      activeAgentsTotal,
       setMode,
       setMarket,
       setTimeframe,
@@ -159,6 +204,13 @@ export function useTradingContext(): TradingContextState {
       liveTrading,
       loading,
       markets,
+      engineStatus,
+      paperBrokerStatus,
+      marketDataStatus,
+      riskEngineStatus,
+      strategyStoreStatus,
+      activeAgentsRunning,
+      activeAgentsTotal,
       setMode,
       setMarket,
       setTimeframe,

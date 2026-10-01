@@ -255,10 +255,10 @@ export function StrategyLabView({
             <button type="button" className="lv-sl-btn lv-sl-btn--primary" onClick={onOpenCreateRun}>
               + Nieuwe zoekopdracht
             </button>
-            <Link className="lv-sl-btn" to="/trading/command-hub?surface=research-command">
+            <Link className="lv-sl-btn" to="/trading/research?section=research-command">
               Research sessie
             </Link>
-            <Link className="lv-sl-btn" to="/trading/trading-desk?surface=paper">
+            <Link className="lv-sl-btn" to="/trading/live-agents">
               Paper validatie
             </Link>
             <button type="button" className="lv-sl-btn" onClick={onOpenCompare} disabled={compareIds.length < 2}>
@@ -483,7 +483,7 @@ export function StrategyLabView({
         <article className="lv-sl-panel lv-sl-papersnap">
           <header>
             <h3>Paper Validatie Snapshot</h3>
-            <Link to="/trading/trading-desk?surface=paper">Details</Link>
+            <Link to="/trading/live-agents">Details</Link>
           </header>
           <div className="lv-sl-papersnap__row">
             <div>

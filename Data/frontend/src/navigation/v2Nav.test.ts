@@ -129,16 +129,16 @@ describe("v2Nav media / trading / runtime groups", () => {
     expect(shouldAutoExpandV2Group(media, "/media/youtube")).toBe(true);
   });
 
-  it("keeps Trading Center children including Markt Simulatie", () => {
+  it("keeps Trading Center three-page children", () => {
     expect(trading).toBeDefined();
     if (!trading) return;
     expect(trading.children?.map((c) => c.label)).toEqual([
-      "Command Hub",
-      "Strategy Lab",
-      "Trading Desk",
-      "Market Data",
+      "Agent Overzicht",
+      "Live Agents",
+      "Research Centrum",
     ]);
-    expect(shouldAutoExpandV2Group(trading, "/trading/trading-desk")).toBe(true);
+    expect(shouldAutoExpandV2Group(trading, "/trading/live-agents")).toBe(true);
+    expect(shouldAutoExpandV2Group(trading, "/trading/agents")).toBe(true);
     expect(shouldAutoExpandV2Group(trading, "/trading/paper")).toBe(true);
   });
 

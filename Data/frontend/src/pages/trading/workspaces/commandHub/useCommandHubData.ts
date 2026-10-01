@@ -258,7 +258,7 @@ export function useCommandHubData(market: string, timeframe: string): CommandHub
           tone: "blue",
           spark: flatSpark(trialCount ?? 0),
           sparkKind: "line",
-          href: "/trading/strategy-lab?surface=lab",
+          href: "/trading/research?section=lab",
         },
         {
           id: "experiments",
@@ -269,7 +269,7 @@ export function useCommandHubData(market: string, timeframe: string): CommandHub
           tone: "purple",
           spark: flatSpark(activeLabs.length),
           sparkKind: "line",
-          href: "/trading/strategy-lab?surface=lab",
+          href: "/trading/research?section=lab",
         },
         {
           id: "paper",
@@ -282,7 +282,7 @@ export function useCommandHubData(market: string, timeframe: string): CommandHub
             ? depList.slice(0, 10).map((d) => (String(d.status || "").toUpperCase() === "ACTIVE" ? 1 : 0))
             : flatSpark(0),
           sparkKind: "bars",
-          href: "/trading/trading-desk?surface=paper",
+          href: "/trading/live-agents",
         },
         {
           id: "datasets",
@@ -295,7 +295,7 @@ export function useCommandHubData(market: string, timeframe: string): CommandHub
             ? srcList.slice(0, 12).map((s) => (s.status === "READY" ? 1 : 0))
             : flatSpark(0),
           sparkKind: "bars",
-          href: "/trading/market-data",
+          href: "/trading/research?section=market-data",
         },
         {
           id: "wallets",
@@ -308,7 +308,7 @@ export function useCommandHubData(market: string, timeframe: string): CommandHub
             ? portList.slice(0, 10).map((p) => asNumber(p.equity) ?? 0)
             : flatSpark(0),
           sparkKind: "bars",
-          href: "/trading/trading-desk?surface=portfolio",
+          href: "/trading/agents?section=portfolio",
         },
         {
           id: "queue",

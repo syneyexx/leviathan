@@ -39,9 +39,9 @@ export function BrokerTradingPage({ embedded = false }: TradingEmbeddedProps = {
             POST /api/trading/order.
           </p>
           <p>
-            <Link to="/trading/trading-desk?surface=paper">Paper trading</Link>
+            <Link to="/trading/live-agents">Paper trading</Link>
             {" · "}
-            <Link to="/trading/strategy-lab?surface=simulation">Simulation</Link>
+            <Link to="/trading/research?section=backtest">Simulation</Link>
           </p>
         </Panel>
       </div>

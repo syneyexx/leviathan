@@ -317,7 +317,7 @@ function NewResearchSessionModal({
               >
                 {busy ? "Starten…" : "Start sessie"}
               </button>
-              <Link className="lv-hub-btn" to="/trading/command-hub" onClick={onClose}>
+              <Link className="lv-hub-btn" to="/trading/agents" onClick={onClose}>
                 Annuleren
               </Link>
             </div>
@@ -391,10 +391,10 @@ export function CommandHubView({ ctx }: { ctx: TradingContextState }) {
               <button type="button" className="lv-hub-btn lv-hub-btn--primary" onClick={() => setNewSessionOpen(true)}>
                 + Nieuwe research sessie
               </button>
-              <Link className="lv-hub-btn" to="/trading/trading-desk?surface=paper">
+              <Link className="lv-hub-btn" to="/trading/live-agents">
                 Paper sessie openen
               </Link>
-              <Link className="lv-hub-btn" to="/trading/strategy-lab?surface=lab">
+              <Link className="lv-hub-btn" to="/trading/research?section=lab">
                 Strategy Lab
               </Link>
             </div>
@@ -433,7 +433,7 @@ export function CommandHubView({ ctx }: { ctx: TradingContextState }) {
         <section className="lv-hub-panel" aria-label="Active Operations">
           <header>
             <h3>Active Operations</h3>
-            <Link to="/trading/strategy-lab?surface=lab">Alle agents bekijken</Link>
+            <Link to="/trading/research?section=lab">Alle agents bekijken</Link>
           </header>
           <table className="lv-hub-table">
             <thead>
