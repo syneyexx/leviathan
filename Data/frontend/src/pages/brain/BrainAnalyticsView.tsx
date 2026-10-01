@@ -143,8 +143,8 @@ export function BrainAnalyticsView({ nodes, edges, stats, onToast }: { nodes: Li
   }, [nodes]);
 
   const kpis: AnalyticsKpi[] = [
-    { label: "Total Nodes", value: formatCount(analytics.nodeCount), note: `${formatCount(datedSeries.daily.slice(-30).reduce((sum, value) => sum + value, 0))} dated nodes (30d)`, spark: movingSpark(datedSeries.cumulative) },
-    { label: "Relationship Density", value: density < 0.01 ? density.toFixed(4) : density.toFixed(2), suffix: "%", note: `${formatCount(analytics.edgeCount)} total connections`, spark: [] },
+    { label: "Loaded Nodes", value: formatCount(analytics.nodeCount), note: `${formatCount(datedSeries.daily.slice(-30).reduce((sum, value) => sum + value, 0))} dated nodes (30d)`, spark: movingSpark(datedSeries.cumulative) },
+    { label: "Relationship Density", value: density < 0.01 ? density.toFixed(4) : density.toFixed(2), suffix: "%", note: `${formatCount(analytics.edgeCount)} loaded connections`, spark: [] },
     { label: "Retrieval Quality", value: "—", note: "No retrieval telemetry in graph projection", spark: [] },
     { label: "Memory Growth", value: memoryGrowth == null ? "—" : `${memoryGrowth >= 0 ? "+" : ""}${memoryGrowth.toFixed(1)}%`, note: memoryNodes.length ? `${formatCount(memoryNodes.length)} memory nodes` : "No memory nodes in projection", spark: [] },
     { label: "Avg. HTTP Latency", value: averageLatency == null ? "—" : Math.round(averageLatency).toLocaleString(), suffix: averageLatency == null ? undefined : " ms", note: averageLatency == null ? "No HTTP requests measured in this server process" : `${latencyValues.length} measured HTTP requests`, spark: movingSpark(latencyValues) },
@@ -169,7 +169,7 @@ export function BrainAnalyticsView({ nodes, edges, stats, onToast }: { nodes: Li
 
       <div className="lv-ba-mid lv-ba-reference-grid">
         <Panel title="Knowledge Growth" className="lv-ba-growth" action={<div className="lv-ba-range">{["7D", "30D", "90D", "ALL"].map((range) => <button key={range} type="button" className={`lv-br-chip${growthRange === range ? " is-active" : ""}`} onClick={() => setGrowthRange(range)}>{range}</button>)}</div>}>
-          {growth.labels.length ? <LineChart series={[{ name: "Total Nodes", color: "#F0C875", values: growth.cumulative }, { name: "New Nodes", color: "#22C9D6", values: growth.daily }]} labels={growth.labels.filter((_, index) => index === 0 || index === growth.labels.length - 1 || index % Math.max(1, Math.floor(growth.labels.length / 4)) === 0)} height={185} /> : <div className="lv-ba-empty-chart">No dated nodes in the current bounded projection.</div>}
+          {growth.labels.length ? <LineChart series={[{ name: "Loaded Nodes", color: "#F0C875", values: growth.cumulative }, { name: "New Nodes", color: "#22C9D6", values: growth.daily }]} labels={growth.labels.filter((_, index) => index === 0 || index === growth.labels.length - 1 || index % Math.max(1, Math.floor(growth.labels.length / 4)) === 0)} height={185} /> : <div className="lv-ba-empty-chart">No dated nodes in the current bounded projection.</div>}
         </Panel>
 
         <Panel title="Source Composition" className="lv-ba-composition">

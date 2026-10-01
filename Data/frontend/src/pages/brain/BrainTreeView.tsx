@@ -425,7 +425,7 @@ export function BrainTreeView({
             <div><dt>Node ID</dt><dd title={selected.id}>{selected.id}</dd></div>
             <div><dt>Parent</dt><dd>{parent?.label ?? "—"}</dd></div>
             <div><dt>Child Nodes</dt><dd>{(selected.children ?? []).length.toLocaleString()}</dd></div>
-            <div><dt>Total Descendants</dt><dd>{descendantCount(selected).toLocaleString()}</dd></div>
+            <div><dt>Loaded Descendants</dt><dd>{descendantCount(selected).toLocaleString()}</dd></div>
             <div><dt>Depth Level</dt><dd>{Math.max(0, selectedPath.length - 1)}</dd></div>
             <div><dt>Created</dt><dd>{formatMetaValue(selected.createdAt)}</dd></div>
             <div><dt>Last Modified</dt><dd>{formatMetaValue(updatedAt)}</dd></div>
@@ -454,7 +454,7 @@ export function BrainTreeView({
           <span>Hierarchical live knowledge structure for LEVIATHAN.</span>
         </div>
         <div className="lv-bt-footer-stats">
-          <span><b>{root.count.toLocaleString()}</b> Total Nodes</span>
+          <span><b>{root.count.toLocaleString()}</b> Loaded Nodes</span>
           <span><b>{visibleBranchCount}</b> Visible Branches</span>
           <span><b>{countLeaves(root).toLocaleString()}</b> Leaf Nodes</span>
           <span><b>{maxDepth(root)}</b> Max Depth Levels</span>

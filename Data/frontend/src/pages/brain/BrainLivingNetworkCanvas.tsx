@@ -20,7 +20,7 @@ import {
   type ProjectedNode,
 } from "./brain-helix-engine";
 import type { LiveBrainEdge, LiveBrainNode } from "./brain-live";
-import { BRAIN_CATEGORY_HEX, categoryForNode } from "./brain-categories";
+import { resolveCategoryPaint, categoryForNode } from "./brain-categories";
 
 export type BrainLivingNetworkCanvasProps = {
   nodes: readonly LiveBrainNode[];
@@ -307,7 +307,7 @@ export function BrainLivingNetworkCanvas({
                 ? "#22d3ee"
                 : p.node.strandRole === "insight"
                   ? "#a78bfa"
-                  : BRAIN_CATEGORY_HEX[cat];
+                  : resolveCategoryPaint(cat);
             const r = Math.max(3.5, p.r * p.scale * grow);
             ctx.globalAlpha = Math.max(0.25, 0.45 + (p.z + 1) * 0.28);
             if (active || selected) {

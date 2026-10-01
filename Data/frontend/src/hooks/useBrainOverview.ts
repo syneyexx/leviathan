@@ -910,7 +910,7 @@ export function useBrainOverview(opts?: { enabled?: boolean }): BrainOverview {
             : catalogNodeCount != null && catalogNodeCount !== nodeCount
               ? `zichtbaar · ${catalogNodeCount} geladen`
               : graphTruth?.bounded_projection || graphTruth?.stats_are_not_global_unless_corpus_fits_bound
-                ? boundedLoadedLabel(nodeCount, nodeCount)
+                ? `≥${nodeCount} geladen`
                 : `${nodeCount} geladen`,
         available: nodeCount != null,
         loading: stillLoading || graphLoading,
