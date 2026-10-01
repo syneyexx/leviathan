@@ -1,5 +1,7 @@
 /**
  * Dataset Management action wiring — regression tests (handlers, gating, console).
+ * Canonical surface is `/datasets` (useDatasetsWorkspace + mutations).
+ * Legacy Pixel DM remains as transitional reference until fully removed.
  */
 
 import { describe, expect, it } from "vitest";
@@ -15,8 +17,11 @@ import type { DatasetActivityEntry, DatasetJob } from "../../types/api";
 
 const PAGE = resolve(__dirname, "../pixel/DatasetManagementPixelPage.tsx");
 const OFFLINE = resolve(__dirname, "../pixel/OfflineDatasetsPixelPage.tsx");
+const CANONICAL = resolve(__dirname, "./useDatasetsWorkspace.ts");
+const MUTATIONS = resolve(__dirname, "./useDatasetMutations.ts");
 const HOOK = resolve(__dirname, "./useDatasetActivity.ts");
 const CLIENT = resolve(__dirname, "../../api/client.ts");
+const FLEET = resolve(__dirname, "./useDatasetLearningFleet.ts");
 
 function pageSource(): string {
   return readFileSync(PAGE, "utf8");
@@ -24,6 +29,10 @@ function pageSource(): string {
 
 function offlineSource(): string {
   return readFileSync(OFFLINE, "utf8");
+}
+
+function canonicalSource(): string {
+  return readFileSync(CANONICAL, "utf8") + "\n" + readFileSync(MUTATIONS, "utf8");
 }
 
 function hookSource(): string {
@@ -42,7 +51,39 @@ function job(partial: Partial<DatasetJob> & Pick<DatasetJob, "jobId" | "jobType"
   };
 }
 
-describe("DatasetManagementPixelPage action wiring", () => {
+describe("Canonical /datasets workspace action wiring", () => {
+  const src = canonicalSource();
+
+  it("wires DM-parity mutations through useDatasetMutations", () => {
+    for (const name of [
+      "onValidate",
+      "onDedupe",
+      "onTransform",
+      "onSplit",
+      "onTokenize",
+      "onScanPii",
+      "onContaminationScan",
+      "onMaterialize",
+      "onLearn",
+      "onDuplicate",
+      "onRefreshLibrary",
+      "onExportDownload",
+      "onSaveSemantic",
+    ]) {
+      expect(src).toContain(name);
+    }
+    expect(src).not.toContain("processDatasetJobs");
+    expect(src).not.toContain("onProcessQueue");
+  });
+
+  it("uses MutationOutcome instead of naive always-success toasts", () => {
+    expect(src).toContain("MutationOutcome");
+    expect(src).toContain("startedJob");
+    expect(src).toContain("blocked(");
+  });
+});
+
+describe("DatasetManagementPixelPage action wiring (legacy transitional)", () => {
   const src = pageSource();
 
   it("maps every Dataset Action to a real handler (no hard-disabled stubs)", () => {
@@ -124,20 +165,22 @@ describe("DatasetManagementPixelPage action wiring", () => {
   });
 });
 
-describe("OfflineDatasetsPixelPage Brain-learned semantics", () => {
+describe("OfflineDatasetsPixelPage redirect to canonical learning mode", () => {
   const src = offlineSource();
 
-  it("loads learned datasets from Brain API, not full ModelData inventory", () => {
-    expect(src).toContain("listLearnedDatasets");
-    expect(src).not.toContain("Converteren naar offline");
-    expect(src).not.toContain("Converteer geselecteerde");
-    expect(src).toContain("Brain-geïmporteerde datasets");
+  it("redirects to /datasets?mode=learning and does not N+1 getDataset", () => {
+    expect(src).toContain('Navigate to="/datasets?mode=learning"');
+    expect(src).not.toContain("listLearnedDatasets");
+    expect(src).not.toContain("api.getDataset");
+    expect(src).toContain("listLearningFleet");
   });
+});
 
-  it("supports opnieuw leren via learnDataset rebuild", () => {
-    expect(src).toContain("Opnieuw leren");
-    expect(src).toContain("rebuild: true");
-    expect(src).toContain("learnDataset");
+describe("Learning fleet hook", () => {
+  it("calls listLearningFleet only", () => {
+    const src = readFileSync(FLEET, "utf8");
+    expect(src).toContain("listLearningFleet");
+    expect(src).not.toContain("getDataset");
   });
 });
 
@@ -156,8 +199,10 @@ describe("API client dataset action additions", () => {
     expect(src).toContain("learnDataset(");
     expect(src).toContain("refreshDatasetLibrary(");
     expect(src).toContain("listLearnedDatasets(");
+    expect(src).toContain("listLearningFleet(");
     expect(src).toContain("/learn");
     expect(src).toContain("/library/refresh");
+    expect(src).toContain("/learning/fleet");
   });
 
   it("passes rebuild on indexDatasetVersion", () => {
@@ -168,12 +213,14 @@ describe("API client dataset action additions", () => {
 describe("useDatasetActivity shared hook", () => {
   const src = hookSource();
 
-  it("reuses mergeActivityEntries + adaptive pollingIntervalMs", () => {
+  it("reuses mergeActivityEntries + adaptive pollingIntervalMs and accepts createdAfter", () => {
     expect(src).toContain("mergeActivityEntries");
     expect(src).toContain("pollingIntervalMs");
     expect(src).toContain("preferredJobId");
     expect(src).toContain("clearActivityView");
     expect(src).toContain("onLifecycleChange");
+    expect(src).toContain("createdAfter");
+    expect(src).toContain("datasetId");
   });
 
   it("merges activity and backs off on API failures", () => {
