@@ -4,12 +4,32 @@ import type { ApiErrorBody } from "../types/api";
 
 export class ApiError extends Error {
   readonly status: number;
+  /** Structured backend error code from `detail.code` when present. */
+  readonly code: string | null;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code: string | null = null) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.code = code;
   }
+}
+
+export function detailCode(data: ApiErrorBody | null): string | null {
+  if (!data?.detail || typeof data.detail !== "object" || Array.isArray(data.detail)) {
+    return null;
+  }
+  const body = data.detail as { code?: unknown; error?: unknown };
+  if (typeof body.code === "string" && body.code.trim()) {
+    return body.code.trim();
+  }
+  if (body.error && typeof body.error === "object" && body.error !== null) {
+    const nested = body.error as { code?: unknown };
+    if (typeof nested.code === "string" && nested.code.trim()) {
+      return nested.code.trim();
+    }
+  }
+  return null;
 }
 
 export function detailMessage(data: ApiErrorBody | null, status: number): string {
@@ -91,7 +111,7 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
   }
 
   if (!response.ok) {
-    throw new ApiError(response.status, detailMessage(data, response.status));
+    throw new ApiError(response.status, detailMessage(data, response.status), detailCode(data));
   }
 
   return data as T;
@@ -101,13 +121,15 @@ export async function requestBlob(path: string, options: RequestInit = {}): Prom
   const response = await fetch(path, { ...options });
   if (!response.ok) {
     let message = `Request failed (${response.status})`;
+    let code: string | null = null;
     try {
       const data = (await response.json()) as ApiErrorBody;
       message = detailMessage(data, response.status);
+      code = detailCode(data);
     } catch {
       /* ignore non-JSON error bodies */
     }
-    throw new ApiError(response.status, message);
+    throw new ApiError(response.status, message, code);
   }
   return response.blob();
 }

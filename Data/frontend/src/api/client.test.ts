@@ -6,6 +6,13 @@ describe("ApiError", () => {
     const error = new ApiError(503, "LLM unavailable");
     expect(error.status).toBe(503);
     expect(error.message).toBe("LLM unavailable");
+    expect(error.code).toBeNull();
+  });
+
+  it("preserves structured backend code", () => {
+    const error = new ApiError(409, "INSUFFICIENT_VRAM: not enough memory", "INSUFFICIENT_VRAM");
+    expect(error.status).toBe(409);
+    expect(error.code).toBe("INSUFFICIENT_VRAM");
   });
 });
 

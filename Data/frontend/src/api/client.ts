@@ -193,6 +193,7 @@ import type {
 
 import {
   ApiError,
+  detailCode,
   detailMessage,
   request,
   requestBlob,
@@ -201,7 +202,7 @@ import { marketSimLabApi } from "./domains/marketSimLab";
 import { researchCommandApi } from "./domains/researchCommand";
 import { parseChatDonePayload, streamEventText } from "./chatContract";
 
-export { ApiError, detailMessage, request, requestBlob };
+export { ApiError, detailCode, detailMessage, request, requestBlob };
 
 export const api = {
   health(): Promise<HealthResponse> {
@@ -631,13 +632,15 @@ export const api = {
     const contentType = (response.headers.get("content-type") || "").toLowerCase();
     if (!response.ok) {
       let detail = `Request failed (${response.status})`;
+      let code: string | null = null;
       try {
         const body = (await response.json()) as ApiErrorBody;
         detail = detailMessage(body, response.status);
+        code = detailCode(body);
       } catch {
         /* ignore */
       }
-      throw new ApiError(response.status, detail);
+      throw new ApiError(response.status, detail, code);
     }
 
     // Feature flag OFF / TEAM JSON → normal JSON response (still runtime-validated).

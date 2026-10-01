@@ -165,17 +165,41 @@ const DEFAULT_VRAM_RESERVE: VramReserveDraft = {
 
 const GIB = 1024 ** 3;
 
+/** Structured memory/VRAM pressure codes that may offer confirmOom retry. */
+const OOM_CONFIRM_CODES = new Set([
+  "INSUFFICIENT_MEMORY",
+  "INSUFFICIENT_VRAM",
+  "GPU_OOM",
+  "HOST_MEMORY_PRESSURE",
+]);
+
 function gbToBytes(gb: number): number {
   return Math.round(gb * GIB);
 }
 
-function bytesToGb(bytes: number | null | undefined): number {
-  if (bytes == null) return 0;
+/** Convert bytes → GB; null/undefined input yields null (caller may fall back). */
+function bytesToGb(bytes: number | null | undefined): number | null {
+  if (bytes == null) return null;
   return Math.round((bytes / GIB) * 100) / 100;
 }
 
 function errMsg(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback;
+}
+
+function isOomConfirmError(err: unknown): boolean {
+  return err instanceof ApiError && err.code != null && OOM_CONFIRM_CODES.has(err.code);
+}
+
+/** Keep selection if still present; else active/loaded; else first; else null. */
+function reconcileSelectedId(
+  list: ModelDescriptor[],
+  current: string | null,
+): string | null {
+  if (current && list.some((m) => m.id === current)) return current;
+  const preferred = list.find((m) => m.active || m.loaded);
+  if (preferred) return preferred.id;
+  return list[0]?.id ?? null;
 }
 
 function draftKey(draft: ModelsLoadDraft): string {
@@ -259,6 +283,7 @@ export type ModelsWorkspace = {
 
   capabilities: ProviderControlCapabilities | null;
   capabilitiesLoading: boolean;
+  capabilitiesError: string | null;
   capSupport: (key: string) => CapabilitySupportValue;
   capNote: (key: string) => string | null;
 
@@ -331,14 +356,17 @@ export function useModelsWorkspace(): ModelsWorkspace {
 
   const [capabilities, setCapabilities] = useState<ProviderControlCapabilities | null>(null);
   const [capabilitiesLoading, setCapabilitiesLoading] = useState(false);
+  const [capabilitiesError, setCapabilitiesError] = useState<string | null>(null);
   const capabilitiesCache = useRef<Map<string, ProviderControlCapabilities>>(new Map());
+  const capabilitiesGen = useRef(0);
 
   const [estimate, setEstimate] = useState<ModelEstimateResult | null>(null);
   const [estimating, setEstimating] = useState(false);
 
   const [optimization, setOptimization] = useState<ModelOptimizationRun | null>(null);
   const [optimizationGoals, setOptimizationGoals] = useState<OptimizationGoals>(DEFAULT_GOALS);
-  const optimizePollRef = useRef<number | null>(null);
+  const optimizePollTimerRef = useRef<number | null>(null);
+  const optimizePollGen = useRef(0);
 
   const [vramReserveDraft, setVramReserveDraftState] = useState<VramReserveDraft>(DEFAULT_VRAM_RESERVE);
   const [vramReserveBaseline, setVramReserveBaseline] = useState<VramReserveDraft>(DEFAULT_VRAM_RESERVE);
@@ -399,15 +427,13 @@ export function useModelsWorkspace(): ModelsWorkspace {
       if (hardwareRes) setHardware(hardwareRes.hardware);
       if (gatewayRes) setGateway(gatewayRes.gateway);
       if (routerRes) setRouter(routerRes.router);
-      if (!selectedId && list.models.length > 0) {
-        // UI row highlight only — never creates execution/load authority.
-        const active = list.models.find((m) => m.active || m.loaded) ?? list.models[0];
-        setSelectedId(active.id);
-      }
+      // Reconcile selection after every catalog update — keep if still present,
+      // else active/loaded, else deterministic first, else null.
+      setSelectedId((prev) => reconcileSelectedId(list.models, prev));
     } catch (err) {
       setError(errMsg(err, "Failed to load models workspace"));
     }
-  }, [activeProviderId, selectedId]);
+  }, [activeProviderId]);
 
   useEffect(() => {
     void (async () => {
@@ -424,10 +450,13 @@ export function useModelsWorkspace(): ModelsWorkspace {
     const policy = (hardware as unknown as { policy?: Record<string, unknown> }).policy ?? {};
     setVramReserveDraftState((prev) => {
       const next: VramReserveDraft = {
-        displayGpuReserveGb: bytesToGb(policy.displayGpuReserveBytes as number | undefined) || prev.displayGpuReserveGb,
-        auxGpuReserveGb: bytesToGb(policy.auxGpuReserveBytes as number | undefined) || prev.auxGpuReserveGb,
+        // bytesToGb(0) is valid — only fall back when policy field is null/undefined.
+        displayGpuReserveGb:
+          bytesToGb(policy.displayGpuReserveBytes as number | undefined) ?? prev.displayGpuReserveGb,
+        auxGpuReserveGb:
+          bytesToGb(policy.auxGpuReserveBytes as number | undefined) ?? prev.auxGpuReserveGb,
         systemRamReserveGb:
-          bytesToGb((policy.ramHeadroomBytes ?? policy.defaultVramHeadroomBytes) as number | undefined) ||
+          bytesToGb((policy.ramHeadroomBytes ?? policy.defaultVramHeadroomBytes) as number | undefined) ??
           prev.systemRamReserveGb,
       };
       setVramReserveBaseline(next);
@@ -440,26 +469,53 @@ export function useModelsWorkspace(): ModelsWorkspace {
   const loadCapabilities = useCallback(async (providerId: string, force = false) => {
     if (!providerId) {
       setCapabilities(null);
+      setCapabilitiesError(null);
+      setCapabilitiesLoading(false);
       return;
     }
+    const gen = ++capabilitiesGen.current;
     if (!force) {
       const cached = capabilitiesCache.current.get(providerId);
       if (cached) {
         setCapabilities(cached);
+        setCapabilitiesError(null);
+        setCapabilitiesLoading(false);
         return;
       }
+    } else {
+      capabilitiesCache.current.delete(providerId);
     }
     setCapabilitiesLoading(true);
+    setCapabilitiesError(null);
     try {
       const caps = await api.getProviderCapabilities(providerId);
+      if (gen !== capabilitiesGen.current) return;
       capabilitiesCache.current.set(providerId, caps);
       setCapabilities(caps);
-    } catch {
+      setCapabilitiesError(null);
+    } catch (err) {
+      if (gen !== capabilitiesGen.current) return;
       setCapabilities(null);
+      setCapabilitiesError(errMsg(err, "Capabilities laden mislukt"));
     } finally {
-      setCapabilitiesLoading(false);
+      if (gen === capabilitiesGen.current) {
+        setCapabilitiesLoading(false);
+      }
     }
   }, []);
+
+  // Clear stale capabilities immediately when provider changes; race-safe reload.
+  useEffect(() => {
+    // Invalidate any in-flight capability fetch before clearing UI state.
+    capabilitiesGen.current += 1;
+    setCapabilities(null);
+    setCapabilitiesError(null);
+    if (!activeProviderId) {
+      setCapabilitiesLoading(false);
+      return;
+    }
+    void loadCapabilities(activeProviderId);
+  }, [activeProviderId, loadCapabilities]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -468,6 +524,7 @@ export function useModelsWorkspace(): ModelsWorkspace {
       const result = await api.refreshModels();
       setModels(result.models);
       setStatus(result.status);
+      setSelectedId((prev) => reconcileSelectedId(result.models, prev));
       await loadAll();
       if (activeProvider?.id) {
         await loadCapabilities(activeProvider.id, true);
@@ -480,54 +537,46 @@ export function useModelsWorkspace(): ModelsWorkspace {
     }
   }, [loadAll, toast, activeProvider?.id, loadCapabilities]);
 
-  const selectModel = useCallback(
-    (id: string | null) => {
-      const gen = ++selectGen.current;
-      setSelectedId(id);
-      setEstimate(null);
-      setOptimization(null);
-      if (!id) {
-        setResidency(null);
-        setResidencyPolicy(null);
-        setRuntimeBinding(null);
-        setCapabilities(null);
-        return;
-      }
-      void (async () => {
-        try {
-          const detail = await api.getModel(id);
-          if (gen !== selectGen.current) return;
-          setResidency(detail.residency ?? null);
-          setRuntimeBinding(detail.runtimeBinding ?? null);
-          setResidencyPolicy(detail.residencyPolicy ?? null);
-          const patch = draftFromResidencyPolicy(detail.residencyPolicy);
-          const nextDraft: ModelsLoadDraft = { ...DEFAULT_DRAFT, ...patch };
-          setDraftState(nextDraft);
-          setBaseline(nextDraft);
-          if (detail.provider?.id) {
-            setActiveProviderId(detail.provider.id);
-            await loadCapabilities(detail.provider.id);
-          }
-          const optList = await api.listModelOptimizations(id).catch(() => ({ optimizations: [] }));
-          if (gen !== selectGen.current) return;
-          const latest = [...(optList.optimizations ?? [])].sort(
-            (a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0),
-          )[0];
-          if (latest) setOptimization(latest);
-        } catch (err) {
-          if (gen === selectGen.current) toast(errMsg(err, "Kon modeldetails niet laden"));
-        }
-      })();
-    },
-    [loadCapabilities, toast],
-  );
+  const selectModel = useCallback((id: string | null) => {
+    setSelectedId(id);
+    setEstimate(null);
+    setOptimization(null);
+  }, []);
 
+  // Load model details whenever selection changes (including post-catalog reconcile).
   useEffect(() => {
-    if (selectedId && !selectedModel) return;
-    if (selectedId) selectModel(selectedId);
-    // Run once when the initial catalog resolves a default selection.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [models.length > 0]);
+    const gen = ++selectGen.current;
+    if (!selectedId) {
+      setResidency(null);
+      setResidencyPolicy(null);
+      setRuntimeBinding(null);
+      return;
+    }
+    void (async () => {
+      try {
+        const detail = await api.getModel(selectedId);
+        if (gen !== selectGen.current) return;
+        setResidency(detail.residency ?? null);
+        setRuntimeBinding(detail.runtimeBinding ?? null);
+        setResidencyPolicy(detail.residencyPolicy ?? null);
+        const patch = draftFromResidencyPolicy(detail.residencyPolicy);
+        const nextDraft: ModelsLoadDraft = { ...DEFAULT_DRAFT, ...patch };
+        setDraftState(nextDraft);
+        setBaseline(nextDraft);
+        if (detail.provider?.id) {
+          setActiveProviderId(detail.provider.id);
+        }
+        const optList = await api.listModelOptimizations(selectedId).catch(() => ({ optimizations: [] }));
+        if (gen !== selectGen.current) return;
+        const latest = [...(optList.optimizations ?? [])].sort(
+          (a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0),
+        )[0];
+        setOptimization(latest ?? null);
+      } catch (err) {
+        if (gen === selectGen.current) toast(errMsg(err, "Kon modeldetails niet laden"));
+      }
+    })();
+  }, [selectedId, toast]);
 
   const setDraft = useCallback((patch: Partial<ModelsLoadDraft>) => {
     setDraftState((prev) => ({ ...prev, ...patch }));
@@ -576,6 +625,9 @@ export function useModelsWorkspace(): ModelsWorkspace {
 
   const capNote = useCallback(
     (key: string): string | null => {
+      // Fetch failures are distinct from "not yet probed" UNKNOWN fields.
+      if (capabilitiesError) return capabilitiesError;
+      if (capabilitiesLoading && !capabilities) return null;
       const field = capField(key);
       const support = field?.support ?? capSupport(key);
       if (support === "SUPPORTED") return null;
@@ -587,10 +639,13 @@ export function useModelsWorkspace(): ModelsWorkspace {
         const providerName = activeProvider?.name || "deze provider";
         return `Niet ondersteund door ${providerName}`;
       }
-      if (support === "UNKNOWN") return "Capability nog niet geprobeerd";
+      if (support === "UNKNOWN") {
+        if (!capabilities) return null;
+        return "Capability nog niet geprobeerd";
+      }
       return null;
     },
-    [capField, capSupport, activeProvider],
+    [capField, capSupport, activeProvider, capabilitiesError, capabilitiesLoading, capabilities],
   );
 
   const awaitJob = useCallback(async (jobId: string): Promise<{ ok: boolean; message?: string }> => {
@@ -660,38 +715,48 @@ export function useModelsWorkspace(): ModelsWorkspace {
   }, [selectedId, draft, hardware, toast]);
 
   const stopOptimizePolling = useCallback(() => {
-    if (optimizePollRef.current != null) {
-      window.clearInterval(optimizePollRef.current);
-      optimizePollRef.current = null;
+    optimizePollGen.current += 1;
+    if (optimizePollTimerRef.current != null) {
+      window.clearTimeout(optimizePollTimerRef.current);
+      optimizePollTimerRef.current = null;
     }
   }, []);
 
   const pollOptimization = useCallback(
     (runId: string) => {
       stopOptimizePolling();
-      optimizePollRef.current = window.setInterval(() => {
-        void (async () => {
-          try {
-            const res = await api.getModelOptimization(runId);
-            setOptimization(res.optimization);
-            if (!RUNNING_OPTIMIZATION_STATUSES.has(res.optimization.status)) {
-              stopOptimizePolling();
-              const label =
-                res.optimization.status === "BEST" || res.optimization.status === "PASS"
-                  ? "Optimalisatie voltooid"
-                  : `Optimalisatie gestopt: ${res.optimization.status}`;
-              toast(label);
-            }
-          } catch {
-            stopOptimizePolling();
+      const gen = optimizePollGen.current;
+
+      const tick = async () => {
+        if (gen !== optimizePollGen.current) return;
+        try {
+          const res = await api.getModelOptimization(runId);
+          if (gen !== optimizePollGen.current) return;
+          setOptimization(res.optimization);
+          if (!RUNNING_OPTIMIZATION_STATUSES.has(res.optimization.status)) {
+            const label =
+              res.optimization.status === "BEST" || res.optimization.status === "PASS"
+                ? "Optimalisatie voltooid"
+                : `Optimalisatie gestopt: ${res.optimization.status}`;
+            toast(label);
+            return;
           }
-        })();
-      }, OPTIMIZE_POLL_MS);
+        } catch {
+          // Stop polling on hard errors; do not leave a dangling timer.
+          return;
+        }
+        if (gen !== optimizePollGen.current) return;
+        optimizePollTimerRef.current = window.setTimeout(() => {
+          void tick();
+        }, OPTIMIZE_POLL_MS);
+      };
+
+      void tick();
     },
     [stopOptimizePolling, toast],
   );
 
-  useEffect(() => stopOptimizePolling, [stopOptimizePolling]);
+  useEffect(() => () => stopOptimizePolling(), [stopOptimizePolling]);
 
   const startOptimize = useCallback(async () => {
     if (!selectedId) return;
@@ -773,7 +838,7 @@ export function useModelsWorkspace(): ModelsWorkspace {
         await loadAll();
       } catch (err) {
         const message = errMsg(err, "Laden mislukt");
-        if (/OOM|memory/i.test(message) && window.confirm(`${message}\n\nToch doorgaan (confirmOom)?`)) {
+        if (isOomConfirmError(err) && window.confirm(`${message}\n\nToch doorgaan (confirmOom)?`)) {
           try {
             const result = await api.loadModel(selectedId, { ...payload, confirmOom: true });
             const jobId = extractQueuedJobId(result);
@@ -996,6 +1061,7 @@ export function useModelsWorkspace(): ModelsWorkspace {
 
     capabilities,
     capabilitiesLoading,
+    capabilitiesError,
     capSupport,
     capNote,
 
