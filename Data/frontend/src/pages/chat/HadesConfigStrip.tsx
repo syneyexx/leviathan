@@ -5,11 +5,13 @@ import {
   type ReasoningModeId,
 } from "../../lib/chat/reasoningModes";
 import { formatModelParams } from "../../lib/chat/formatModelParams";
+import { modelPickerWarning } from "../../lib/chatModels";
 import { classifyCapability, isCapabilityActive } from "./chatHelpers";
 
 export type HadesConfigStripProps = {
   models: ModelDescriptor[];
-  nonChatModels: ModelDescriptor[];
+  /** @deprecated kept for callers; picker now lists every model. */
+  nonChatModels?: ModelDescriptor[];
   selectedModelId: string | null;
   onSelectModel: (modelId: string | null) => void;
   collaborationStrategy: "direct" | "team";
@@ -138,7 +140,6 @@ function SelectCardShell({
 
 export function HadesConfigStrip({
   models,
-  nonChatModels,
   selectedModelId,
   onSelectModel,
   collaborationStrategy,
@@ -156,10 +157,16 @@ export function HadesConfigStrip({
     () => models.find((m) => m.id === selectedModelId) ?? null,
     [models, selectedModelId],
   );
+  const selectedWarning = useMemo(() => {
+    if (!selectedModel) return null;
+    return modelPickerWarning(selectedModel);
+  }, [selectedModel]);
 
   const modelValue = selectedModel?.displayName || selectedModel?.id || "Auto";
   const modelMeta = selectedModel
-    ? modelMetaLine(selectedModel)
+    ? selectedWarning
+      ? `${modelMetaLine(selectedModel)} · ${selectedWarning}`
+      : modelMetaLine(selectedModel)
     : "Router kiest het beste chat-model";
   const formatBadge = selectedModel?.format?.trim() || null;
 
@@ -259,32 +266,32 @@ export function HadesConfigStrip({
           }}
         >
           Auto
-          <small>Router kiest chat-capable model</small>
+          <small>Router kiest actief / geconfigureerd model</small>
         </button>
-        {models.map((model) => (
-          <button
-            key={model.id}
-            type="button"
-            role="option"
-            aria-selected={selectedModelId === model.id}
-            onClick={() => {
-              onSelectModel(model.id);
-              setOpen(null);
-            }}
-          >
-            {model.displayName || model.id}
-            <small>{modelMetaLine(model)}</small>
-          </button>
-        ))}
+        {models.map((model) => {
+          const warning = modelPickerWarning(model);
+          const meta = warning
+            ? `${modelMetaLine(model)} · ${warning}`
+            : modelMetaLine(model);
+          return (
+            <button
+              key={model.id}
+              type="button"
+              role="option"
+              aria-selected={selectedModelId === model.id}
+              onClick={() => {
+                onSelectModel(model.id);
+                setOpen(null);
+              }}
+            >
+              {model.displayName || model.id}
+              <small>{meta}</small>
+            </button>
+          );
+        })}
         {models.length === 0 ? (
           <div className="lv-v2-muted" style={{ padding: "8px 10px", fontSize: 12 }}>
-            Geen chat-capable models. Configureer er een onder Models.
-          </div>
-        ) : null}
-        {nonChatModels.length > 0 ? (
-          <div className="lv-v2-muted" style={{ padding: "8px 10px", fontSize: 11 }}>
-            {nonChatModels.length} niet-chat model
-            {nonChatModels.length === 1 ? "" : "len"} verborgen
+            Geen modellen gevonden. Vernieuw onder Models of verbind LM Studio.
           </div>
         ) : null}
       </SelectCardShell>

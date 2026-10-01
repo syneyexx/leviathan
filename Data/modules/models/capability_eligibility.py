@@ -361,7 +361,25 @@ def capability_satisfies_request(
                 "inferred_non_chat_model_family",
             )
 
+    # Operator-authorized chat selection (explicit model id or activated default)
+    # may attempt unresolved chat capability. Embedding/non-chat families and
+    # verified UNSUPPORTED remain rejected above.
+    authorized_chat = attr == "chat" and bool(
+        ctx.get("explicit_selection") or ctx.get("authorized_selection")
+    )
+
     if state == CapabilityState.UNMEASURED:
+        if authorized_chat or bool(ctx.get("allow_unmeasured_hard", False)):
+            return CapabilityDecision(
+                True,
+                state,
+                provenance,
+                (
+                    "hard_chat_authorized_selection_permitted"
+                    if authorized_chat
+                    else "hard_unmeasured_explicitly_allowed"
+                ),
+            )
         return CapabilityDecision(
             False, state, provenance, "hard_unmeasured_rejected"
         )
@@ -369,18 +387,32 @@ def capability_satisfies_request(
     if state == CapabilityState.UNVERIFIED:
         # Hard requirements reject UNVERIFIED unless an explicit documented policy
         # allows it for this exact request (operator override / explicit policy flag).
-        if bool(ctx.get("allow_unverified_hard", False)):
+        if authorized_chat or bool(ctx.get("allow_unverified_hard", False)):
             return CapabilityDecision(
-                True, state, provenance, "hard_unverified_explicitly_allowed"
+                True,
+                state,
+                provenance,
+                (
+                    "hard_chat_authorized_selection_permitted"
+                    if authorized_chat
+                    else "hard_unverified_explicitly_allowed"
+                ),
             )
         return CapabilityDecision(
             False, state, provenance, "hard_unverified_rejected"
         )
 
     # UNKNOWN
-    if bool(ctx.get("allow_unknown_hard", False)):
+    if authorized_chat or bool(ctx.get("allow_unknown_hard", False)):
         return CapabilityDecision(
-            True, state, provenance, "hard_unknown_explicitly_allowed"
+            True,
+            state,
+            provenance,
+            (
+                "hard_chat_authorized_selection_permitted"
+                if authorized_chat
+                else "hard_unknown_explicitly_allowed"
+            ),
         )
     return CapabilityDecision(
         False, state, provenance, "hard_unknown_rejected"

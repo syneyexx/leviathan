@@ -334,9 +334,10 @@ class ModelRouter:
                 if decision:
                     return decision
 
-        # 4. Active default — only if currently live/servable
+        # 4. Active default — only if currently live/servable.
+        # Treat as operator-authorized (same unresolved-chat permission as explicit).
         if active_id and active_live:
-            decision = try_model(active_id, "active_default")
+            decision = try_model(active_id, "active_default", explicit=True)
             if decision:
                 return decision
 

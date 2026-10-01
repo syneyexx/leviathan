@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   chatIneligibilityReason,
   isChatCapableModel,
+  modelPickerWarning,
   partitionChatModels,
 } from "../lib/chatModels";
 import type { ModelCapabilities, ModelDescriptor } from "../types/api";
@@ -99,6 +100,36 @@ describe("chatModels picker eligibility", () => {
     expect(
       chatIneligibilityReason(model({ id: "um", displayName: "UM", capabilities: { chat: "unmeasured" } })),
     ).toMatch(/unmeasured/i);
+  });
+
+  it("picker warning only for embeddings / unsupported / offline — not unverified LM Studio models", () => {
+    expect(
+      modelPickerWarning(
+        model({
+          id: "qwen",
+          displayName: "Qwen2.5 Instruct",
+          capabilities: { chat: "unverified" },
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      modelPickerWarning(
+        model({
+          id: "embed",
+          displayName: "text-embedding-nomic-embed-text-v1.5",
+          capabilities: { chat: "unknown" },
+        }),
+      ),
+    ).toMatch(/Embedding|rerank/i);
+    expect(
+      modelPickerWarning(
+        model({
+          id: "bad",
+          displayName: "Broken",
+          capabilities: { chat: "unsupported" },
+        }),
+      ),
+    ).toMatch(/niet ondersteund/i);
   });
 
   it("Auto remains conceptually available even when no models", () => {

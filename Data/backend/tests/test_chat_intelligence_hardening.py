@@ -270,6 +270,86 @@ class ChatModelRoutingTests(unittest.TestCase):
         self.assertEqual(decision.model_id, "chat-a")
         self.assertEqual(decision.reason, "active_default")
 
+    def test_router_allows_explicit_unverified_generative(self) -> None:
+        """LM Studio models start as UNVERIFIED — explicit/active selection must work."""
+
+        class _MemStore:
+            def get_active_model_id(self):
+                return None
+
+            def get_router_config(self):
+                return {
+                    "fallback_order": [],
+                    "role_overrides": {},
+                    "cloud_fallback_allowed": False,
+                    "streaming": True,
+                    "stream_provisional_text": True,
+                    "progress_events_enabled": True,
+                }
+
+            def save_router_config(self, payload):
+                return payload
+
+            def append_audit(self, *_a, **_k):
+                return None
+
+        models = {
+            "lm_studio:qwen": self._desc(
+                "lm_studio:qwen",
+                chat=CapabilityState.UNVERIFIED,
+                display="Qwen2.5-14B-Instruct",
+            ),
+            "embed-b": enrich_descriptor_capabilities(
+                self._desc(
+                    "embed-b",
+                    chat=CapabilityState.UNVERIFIED,
+                    embeddings=CapabilityState.SUPPORTED,
+                    display="text-embedding-nomic-embed-text-v1.5",
+                )
+            ),
+        }
+        gateway = ModelGateway()
+        router = ModelRouter(_MemStore(), gateway, get_models=lambda: list(models.values()))  # type: ignore[arg-type]
+        from Data.modules.models.contracts import ModelRequest
+
+        decision = router.resolve(
+            ModelRequest(
+                explicit_model_id="lm_studio:qwen",
+                required_capabilities=("chat",),
+            )
+        )
+        self.assertEqual(decision.model_id, "lm_studio:qwen")
+        self.assertEqual(decision.reason, "explicit")
+
+        with self.assertRaises(ModelControlError) as ctx:
+            router.resolve(
+                ModelRequest(
+                    explicit_model_id="embed-b",
+                    required_capabilities=("chat",),
+                )
+            )
+        self.assertEqual(ctx.exception.code, MODEL_NOT_CHAT_CAPABLE)
+
+        class _ActiveStore(_MemStore):
+            def get_active_model_id(self):
+                return "lm_studio:qwen"
+
+        router_active = ModelRouter(
+            _ActiveStore(), gateway, get_models=lambda: list(models.values())
+        )  # type: ignore[arg-type]
+        active = router_active.resolve(
+            ModelRequest(required_capabilities=("chat",), preferred_role="chat")
+        )
+        self.assertEqual(active.model_id, "lm_studio:qwen")
+        self.assertEqual(active.reason, "active_default")
+
+        self.assertTrue(
+            is_chat_capable(
+                models["lm_studio:qwen"], explicit_selection=True
+            ).satisfies
+        )
+        self.assertFalse(is_chat_capable(models["lm_studio:qwen"]).satisfies)
+
 
 class ReasoningModeTests(unittest.TestCase):
     def test_auto_maps_greeting_to_fast(self) -> None:
