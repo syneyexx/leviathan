@@ -360,8 +360,8 @@ export function HadesConfigStrip({
       <SelectCardShell
         menuId={`${baseId}-tools`}
         label="Tools & Integraties"
-        value={totalCount === 0 ? "UNMEASURED" : `${activeCount}/${totalCount} Actief`}
-        meta={toolsMeta}
+        value={totalCount === 0 ? "UNMEASURED" : `${activeCount}/${totalCount} beschikbaar`}
+        meta={toolsMeta || "beschikbaar ≠ actief deze beurt"}
         statusDot={totalCount > 0 && activeCount === totalCount}
         open={open === "tools"}
         busy={busy}
@@ -397,7 +397,7 @@ export function HadesConfigStrip({
                   <span className="lv-v2-select-card__status-name">{cap.name || cap.id}</span>
                   <small>
                     {TOOL_KIND_LABEL[kind as keyof typeof TOOL_KIND_LABEL] || kind} ·{" "}
-                    {active ? "actief" : "inactief"}
+                    {active ? "beschikbaar" : "niet beschikbaar"}
                   </small>
                 </li>
               );
