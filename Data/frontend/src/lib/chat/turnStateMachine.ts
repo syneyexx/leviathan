@@ -125,10 +125,16 @@ export function isBusyChatTurn(state: ChatTurnUiState): boolean {
   );
 }
 
-/** Map UI state → MessageList/legacy streaming badge. */
-export function chatTurnToStreamingBadge(
-  state: ChatTurnUiState,
-): "idle" | "streaming" | "degraded" | "complete" | "failed" {
+export type ChatStreamingBadge =
+  | "idle"
+  | "streaming"
+  | "degraded"
+  | "complete"
+  | "failed"
+  | "cancelled";
+
+/** Map UI state → MessageList streaming badge. CANCELLED ≠ FAILED. */
+export function chatTurnToStreamingBadge(state: ChatTurnUiState): ChatStreamingBadge {
   switch (state) {
     case "STREAMING":
     case "RUNNING":
@@ -139,8 +145,9 @@ export function chatTurnToStreamingBadge(
       return "degraded";
     case "COMPLETED":
       return "complete";
-    case "FAILED":
     case "CANCELLED":
+      return "cancelled";
+    case "FAILED":
       return "failed";
     default:
       return "idle";

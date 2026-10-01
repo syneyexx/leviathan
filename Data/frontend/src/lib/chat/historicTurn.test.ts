@@ -1,20 +1,14 @@
 /**
- * MessageList historic turn hydration + load-older contract.
+ * MessageList historic turn hydration + load-older contract + tool receipts.
  */
 import { describe, expect, it } from "vitest";
 import type { ChatTurn } from "../../types/api";
 import type { ChatDisplayMessage } from "../../pages/chat/MessageList";
-
-function resolveTurn(
-  message: ChatDisplayMessage,
-  turnsByMessageId: Record<string, ChatTurn>,
-): ChatTurn | null {
-  return (
-    message.turn ||
-    (message.id != null ? turnsByMessageId[String(message.id)] ?? null : null) ||
-    null
-  );
-}
+import {
+  resolveHistoricActivity,
+  resolveHistoricToolCalls,
+  resolveTurnForMessage,
+} from "./historicTurn";
 
 describe("historic turn hydration", () => {
   it("prefers message.turn over turnsByMessageId", () => {
@@ -37,7 +31,7 @@ describe("historic turn hydration", () => {
       created_at: null,
       turn: embedded,
     };
-    expect(resolveTurn(msg, { "7": mapped })?.turn_id).toBe("t-embed");
+    expect(resolveTurnForMessage(msg, { "7": mapped })?.turn_id).toBe("t-embed");
   });
 
   it("hydrates from turnsByMessageId when message.turn absent", () => {
@@ -55,7 +49,7 @@ describe("historic turn hydration", () => {
       content: "answer",
       created_at: "2026-01-01T00:00:00Z",
     };
-    const turn = resolveTurn(msg, { "42": mapped });
+    const turn = resolveTurnForMessage(msg, { "42": mapped });
     expect(turn?.effective_model).toBe("m1");
     expect(turn?.knowledge_hit_count).toBe(2);
   });
@@ -67,6 +61,102 @@ describe("historic turn hydration", () => {
       content: "legacy",
       created_at: null,
     };
-    expect(resolveTurn(msg, {})).toBeNull();
+    expect(resolveTurnForMessage(msg, {})).toBeNull();
+  });
+});
+
+describe("historic tool receipts", () => {
+  it("renders tool_calls from durable turn for non-last messages", () => {
+    const turn: ChatTurn = {
+      turn_id: "t1",
+      conversation_id: "c1",
+      tool_calls: [
+        {
+          capability_id: "web.search",
+          status: "COMPLETED",
+          success: true,
+          receipt_id: "r1",
+          duration_ms: 12,
+        },
+      ],
+    };
+    const calls = resolveHistoricToolCalls(turn, {
+      isLast: false,
+      liveToolCalls: [{ capability_id: "live.only", status: "RUNNING" }],
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.capability_id).toBe("web.search");
+    expect(calls[0]?.receipt_id).toBe("r1");
+  });
+
+  it("prefers live telemetry for the last message", () => {
+    const turn: ChatTurn = {
+      turn_id: "t1",
+      conversation_id: "c1",
+      tool_calls: [{ capability_id: "historic", status: "COMPLETED" }],
+    };
+    const calls = resolveHistoricToolCalls(turn, {
+      isLast: true,
+      liveToolCalls: [{ capability_id: "live.tool", status: "COMPLETED", success: true }],
+    });
+    expect(calls[0]?.capability_id).toBe("live.tool");
+  });
+
+  it("reads metadata.tool_calls when top-level absent", () => {
+    const turn: ChatTurn = {
+      turn_id: "t1",
+      conversation_id: "c1",
+      metadata: {
+        tool_calls: [{ capability_id: "from.meta", status: "OK", module_id: "mod" }],
+      },
+    };
+    const calls = resolveHistoricToolCalls(turn);
+    expect(calls[0]?.capability_id).toBe("from.meta");
+  });
+
+  it("does not invent tool cards from receipt ids alone", () => {
+    const turn: ChatTurn = {
+      turn_id: "t1",
+      conversation_id: "c1",
+      tool_receipt_ids: ["r-only"],
+    };
+    expect(resolveHistoricToolCalls(turn)).toEqual([]);
+  });
+});
+
+describe("historic activity", () => {
+  it("surfaces activity only when present on the turn", () => {
+    const turn: ChatTurn = {
+      turn_id: "t1",
+      conversation_id: "c1",
+      activity: {
+        operationId: "op-1",
+        highestSequence: 1,
+        tree: [],
+        events: [
+          {
+            eventId: "e1",
+            operationId: "op-1",
+            sequence: 1,
+            actorType: "system",
+            category: "chat",
+            phase: "complete",
+            lifecycle: "completed",
+            title: "turn complete",
+          },
+        ],
+      },
+    };
+    const activity = resolveHistoricActivity(turn);
+    expect(activity?.operationId).toBe("op-1");
+  });
+
+  it("does not invent activity from activity_ref alone", () => {
+    const turn: ChatTurn = {
+      turn_id: "t1",
+      conversation_id: "c1",
+      activity_ref: "run-123",
+    };
+    expect(resolveHistoricActivity(turn)).toBeNull();
   });
 });

@@ -23,7 +23,8 @@ describe("Brain celestial Graph integration contracts", () => {
     expect(page).toContain("Celestial");
     expect(page).toContain("Technical");
     expect(page).toContain("DNA");
-    expect(dna).toContain("layoutDnaNetwork");
+    expect(dna).toContain("BrainLivingNetworkCanvas");
+    expect(dna).toContain("helix canvas");
     expect(page).not.toMatch(/setView\(["']Space["']\)/);
     expect(page).not.toMatch(/BrainView.*Space/);
     expect(page).not.toContain("BrainSpacePrototypeView");

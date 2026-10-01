@@ -40,7 +40,7 @@ export type LastTurnMeta = {
   intent: string | null;
   complexity: string | null;
   knowledgeCount: number | null;
-  streaming: "idle" | "streaming" | "degraded" | "complete" | "failed";
+  streaming: "idle" | "streaming" | "degraded" | "complete" | "failed" | "cancelled";
   turnState: ChatTurnUiState;
   reasoning: ReasoningSummary | null;
   knowledgeSources: KnowledgeSource[];
@@ -141,6 +141,8 @@ export function useChatTurn(args: UseChatTurnArgs) {
   const [lastTurn, setLastTurn] = useState<LastTurnMeta>(EMPTY_TURN);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  /** In-flight idempotency key — same send cannot double-dispatch while busy. */
+  const idempotencyKeyRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const turnIdRef = useRef<string | null>(null);
   const chatRunIdRef = useRef<string | null>(null);
@@ -249,6 +251,7 @@ export function useChatTurn(args: UseChatTurnArgs) {
       setTurnState("CANCELLED");
     }
     busyRef.current = false;
+    idempotencyKeyRef.current = null;
     setBusy(false);
     args.onToast("Antwoord gestopt.");
   }, [args, reconcile, setTurnState]);
@@ -256,8 +259,11 @@ export function useChatTurn(args: UseChatTurnArgs) {
   const send = useCallback(
     async (textRaw: string, options?: SendTurnOptions) => {
       const text = textRaw.trim();
-      if (!text || busyRef.current) return;
+      // Double-submit guard: busyRef is set synchronously before any await.
+      if (!text || busyRef.current || idempotencyKeyRef.current) return;
       busyRef.current = true;
+      const idempotencyKey = newIdempotencyKey();
+      idempotencyKeyRef.current = idempotencyKey;
       setBusy(true);
       setTurnState("PREPARING");
 
@@ -266,6 +272,7 @@ export function useChatTurn(args: UseChatTurnArgs) {
         activeId = await args.ensureConversationId();
         if (!activeId) {
           busyRef.current = false;
+          idempotencyKeyRef.current = null;
           setBusy(false);
           setTurnState("FAILED");
           setTurnState("IDLE");
@@ -273,7 +280,6 @@ export function useChatTurn(args: UseChatTurnArgs) {
         }
       }
 
-      const idempotencyKey = newIdempotencyKey();
       const artifactIds = options?.artifactIds?.filter(Boolean) ?? [];
       args.setMessages((current) => [
         ...current,
@@ -517,6 +523,7 @@ export function useChatTurn(args: UseChatTurnArgs) {
         }
       } finally {
         busyRef.current = false;
+        idempotencyKeyRef.current = null;
         setBusy(false);
         abortRef.current = null;
       }

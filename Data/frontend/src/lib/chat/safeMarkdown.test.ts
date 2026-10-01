@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isSafeHref, parseSafeMarkdown } from "./safeMarkdown";
+import { isSafeHref, parseSafeMarkdown, sanitizeHref } from "./safeMarkdown";
 
 describe("safeMarkdown", () => {
   it("blocks javascript: and data: hrefs", () => {
@@ -49,5 +49,31 @@ describe("safeMarkdown", () => {
     expect(blocks[0]?.type).toBe("paragraph");
     // isSafeHref is the gate used by the renderer
     expect(isSafeHref("javascript:alert(1)")).toBe(false);
+  });
+
+  it("blocks adversarial scheme variants and nested markdown html", () => {
+    expect(isSafeHref("JAVASCRIPT:alert(1)")).toBe(false);
+    expect(isSafeHref("  javascript:alert(1)")).toBe(false);
+    expect(isSafeHref("vbscript:msgbox(1)")).toBe(false);
+    expect(isSafeHref("file:///etc/passwd")).toBe(false);
+    expect(isSafeHref("data:text/html,<img src=x onerror=alert(1)>")).toBe(false);
+    expect(sanitizeHref("javascript:alert(1)")).toBeNull();
+    expect(sanitizeHref("https://ok.example/a")).toBe("https://ok.example/a");
+
+    const blocks = parseSafeMarkdown(
+      [
+        '[click](JaVaScRiPt:alert(1))',
+        "",
+        '<img src=x onerror="alert(1)">',
+        "",
+        "[ok](https://example.com)",
+      ].join("\n"),
+    );
+    const serialized = JSON.stringify(blocks);
+    expect(serialized).not.toMatch(/dangerouslySetInnerHTML/);
+    expect(serialized.toLowerCase()).toContain("javascript:alert");
+    // Safe https link remains parseable as paragraph text / inline target.
+    expect(blocks.some((b) => b.type === "paragraph")).toBe(true);
+    expect(isSafeHref("https://example.com")).toBe(true);
   });
 });

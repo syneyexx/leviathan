@@ -39,7 +39,7 @@ describe("turnStateMachine", () => {
     expect(isBusyChatTurn("STREAMING")).toBe(true);
     expect(isBusyChatTurn("IDLE")).toBe(false);
     expect(chatTurnToStreamingBadge("DEGRADED")).toBe("degraded");
-    expect(chatTurnToStreamingBadge("CANCELLED")).toBe("failed");
+    expect(chatTurnToStreamingBadge("CANCELLED")).toBe("cancelled");
   });
 
   it("has an allow-list entry for every state", () => {

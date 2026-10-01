@@ -248,6 +248,8 @@ class ChatTurn:
     error_summary: str | None = None
 
     def public_dict(self) -> dict[str, Any]:
+        import json
+
         data = asdict(self)
         # Surface measurement honesty for counts.
         data["retrieval"] = {
@@ -270,6 +272,21 @@ class ChatTurn:
             "context_budget": _measurement_public(self.context_budget),
             "latency_ms": _measurement_public(self.latency_ms),
         }
+        # Parse JSON reference columns for frontend hydration (honest absence = []).
+        data["tool_receipt_ids"] = _parse_json_list(self.tool_receipt_ids_json)
+        data["decision_receipt_ids"] = _parse_json_list(self.decision_receipt_ids_json)
+        data["artifact_ids"] = _parse_json_list(self.artifact_ids_json)
+        data["source_refs"] = _parse_json_list(self.source_refs_json)
+        meta = _parse_json_object(self.metadata_json)
+        data["metadata"] = meta
+        # Bounded tool_calls summary when persisted at complete (never invent).
+        tool_calls = meta.get("tool_calls") if isinstance(meta, dict) else None
+        if isinstance(tool_calls, list):
+            data["tool_calls"] = tool_calls
+        # Historic activity projection only when explicitly stored — never invent.
+        activity = meta.get("activity") if isinstance(meta, dict) else None
+        if isinstance(activity, dict):
+            data["activity"] = activity
         return data
 
 
@@ -277,6 +294,30 @@ def _measurement_public(value: float | int | None) -> dict[str, Any]:
     if value is None:
         return MeasurementValue.unmeasured().public_dict()
     return MeasurementValue.measured(value).public_dict()
+
+
+def _parse_json_list(raw: str | None) -> list[Any]:
+    import json
+
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _parse_json_object(raw: str | None) -> dict[str, Any]:
+    import json
+
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 # Frontend-aligned turn lifecycle (documented contract; mirrored in TS).

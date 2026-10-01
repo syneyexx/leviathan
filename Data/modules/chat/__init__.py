@@ -14,6 +14,12 @@ it does NOT create parallel retrieval, execution, or artifact authorities.
 from .cancellation import CancelReason, ChatCancelResult, cancel_chat_turn
 from .cognition_stream import CognitionPublicSink, map_cognition_events_to_public_sink
 from .coordinator import ChatTurnCoordinator
+from .ownership import (
+    assert_single_response_owner,
+    bounded_tool_calls_for_turn,
+    cognition_owns_final_response,
+    resolve_response_owner_and_path,
+)
 from .protocol import (
     STREAM_EVENT_TYPES,
     build_stream_meta,
@@ -47,9 +53,13 @@ __all__ = [
     "STREAM_EVENT_TYPES",
     "StreamingPosture",
     "VerificationTurnState",
+    "assert_single_response_owner",
+    "bounded_tool_calls_for_turn",
     "build_stream_meta",
     "cancel_chat_turn",
+    "cognition_owns_final_response",
     "map_cognition_events_to_public_sink",
     "new_turn_id",
     "normalize_chat_response",
+    "resolve_response_owner_and_path",
 ]

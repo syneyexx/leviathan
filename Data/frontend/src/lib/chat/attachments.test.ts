@@ -81,6 +81,18 @@ describe("mapRunStatusToOutcome", () => {
     expect(mapRunStatusToOutcome({ run: { state: "EXECUTING" } })).toBe("running");
     expect(mapRunStatusToOutcome({})).toBe("unknown");
   });
+
+  it("treats CANCELLED as distinct from FAILED (cancel race)", () => {
+    expect(mapRunStatusToOutcome({ turn: { run_state: "CANCELLED" } })).not.toBe("failed");
+    expect(mapRunStatusToOutcome({ run: { state: "CANCELLED" } })).toBe("cancelled");
+    // Turn CANCELLED wins even if run still looks failed-ish naming
+    expect(
+      mapRunStatusToOutcome({
+        turn: { run_state: "CANCELLED" },
+        run: { state: "FAILED" },
+      }),
+    ).toBe("cancelled");
+  });
 });
 
 describe("ReasoningModeId includes standard", () => {

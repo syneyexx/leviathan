@@ -211,9 +211,13 @@ from Data.modules.chat import (
     ResponseOwner,
     ExecutionPath,
     FailureClassification,
+    assert_single_response_owner,
+    bounded_tool_calls_for_turn,
     build_stream_meta,
     cancel_chat_turn,
+    cognition_owns_final_response,
     normalize_chat_response,
+    resolve_response_owner_and_path,
 )
 from Data.modules.chat.artifacts_context import (
     attach_parts_to_history,
@@ -3890,13 +3894,9 @@ async def chat(payload: ChatRequest, request: Request):
             }
 
     # ACTIVE cognition owns the answer — skip duplicate retrieval / neuro / model acquire.
-    cognition_early_own = bool(
-        cognition_meta
-        and not cognition_meta.get("shadow")
-        and not settings.features.cognition_shadow
-        and (cognition_meta.get("response") or "").strip()
-        and cognition_meta.get("response_ownership") == "cognition"
-        and not cognition_meta.get("error")
+    cognition_early_own = cognition_owns_final_response(
+        cognition_meta,
+        cognition_shadow_feature=bool(settings.features.cognition_shadow),
     )
 
     runs.transition(
@@ -4498,13 +4498,9 @@ async def chat(payload: ChatRequest, request: Request):
 
     # ACTIVE cognition owns the authoritative answer when it produced one.
     # SHADOW cognition may observe only — chat path remains authoritative.
-    cognition_owns_response = bool(cognition_early_own) or bool(
-        cognition_meta
-        and not cognition_meta.get("shadow")
-        and not settings.features.cognition_shadow
-        and (cognition_meta.get("response") or "").strip()
-        and cognition_meta.get("response_ownership") == "cognition"
-        and not cognition_meta.get("error")
+    cognition_owns_response = cognition_owns_final_response(
+        cognition_meta,
+        cognition_shadow_feature=bool(settings.features.cognition_shadow),
     )
     if cognition_meta is not None:
         cognition_meta = {
@@ -4669,16 +4665,11 @@ async def chat(payload: ChatRequest, request: Request):
             evidence_hits=[],
             run_started_at=getattr(run, "started_at", None) or getattr(run, "created_at", None),
         )
-        owner = (
-            ResponseOwner.COGNITION.value
-            if cognition_owns_response
-            else ResponseOwner.DIRECT.value
+        owner, path = resolve_response_owner_and_path(
+            cognition_meta,
+            cognition_shadow_feature=bool(settings.features.cognition_shadow),
         )
-        path = (
-            ExecutionPath.COGNITION_OWNED.value
-            if cognition_owns_response
-            else ExecutionPath.DIRECT_CHAT.value
-        )
+        assert_single_response_owner(owner, path)
         try:
             durable = chat_turn_coordinator.complete(
                 turn_id,
@@ -4719,6 +4710,15 @@ async def chat(payload: ChatRequest, request: Request):
                 context_used=telemetry.get("context_used"),
                 context_budget=telemetry.get("context_budget"),
                 activity_ref=run.run_id,
+                metadata={
+                    "tool_calls": bounded_tool_calls_for_turn(telemetry.get("tool_calls")),
+                    # Historic activity only when we have a real snapshot — never invent.
+                    **(
+                        {"activity": snap.get("activity")}
+                        if isinstance(snap.get("activity"), dict)
+                        else {}
+                    ),
+                },
             )
         except Exception:  # noqa: BLE001
             durable = chat_turn_store.get(turn_id)

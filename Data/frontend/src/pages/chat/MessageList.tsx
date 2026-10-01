@@ -11,6 +11,11 @@ import type {
   DecisionReceipt,
 } from "../../types/activity";
 import { ActivityTimeline } from "../../components/activity/ActivityTimeline";
+import {
+  resolveHistoricActivity,
+  resolveHistoricToolCalls,
+  resolveTurnForMessage,
+} from "../../lib/chat/historicTurn";
 import { SafeMarkdown } from "../../lib/chat/safeMarkdown";
 import { formatMessageTime } from "./chatHelpers";
 import { CapabilityResultCards } from "./CapabilityResultCards";
@@ -26,10 +31,18 @@ export type ChatDisplayMessage = {
   turn?: ChatTurn | null;
 };
 
+export type MessageListStreamingBadge =
+  | "idle"
+  | "streaming"
+  | "degraded"
+  | "complete"
+  | "failed"
+  | "cancelled";
+
 export type MessageListLastTurn = {
   reasoning?: ReasoningSummary | null;
   cognitionPhase?: string | null;
-  streaming?: "idle" | "streaming" | "degraded" | "complete" | "failed";
+  streaming?: MessageListStreamingBadge;
   telemetry?: AssistantTurnTelemetry | null;
   /** Optional measured reasoning elapsed (ms) — never invent. */
   reasoningElapsedMs?: number | null;
@@ -147,6 +160,28 @@ function ActivityOrLegacy({
   return <LegacyReasoningFallback lastTurn={lastTurn} />;
 }
 
+function HistoricActivity({
+  activity,
+  activityMode,
+  onActivityModeChange,
+}: {
+  activity: ActivityProjection;
+  activityMode?: ActivityDisplayMode;
+  onActivityModeChange?: (mode: ActivityDisplayMode) => void;
+}) {
+  const hasRows =
+    (activity.events?.length ?? 0) > 0 || (activity.tree?.length ?? 0) > 0;
+  if (!hasRows) return null;
+  return (
+    <ActivityTimeline
+      projection={activity}
+      mode={activityMode ?? "detailed"}
+      streaming={false}
+      onModeChange={onActivityModeChange}
+    />
+  );
+}
+
 function TurnMetaChip({ turn }: { turn: ChatTurn }) {
   const model = turn.effective_model || turn.requested_model;
   const mode = turn.effective_reasoning_mode || turn.requested_reasoning_mode;
@@ -255,20 +290,24 @@ export function MessageList({
       ) : (
         messages.map((message, index) => {
           const isLast = index === messages.length - 1;
-          const messageTurn =
-            message.turn ||
-            (message.id != null ? turnsByMessageId[String(message.id)] : null) ||
-            null;
-          const showReasoning =
+          const messageTurn = resolveTurnForMessage(message, turnsByMessageId);
+          const showLiveReasoning =
             message.role === "assistant" &&
             isLast &&
             lastTurn != null &&
             !message.error;
+          const historicActivity =
+            message.role === "assistant" && !showLiveReasoning && !message.error
+              ? resolveHistoricActivity(messageTurn)
+              : null;
+          const toolCalls = resolveHistoricToolCalls(messageTurn, {
+            isLast,
+            liveToolCalls: lastTurn?.telemetry?.tool_calls,
+          });
           const showTools =
             message.role === "assistant" &&
-            isLast &&
             !message.pending &&
-            (lastTurn?.telemetry?.tool_calls?.length ?? 0) > 0;
+            toolCalls.length > 0;
 
           return (
             <article
@@ -288,9 +327,16 @@ export function MessageList({
                 {message.role === "assistant" ? (
                   <div className="lv-v2-msg__identity">Hades AI</div>
                 ) : null}
-                {showReasoning && lastTurn ? (
+                {showLiveReasoning && lastTurn ? (
                   <ActivityOrLegacy
                     lastTurn={lastTurn}
+                    onActivityModeChange={onActivityModeChange}
+                  />
+                ) : null}
+                {historicActivity ? (
+                  <HistoricActivity
+                    activity={historicActivity}
+                    activityMode={lastTurn?.activityMode}
                     onActivityModeChange={onActivityModeChange}
                   />
                 ) : null}
@@ -305,9 +351,7 @@ export function MessageList({
                     <SafeMarkdown content={message.content} />
                   )}
                 </div>
-                {showTools ? (
-                  <CapabilityResultCards toolCalls={lastTurn?.telemetry?.tool_calls} />
-                ) : null}
+                {showTools ? <CapabilityResultCards toolCalls={toolCalls} /> : null}
                 {messageTurn ? <TurnMetaChip turn={messageTurn} /> : null}
                 <div className="lv-v2-msg__meta">
                   {formatMessageTime(message.created_at) ||

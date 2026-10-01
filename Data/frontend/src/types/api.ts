@@ -83,6 +83,18 @@ export type ChatTurn = {
   latency_ms?: number | null;
   idempotency_key?: string | null;
   error_summary?: string | null;
+  /** Parsed JSON refs from durable turn row. */
+  tool_receipt_ids?: string[];
+  decision_receipt_ids?: string[];
+  artifact_ids?: string[];
+  source_refs?: unknown[];
+  /** Bounded tool-call summary when persisted on complete. */
+  tool_calls?: AssistantToolCallTelemetry[];
+  /** Parsed metadata object (may include tool_calls / activity). */
+  metadata?: Record<string, unknown> | null;
+  /** Historic activity projection only when explicitly stored — never invented. */
+  activity?: import("./activity").ActivityProjection | null;
+  activity_ref?: string | null;
   [key: string]: unknown;
 };
 

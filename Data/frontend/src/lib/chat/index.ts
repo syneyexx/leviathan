@@ -25,6 +25,7 @@ export {
   chatTurnToStreamingBadge,
 } from "./turnStateMachine";
 export type { ChatTurnUiState } from "./turnStateMachine";
+export type { ChatStreamingBadge } from "./turnStateMachine";
 
 export { formatModelParams, formatParamCount, formatParameterCount } from "./formatModelParams";
 
@@ -62,3 +63,9 @@ export {
   visionClaimAllowed,
 } from "./attachments";
 export type { ChatAttachment, ChatAttachmentState } from "./attachments";
+
+export {
+  resolveTurnForMessage,
+  resolveHistoricToolCalls,
+  resolveHistoricActivity,
+} from "./historicTurn";
