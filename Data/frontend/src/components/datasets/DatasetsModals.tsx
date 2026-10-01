@@ -1,4 +1,5 @@
 import { DatasetActivityConsole } from "../../pages/datasets/DatasetActivityConsole";
+import { healthBarStyle, healthPctLabel } from "../../pages/datasets/datasetHealth";
 import type { DatasetsWorkspace } from "../../pages/datasets/useDatasetsWorkspace";
 
 type Props = {
@@ -60,21 +61,24 @@ export function DatasetsModals({ ws }: Props) {
         >
           <h2 id="lv-v2-ds-modal-title">Dataset Health</h2>
           <p className="lv-v2-muted">
-            Health blijft beschikbaar als secondary surface — niet als vijfde bottom card.
+            Catalog-wide health uit overview — niet de huidige inventarispagina.
           </p>
           <ul className="lv-v2-ds-health">
-            {ws.healthItems.map((item) => (
-              <li key={item.id}>
-                <span className="lv-v2-ds-health__label">{item.label}</span>
-                <span className={`lv-v2-ds-health__pct is-${item.tone}`}>
-                  {item.pct == null ? "UNMEASURED" : `${item.pct}%`}
-                </span>
-                {item.hint ? <span className="lv-v2-ds-health__hint">{item.hint}</span> : null}
-                <div className={`lv-v2-ds-health__bar is-${item.tone}`}>
-                  <i style={{ width: `${item.pct ?? 0}%` }} />
-                </div>
-              </li>
-            ))}
+            {ws.healthItems.map((item) => {
+              const bar = healthBarStyle(item.pct);
+              return (
+                <li key={item.id}>
+                  <span className="lv-v2-ds-health__label">{item.label}</span>
+                  <span className={`lv-v2-ds-health__pct is-${item.tone}`}>
+                    {healthPctLabel(item.pct)}
+                  </span>
+                  {item.hint ? <span className="lv-v2-ds-health__hint">{item.hint}</span> : null}
+                  <div className={`lv-v2-ds-health__bar is-${item.tone} ${bar.className}`.trim()}>
+                    <i style={bar.style} />
+                  </div>
+                </li>
+              );
+            })}
           </ul>
           <div className="lv-v2-ds-modal__actions">
             <button type="button" className="lv-v2-button lv-v2-button--ghost" onClick={() => ws.setModal(null)}>
@@ -86,11 +90,54 @@ export function DatasetsModals({ ws }: Props) {
     );
   }
 
+  if (ws.modal === "delete") {
+    return (
+      <div
+        className="lv-v2-ds-modal-backdrop"
+        role="presentation"
+        onClick={() => !ws.busy && ws.closeModal()}
+      >
+        <div
+          className="lv-v2-ds-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="lv-v2-ds-modal-title"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <h2 id="lv-v2-ds-modal-title">Dataset verwijderen</h2>
+          <p>
+            Weet je zeker dat je{" "}
+            <strong>{ws.activeRow?.name || ws.activeId}</strong> wilt verwijderen? Dit kan niet
+            ongedaan worden gemaakt.
+          </p>
+          <div className="lv-v2-ds-modal__actions">
+            <button
+              type="button"
+              className="lv-v2-button lv-v2-button--ghost"
+              disabled={ws.busy}
+              onClick={() => ws.closeModal()}
+            >
+              Annuleren
+            </button>
+            <button
+              type="button"
+              className="lv-v2-button lv-v2-button--danger"
+              disabled={ws.busy || !ws.activeId}
+              onClick={() => ws.activeId && void ws.onDelete(ws.activeId)}
+            >
+              Verwijderen
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="lv-v2-ds-modal-backdrop"
       role="presentation"
-      onClick={() => !ws.busy && ws.setModal(null)}
+      onClick={() => !ws.busy && ws.closeModal()}
     >
       <div
         className="lv-v2-ds-modal"
@@ -118,7 +165,12 @@ export function DatasetsModals({ ws }: Props) {
                 <textarea value={ws.createDesc} onChange={(e) => ws.setCreateDesc(e.target.value)} />
               </label>
               <div className="lv-v2-ds-modal__actions">
-                <button type="button" className="lv-v2-button lv-v2-button--ghost" disabled={ws.busy} onClick={() => ws.setModal(null)}>
+                <button
+                  type="button"
+                  className="lv-v2-button lv-v2-button--ghost"
+                  disabled={ws.busy}
+                  onClick={() => ws.closeModal()}
+                >
                   Annuleren
                 </button>
                 <button
@@ -148,7 +200,10 @@ export function DatasetsModals({ ws }: Props) {
               </label>
               <label>
                 Optionele naam
-                <input value={ws.createName} onChange={(e) => ws.setCreateName(e.target.value)} />
+                <input
+                  value={ws.uploadForm.name}
+                  onChange={(e) => ws.setUploadForm((f) => ({ ...f, name: e.target.value }))}
+                />
               </label>
               <div className="lv-v2-ds-modal__actions">
                 <button
@@ -174,7 +229,12 @@ export function DatasetsModals({ ws }: Props) {
                 <input value={ws.localName} onChange={(e) => ws.setLocalName(e.target.value)} />
               </label>
               <div className="lv-v2-ds-modal__actions">
-                <button type="button" className="lv-v2-button lv-v2-button--ghost" disabled={ws.busy} onClick={() => ws.setModal(null)}>
+                <button
+                  type="button"
+                  className="lv-v2-button lv-v2-button--ghost"
+                  disabled={ws.busy}
+                  onClick={() => ws.closeModal()}
+                >
                   Annuleren
                 </button>
                 <button
@@ -193,7 +253,7 @@ export function DatasetsModals({ ws }: Props) {
         {ws.modal === "hf" ? (
           <>
             <h2 id="lv-v2-ds-modal-title">Externe bron — Hugging Face</h2>
-            <p>Queue een Hugging Face repository import via DatasetService. Token wordt nooit gelogd.</p>
+            <p>Queue een Hugging Face repository import via DatasetService. Token wordt nooit gelogd of opgeslagen.</p>
             <div className="lv-v2-ds-form">
               <label>
                 Repository id
@@ -218,7 +278,12 @@ export function DatasetsModals({ ws }: Props) {
                 />
               </label>
               <div className="lv-v2-ds-modal__actions">
-                <button type="button" className="lv-v2-button lv-v2-button--ghost" disabled={ws.busy} onClick={() => ws.setModal(null)}>
+                <button
+                  type="button"
+                  className="lv-v2-button lv-v2-button--ghost"
+                  disabled={ws.busy}
+                  onClick={() => ws.closeModal()}
+                >
                   Annuleren
                 </button>
                 <button
