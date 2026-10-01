@@ -1,7 +1,12 @@
 import { Link } from "react-router-dom";
-import { formatBytes, mapType, rowStatusLabel, statusLabel } from "../../pages/datasets/datasetsMapping";
+import type { ReactNode } from "react";
+import { formatBytes, mapType, statusLabel } from "../../pages/datasets/datasetsMapping";
+import { seriesFromPreview } from "../../pages/datasets/previewSeries";
+import { redactSecretUri, recoveryLabel, qualityLabel, previewSampleText, previewSampleTable } from "../../pages/datasets/viewModels";
 import type { DatasetsWorkspace, DetailTab } from "../../pages/datasets/useDatasetsWorkspace";
+import { DatasetActivityConsole } from "../../pages/datasets/DatasetActivityConsole";
 import { EmptyState, LoadingState } from "../ui";
+import { exportPhaseLabel } from "../../pages/datasets/exportState";
 
 type Props = {
   ws: DatasetsWorkspace;
@@ -9,34 +14,21 @@ type Props = {
 
 const PRIMARY_TABS: Array<{ id: DetailTab; label: string }> = [
   { id: "overview", label: "Overzicht" },
-  { id: "analyse", label: "Analyse" },
+  { id: "quality", label: "Kwaliteit" },
   { id: "preview", label: "Voorbeeld" },
-  { id: "metadata", label: "Metadata" },
+  { id: "versions", label: "Versies" },
+  { id: "processing", label: "Verwerking" },
 ];
 
-/** Detect numeric time-series columns from bounded preview — never invent BTC charts. */
-function seriesFromPreview(rows: Array<Record<string, unknown>>): {
-  values: number[];
-  label: string;
-} | null {
-  if (!rows.length) return null;
-  const keys = Object.keys(rows[0] ?? {});
-  const numericKey = keys.find((k) =>
-    rows.slice(0, 12).every((r) => {
-      const v = r[k];
-      return typeof v === "number" || (typeof v === "string" && v.trim() !== "" && !Number.isNaN(Number(v)));
-    }),
-  );
-  if (!numericKey) return null;
-  const values = rows
-    .slice(0, 24)
-    .map((r) => Number(r[numericKey]))
-    .filter((n) => Number.isFinite(n));
-  if (values.length < 3) return null;
-  return { values, label: numericKey };
-}
+const MORE_TABS: Array<{ id: DetailTab; label: string }> = [
+  { id: "semantics", label: "Semantiek" },
+  { id: "learning", label: "Learning" },
+  { id: "provenance", label: "Herkomst" },
+  { id: "activity", label: "Activiteit" },
+  { id: "advanced", label: "Geavanceerd" },
+];
 
-function MiniSeriesChart({ values, label }: { values: number[]; label: string }) {
+function MiniSeriesChart({ values, label, xLabel }: { values: number[]; label: string; xLabel: string }) {
   const min = Math.min(...values);
   const max = Math.max(...values);
   const span = Math.max(1e-9, max - min);
@@ -50,27 +42,27 @@ function MiniSeriesChart({ values, label }: { values: number[]; label: string })
     })
     .join(" ");
   const last = values[values.length - 1];
-  const first = values[0];
-  const delta = first !== 0 ? ((last - first) / Math.abs(first)) * 100 : null;
   return (
-    <div className="lv-v2-ds-series" aria-label={`Series preview: ${label}`}>
+    <div className="lv-v2-ds-series" aria-label={`Series preview: ${label} over ${xLabel}`}>
       <div className="lv-v2-ds-series__head">
-        <strong>{label}</strong>
-        <span>
-          {last.toLocaleString()}
-          {delta != null ? (
-            <em className={delta >= 0 ? "is-up" : "is-down"}>
-              {" "}
-              {delta >= 0 ? "+" : ""}
-              {delta.toFixed(1)}%
-            </em>
-          ) : null}
-        </span>
+        <strong>
+          {label} <span className="lv-v2-muted">× {xLabel}</span>
+        </strong>
+        <span>{last.toLocaleString()}</span>
       </div>
       <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden="true">
         <polyline fill="none" stroke="#38bdf8" strokeWidth="2" points={pts} />
       </svg>
     </div>
+  );
+}
+
+function ActionDisabled({ reason, children }: { reason: string | null; children: ReactNode }) {
+  if (!reason) return <>{children}</>;
+  return (
+    <span title={reason} className="lv-v2-ds-action-disabled">
+      {children}
+    </span>
   );
 }
 
@@ -86,11 +78,29 @@ export function DatasetsDetailPanel({ ws }: Props) {
     );
   }
 
-  const relatedJobs = ws.jobs.filter((j) => j.datasetId === record.datasetId).slice(0, 8);
-  const tags = row.tags ?? record.semanticTags ?? [];
   const series = seriesFromPreview(ws.detailPreview);
   const columnsKnown =
     ws.detailPreview[0] != null ? Object.keys(ws.detailPreview[0]).length : null;
+  const tags = ws.tagChips.length ? ws.tagChips : row.tags ?? record.semanticTags ?? [];
+  const learning =
+    record.learningState ?? record.brain ?? null;
+  const brainStatus = record.brainStatus ?? learning?.brainStatus ?? "—";
+
+  const needsVersion = !ws.selectedVersionId ? "Selecteer eerst een datasetversie" : null;
+
+  const previewBody = (() => {
+    if (ws.previewError) return <p className="lv-v2-warn">{ws.previewError}</p>;
+    if (ws.detailPreview.length === 0) {
+      return <EmptyState title="Geen voorbeeldrijen" detail="Bounded preview vereist een gematerialiseerde versie." />;
+    }
+    if (ws.sampleTab === "Tekst") {
+      return <pre className="lv-v2-ds-preview">{previewSampleText(ws.detailPreview)}</pre>;
+    }
+    if (ws.sampleTab === "Tabel") {
+      return <pre className="lv-v2-ds-preview">{previewSampleTable(ws.detailPreview)}</pre>;
+    }
+    return <pre className="lv-v2-ds-preview">{JSON.stringify(ws.detailPreview.slice(0, 12), null, 2)}</pre>;
+  })();
 
   return (
     <aside className="lv-v2-panel lv-v2-ds-detail" aria-label="Dataset detail">
@@ -114,6 +124,12 @@ export function DatasetsDetailPanel({ ws }: Props) {
         </button>
       </header>
 
+      {ws.selectionOutsidePage ? (
+        <p className="lv-v2-warn" role="status">
+          Geselecteerde dataset staat buiten de huidige inventarisfilters/pagina — detail blijft synchroon.
+        </p>
+      ) : null}
+
       <div className="lv-v2-ds-detail__tabs" role="tablist" aria-label="Dataset detail tabs">
         {PRIMARY_TABS.map((tab) => (
           <button
@@ -129,12 +145,11 @@ export function DatasetsDetailPanel({ ws }: Props) {
         ))}
         <details className="lv-v2-ds-detail__more">
           <summary>Meer</summary>
-          <button type="button" onClick={() => ws.setDetailTab("versions")}>
-            Versies
-          </button>
-          <button type="button" onClick={() => ws.setDetailTab("activity")}>
-            Activiteit
-          </button>
+          {MORE_TABS.map((tab) => (
+            <button key={tab.id} type="button" onClick={() => ws.setDetailTab(tab.id)}>
+              {tab.label}
+            </button>
+          ))}
           <button type="button" onClick={() => ws.setModal("health")}>
             Health
           </button>
@@ -147,43 +162,34 @@ export function DatasetsDetailPanel({ ws }: Props) {
 
         {ws.detailTab === "overview" && !ws.detailLoading ? (
           <>
-            {series ? <MiniSeriesChart values={series.values} label={series.label} /> : null}
+            {series ? (
+              <MiniSeriesChart values={series.values} label={series.label} xLabel={series.xLabel} />
+            ) : null}
             <dl className="lv-v2-ds-kv">
               <div>
-                <dt>Type</dt>
-                <dd>{mapType(record)}</dd>
-              </div>
-              <div>
-                <dt>Bron</dt>
+                <dt>SOURCE</dt>
                 <dd>{row.source}</dd>
               </div>
               <div>
-                <dt>Grootte</dt>
-                <dd>{formatBytes(record.byteSize)}</dd>
-              </div>
-              <div>
-                <dt>Records</dt>
-                <dd>{record.rowCount == null ? "—" : record.rowCount.toLocaleString()}</dd>
-              </div>
-              <div>
-                <dt>Kolommen</dt>
-                <dd>{columnsKnown == null ? "UNMEASURED" : columnsKnown}</dd>
-              </div>
-              <div>
-                <dt>Bijgewerkt</dt>
-                <dd>{row.updated}</dd>
-              </div>
-              <div>
-                <dt>Status</dt>
+                <dt>DATASET</dt>
                 <dd>
-                  <span className={`lv-v2-ds-status is-${row.status}`}>
-                    <i aria-hidden="true" />
-                    {rowStatusLabel(row)}
-                  </span>
+                  {mapType(record)} · {statusLabel(row.status)}
                 </dd>
               </div>
               <div>
-                <dt>Index</dt>
+                <dt>VERSION</dt>
+                <dd>
+                  {ws.selectedVersion
+                    ? `${ws.selectedVersion.versionLabel} (${ws.selectedVersion.kind})`
+                    : "—"}
+                </dd>
+              </div>
+              <div>
+                <dt>VALIDATION</dt>
+                <dd>{qualityLabel(record.quality)}</dd>
+              </div>
+              <div>
+                <dt>INDEX</dt>
                 <dd>
                   {row.embeddings.kind === "indexing"
                     ? row.embeddings.pct >= 0
@@ -193,8 +199,25 @@ export function DatasetsDetailPanel({ ws }: Props) {
                 </dd>
               </div>
               <div>
-                <dt>Pad</dt>
-                <dd className="lv-v2-ds-mono">{record.rawPath || record.originalUri || "—"}</dd>
+                <dt>LEARNING</dt>
+                <dd>{String(brainStatus)}</dd>
+              </div>
+              <div>
+                <dt>SEMANTICS</dt>
+                <dd>
+                  {record.semanticProfile?.primaryCategory ||
+                    record.primaryCategory ||
+                    record.semanticProfile?.summary ||
+                    "—"}
+                </dd>
+              </div>
+              <div>
+                <dt>Grootte / Records</dt>
+                <dd>
+                  {formatBytes(record.byteSize)} ·{" "}
+                  {record.rowCount == null ? "—" : record.rowCount.toLocaleString()}
+                  {columnsKnown == null ? "" : ` · ${columnsKnown} kolommen`}
+                </dd>
               </div>
             </dl>
             <div className="lv-v2-ds-tags-block">
@@ -202,19 +225,47 @@ export function DatasetsDetailPanel({ ws }: Props) {
                 <span>Tags</span>
               </div>
               <div className="lv-v2-ds-tags">
-                {tags.length ? tags.map((t) => <span key={t}>{t}</span>) : <span className="lv-v2-muted">Geen tags</span>}
+                {tags.length ? (
+                  tags.map((t, i) => (
+                    <button
+                      key={`${t.toLowerCase()}-${i}`}
+                      type="button"
+                      className="lv-v2-ds-tag-chip"
+                      onClick={() => ws.onRemoveTagChip(t)}
+                      title="Verwijderen"
+                    >
+                      {t} ×
+                    </button>
+                  ))
+                ) : (
+                  <span className="lv-v2-muted">Geen tags</span>
+                )}
               </div>
               <div className="lv-v2-ds-tag-edit">
                 <input
-                  value={ws.tagDraft}
-                  onChange={(e) => ws.setTagDraft(e.target.value)}
-                  placeholder="tag1, tag2"
-                  aria-label="Tags bewerken"
+                  value={ws.tagInput}
+                  onChange={(e) => ws.setTagInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      ws.onAddTagChip();
+                    }
+                  }}
+                  placeholder="tag toevoegen"
+                  aria-label="Tag toevoegen"
                 />
                 <button
                   type="button"
                   className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm"
-                  disabled={ws.busy || !ws.tagDraft.trim()}
+                  disabled={ws.busy || !ws.tagInput.trim()}
+                  onClick={() => ws.onAddTagChip()}
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm"
+                  disabled={ws.busy}
                   onClick={() => void ws.onSaveTags()}
                 >
                   Opslaan
@@ -224,17 +275,9 @@ export function DatasetsDetailPanel({ ws }: Props) {
           </>
         ) : null}
 
-        {ws.detailTab === "analyse" ? (
+        {ws.detailTab === "quality" || ws.detailTab === "analyse" ? (
           <div className="lv-v2-ds-analyse">
-            <p>
-              Analyse opent de bestaande Research-surface met deze dataset-identiteit. Er is geen tweede
-              analysis engine.
-            </p>
             <dl className="lv-v2-ds-kv">
-              <div>
-                <dt>Semantic profile</dt>
-                <dd>{record.semanticProfile?.summary || record.semanticProfile?.primaryCategory || "—"}</dd>
-              </div>
               <div>
                 <dt>Quality</dt>
                 <dd>
@@ -244,10 +287,52 @@ export function DatasetsDetailPanel({ ws }: Props) {
                 </dd>
               </div>
               <div>
-                <dt>Status</dt>
-                <dd>{statusLabel(row.status)}</dd>
+                <dt>Recovery</dt>
+                <dd>{recoveryLabel(ws.recovery?.recoveryState ?? ws.recovery?.state)}</dd>
               </div>
             </dl>
+            <div className="lv-v2-ds-action-row">
+              <ActionDisabled reason={needsVersion}>
+                <button
+                  type="button"
+                  className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm"
+                  disabled={ws.busy || Boolean(needsVersion)}
+                  onClick={() => void ws.onValidate()}
+                >
+                  Valideren
+                </button>
+              </ActionDisabled>
+              <ActionDisabled reason={needsVersion}>
+                <button
+                  type="button"
+                  className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm"
+                  disabled={ws.busy || Boolean(needsVersion)}
+                  onClick={() => void ws.onScanPii()}
+                >
+                  PII-scan
+                </button>
+              </ActionDisabled>
+              <ActionDisabled reason={needsVersion}>
+                <button
+                  type="button"
+                  className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm"
+                  disabled={ws.busy || Boolean(needsVersion)}
+                  onClick={() => void ws.onDedupe()}
+                >
+                  Dedupliceren
+                </button>
+              </ActionDisabled>
+              <ActionDisabled reason={needsVersion}>
+                <button
+                  type="button"
+                  className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm"
+                  disabled={ws.busy || Boolean(needsVersion)}
+                  onClick={() => void ws.onContaminationScan()}
+                >
+                  Contaminatie
+                </button>
+              </ActionDisabled>
+            </div>
             <button
               type="button"
               className="lv-v2-button lv-v2-button--primary lv-v2-button--sm"
@@ -255,25 +340,26 @@ export function DatasetsDetailPanel({ ws }: Props) {
             >
               Openen in Analyse
             </button>
-            <button
-              type="button"
-              className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm"
-              disabled={ws.busy}
-              onClick={() => void ws.onSemanticAnalyze(row.id)}
-            >
-              Semantic analyse enqueue
-            </button>
           </div>
         ) : null}
 
         {ws.detailTab === "preview" ? (
-          ws.previewError ? (
-            <p className="lv-v2-warn">{ws.previewError}</p>
-          ) : ws.detailPreview.length === 0 ? (
-            <EmptyState title="Geen voorbeeldrijen" detail="Bounded preview vereist een gematerialiseerde versie." />
-          ) : (
-            <pre className="lv-v2-ds-preview">{JSON.stringify(ws.detailPreview.slice(0, 12), null, 2)}</pre>
-          )
+          <>
+            <div className="lv-v2-ds-sample-tabs" role="tablist">
+              {(["JSON", "Tekst", "Tabel"] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  role="tab"
+                  className={ws.sampleTab === t ? "is-active" : undefined}
+                  onClick={() => ws.setSampleTab(t)}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+            {previewBody}
+          </>
         ) : null}
 
         {ws.detailTab === "versions" ? (
@@ -283,52 +369,199 @@ export function DatasetsDetailPanel({ ws }: Props) {
             <ul className="lv-v2-ds-version-list">
               {ws.detailVersions.map((v) => (
                 <li key={v.versionId}>
-                  <strong>{v.versionLabel}</strong>
-                  <span>{v.kind}</span>
-                  <span>{v.status}</span>
-                  <span>{formatBytes(v.byteSize)}</span>
+                  <button
+                    type="button"
+                    className={ws.selectedVersionId === v.versionId ? "is-active" : undefined}
+                    onClick={() => ws.setSelectedVersionId(v.versionId)}
+                  >
+                    <strong>{v.versionLabel}</strong>
+                    <span>{v.kind}</span>
+                    <span>{v.status}</span>
+                    <span>{formatBytes(v.byteSize)}</span>
+                  </button>
                 </li>
               ))}
             </ul>
           )
         ) : null}
 
-        {ws.detailTab === "metadata" ? (
-          <pre className="lv-v2-ds-preview">
-            {JSON.stringify(
-              {
-                datasetId: record.datasetId,
-                name: record.name,
-                sourceType: record.sourceType,
-                status: record.status,
-                license: record.license,
-                contentHash: record.contentHash,
-                semanticProfile: record.semanticProfile,
-                metadata: record.metadata,
-              },
-              null,
-              2,
-            )}
-          </pre>
+        {ws.detailTab === "processing" ? (
+          <div className="lv-v2-ds-action-grid">
+            <button type="button" className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm" disabled={ws.busy} onClick={() => void ws.onMaterialize()}>
+              Materialiseren
+            </button>
+            <ActionDisabled reason={needsVersion}>
+              <button type="button" className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm" disabled={ws.busy || Boolean(needsVersion)} onClick={() => void ws.onValidate()}>
+                Valideren
+              </button>
+            </ActionDisabled>
+            <ActionDisabled reason={needsVersion}>
+              <button type="button" className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm" disabled={ws.busy || Boolean(needsVersion)} onClick={() => void ws.onDedupe()}>
+                Dedupliceren
+              </button>
+            </ActionDisabled>
+            <ActionDisabled reason={needsVersion}>
+              <button type="button" className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm" disabled={ws.busy || Boolean(needsVersion)} onClick={() => void ws.onTransform()}>
+                Transformeren
+              </button>
+            </ActionDisabled>
+            <ActionDisabled reason={needsVersion}>
+              <button type="button" className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm" disabled={ws.busy || Boolean(needsVersion)} onClick={() => void ws.onSplit()}>
+                Splitsen
+              </button>
+            </ActionDisabled>
+            <ActionDisabled reason={needsVersion}>
+              <button type="button" className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm" disabled={ws.busy || Boolean(needsVersion)} onClick={() => void ws.onTokenize()}>
+                Tokenize stats
+              </button>
+            </ActionDisabled>
+            <button type="button" className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm" disabled={ws.busy} onClick={() => void ws.onExportDownload(row.id)}>
+              Exporteren
+            </button>
+            <button type="button" className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm" disabled={ws.busy} onClick={() => void ws.onIndex(row.id)}>
+              Indexeren
+            </button>
+            <p className="lv-v2-muted">Export: {exportPhaseLabel(ws.exportState.phase)}</p>
+            {ws.exportState.phase === "READY" ? (
+              <button type="button" className="lv-v2-button lv-v2-button--primary lv-v2-button--sm" disabled={ws.busy} onClick={() => void ws.onDownloadExport()}>
+                Downloaden
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {ws.detailTab === "semantics" || ws.detailTab === "metadata" ? (
+          <div className="lv-v2-ds-form">
+            <p className="lv-v2-muted">
+              Operator overrides vs model profile — opslaan schrijft canonical semantic metadata.
+            </p>
+            <label>
+              Weergavenaam
+              <input
+                value={ws.editDisplayName}
+                onChange={(e) => ws.setEditDisplayName(e.target.value)}
+                disabled={!ws.semanticEditing && false}
+              />
+            </label>
+            <label>
+              Categorie
+              <input value={ws.editCategory} onChange={(e) => ws.setEditCategory(e.target.value)} />
+            </label>
+            <pre className="lv-v2-ds-preview">
+              {JSON.stringify(
+                {
+                  operator: { displayName: ws.editDisplayName, category: ws.editCategory, tags: ws.tagChips },
+                  model: record.semanticProfile,
+                },
+                null,
+                2,
+              )}
+            </pre>
+            <div className="lv-v2-ds-action-row">
+              <button type="button" className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm" disabled={ws.busy} onClick={() => void ws.onSemanticAnalyze(row.id, false)}>
+                Analyse enqueue
+              </button>
+              <button type="button" className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm" disabled={ws.busy} onClick={() => void ws.onSemanticAnalyze(row.id, true)}>
+                Analyse sync
+              </button>
+              <button type="button" className="lv-v2-button lv-v2-button--primary lv-v2-button--sm" disabled={ws.busy} onClick={() => void ws.onSaveSemantic()}>
+                Metadata opslaan
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {ws.detailTab === "learning" ? (
+          <div className="lv-v2-ds-analyse">
+            <dl className="lv-v2-ds-kv">
+              <div>
+                <dt>Brain status</dt>
+                <dd>{String(brainStatus)}</dd>
+              </div>
+              <div>
+                <dt>Canonical</dt>
+                <dd>{String(record.canonicalState ?? learning?.canonicalState ?? "—")}</dd>
+              </div>
+              <div>
+                <dt>Source missing</dt>
+                <dd>{record.sourceMissing || learning?.sourceMissing ? "Ja" : "Nee"}</dd>
+              </div>
+            </dl>
+            <div className="lv-v2-ds-action-row">
+              <button type="button" className="lv-v2-button lv-v2-button--primary lv-v2-button--sm" disabled={ws.busy} onClick={() => void ws.onLearn()}>
+                Kennis leren
+              </button>
+              <button type="button" className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm" disabled={ws.busy} onClick={() => void ws.onLearn({ rebuild: true })}>
+                Rebuild
+              </button>
+              <button type="button" className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm" disabled={ws.busy} onClick={() => void ws.onPreflight()}>
+                Preflight
+              </button>
+            </div>
+            <Link className="lv-v2-ds-widget__link" to="/datasets?mode=learning">
+              Learning fleet →
+            </Link>
+          </div>
+        ) : null}
+
+        {ws.detailTab === "provenance" ? (
+          <dl className="lv-v2-ds-kv">
+            <div>
+              <dt>Source URI</dt>
+              <dd className="lv-v2-ds-mono">{redactSecretUri(record.originalUri || record.rawPath)}</dd>
+            </div>
+            <div>
+              <dt>Content hash</dt>
+              <dd className="lv-v2-ds-mono">{record.contentHash || "—"}</dd>
+            </div>
+            <div>
+              <dt>License</dt>
+              <dd>{record.license || "—"}</dd>
+            </div>
+            <div>
+              <dt>Recovery</dt>
+              <dd>{recoveryLabel(ws.recovery?.recoveryState ?? ws.recovery?.state)}</dd>
+            </div>
+            <div>
+              <dt>Lineage</dt>
+              <dd className="lv-v2-ds-mono">
+                {JSON.stringify(ws.recovery ?? { datasetId: record.datasetId }, null, 2).slice(0, 800)}
+              </dd>
+            </div>
+          </dl>
         ) : null}
 
         {ws.detailTab === "activity" ? (
-          relatedJobs.length === 0 ? (
-            <EmptyState title="Geen jobs voor deze dataset" detail="Importeer, indexeer of verwerk om jobs te maken." />
-          ) : (
-            <ul className="lv-v2-ds-job-list">
-              {relatedJobs.map((j) => (
-                <li key={j.jobId}>
-                  <strong>{j.jobType.replace(/_/g, " ")}</strong>
-                  <span>{j.status}</span>
-                  <span>{j.phase || "—"}</span>
-                  <span>
-                    {j.progress == null ? "progress UNMEASURED" : `${Math.round(j.progress * 100)}%`}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )
+          <DatasetActivityConsole
+            jobs={ws.detailJobs}
+            entries={ws.detailActivityEntries}
+            preferredJobId={ws.preferredJobId}
+            onPreferredJobIdChange={ws.setPreferredJobId}
+            apiError={ws.detailJobsError}
+            live={ws.detailJobs.some((j) => ["running", "queued", "pending"].includes(j.status.toLowerCase()))}
+            busy={ws.busy}
+            onCancelJob={ws.onCancelDatasetJob}
+            onClearView={ws.clearActivityView}
+          />
+        ) : null}
+
+        {ws.detailTab === "advanced" ? (
+          <div className="lv-v2-ds-action-grid">
+            <button type="button" className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm" disabled={ws.busy} onClick={() => void ws.onDuplicate()}>
+              Dupliceren
+            </button>
+            <button type="button" className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm" disabled={ws.busy} onClick={() => void ws.onRefreshLibrary()}>
+              Library rescan
+            </button>
+            <button type="button" className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm" disabled={ws.busy} onClick={() => void ws.onPreflight()}>
+              Recovery / preflight
+            </button>
+            <p className="lv-v2-muted">
+              Recovery: {recoveryLabel(ws.recovery?.recoveryState ?? ws.recovery?.state)} —{" "}
+              {ws.recovery?.detail || "geen extra diagnostiek"}
+            </p>
+            <p className="lv-v2-muted">Mixtures / packing: alleen via bestaande API-routes wanneer beschikbaar.</p>
+          </div>
         ) : null}
       </div>
 
@@ -370,13 +603,13 @@ export function DatasetsDetailPanel({ ws }: Props) {
             type="button"
             className="lv-v2-button lv-v2-button--danger lv-v2-button--sm"
             disabled={ws.busy}
-            onClick={() => void ws.onDelete(row.id)}
+            onClick={() => ws.setModal("delete")}
           >
             Verwijderen
           </button>
         </div>
-        <Link className="lv-v2-ds-widget__link" to="/offline-datasets">
-          Offline weergave →
+        <Link className="lv-v2-ds-widget__link" to="/datasets?mode=learning">
+          Learning weergave →
         </Link>
       </footer>
     </aside>

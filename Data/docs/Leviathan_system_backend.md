@@ -1042,24 +1042,32 @@ Important dataset concepts:
 
 HTTP: `Data/backend/routes/datasets.py`. Knowledge ingestion: `Data/backend/routes/knowledge.py`. Source ingestion enters through domain APIs but heavy parse/index work is worker-owned.
 
-### Catalog query, overview, and quality
+### Catalog query, overview, jobs, learning, and quality
 
 `GET /api/datasets` supports bounded server-side listing (backward compatible with `limit`-only callers):
 
 - `q` — search name / displayName / description / category / tags metadata
-- `source` / `sourceType`, `sourceScope` (`local`|`external`), `indexed` (bool), `category`, `split`, `status`, `type` / `detectedFormat`, `tags`
-- `sort`, `offset`, `limit` (capped)
-- response includes `datasets`, `total`, `hasMore`, `nextOffset` — **page size never defines catalog totals**
+- `source` / `sourceType`, `sourceScope` (`local`|`external`), `indexed` (bool), `category`, `split`, `status`, `type` / `detectedFormat`
+- `tags` — CSV of tags; **exact** case-insensitive membership in JSON tag arrays (`semanticProfile.tags` / `semanticTags` / `tags`); AND across CSV members (no summary substring false positives)
+- `updatedAfter` / `updatedBefore` — ISO bounds on dataset `updated_at`
+- `sort`, `offset`, `limit` (capped); optional `cursor` for keyset pagination when `sort=updated_at_desc`
+- response includes `datasets`, `total`, `hasMore`, `nextOffset`, `nextCursor` — **page size never defines catalog totals**
 
-`GET /api/datasets/overview` returns bounded aggregates for the Dataset Management / Onderzoek Datasets control planes:
+`GET /api/datasets/overview` returns bounded aggregates for the Datasets control plane (`/datasets`):
 
 - totalDatasets / totalSamples (partial measurement when `row_count` is null)
 - localDatasets / externalDatasets / indexedDatasets / notIndexedDatasets (SQL aggregates; indexed = distinct datasets with a READY `dataset_indexes` row)
 - attributableBytes + disk capacity (`shutil.disk_usage` on corpus root) + storageBreakdown
 - active/running/queued import jobs
-- validation issue rollups from persisted `validation_json` (not failed-job counts)
+- validation issue rollups from persisted `validation_json` — **latest-only** per dataset (`ROW_NUMBER` by `updated_at DESC`, one authoritative version); not failed-job counts and not a sum across all versions
 - catalogStatus from derived catalog reconcile (`generatedAt`) — not remote “Online sync”
 - tagCounts and Dataset Services **status projections** (embedding / dataset / training / knowledge) — no new daemons
+
+`GET /api/datasets/jobs` supports `datasetId`, `status`, `jobType`, `createdAfter`, `createdBefore`, `limit`, `offset` (server-side period filtering).
+
+`GET /api/datasets/learning/fleet` returns learned + active INDEX rows with embedded dataset summaries (avoids N+1 `GET /api/datasets/{id}`). Related: `GET …/learning/activity`, `POST …/learning/reconcile`.
+
+`POST /api/datasets/jobs/process` is a **test/dev drain helper** only; kernel-backed production raises DatasetError 503. Control-plane UI must not call it.
 
 Bounded bulk control-plane operations (max 25 ids, partial failure reported per id):
 

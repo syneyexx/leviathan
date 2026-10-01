@@ -113,7 +113,7 @@ Tests include `shellStatus.test.ts` / `useShellStatus.test.ts` and page-specific
 | Group | Main destinations |
 |---|---|
 | Hades AI | Chatten, Coding Agent, Taken |
-| LLM | Modellen, Agents, Training, Dataset Management, Offline Datasets, Statestieken |
+| LLM | Modellen, Agents, Training, Statistieken |
 | Media Control | Overview, YouTube, TikTok, Instagram, Facebook, Queue, Viral Radar, Calendar, Analytics, Library, Personas |
 | TradingCenter | Simulation, Strategies, Market Data, Portfolio, PAPER, BROKER, Onderzoek, Research Lab, Control Room |
 | Onderzoek & Kennis | Research, Brain, Geheugen, Knowledge, Evidence, Datasets |
@@ -139,8 +139,8 @@ The “Hades AI” navigation label is UI naming. It does not make `Data/HADES/`
 | `/coding` | `CodingPage` |
 | `/models` | `ModelsPage` |
 | `/training` | `TrainingPage` (V2) |
-| `/dataset-management` | `DatasetManagementPage` (V2) |
-| `/offline-datasets` | `OfflineDatasetsPixelPage` |
+| `/dataset-management` | redirect → `/datasets?mode=manage` |
+| `/offline-datasets` | redirect → `/datasets?mode=learning` |
 | `/agents` | `AgentsPage` |
 | `/analytics` | `AnalyticsPage` |
 
@@ -579,43 +579,47 @@ Evidence=0 alone is not a diagnosis. The UI should display backend reasons such 
 
 # 15. Datasets UI
 
-Two related surfaces exist and **must share the same DatasetService / DatasetStore identities**:
+**Canonical workspace:** `/datasets` → `src/pages/DatasetsPage.tsx` + `src/pages/datasets/` + `src/components/datasets/` under **Onderzoek & Kennis → Datasets** (Leviathan V2). All DatasetService / DatasetStore identities live here.
 
-- `/dataset-management` → `src/pages/DatasetManagementPage.tsx` + `src/pages/dataset-management/` + `src/components/dataset-management/` — **LLM → Dataset Management** operator control plane (Leviathan V2);
-- `/datasets` → `src/pages/DatasetsPage.tsx` + `src/pages/datasets/` + `src/components/datasets/` — **Onderzoek & Kennis → Datasets** research/knowledge surface (Leviathan V2);
-- `/offline-datasets` → `src/pages/pixel/OfflineDatasetsPixelPage.tsx` — offline dataset tooling.
+Legacy redirects (thin `Navigate` shells only):
 
-`/dataset-management` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "LLM / Dataset Management"). MAIN_MENU owns the page under LLM (`v2ChildrenFromMainMenu("llm")`); there is no separate Dataset rail owner.
+- `/dataset-management` → `DatasetManagementPage` → `/datasets?mode=manage`
+- `/offline-datasets` → `OfflineDatasetsPixelPage` → `/datasets?mode=learning`
 
-Composition: `DatasetManagementPage` + `useDatasetManagementWorkspace` + `src/components/dataset-management/*` (hero, metrics, actions, services, library, details, semantic summary, preview, storage, tags) + shared `DatasetActivityConsole`.
+Workspace modes via `?mode=`:
 
-No page-local Dataset Management CSS file — layout lives in global `leviathan-v2.css` under `.lv-v2-page--dataset-mgmt` / `.lv-v2-dm-*`.
-
-Catalog listing is **server-side** (`GET /api/datasets` with `q` / filters / `offset` / `limit` / `total`). KPI / storage / services / popular tags come from `GET /api/datasets/overview`. Quality is evidence-based (`quality_signals` from persisted validation); unmeasured ≠ 100%. Catalog status is derived-catalog reconcile truth — not a fake “Online sync”.
-
-Production never imports `mocks/dataset-management` configuration or Screen 1 fixture numbers. Visual fixture: `src/mocks/datasetManagementV2VisualFixture.ts` + `e2e/helpers/datasetManagementV2Visual.ts` + `e2e/dataset-management-v2.visual.spec.ts` (reference: `docs/ui_reference/dataset-management-llm-v2-reference.png`, 1672×941).
+- default / inventory — catalog inventory + detail
+- `manage` — same workspace with manage-oriented entry (redirect target from legacy DM)
+- `learning` — learning fleet via `GET /api/datasets/learning/fleet` (`useDatasetLearningFleet`; no N+1 `getDataset`)
 
 `/datasets` uses `AppShell variant="v2"` (title "Kennis & Onderzoek / Datasets"). MAIN_MENU owns the page under Onderzoek & Kennis (`v2ChildrenFromMainMenu("research")`).
 
 Composition (reference 1664×936): topbar → 5 KPIs → action/search toolbar → filter pills + Filters/Kolommen/list-grid → inventory + detail → **4** bottom widgets (Verwerking / Bron Integraties / Opslag / Activiteit). No primary hero. Activity expands via modal; Health is secondary modal. Production contracts: `src/pages/datasets/constants.ts` (never import fixture numbers from `mocks/`).
 
-No page-local Datasets V2 CSS — layout lives in global `leviathan-v2.css` under `.lv-v2-page--datasets` / `.lv-v2-ds-*`. Legacy `datasets-dashboard.css` remains for shared `.lv-dac` activity console primitives.
+No page-local Datasets V2 CSS — layout lives in global `leviathan-v2.css` under `.lv-v2-page--datasets` / `.lv-v2-ds-*`. Legacy `datasets-dashboard.css` remains for shared `.lv-dac` activity console primitives. Dead CSS for the removed DM surface (`.lv-v2-page--dataset-mgmt` / `.lv-v2-dm-*`) may still linger in `leviathan-v2.css` until a later CSS cleanup.
 
-Inventory uses bounded server pagination (`GET /api/datasets` with `sourceScope` / `indexed` / `offset` / `total`). Overview KPIs prefer `GET /api/datasets/overview` (incl. local/external/indexed aggregates). Updated-date filters operate on real `updatedAt`. Unknown backend status renders as UNKNOWN (never Ready). Unmeasured job progress is indeterminate / UNMEASURED — never an invented percentage. Capacity unknown ≠ fake 1 TB. Screenshot numbers exist only in `mocks/datasetsV2VisualFixture.ts`. Manage Storage navigates to Settings → Opslag. Analyse deep-links to `/research?dataset=…`. Bulk Verwerken/Indexeren use `POST /api/datasets/bulk/{materialize,index}` (max 25, partial failure).
+Catalog listing is **server-side** (`GET /api/datasets` with `q` / filters / `updatedAfter`/`updatedBefore` / `offset` / optional `cursor` / `limit` / `total`). KPI / storage / services / popular tags come from `GET /api/datasets/overview`. Quality is evidence-based (`quality_signals` from persisted validation); unmeasured ≠ 100%. Catalog status is derived-catalog reconcile truth — not a fake “Online sync”.
+
+Inventory uses bounded server pagination (`sourceScope` / `indexed` / `offset` / `total`). Overview KPIs prefer overview aggregates (incl. local/external/indexed). Updated-date filters operate on real `updatedAt`. Unknown backend status renders as UNKNOWN (never Ready). Unmeasured job progress is indeterminate / UNMEASURED — never an invented percentage. Capacity unknown ≠ fake 1 TB. Screenshot numbers exist only in `mocks/datasetsV2VisualFixture.ts`. Manage Storage navigates to Settings → Opslag. Analyse deep-links to `/research?dataset=…`. Bulk Verwerken/Indexeren use `POST /api/datasets/bulk/{materialize,index}` (max 25, partial failure). UI never calls `POST /api/datasets/jobs/process` (test/dev drain only).
 
 Production never falls back to `DH_DEMO_*` inventory rows as live truth.
+
+Visual fixture: `src/mocks/datasetsV2VisualFixture.ts` + `e2e/helpers/datasetsV2Visual.ts` + `e2e/datasets-v2.visual.spec.ts` (reference: `docs/ui_reference/datasets-v2-reference.png`). Redirect e2e: `e2e/dataset-management-v2.visual.spec.ts` asserts `/dataset-management` → `/datasets?mode=manage` and `.lv-v2-page--datasets`.
 
 Supporting shared dataset code includes:
 
 - `DatasetActivityConsole.tsx`;
 - `datasetActivity.ts`;
-- `useDatasetActivity.ts`;
+- `useDatasetActivity.ts` (gen-id + in-flight guard; skip poll when `document.hidden`; failure backoff);
+- `useDatasetInventory.ts` (gen-id race guards);
+- `useDatasetLearningFleet.ts` (`listLearningFleet` only);
+- `useDatasetMutations.ts`;
 - `datasetsInventory.ts`;
 - `datasetsMapping.ts`;
 - `datasetLearningState.ts`;
 - dataset activity/management tests.
 
-Dataset Management uses `displayName ?? name`, category/tags/search and semantic re-analysis APIs (`PATCH /api/datasets/{id}/semantic`). `REINDEX_REQUIRED` is never shown as learned Brain state. Training deep-links pass immutable `datasetId` + `datasetVersionId`.
+Display uses `displayName ?? name`, category/tags/search and semantic re-analysis APIs (`PATCH /api/datasets/{id}/semantic`). `REINDEX_REQUIRED` is never shown as learned Brain state. Training deep-links pass immutable `datasetId` + `datasetVersionId`.
 
 Job/activity panels expose backend compute truth (`python_streaming` / `rust_native`) and progress. Missing peak RSS/spill/throughput remains UNMEASURED.
 
@@ -1105,7 +1109,7 @@ Always inspect the current client function and backend route before adding a pag
 | Knowledge | `src/pages/KnowledgeLibraryPage.tsx` |
 | Evidence | `src/pages/EvidenceVaultPage.tsx` |
 | General Research | `src/pages/ResearchPage.tsx`, `src/config/research.ts` |
-| Datasets | `src/pages/DatasetsPage.tsx`, `src/pages/datasets/`, `src/pages/pixel/*Dataset*` |
+| Datasets | `src/pages/DatasetsPage.tsx`, `src/pages/datasets/`, `src/components/datasets/`; redirects: `DatasetManagementPage`, `OfflineDatasetsPixelPage` |
 | Training | route in `App.tsx`, training/pixel page family |
 | Analytics | `src/pages/AnalyticsPage.tsx` |
 | Trading shared | `src/pages/trading/` |

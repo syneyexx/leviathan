@@ -205,15 +205,22 @@ describe("datasets inventory + activity co-existence regression", () => {
     expect(cssSrc).toMatch(/\.lv-v2-page--datasets\s+\.lv-dac/);
   });
 
-  it("inventory filtering is wired through shared helper (not inlined-away)", () => {
+  it("inventory filtering is server-side via listDatasets params (not page-local type/updated)", () => {
     const wsSrc = readFileSync(join(here, "datasets/useDatasetsWorkspace.ts"), "utf8");
+    const invSrc = readFileSync(join(here, "datasets/useDatasetInventory.ts"), "utf8");
+    const filterSrc = readFileSync(join(here, "datasets/datasetFilterParams.ts"), "utf8");
     const widgetsSrc = readFileSync(
       join(here, "../components/datasets/DatasetsBottomWidgets.tsx"),
       "utf8",
     );
-    expect(wsSrc).toContain("filterDatasetRows");
-    expect(wsSrc).toContain("countDatasetsByFilter");
-    expect(wsSrc).toContain("api.listDatasets");
+    expect(invSrc).toContain("buildListDatasetsParams");
+    expect(invSrc).toContain("api.listDatasets");
+    expect(invSrc).toContain("countDatasetsByFilter");
+    expect(invSrc).toContain("selectionOutsidePage");
+    expect(filterSrc).toContain("updatedAfter");
+    expect(filterSrc).toContain("detectedFormat");
+    // Client-side type/updated filter must not drive inventory totals.
+    expect(invSrc).not.toMatch(/filterDatasetRows\(liveRows/);
     expect(wsSrc).toContain("/settings?section=opslag");
     expect(widgetsSrc).toContain("Dataset Activiteit");
   });

@@ -32,22 +32,20 @@ describe("navigation menu", () => {
     ]);
   });
 
-  it("maps models/training/agents/analytics/dataset pages under LLM", () => {
+  it("maps models/training/agents/analytics under LLM (datasets live under research)", () => {
     expect(findMainMenuByPath("/models").id).toBe("llm");
     expect(findMainMenuByPath("/training").id).toBe("llm");
     expect(findMainMenuByPath("/agents").id).toBe("llm");
     expect(findMainMenuByPath("/analytics").id).toBe("llm");
-    expect(findMainMenuByPath("/dataset-management").id).toBe("llm");
-    expect(findMainMenuByPath("/offline-datasets").id).toBe("llm");
     const llm = findMainMenuByPath("/models");
     expect(llm.submenu.map((item) => item.label)).toEqual([
       "Modellen",
       "Agents",
       "Training",
-      "Dataset Manager",
-      "Offline Datasets",
       "Statistieken",
     ]);
+    expect(llm.submenu.some((item) => item.id === "dataset-management")).toBe(false);
+    expect(llm.submenu.some((item) => item.id === "offline-datasets")).toBe(false);
   });
 
   it("labels Workflows under Runtime & Tools", () => {

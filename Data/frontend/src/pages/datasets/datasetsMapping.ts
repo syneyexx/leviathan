@@ -91,13 +91,14 @@ export function mapStatus(status: string): DhStatus {
   if (s === "ready" || s === "complete" || s === "completed" || s === "processed" || s === "materialized") {
     return "ready";
   }
-  if (s === "created" || s === "raw") return "processing";
+  if (s === "created" || s === "raw") return "created";
   if (s === "archived") return "offline";
   return "unknown";
 }
 
 export function statusLabel(status: DhStatus): string {
   if (status === "ready") return "Gereed";
+  if (status === "created") return "Aangemaakt";
   if (status === "offline") return "Offline";
   if (status === "validating") return "Valideren";
   if (status === "failed") return "Mislukt";
@@ -268,17 +269,28 @@ export function recordToRow(ds: DatasetRecord, jobs: DatasetJob[]): DhRow {
     return s === "running" || s === "queued" || s === "pending";
   });
   const latestJob = related[0];
-  const status = mapStatus(ds.status);
+  // Prefer live job status when this dataset has an active job.
+  let status = mapStatus(ds.status);
+  if (activeJob) status = "processing";
   const detail =
     status === "processing" || status === "validating"
       ? jobProgressDetail(activeJob || latestJob)
       : status === "failed"
         ? jobProgressDetail(latestJob) || latestJob?.error || null
         : null;
-  const tags = [
+  const seenTags = new Set<string>();
+  const tags: string[] = [];
+  for (const raw of [
     ...(ds.semanticTags ?? []),
     ...((ds.metadata as { tags?: string[] } | undefined)?.tags ?? []),
-  ].filter(Boolean);
+  ]) {
+    const tag = String(raw || "").trim();
+    if (!tag) continue;
+    const key = tag.toLowerCase();
+    if (seenTags.has(key)) continue;
+    seenTags.add(key);
+    tags.push(tag);
+  }
   return {
     id: ds.datasetId,
     name: ds.displayName || ds.semanticProfile?.displayName || ds.name,

@@ -92,7 +92,12 @@ export function DatasetsToolbar({ ws }: Props) {
         <button
           type="button"
           className="lv-v2-button lv-v2-button--ghost lv-v2-button--sm"
-          disabled={ws.busy}
+          disabled={ws.busy || !ws.canProcess}
+          title={
+            ws.canProcess
+              ? "Materialiseer geselecteerde datasets"
+              : "Selecteer datasets om te verwerken"
+          }
           onClick={() => void ws.onBulkProcess()}
         >
           Verwerken

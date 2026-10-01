@@ -84,8 +84,6 @@ describe("v2Nav LLM group", () => {
       "Modellen",
       "Agents",
       "Training",
-      "Dataset Manager",
-      "Offline Datasets",
       "Statistieken",
     ]);
   });
@@ -96,9 +94,10 @@ describe("v2Nav LLM group", () => {
     expect(isV2NavItemActive(llm, "/models")).toBe(true);
     expect(isV2NavItemActive(llm, "/agents")).toBe(true);
     expect(isV2NavItemActive(llm, "/training")).toBe(true);
-    expect(isV2NavItemActive(llm, "/dataset-management")).toBe(true);
-    expect(isV2NavItemActive(llm, "/offline-datasets")).toBe(true);
     expect(isV2NavItemActive(llm, "/analytics")).toBe(true);
+    // Datasets moved to Onderzoek & Kennis — legacy routes redirect, not LLM-active.
+    expect(isV2NavItemActive(llm, "/dataset-management")).toBe(false);
+    expect(isV2NavItemActive(llm, "/offline-datasets")).toBe(false);
     expect(isV2NavItemActive(llm, "/")).toBe(false);
   });
 

@@ -251,6 +251,109 @@ class DatasetCatalogQueryTests(unittest.TestCase):
         self.assertEqual(len(body["datasets"]), 100)
         self.assertEqual(body["total"], 120)
 
+    def test_updated_after_before_window(self) -> None:
+        # Touch one dataset so its updated_at is distinctly newer.
+        target = self.store.list_datasets(limit=1)[0]
+        self.store.update_dataset(target.dataset_id, description="touched for window")
+        refreshed = self.store.get_dataset(target.dataset_id)
+        assert refreshed is not None
+        stamp = refreshed.updated_at
+        r = self.client.get(
+            "/api/datasets",
+            params={"updatedAfter": stamp, "limit": 50, "sort": "updated_at_desc"},
+        )
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertGreaterEqual(body["total"], 1)
+        ids = {d["datasetId"] for d in body["datasets"]}
+        self.assertIn(target.dataset_id, ids)
+
+        r2 = self.client.get(
+            "/api/datasets",
+            params={"updatedBefore": "1970-01-01T00:00:00+00:00", "limit": 50},
+        )
+        self.assertEqual(r2.status_code, 200)
+        self.assertEqual(r2.json()["total"], 0)
+
+    def test_combined_filters_with_indexed_and_search(self) -> None:
+        # Mark first even kennis/local row with a ready index.
+        ds = None
+        for i in range(120):
+            if i % 2 == 0 and i % 3 != 0:  # kennis + local from seed
+                # Find by name
+                found = self.store.query_datasets(q=f"ds_{i:04d}", limit=1)
+                if found["items"]:
+                    ds = found["items"][0]
+                    break
+        self.assertIsNotNone(ds)
+        assert ds is not None
+        ver = self.store.list_versions(ds.dataset_id)[0]
+        from Data.modules.datasets.types import IndexStatus
+
+        idx = self.store.create_index(
+            dataset_id=ds.dataset_id,
+            version_id=ver.version_id,
+            status=IndexStatus.READY,
+        )
+        self.store.update_index(idx.index_id, chunk_count=10)
+        r = self.client.get(
+            "/api/datasets",
+            params={
+                "sourceScope": "local",
+                "category": "kennis",
+                "indexed": True,
+                "q": ds.name,
+                "limit": 20,
+            },
+        )
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertGreaterEqual(body["total"], 1)
+        self.assertTrue(any(d["datasetId"] == ds.dataset_id for d in body["datasets"]))
+
+    def test_cursor_keyset_pagination(self) -> None:
+        r1 = self.client.get(
+            "/api/datasets",
+            params={"sort": "updated_at_desc", "limit": 10},
+        )
+        self.assertEqual(r1.status_code, 200)
+        body1 = r1.json()
+        self.assertEqual(body1["total"], 120)
+        self.assertIsNotNone(body1.get("nextCursor"))
+        ids1 = [d["datasetId"] for d in body1["datasets"]]
+
+        r2 = self.client.get(
+            "/api/datasets",
+            params={
+                "sort": "updated_at_desc",
+                "limit": 10,
+                "cursor": body1["nextCursor"],
+            },
+        )
+        self.assertEqual(r2.status_code, 200)
+        body2 = r2.json()
+        self.assertEqual(body2["total"], 120)
+        ids2 = [d["datasetId"] for d in body2["datasets"]]
+        self.assertTrue(set(ids1).isdisjoint(set(ids2)))
+        self.assertEqual(len(ids2), 10)
+
+    def test_overview_health_fields(self) -> None:
+        r = self.client.get("/api/datasets/overview")
+        self.assertEqual(r.status_code, 200)
+        ov = r.json()["overview"]
+        self.assertIn("readyDatasets", ov)
+        self.assertIn("datasetsWithValidation", ov)
+        self.assertIn("datasetsWithoutValidation", ov)
+        self.assertEqual(
+            ov["datasetsWithValidation"] + ov["datasetsWithoutValidation"],
+            ov["totalDatasets"],
+        )
+        self.assertEqual(ov["datasetsWithValidation"], ov["versionsWithValidation"])
+        self.assertGreater(ov["readyDatasets"], 0)
+        self.assertIn("localDatasets", ov)
+        self.assertIn("externalDatasets", ov)
+        self.assertIn("indexedDatasets", ov)
+
 
 if __name__ == "__main__":
     unittest.main()

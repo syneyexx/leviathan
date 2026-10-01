@@ -4653,6 +4653,18 @@ def _m62_chat_turns(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m63_dataset_query_indexes(conn: sqlite3.Connection) -> None:
+    """Indexes justified by catalog filters + job time-range / dataset scope queries."""
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_dataset_indexes_dataset_status "
+        "ON dataset_indexes(dataset_id, status)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_dataset_jobs_dataset_created "
+        "ON dataset_jobs(dataset_id, created_at DESC)"
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -4795,6 +4807,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=62,
         name="chat_turns",
         apply=_m62_chat_turns,
+    ),
+    Migration(
+        version=63,
+        name="dataset_query_indexes",
+        apply=_m63_dataset_query_indexes,
     ),
 )
 

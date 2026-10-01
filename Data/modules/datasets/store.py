@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import sqlite3
 import uuid
@@ -10,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from .quality_signals import _as_nonneg_int
 from .types import (
     DatasetFile,
     DatasetIndex,
@@ -38,6 +40,46 @@ def _loads(raw: str | None, default: Any) -> Any:
         return json.loads(raw)
     except json.JSONDecodeError:
         return default
+
+
+def _validation_count(blob: dict[str, Any], count_key: str, list_key: str) -> int:
+    """Prefer explicit *Count fields (including 0); lists use length; else coerce int."""
+    if count_key in blob:
+        return _as_nonneg_int(blob.get(count_key))
+    raw = blob.get(list_key)
+    if isinstance(raw, list):
+        return len(raw)
+    return _as_nonneg_int(raw)
+
+
+def _encode_catalog_cursor(updated_at: str, dataset_id: str) -> str:
+    raw = f"{updated_at}|{dataset_id}".encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_catalog_cursor(cursor: str) -> tuple[str, str] | None:
+    text = str(cursor or "").strip()
+    if not text:
+        return None
+    # Accept opaque base64 or plain ``updated_at|dataset_id``.
+    if "|" in text and not text.endswith("="):
+        # May still be plain; try plain first when delimiter present and looks like ISO.
+        parts = text.split("|", 1)
+        if len(parts) == 2 and parts[0] and parts[1]:
+            # Prefer plain when it looks like a timestamp|id (contains digit / T).
+            if any(ch.isdigit() for ch in parts[0]):
+                return parts[0], parts[1]
+    pad = "=" * (-len(text) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(text + pad).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if "|" not in decoded:
+        return None
+    updated_at, dataset_id = decoded.split("|", 1)
+    if not updated_at or not dataset_id:
+        return None
+    return updated_at, dataset_id
 
 
 class DatasetStore:
@@ -169,14 +211,23 @@ class DatasetStore:
         tags: str | None = None,
         split: str | None = None,
         sort: str = "created_at_desc",
+        updated_after: str | None = None,
+        updated_before: str | None = None,
+        cursor: str | None = None,
     ) -> dict[str, Any]:
-        """Bounded catalog query with server-side filters, sort, offset, and total.
+        """Bounded catalog query with server-side filters, sort, offset/cursor, and total.
 
-        Returns ``{items, total, limit, offset, sort}``. Does not invent rows —
-        ``total`` is the filtered catalog count independent of page size.
+        Returns ``{items, total, limit, offset, sort, nextCursor?}``. Does not invent
+        rows — ``total`` is the filtered catalog count independent of page size.
         """
-        safe_limit = max(1, min(int(limit), 500))
-        safe_offset = max(0, int(offset))
+        try:
+            safe_limit = max(1, min(int(limit), 500))
+        except (TypeError, ValueError):
+            safe_limit = 100
+        try:
+            safe_offset = max(0, int(offset))
+        except (TypeError, ValueError):
+            safe_offset = 0
         clauses: list[str] = []
         params: list[Any] = []
 
@@ -247,10 +298,44 @@ class DatasetStore:
             params.extend([cat, cat])
 
         if tags and str(tags).strip():
-            # Tags live in metadata JSON arrays; membership via bounded LIKE.
-            tag = str(tags).strip()
-            clauses.append("lower(metadata_json) LIKE ?")
-            params.append(f"%{tag.lower()}%")
+            # Exact case-insensitive membership in known tag arrays (AND for CSV).
+            tag_list = [t.strip().lower() for t in str(tags).split(",") if t.strip()]
+            for tag in tag_list:
+                clauses.append(
+                    """(
+                    EXISTS (
+                        SELECT 1 FROM json_each(
+                            CASE
+                                WHEN json_type(json_extract(metadata_json, '$.semanticProfile.tags')) = 'array'
+                                THEN json_extract(metadata_json, '$.semanticProfile.tags')
+                                ELSE '[]'
+                            END
+                        ) AS je
+                        WHERE lower(je.value) = ?
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM json_each(
+                            CASE
+                                WHEN json_type(json_extract(metadata_json, '$.semanticTags')) = 'array'
+                                THEN json_extract(metadata_json, '$.semanticTags')
+                                ELSE '[]'
+                            END
+                        ) AS je
+                        WHERE lower(je.value) = ?
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM json_each(
+                            CASE
+                                WHEN json_type(json_extract(metadata_json, '$.tags')) = 'array'
+                                THEN json_extract(metadata_json, '$.tags')
+                                ELSE '[]'
+                            END
+                        ) AS je
+                        WHERE lower(je.value) = ?
+                    )
+                    )"""
+                )
+                params.extend([tag, tag, tag])
 
         if split and str(split).strip():
             # Dataset has at least one version whose split_json contains the key.
@@ -268,7 +353,13 @@ class DatasetStore:
             params.append(f'%"{split_key}"%')
             params.append(f"$.{split_key}")
 
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        if updated_after and str(updated_after).strip():
+            clauses.append("updated_at >= ?")
+            params.append(str(updated_after).strip())
+        if updated_before and str(updated_before).strip():
+            clauses.append("updated_at <= ?")
+            params.append(str(updated_before).strip())
+
         sort_key = (sort or "created_at_desc").strip().lower()
         order_map = {
             "created_at_desc": "created_at DESC",
@@ -282,26 +373,68 @@ class DatasetStore:
             "row_count_desc": "COALESCE(row_count, -1) DESC",
             "row_count_asc": "COALESCE(row_count, 9223372036854775807) ASC",
         }
-        order_sql = order_map.get(sort_key, order_map["created_at_desc"])
+        resolved_sort = sort_key if sort_key in order_map else "created_at_desc"
+
+        # Keyset pagination when cursor present and sort is updated_at_desc (frontend default).
+        use_keyset = False
+        keyset_params: list[Any] = []
+        cursor_tuple = _decode_catalog_cursor(cursor) if cursor else None
+        if cursor_tuple is not None and resolved_sort == "updated_at_desc":
+            use_keyset = True
+            keyset_params = [cursor_tuple[0], cursor_tuple[1]]
+            safe_offset = 0
+
+        total_where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        page_clauses = list(clauses)
+        page_params = list(params)
+        if use_keyset:
+            page_clauses.append("(updated_at, dataset_id) < (?, ?)")
+            page_params.extend(keyset_params)
+        where = f"WHERE {' AND '.join(page_clauses)}" if page_clauses else ""
+        if use_keyset:
+            order_sql = "updated_at DESC, dataset_id DESC"
+        else:
+            order_sql = order_map[resolved_sort]
+            # Deterministic secondary when sorting by updated_at without cursor.
+            if resolved_sort in {"updated_at_desc", "updated_at_asc"}:
+                direction = "DESC" if resolved_sort.endswith("_desc") else "ASC"
+                order_sql = f"updated_at {direction}, dataset_id {direction}"
 
         with self.connect() as conn:
+            # Total ignores keyset cursor so pages share the same filtered count.
             total = int(
                 conn.execute(
-                    f"SELECT COUNT(*) FROM datasets {where}",
+                    f"SELECT COUNT(*) FROM datasets {total_where}",
                     params,
                 ).fetchone()[0]
             )
-            rows = conn.execute(
-                f"SELECT * FROM datasets {where} ORDER BY {order_sql} LIMIT ? OFFSET ?",
-                [*params, safe_limit, safe_offset],
-            ).fetchall()
+            if use_keyset:
+                rows = conn.execute(
+                    f"SELECT * FROM datasets {where} ORDER BY {order_sql} LIMIT ?",
+                    [*page_params, safe_limit],
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    f"SELECT * FROM datasets {where} ORDER BY {order_sql} LIMIT ? OFFSET ?",
+                    [*page_params, safe_limit, safe_offset],
+                ).fetchall()
+
+        items = [self._dataset_from_row(r) for r in rows]
+        next_cursor = None
+        if items and len(items) >= safe_limit and (
+            use_keyset or resolved_sort == "updated_at_desc"
+        ):
+            last = items[-1]
+            next_cursor = _encode_catalog_cursor(last.updated_at, last.dataset_id)
 
         return {
-            "items": [self._dataset_from_row(r) for r in rows],
+            "items": items,
             "total": total,
             "limit": safe_limit,
             "offset": safe_offset,
-            "sort": sort_key if sort_key in order_map else "created_at_desc",
+            "sort": resolved_sort,
+            "nextCursor": next_cursor,
+            "cursor": cursor if use_keyset else None,
         }
 
     def aggregate_catalog_stats(self) -> dict[str, Any]:
@@ -332,15 +465,31 @@ class DatasetStore:
             source_rows = conn.execute(
                 "SELECT source_type, COUNT(*) AS n FROM datasets GROUP BY source_type"
             ).fetchall()
-            # Validation rollup from newest version per dataset that has validation_json.
+            # Validation rollup: exactly one authoritative (latest) validation per dataset.
             validation_rows = conn.execute(
                 """
-                SELECT validation_json FROM dataset_versions
-                WHERE validation_json IS NOT NULL
-                  AND validation_json != '{}'
-                  AND validation_json != ''
+                SELECT dataset_id, validation_json FROM (
+                    SELECT
+                        dataset_id,
+                        validation_json,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY dataset_id
+                            ORDER BY updated_at DESC, version_id DESC
+                        ) AS rn
+                    FROM dataset_versions
+                    WHERE validation_json IS NOT NULL
+                      AND validation_json != '{}'
+                      AND validation_json != ''
+                ) ranked
+                WHERE rn = 1
                 """
             ).fetchall()
+            ready_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM datasets WHERE lower(status) = ?",
+                    (DatasetStatus.READY.value,),
+                ).fetchone()[0]
+            )
             version_bytes = conn.execute(
                 """
                 SELECT kind, COALESCE(SUM(byte_size), 0) AS byte_sum
@@ -390,14 +539,14 @@ class DatasetStore:
         validation_issues = 0
         validation_critical = 0
         validation_warning = 0
-        versions_with_validation = 0
+        datasets_with_validation = 0
         for row in validation_rows:
             blob = _loads(row["validation_json"], {})
             if not isinstance(blob, dict) or not blob:
                 continue
-            versions_with_validation += 1
-            errors = int(blob.get("errorCount") or blob.get("errors") or 0)
-            warnings = int(blob.get("warningCount") or blob.get("warnings") or 0)
+            datasets_with_validation += 1
+            errors = _validation_count(blob, "errorCount", "errors")
+            warnings = _validation_count(blob, "warningCount", "warnings")
             validation_critical += errors
             validation_warning += warnings
             validation_issues += errors + warnings
@@ -411,6 +560,7 @@ class DatasetStore:
                 import_queued = int(row["n"])
 
         by_kind = {str(r["kind"]): int(r["byte_sum"] or 0) for r in version_bytes}
+        datasets_without_validation = max(0, total - datasets_with_validation)
 
         return {
             "totalDatasets": total,
@@ -425,7 +575,11 @@ class DatasetStore:
             "validationIssues": validation_issues,
             "criticalValidationIssues": validation_critical,
             "warningValidationIssues": validation_warning,
-            "versionsWithValidation": versions_with_validation,
+            # Compat: versionsWithValidation == latest-only datasetsWithValidation count.
+            "versionsWithValidation": datasets_with_validation,
+            "datasetsWithValidation": datasets_with_validation,
+            "datasetsWithoutValidation": datasets_without_validation,
+            "readyDatasets": ready_count,
             "activeImports": import_running + import_queued,
             "runningImports": import_running,
             "queuedImports": import_queued,
@@ -468,7 +622,10 @@ class DatasetStore:
     def latest_version_validation_map(
         self, dataset_ids: list[str]
     ) -> dict[str, dict[str, Any]]:
-        """Return newest non-empty validation blob per dataset (for quality column)."""
+        """Return newest non-empty validation blob per dataset (for quality column).
+
+        Tie-break: ``ORDER BY updated_at DESC, version_id DESC``.
+        """
         if not dataset_ids:
             return {}
         out: dict[str, dict[str, Any]] = {}
@@ -480,13 +637,13 @@ class DatasetStore:
                 placeholders = ",".join("?" * len(batch))
                 rows = conn.execute(
                     f"""
-                    SELECT dataset_id, validation_json, updated_at
+                    SELECT dataset_id, validation_json, updated_at, version_id
                     FROM dataset_versions
                     WHERE dataset_id IN ({placeholders})
                       AND validation_json IS NOT NULL
                       AND validation_json != '{{}}'
                       AND validation_json != ''
-                    ORDER BY updated_at DESC
+                    ORDER BY updated_at DESC, version_id DESC
                     """,
                     batch,
                 ).fetchall()
@@ -850,25 +1007,84 @@ class DatasetStore:
         self,
         *,
         dataset_id: str | None = None,
-        status: DatasetJobStatus | None = None,
+        status: DatasetJobStatus | str | None = None,
+        job_type: DatasetJobType | str | None = None,
+        created_after: str | None = None,
+        created_before: str | None = None,
         limit: int = 100,
+        offset: int = 0,
     ) -> list[DatasetJob]:
+        """List jobs with optional filters. Prefer ``query_jobs`` when total is needed."""
+        page = self.query_jobs(
+            dataset_id=dataset_id,
+            status=status,
+            job_type=job_type,
+            created_after=created_after,
+            created_before=created_before,
+            limit=limit,
+            offset=offset,
+        )
+        return page["items"]
+
+    def query_jobs(
+        self,
+        *,
+        dataset_id: str | None = None,
+        status: DatasetJobStatus | str | None = None,
+        job_type: DatasetJobType | str | None = None,
+        created_after: str | None = None,
+        created_before: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Bounded job query with filters, offset, and filtered total."""
+        try:
+            safe_limit = max(1, min(int(limit), 500))
+        except (TypeError, ValueError):
+            safe_limit = 100
+        try:
+            safe_offset = max(0, int(offset))
+        except (TypeError, ValueError):
+            safe_offset = 0
         clauses: list[str] = []
         params: list[Any] = []
         if dataset_id:
             clauses.append("dataset_id = ?")
             params.append(dataset_id)
         if status is not None:
-            clauses.append("status = ?")
-            params.append(status.value)
+            status_val = status.value if isinstance(status, DatasetJobStatus) else str(status).strip().lower()
+            if status_val:
+                clauses.append("status = ?")
+                params.append(status_val)
+        if job_type is not None:
+            type_val = job_type.value if isinstance(job_type, DatasetJobType) else str(job_type).strip().lower()
+            if type_val:
+                clauses.append("job_type = ?")
+                params.append(type_val)
+        if created_after and str(created_after).strip():
+            clauses.append("created_at >= ?")
+            params.append(str(created_after).strip())
+        if created_before and str(created_before).strip():
+            clauses.append("created_at <= ?")
+            params.append(str(created_before).strip())
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        params.append(max(1, min(limit, 500)))
         with self.connect() as conn:
+            total = int(
+                conn.execute(
+                    f"SELECT COUNT(*) FROM dataset_jobs {where}",
+                    params,
+                ).fetchone()[0]
+            )
             rows = conn.execute(
-                f"SELECT * FROM dataset_jobs {where} ORDER BY created_at DESC LIMIT ?",
-                params,
+                f"SELECT * FROM dataset_jobs {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                [*params, safe_limit, safe_offset],
             ).fetchall()
-        return [self._job_from_row(r) for r in rows]
+        return {
+            "items": [self._job_from_row(r) for r in rows],
+            "total": total,
+            "limit": safe_limit,
+            "offset": safe_offset,
+        }
 
     def update_job(self, job_id: str, **fields: Any) -> DatasetJob:
         colmap = {

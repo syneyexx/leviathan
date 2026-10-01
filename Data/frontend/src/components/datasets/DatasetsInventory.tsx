@@ -50,8 +50,8 @@ function RowMenu({ row, ws }: { row: DhRow; ws: DatasetsWorkspace }) {
       <button type="button" role="menuitem" onClick={() => void ws.onExportDownload(row.id)}>
         Downloaden / Exporteren
       </button>
-      <Link role="menuitem" to="/offline-datasets" onClick={() => ws.setMenuFor(null)}>
-        Offline weergave
+      <Link role="menuitem" to="/datasets?mode=learning" onClick={() => ws.setMenuFor(null)}>
+        Learning weergave
       </Link>
       <button
         type="button"

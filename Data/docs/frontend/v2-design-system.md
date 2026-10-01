@@ -115,7 +115,7 @@ Media Control, Plugin & Runtime, Coding Agent, and other deep links remain regis
 ## Models migration
 
 - `/models` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "LM / Models").
-- LM is an expandable nav group, derived from `MAIN_MENU` via `v2ChildrenFromMainMenu("llm")`. Its `match` claims `/models`, `/training`, `/agents`, `/analytics`, `/dataset-management`, and `/offline-datasets`. On those routes LM auto-expands with the matching child selected — there is no separate top-level Training owner.
+- LM is an expandable nav group, derived from `MAIN_MENU` via `v2ChildrenFromMainMenu("llm")`. Its `match` claims `/models`, `/training`, `/agents`, and `/analytics`. On those routes LM auto-expands with the matching child selected — there is no separate top-level Training owner. Datasets live under Onderzoek & Kennis, not LLM.
 - `ModelsPage.tsx` composes four card rows (Runtime Provider / Hardware / VRAM; Model list / Load Config / Multi-GPU / Advanced; wide Optimalisatie; Resource Estimate / Performance / Actions) plus a manage-links footer that opens drawers for the existing `ProviderManager`, `ModelGatewayPanel`, `ModelRouterPanel`, and `ModelResidencyPanel` panels — those advanced surfaces are reused unchanged, not rebuilt.
 - All page composition lives in `src/components/models/*` (11 focused card components + `useModelsWorkspace` for data/mutation orchestration). No page-local CSS file; layout, form controls (select/range/toggle rows, tables, meters) live in `leviathan-v2.css` under `.lv-v2-page--models` / `.lv-v2-models-*`.
 - Capability-gating truth discipline: controls are enabled/disabled from the backend
@@ -207,28 +207,24 @@ Media Control, Plugin & Runtime, Coding Agent, and other deep links remain regis
 - Search focuses dashboard panels (Ctrl+K). Refresh is bounded/non-overlapping; partial/stale/UNMEASURED stay honest.
 - Visual fixture: `src/mocks/analyticsV2VisualFixture.ts` + `e2e/helpers/analyticsV2Visual.ts` + `e2e/analytics-v2.visual.spec.ts` (reference: `docs/ui_reference/analytics-v2-reference.png`, 1664×936). Production never imports fixture defaults.
 
-## Dataset Management migration
+## Datasets (Onderzoek & Kennis) — canonical workspace
 
-- `/dataset-management` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "LLM / Dataset Management").
-- **MAIN_MENU owns Dataset Manager under LLM.** On `/dataset-management` LM auto-expands with the Dataset Manager child selected. Do not move this page to Onderzoek & Kennis in this migration.
-- Separate Research surface `/datasets` remains; both reuse the same DatasetService / DatasetStore / versions / jobs.
-- Composition: `DatasetManagementPage` + `useDatasetManagementWorkspace` + `src/components/dataset-management/*` + shared `DatasetActivityConsole`.
-- No page-local Dataset Management CSS; layout lives in `leviathan-v2.css` under `.lv-v2-page--dataset-mgmt` / `.lv-v2-dm-*`.
-- Catalog query is server-backed (`q`, source/category/split filters, offset pagination, `total`). Overview KPIs / storage / services / tags from `GET /api/datasets/overview`. Quality from persisted validation only.
-- Production never imports `mocks/dataset-management` or Screen 1 fixture numbers. Visual fixture: `src/mocks/datasetManagementV2VisualFixture.ts` + `e2e/helpers/datasetManagementV2Visual.ts` + `e2e/dataset-management-v2.visual.spec.ts` (reference: `docs/ui_reference/dataset-management-llm-v2-reference.png`, 1672×941).
-
-## Datasets (Onderzoek & Kennis) migration
-
+- **Single surface:** `/datasets` under **Onderzoek & Kennis → Datasets**. There is no separate LLM Dataset Manager nav child.
+- Legacy redirects (keep routes in `App.tsx`):
+  - `/dataset-management` → `/datasets?mode=manage` (`DatasetManagementPage` Navigate shell)
+  - `/offline-datasets` → `/datasets?mode=learning` (`OfflineDatasetsPixelPage` Navigate shell)
+- Modes: default inventory, `?mode=manage`, `?mode=learning` (fleet via `listLearningFleet`).
 - `/datasets` uses `AppShell variant="v2"` with shared `AppSidebarV2` / `AppTopbarV2` (title "Kennis & Onderzoek / Datasets").
 - **MAIN_MENU owns Datasets under Onderzoek & Kennis.** Research group children stay MAIN_MENU-derived via `v2ChildrenFromMainMenu("research")`.
-- Composition (reference 1664×936): topbar → 5 KPI cards → action/search toolbar → filter pills + Filters/Kolommen/list-grid → inventory table + detail panel → **exactly 4** bottom widgets (Verwerking / Bron Integraties / Opslag / Activiteit).
+- Composition: `DatasetsPage` + `useDatasetsWorkspace` + `useDatasetMutations` + `src/components/datasets/*` + shared `DatasetActivityConsole`.
+- Composition layout (reference 1664×936): topbar → 5 KPI cards → action/search toolbar → filter pills + Filters/Kolommen/list-grid → inventory table + detail panel → **exactly 4** bottom widgets (Verwerking / Bron Integraties / Opslag / Activiteit).
 - No standalone hero in the primary composition. `DatasetsHero` is preserved but not rendered on `/datasets`.
 - Activity console is compact in the 4th bottom widget; expanded cancel/clear lives in the activity modal. Health remains a secondary modal (not a 5th bottom card).
-- No page-local Datasets V2 CSS; layout lives in `leviathan-v2.css` under `.lv-v2-page--datasets` / `.lv-v2-ds-*`. Legacy `datasets-dashboard.css` remains only for shared `.lv-dac` activity console base styles.
-- Production presentation contracts live in `src/pages/datasets/constants.ts`. Production code must not import fixture data from `mocks/datasets-dashboard`. Visual fixture: `src/mocks/datasetsV2VisualFixture.ts` + `e2e/helpers/datasetsV2Visual.ts` (reference: `docs/ui_reference/datasets-v2-reference.png`).
-- Inventory uses bounded server pagination (`limit`/`offset`/`hasMore`/`total`) via `GET /api/datasets` with `sourceScope` / `indexed` filters. KPI totals come from `GET /api/datasets/overview` (including `localDatasets` / `externalDatasets` / `indexedDatasets`). Page size never defines catalog totals.
+- No page-local Datasets V2 CSS; layout lives in `leviathan-v2.css` under `.lv-v2-page--datasets` / `.lv-v2-ds-*`. Legacy `datasets-dashboard.css` remains only for shared `.lv-dac` activity console base styles. Obsolete `.lv-v2-page--dataset-mgmt` / `.lv-v2-dm-*` rules may remain until CSS cleanup.
+- Production presentation contracts live in `src/pages/datasets/constants.ts`. Production code must not import fixture data from `mocks/datasets-dashboard`. Visual fixture: `src/mocks/datasetsV2VisualFixture.ts` + `e2e/helpers/datasetsV2Visual.ts` (reference: `docs/ui_reference/datasets-v2-reference.png`). Redirect coverage: `e2e/dataset-management-v2.visual.spec.ts`.
+- Inventory uses bounded server pagination (`limit`/`offset`/`hasMore`/`total`/`nextCursor`) via `GET /api/datasets` with `sourceScope` / `indexed` / `updatedAfter`/`updatedBefore` / exact `tags`. KPI totals come from `GET /api/datasets/overview`. Page size never defines catalog totals.
 - Detail primary tabs: Overzicht / Analyse / Voorbeeld / Metadata. Versions + Activity + Health remain via secondary “Meer” / modals. Analyse deep-links to `/research?dataset=…` (no second analysis engine). Charts render only from bounded numeric preview series — never hardcoded BTC.
-- Toolbar: Nieuwe dataset / Importeren / Externe bron (HF) / Verwerken (bulk materialize or process queue) / Indexeren (bulk index). Tags mutate via `PATCH /api/datasets/{id}/semantic`. Download uses export/download DatasetService paths. Delen copies an internal deep link only.
+- Toolbar: Nieuwe dataset / Importeren / Externe bron (HF) / Verwerken (bulk materialize) / Indexeren (bulk index). UI does **not** call `POST /api/datasets/jobs/process`. Tags mutate via `PATCH /api/datasets/{id}/semantic`. Download uses export/download DatasetService paths. Delen copies an internal deep link only.
 - Unknown status ≠ Ready. Unmeasured progress ≠ invented %. Capacity unknown ≠ fake 1 TB. Screenshot KPI numbers exist only in test fixtures.
 
 ## Knowledge Library migration
