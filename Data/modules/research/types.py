@@ -211,6 +211,19 @@ class ResearchBudget:
         )
 
 
+class KnowledgePromotionStatus(str, Enum):
+    """Distinct from research_status / report_status — assimilation is separate truth."""
+
+    NOT_REQUESTED = "NOT_REQUESTED"
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    PARTIAL = "PARTIAL"
+    FAILED = "FAILED"
+    UNKNOWN = "UNKNOWN"
+    UNMEASURED = "UNMEASURED"
+
+
 @dataclass(frozen=True)
 class ResearchPlan:
     interpreted_question: str
@@ -226,6 +239,8 @@ class ResearchPlan:
     notes: str = ""
     stopping_criteria: list[str] = field(default_factory=list)
     evidence_coverage_targets: dict[str, Any] = field(default_factory=dict)
+    # Structured planner provenance — never silent enrichment fallback.
+    plan_provenance: dict[str, Any] = field(default_factory=dict)
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -242,6 +257,7 @@ class ResearchPlan:
             "notes": self.notes,
             "stopping_criteria": list(self.stopping_criteria),
             "evidence_coverage_targets": dict(self.evidence_coverage_targets),
+            "plan_provenance": dict(self.plan_provenance),
         }
 
     @classmethod
@@ -262,6 +278,7 @@ class ResearchPlan:
             notes=str(data.get("notes") or ""),
             stopping_criteria=list(data.get("stopping_criteria") or []),
             evidence_coverage_targets=dict(data.get("evidence_coverage_targets") or {}),
+            plan_provenance=dict(data.get("plan_provenance") or {}),
         )
 
 
@@ -670,13 +687,56 @@ class ResearchProject:
     kernel_job_id: str | None = None
     wait_reason: str | None = None
 
+    def knowledge_promotion_view(self) -> dict[str, Any]:
+        """Expose assimilation truth separately from research_status."""
+        profile = dict(self.model_profile or {})
+        status = profile.get("knowledge_promotion_status")
+        receipt = profile.get("knowledge_promotion")
+        error = profile.get("knowledge_promotion_error")
+        if status is None:
+            if error:
+                status = KnowledgePromotionStatus.FAILED.value
+            elif isinstance(receipt, dict):
+                if receipt.get("ok") is False or int(receipt.get("failure_count") or 0) > 0:
+                    if int(receipt.get("success_count") or 0) > 0:
+                        status = KnowledgePromotionStatus.PARTIAL.value
+                    else:
+                        status = KnowledgePromotionStatus.FAILED.value
+                elif receipt.get("ok") is True:
+                    status = KnowledgePromotionStatus.COMPLETED.value
+                else:
+                    status = KnowledgePromotionStatus.UNKNOWN.value
+            else:
+                status = KnowledgePromotionStatus.NOT_REQUESTED.value
+        return {
+            "knowledge_promotion_status": status,
+            "knowledge_promotion_receipt": receipt,
+            "knowledge_promotion_error": error,
+        }
+
+    def cancel_ack_view(self) -> dict[str, Any]:
+        profile = dict(self.model_profile or {})
+        return {
+            "cancel_ack_at": profile.get("cancel_ack_at"),
+            "cancel_ack_job_state": profile.get("cancel_ack_job_state"),
+            "cancel_ack_error": profile.get("cancel_ack_error"),
+        }
+
     def public_dict(self) -> dict[str, Any]:
+        promo = self.knowledge_promotion_view()
+        cancel_ack = self.cancel_ack_view()
         return {
             "project_id": self.project_id,
             "title": self.title,
             "topic": self.topic,
             "objective": self.objective,
             "status": self.status.value,
+            "research_status": self.status.value,
+            "report_status": (
+                "AVAILABLE"
+                if int(self.report_version or 0) > 0
+                else "NOT_GENERATED"
+            ),
             "depth": self.depth.value,
             "allow_web": self.allow_web,
             "respect_robots_txt": self.respect_robots_txt,
@@ -713,6 +773,8 @@ class ResearchProject:
             "workers": list(self.workers),
             "kernel_job_id": self.kernel_job_id,
             "wait_reason": self.wait_reason,
+            **cancel_ack,
+            **promo,
         }
 
 
