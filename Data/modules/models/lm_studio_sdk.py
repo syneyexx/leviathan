@@ -236,7 +236,18 @@ def sdk_load_model(
     timeout_seconds: float = 600.0,
     identifier: str | None = None,
 ) -> dict[str, Any]:
-    """Execute an official SDK load. Bounded; never kills LM Studio."""
+    """Execute an official SDK load with a real wall-clock timeout bound.
+
+    Native SDK calls are blocking. We run them in a worker thread and enforce
+    ``timeout_seconds`` via ``concurrent.futures``. A late thread return after
+    timeout must NOT be treated as success by the caller — this function raises
+    REQUEST_TIMEOUT and does not return a loaded receipt.
+
+    Hard cancellation of the native SDK call is not guaranteed (Python threads
+    cannot kill native work). Callers must reconcile/list-loaded after timeout.
+    """
+    import concurrent.futures
+
     available, detail = probe_sdk_import()
     if not available:
         raise ModelControlError(
@@ -256,10 +267,10 @@ def sdk_load_model(
             code="INVALID_LOAD_CONFIG",
             message=f"Invalid LM Studio SDK load config: {exc}",
             http_status=422,
-            details={"config": config},
+            details={"config": {k: v for k, v in (config or {}).items() if "key" not in str(k).lower()}},
         ) from exc
 
-    try:
+    def _do_load() -> dict[str, Any]:
         with lms.Client(api_host) as client:
             handle = client.llm.load_new_instance(
                 model_key,
@@ -298,33 +309,72 @@ def sdk_load_model(
                 "instanceId": str(instance_id) if instance_id else None,
                 "loadConfig": applied,
                 "timeoutSeconds": timeout_seconds,
+                "timeoutEnforced": True,
             }
-    except ModelControlError:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        from Data.modules.models.lm_studio_control import classify_lm_studio_error
 
-        code = classify_lm_studio_error(str(exc))
-        raise ModelControlError(
-            code=code,
-            message=f"LM Studio SDK load failed: {exc}",
-            http_status=502,
-            details={"transport": "sdk", "apiHost": api_host, "modelKey": model_key},
-        ) from exc
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(_do_load)
+    try:
+        try:
+            return future.result(timeout=float(timeout_seconds))
+        except concurrent.futures.TimeoutError as exc:
+            # Do not wait for late completion; abandon the future.
+            future.cancel()
+            raise ModelControlError(
+                code="REQUEST_TIMEOUT",
+                message=(
+                    f"LM Studio SDK load timed out after {timeout_seconds}s "
+                    "(native call may still complete in background — reconcile required)"
+                ),
+                http_status=504,
+                details={
+                    "transport": "sdk",
+                    "apiHost": api_host,
+                    "modelKey": model_key,
+                    "timeoutSeconds": timeout_seconds,
+                    "timeoutEnforced": True,
+                    "softCancelOnly": True,
+                    "reconcileRequired": True,
+                },
+            ) from exc
+        except ModelControlError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            from Data.modules.models.lm_studio_control import classify_lm_studio_error
+
+            code = classify_lm_studio_error(str(exc))
+            raise ModelControlError(
+                code=code,
+                message=f"LM Studio SDK load failed: {exc}",
+                http_status=502,
+                details={"transport": "sdk", "apiHost": api_host, "modelKey": model_key},
+            ) from exc
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def sdk_probe_reachable(endpoint: str, *, timeout_seconds: float = 5.0) -> bool:
-    """Best-effort SDK reachability probe (list loaded). Never raises."""
+    """Best-effort SDK reachability probe with real timeout. Never raises."""
+    import concurrent.futures
+
     available, _ = probe_sdk_import()
     if not available:
         return False
-    try:
+
+    def _probe() -> bool:
         import lmstudio as lms
 
         api_host = api_host_from_endpoint(endpoint)
         with lms.Client(api_host) as client:
             client.llm.list_loaded()
         return True
+
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(_probe)
+    try:
+        return bool(future.result(timeout=float(timeout_seconds)))
     except Exception as exc:  # noqa: BLE001
         logger.debug("LM Studio SDK probe failed: %s", exc)
         return False
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)

@@ -1,4 +1,4 @@
-"""Model router — selection precedence and fallback tracing."""
+"""ModelRouter — selection precedence and fallback tracing."""
 
 from __future__ import annotations
 
@@ -9,13 +9,19 @@ from Data.modules.models.capability_eligibility import (
     capability_satisfies_request,
     enrich_descriptor_capabilities,
 )
+from Data.modules.models.capability_vocabulary import capability_attr
 from Data.modules.models.contracts import (
     ModelDescriptor,
     ModelRequest,
     RouteDecision,
     RouterConfig,
 )
+from Data.modules.models.effective_capability import (
+    enrich_with_effective_capabilities,
+    load_verified_map,
+)
 from Data.modules.models.errors import (
+    AMBIGUOUS_MODEL_ID,
     MODEL_NOT_CHAT_CAPABLE,
     MODEL_NOT_FOUND,
     NO_CHAT_MODEL_AVAILABLE,
@@ -24,6 +30,7 @@ from Data.modules.models.errors import (
     ModelControlError,
 )
 from Data.modules.models.gateway import ModelGateway
+from Data.modules.models.locality import is_local_execution_eligible
 from Data.modules.models.store import ModelStore
 
 
@@ -46,10 +53,12 @@ class ModelRouter:
         gateway: ModelGateway,
         *,
         get_models: Callable[[], list[ModelDescriptor]],
+        list_verified: Callable[[str], list] | None = None,
     ) -> None:
         self.store = store
         self.gateway = gateway
         self._get_models = get_models
+        self._list_verified = list_verified
 
     def get_config(self) -> RouterConfig:
         raw = self.store.get_router_config()
@@ -80,6 +89,69 @@ class ModelRouter:
                 message="roleModelOverrides must be a string-to-string map",
                 http_status=422,
             )
+
+        # Detect duplicate fallback IDs
+        seen: set[str] = set()
+        duplicates: list[str] = []
+        for mid in fallback:
+            if mid in seen:
+                duplicates.append(mid)
+            seen.add(mid)
+        if duplicates:
+            raise ModelControlError(
+                code="VALIDATION_ERROR",
+                message=f"fallbackOrder contains duplicate model ids: {duplicates}",
+                http_status=422,
+                details={"duplicates": duplicates},
+            )
+
+        known_ids = {m.id for m in self._get_models()}
+        missing_fallback = [mid for mid in fallback if mid not in known_ids]
+        missing_roles = {
+            role: mid for role, mid in roles.items() if mid not in known_ids
+        }
+        # Ambiguous aliases in config targets
+        ambiguous: list[dict] = []
+        for mid in list(fallback) + list(roles.values()):
+            if mid in known_ids:
+                continue
+            matches = [
+                m
+                for m in self._get_models()
+                if m.display_name == mid
+                or (m.metadata or {}).get("provider_model_id") == mid
+            ]
+            if len(matches) > 1:
+                ambiguous.append(
+                    {
+                        "alias": mid,
+                        "candidateCanonicalIds": [m.id for m in matches],
+                    }
+                )
+        if ambiguous:
+            raise ModelControlError(
+                code=AMBIGUOUS_MODEL_ID,
+                message="Router config contains ambiguous model aliases",
+                http_status=409,
+                details={"ambiguous": ambiguous},
+            )
+        if missing_fallback or missing_roles:
+            # Do not silently clean — reject so operator knows targets don't exist.
+            # Offline-but-known IDs are allowed (configured-but-unavailable).
+            raise ModelControlError(
+                code="VALIDATION_ERROR",
+                message="Router config references unknown model ids",
+                http_status=422,
+                details={
+                    "missingFallbackOrder": missing_fallback,
+                    "missingRoleOverrides": missing_roles,
+                    "truth": {
+                        "no_silent_cleanup": True,
+                        "offline_configured_targets_must_exist_in_registry": True,
+                    },
+                },
+            )
+
         config = {
             "fallback_order": list(fallback),
             "role_overrides": dict(roles),
@@ -101,18 +173,60 @@ class ModelRouter:
         self.store.append_audit("routing_changed", detail={"config": config})
         return self.get_config()
 
+    def _enrich(self, model: ModelDescriptor) -> ModelDescriptor:
+        enriched = enrich_descriptor_capabilities(model)
+        if self._list_verified is not None:
+            verified_map = load_verified_map(enriched.id, self._list_verified)
+            enriched = enrich_with_effective_capabilities(
+                enriched, verified_by_cap=verified_map
+            )
+        return enriched
+
+    def _resolve_alias(
+        self, model_id: str, models: dict[str, ModelDescriptor]
+    ) -> ModelDescriptor | None:
+        if model_id in models:
+            return models[model_id]
+        matches = [
+            candidate
+            for candidate in models.values()
+            if candidate.display_name == model_id
+            or candidate.metadata.get("provider_model_id") == model_id
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise ModelControlError(
+                code=AMBIGUOUS_MODEL_ID,
+                message=(
+                    f"Ambiguous model alias '{model_id}' matches "
+                    f"{len(matches)} canonical ids; specify a canonical model id"
+                ),
+                model_id=model_id,
+                http_status=409,
+                details={
+                    "alias": model_id,
+                    "candidateCanonicalIds": [m.id for m in matches],
+                },
+            )
+        return None
+
     def resolve(self, request: ModelRequest | None = None) -> RouteDecision:
         request = request or ModelRequest()
-        models = {
-            m.id: enrich_descriptor_capabilities(m) for m in self._get_models()
-        }
+        models = {m.id: self._enrich(m) for m in self._get_models()}
         config = self.get_config()
         trace_id = str(uuid.uuid4())
         tried: list[str] = []
         requires_chat = any(
-            _cap_attr(c) == "chat" for c in (request.required_capabilities or ())
+            capability_attr(c) == "chat" for c in (request.required_capabilities or ())
         )
         active_id = self.store.get_active_model_id()
+        # Active preference that is offline is preference-only, not live-eligible.
+        active_model = models.get(active_id) if active_id else None
+        active_live = bool(
+            active_model
+            and active_model.lifecycle_state.value not in {"error", "offline"}
+        )
 
         def eligible(model: ModelDescriptor, *, explicit: bool = False) -> bool:
             if model.lifecycle_state.value in {"error", "offline"}:
@@ -121,41 +235,35 @@ class ModelRouter:
                 "explicit_selection": explicit,
                 "runtime_supports_chat": True,
                 "preferred_role": request.preferred_role,
+                "requirement_mode": "hard",
             }
             for cap in request.required_capabilities:
                 decision = capability_satisfies_request(model, cap, request_context=ctx)
                 if not decision.satisfies:
                     return False
-            if request.locality == "local_only" and model.source.value not in {"local", "imported", "downloaded"}:
+            if request.locality == "local_only" and not is_local_execution_eligible(model):
                 return False
-            if request.locality == "local_preferred":
-                pass
-            # Context-fit eligibility (after capability / locality). Cache affinity is NOT here.
+            # Context-fit: unknown capacity with hard minimum → fail closed.
             min_window = request.minimum_context_window
             if min_window is None and request.required_input_tokens is not None:
-                # Require room for input + optional output reserve.
                 out_need = int(request.required_output_tokens or 0)
                 min_window = int(request.required_input_tokens) + out_need
-            if min_window is not None and model.context_window is not None:
+            if min_window is not None:
+                if model.context_window is None:
+                    # Conservative: unknown context capacity cannot satisfy hard minimum.
+                    return False
                 try:
                     if int(model.context_window) < int(min_window):
                         return False
                 except (TypeError, ValueError):
-                    pass
+                    return False
             return True
 
         def try_model(model_id: str, reason: str, *, explicit: bool = False) -> RouteDecision | None:
             if not model_id:
                 return None
             tried.append(model_id)
-            model = models.get(model_id)
-            if model is None:
-                # Also allow matching by display name / provider model id for convenience
-                for candidate in models.values():
-                    if candidate.display_name == model_id or candidate.metadata.get("provider_model_id") == model_id:
-                        model = candidate
-                        model_id = candidate.id
-                        break
+            model = self._resolve_alias(model_id, models)
             if model is None:
                 return None
             if not eligible(model, explicit=explicit):
@@ -176,16 +284,11 @@ class ModelRouter:
             decision = try_model(request.explicit_model_id, "explicit", explicit=True)
             if decision:
                 return decision
-            # Distinguish not-found vs not chat-capable for clearer API errors.
-            model = models.get(request.explicit_model_id)
-            if model is None:
-                for candidate in models.values():
-                    if (
-                        candidate.display_name == request.explicit_model_id
-                        or candidate.metadata.get("provider_model_id") == request.explicit_model_id
-                    ):
-                        model = candidate
-                        break
+            model = None
+            try:
+                model = self._resolve_alias(request.explicit_model_id, models)
+            except ModelControlError:
+                raise
             if model is not None and requires_chat:
                 chat_decision = capability_satisfies_request(
                     model,
@@ -231,8 +334,8 @@ class ModelRouter:
                 if decision:
                     return decision
 
-        # 4. Active default
-        if active_id:
+        # 4. Active default — only if currently live/servable
+        if active_id and active_live:
             decision = try_model(active_id, "active_default")
             if decision:
                 return decision
@@ -244,9 +347,7 @@ class ModelRouter:
                 self.gateway.record_fallback("primary unavailable; configured fallback")
                 return decision
 
-        # 6. Optional cloud — only if allowed. Registry iteration order is NOT policy.
-        # Prefer a single eligible API model; if multiple exist without configured
-        # preference (already exhausted in step 5), fail closed rather than pick by order.
+        # 6. Optional cloud
         if config.cloud_fallback_allowed:
             cloud_candidates = [
                 model
@@ -259,7 +360,6 @@ class ModelRouter:
                     self.gateway.record_fallback("local exhausted; cloud fallback allowed")
                     return decision
             elif len(cloud_candidates) > 1:
-                # Do not use display_name / registry order as a tie-breaker.
                 raise ModelControlError(
                     code=NO_MODEL_ASSIGNED if not tried else ROUTER_EXHAUSTED,
                     message=(
@@ -282,7 +382,6 @@ class ModelRouter:
                     ),
                 )
 
-        # FAIL CLOSED — never first_eligible / models[0] / alphabetically first.
         code = NO_CHAT_MODEL_AVAILABLE if requires_chat else (
             NO_MODEL_ASSIGNED if not tried else ROUTER_EXHAUSTED
         )
@@ -302,15 +401,19 @@ class ModelRouter:
                 config=config,
                 requires_chat=requires_chat,
                 reason="NO_MODEL_ASSIGNED",
-                extra={"traceId": trace_id},
+                extra={
+                    "traceId": trace_id,
+                    "activeModelConfigured": active_id,
+                    "activeModelLive": active_live,
+                },
             ),
         )
 
     def find_compatible(self, *, required_capabilities: list[str], locality: str = "any") -> list[str]:
-        models = [enrich_descriptor_capabilities(m) for m in self._get_models()]
+        models = [self._enrich(m) for m in self._get_models()]
         out: list[str] = []
         for model in models:
-            if locality == "local_only" and model.source.value not in {"local", "imported", "downloaded"}:
+            if locality == "local_only" and not is_local_execution_eligible(model):
                 continue
             if model.lifecycle_state.value in {"error", "offline"}:
                 continue
@@ -355,24 +458,9 @@ def _exhaustion_details(
             "discovery_is_not_execution_authority": True,
             "registry_order_is_not_selection_policy": True,
             "first_eligible_removed": True,
+            "preference_is_not_live_active": True,
         },
     }
     if extra:
         details.update(extra)
     return details
-
-
-def _cap_attr(name: str) -> str:
-    mapping = {
-        "chat": "chat",
-        "reasoning": "reasoning",
-        "coding": "coding",
-        "tool_calling": "tool_calling",
-        "toolCalling": "tool_calling",
-        "structured_output": "structured_output",
-        "structuredOutput": "structured_output",
-        "vision": "vision",
-        "embeddings": "embeddings",
-        "streaming": "streaming",
-    }
-    return mapping.get(name, name)

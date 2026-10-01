@@ -122,6 +122,8 @@ class ModelControlPlane:
             self.registry,
             get_adapter=self.get_adapter,
         )
+        # Wire verified probes into router effective-capability decisions.
+        self.router._list_verified = self.probes.list_for_model
         self.benchmarks = BenchmarkService(self.registry, get_adapter=self.get_adapter)
         download_root = settings.database_path.parent / "model_downloads"
         allowed_roots = [
@@ -864,6 +866,24 @@ class ModelControlPlane:
             "runtime": runtime_label,
             "availableModels": len(models),
             "activeModel": active,
+            "activeModelLive": bool(
+                active
+                and any(
+                    m.id == active
+                    and m.lifecycle_state.value not in {"offline", "error"}
+                    for m in models
+                )
+            ),
+            "activeModelServable": bool(
+                active
+                and any(
+                    m.id == active
+                    and m.lifecycle_state.value not in {"offline", "error"}
+                    and m.health.value not in {"offline", "error"}
+                    for m in models
+                )
+            ),
+            "preferredModelId": active,
             "loadedModels": len(loaded),
             "discoveryLatencyMs": self.registry.last_discovery_latency_ms,
             "gatewayHealth": (
@@ -1560,55 +1580,140 @@ class ModelControlPlane:
     ) -> dict[str, Any]:
         model = self.registry.get(model_id)
         leviathan_est = None
+        leviathan_status = "UNAVAILABLE"
         if hasattr(self.resources, "estimate"):
             try:
                 leviathan_est = self.resources.estimate(
                     model, requested_context=options.context_length if options else None
                 ).public_dict()
+                leviathan_status = "MEASURED" if leviathan_est else "UNAVAILABLE"
+                if isinstance(leviathan_est, dict) and leviathan_est.get("error"):
+                    leviathan_status = "UNAVAILABLE"
             except Exception as exc:  # noqa: BLE001
-                leviathan_est = {"error": str(exc), "provenance": "LEVIATHAN_ESTIMATE"}
+                leviathan_est = {
+                    "error": str(exc),
+                    "provenance": "LEVIATHAN_ESTIMATE",
+                    "status": "UNAVAILABLE",
+                }
+                leviathan_status = "UNAVAILABLE"
 
         provider_est = None
+        provider_status = "UNAVAILABLE"
         warnings: list[str] = []
         try:
             adapter = self.get_adapter(model.provider_id)
             if hasattr(adapter, "estimate_load"):
                 provider_est = await adapter.estimate_load(model_id, options)
+                provider_status = "MEASURED"
+                if isinstance(provider_est, dict) and provider_est.get("error"):
+                    provider_status = "UNAVAILABLE"
             else:
                 warnings.append("Provider does not expose estimate_load")
+                provider_status = "UNAVAILABLE"
         except ModelControlError as exc:
             warnings.append(exc.message)
             provider_est = {"error": exc.public_dict(), "provenance": "PROVIDER_ESTIMATE"}
+            provider_status = "UNAVAILABLE"
         except Exception as exc:  # noqa: BLE001
             warnings.append(str(exc))
+            provider_status = "UNAVAILABLE"
 
         disagree = False
+        disagree_abs: int | None = None
+        disagree_pct: float | None = None
+        p_gpu = None
+        l_vram = None
         try:
-            p_gpu = (provider_est or {}).get("estimate", {}).get("estimatedGpuMemoryBytes")
-            l_vram = (leviathan_est or {}).get("estimatedVramBytes") or (
-                leviathan_est or {}
-            ).get("vramBytes")
-            if isinstance(p_gpu, int) and isinstance(l_vram, int) and l_vram > 0:
-                ratio = abs(p_gpu - l_vram) / max(p_gpu, l_vram)
-                if ratio > 0.25:
-                    disagree = True
-                    warnings.append(
-                        "Leviathan and LM Studio estimates disagree by more than 25%"
+            if isinstance(provider_est, dict):
+                p_gpu = (provider_est.get("estimate") or {}).get("estimatedGpuMemoryBytes")
+                if p_gpu is None:
+                    p_gpu = provider_est.get("estimatedGpuMemoryBytes")
+            if isinstance(leviathan_est, dict):
+                # Canonical ResourceEstimate public key is vramNeededBytes
+                l_vram = leviathan_est.get("vramNeededBytes")
+                if l_vram is None:
+                    l_vram = leviathan_est.get("estimatedVramBytes") or leviathan_est.get(
+                        "vramBytes"
                     )
+            if isinstance(p_gpu, (int, float)) and isinstance(l_vram, (int, float)):
+                p_gpu_i = int(p_gpu)
+                l_vram_i = int(l_vram)
+                if p_gpu_i > 0 and l_vram_i > 0:
+                    disagree_abs = abs(p_gpu_i - l_vram_i)
+                    disagree_pct = disagree_abs / max(p_gpu_i, l_vram_i)
+                    if disagree_pct > 0.25:
+                        disagree = True
+                        warnings.append(
+                            "Leviathan and provider estimates disagree by more than 25%"
+                        )
         except Exception:  # noqa: BLE001
             pass
 
+        if leviathan_status == "UNAVAILABLE" and provider_status == "UNAVAILABLE":
+            status = "UNAVAILABLE"
+        elif leviathan_status == "UNAVAILABLE" or provider_status == "UNAVAILABLE":
+            status = "PARTIAL"
+        else:
+            status = "MEASURED"
+
+        conservative_verdict = None
+        if disagree and isinstance(p_gpu, (int, float)) and isinstance(l_vram, (int, float)):
+            # Conservative policy uses the higher estimate for OOM safety.
+            conservative_verdict = "DISAGREE_USE_MAX"
+        if status == "UNAVAILABLE":
+            conservative_verdict = "UNMEASURED"
+
+        provider_version = None
+        try:
+            adapter = self.get_adapter(model.provider_id)
+            if hasattr(adapter, "control_capabilities"):
+                provider_version = adapter.control_capabilities().provider_version
+        except Exception:  # noqa: BLE001
+            provider_version = None
+
         self._emit(
             "model.estimate",
-            {"modelId": model_id, "provider": provider_est, "leviathan": leviathan_est},
+            {
+                "modelId": model_id,
+                "provider": provider_est,
+                "leviathan": leviathan_est,
+                "status": status,
+            },
         )
         return {
             "modelId": model_id,
+            "status": status,
             "leviathanEstimate": leviathan_est,
             "providerEstimate": provider_est,
+            "leviathanStatus": leviathan_status,
+            "providerStatus": provider_status,
             "disagreeMaterially": disagree,
+            "disagreementAbsoluteBytes": disagree_abs,
+            "disagreementPercentage": disagree_pct,
+            "leviathanVramBytes": int(l_vram) if isinstance(l_vram, (int, float)) else None,
+            "providerGpuMemoryBytes": int(p_gpu) if isinstance(p_gpu, (int, float)) else None,
+            "conservativeVerdict": conservative_verdict,
+            "requestedContext": options.context_length if options else None,
+            "providerVersion": provider_version,
             "warnings": warnings,
+            "errors": [
+                *(
+                    [leviathan_est.get("error")]
+                    if isinstance(leviathan_est, dict) and leviathan_est.get("error")
+                    else []
+                ),
+                *(
+                    [provider_est.get("error")]
+                    if isinstance(provider_est, dict) and provider_est.get("error")
+                    else []
+                ),
+            ],
             "timestamp": time.time(),
+            "truth": {
+                "missing_is_not_zero": True,
+                "partial_when_one_source": True,
+                "unavailable_when_neither": True,
+            },
         }
 
     async def start_optimization(
@@ -1621,6 +1726,7 @@ class ModelControlPlane:
         deadline_seconds: float = 900.0,
     ) -> dict[str, Any]:
         import asyncio
+        import hashlib
 
         model = self.registry.get(model_id)
         obj = OptimizationObjective(
@@ -1632,6 +1738,44 @@ class ModelControlPlane:
         hw = self.resources.hardware_snapshot()
         device_count = len(hw.devices)
 
+        # Stable hardware fingerprint — devices + usable VRAM + provider version.
+        # No serial numbers / sensitive identifiers.
+        hw_parts: list[str] = []
+        for dev in hw.devices:
+            hw_parts.append(
+                f"{getattr(dev, 'stable_device_id', None) or getattr(dev, 'name', 'dev')}:"
+                f"{getattr(dev, 'total_vram_bytes', None)}"
+            )
+        provider_version = None
+        supported_controls: set[str] | None = None
+        try:
+            adapter = self.get_adapter(model.provider_id)
+            if hasattr(adapter, "control_capabilities"):
+                caps = adapter.control_capabilities()
+                provider_version = caps.provider_version
+                # Collect supported load controls from field matrix / public caps
+                supported_controls = set()
+                for field in getattr(caps, "fields", None) or []:
+                    name = getattr(field, "name", None) or (
+                        field.get("name") if isinstance(field, dict) else None
+                    )
+                    support = getattr(field, "support", None) or (
+                        field.get("support") if isinstance(field, dict) else None
+                    )
+                    if name and str(support).upper() == "SUPPORTED":
+                        supported_controls.add(str(name))
+                if not supported_controls:
+                    flat = caps.public_dict() if hasattr(caps, "public_dict") else {}
+                    for key, val in (flat.get("capabilities") or flat or {}).items():
+                        if str(val).upper() == "SUPPORTED":
+                            supported_controls.add(str(key))
+        except Exception:  # noqa: BLE001
+            provider_version = None
+            supported_controls = None
+
+        hw_fp_src = "|".join(hw_parts) + f"|pv={provider_version or ''}|q={model.quantization or ''}"
+        hardware_fingerprint = hashlib.sha256(hw_fp_src.encode("utf-8")).hexdigest()[:24]
+
         async def load_fn(mid: str, opts: LoadOptions) -> dict[str, Any]:
             return await self.load_model(mid, opts, confirm_oom=False)
 
@@ -1639,24 +1783,34 @@ class ModelControlPlane:
             return await self.unload_model(mid)
 
         async def benchmark_fn(mid: str) -> dict[str, Any]:
-            try:
-                await self.benchmarks.quick_benchmark(mid)
-            except Exception:  # noqa: BLE001
-                pass
+            # Single call — BenchmarkService owns any internal warmup.
             return await self.benchmarks.quick_benchmark(mid)
 
         async def preflight_fn(mid: str, opts: LoadOptions) -> dict[str, Any]:
-            return self.placement_preflight(mid, load_options=opts)
+            result = self.placement_preflight(mid, load_options=opts)
+            # Normalize verdict for optimizer consumption.
+            if isinstance(result, dict) and "verdict" not in result:
+                feasible = result.get("feasible")
+                plan = result.get("plan") if isinstance(result.get("plan"), dict) else {}
+                if feasible is False:
+                    reason = str(
+                        plan.get("reason")
+                        or plan.get("infeasibleReason")
+                        or result.get("reason")
+                        or ""
+                    ).upper()
+                    if any(tok in reason for tok in ("OOM", "VRAM", "MEMORY", "HEADROOM")):
+                        result = {**result, "verdict": "LIKELY_OOM"}
+                    else:
+                        result = {**result, "verdict": "WARNING"}
+                elif feasible is True:
+                    result = {**result, "verdict": "SAFE"}
+            return result
 
-        provider_version = None
-        try:
-            adapter = self.get_adapter(model.provider_id)
-            if hasattr(adapter, "control_capabilities"):
-                provider_version = adapter.control_capabilities().provider_version
-        except Exception:  # noqa: BLE001
-            provider_version = None
+        async def estimate_fn(mid: str, opts: LoadOptions) -> dict[str, Any]:
+            return await self.estimate_model_load(mid, opts)
 
-        from Data.modules.models.optimizer import OptimizationRun
+        from Data.modules.models.optimizer import OptimizationRun, OptimizationStatus
 
         pending = OptimizationRun(
             run_id=str(uuid.uuid4()),
@@ -1666,35 +1820,78 @@ class ModelControlPlane:
             deadline_seconds=float(deadline_seconds),
             status=OptimizationStatus.RUNNING,
             started_at=time.time(),
+            hardware_fingerprint=hardware_fingerprint,
         )
-        self.optimizer._runs[pending.run_id] = pending
+        # Exactly one run identity from start → terminal.
+        self.optimizer.register_run(pending)
         self._emit("model.optimize.start", {"modelId": model_id, "runId": pending.run_id})
 
         async def _bound_start() -> None:
-            real = await self.optimizer.run(
-                model_id=model_id,
-                base_options=options or LoadOptions(),
-                objectives=obj,
-                max_candidates=pending.max_candidates,
-                deadline_seconds=pending.deadline_seconds,
-                device_count=device_count,
-                provider_version=provider_version,
-                hardware_fingerprint=None,
-                quantization=model.quantization,
-                load_fn=load_fn,
-                unload_fn=unload_fn,
-                benchmark_fn=benchmark_fn,
-                preflight_fn=preflight_fn,
-            )
-            real.run_id = pending.run_id
-            self.optimizer._runs[pending.run_id] = real
-            self._emit(
-                "model.optimize.complete",
-                {"modelId": model_id, "runId": real.run_id, "status": real.status.value},
-            )
+            try:
+                real = await self.optimizer.run(
+                    model_id=model_id,
+                    base_options=options or LoadOptions(),
+                    objectives=obj,
+                    max_candidates=pending.max_candidates,
+                    deadline_seconds=pending.deadline_seconds,
+                    device_count=device_count,
+                    provider_version=provider_version,
+                    hardware_fingerprint=hardware_fingerprint,
+                    quantization=model.quantization,
+                    run_id=pending.run_id,
+                    supported_controls=supported_controls,
+                    load_fn=load_fn,
+                    unload_fn=unload_fn,
+                    benchmark_fn=benchmark_fn,
+                    preflight_fn=preflight_fn,
+                    estimate_fn=estimate_fn,
+                )
+                # Same object identity — never renumber a second run onto pending.
+                self._emit(
+                    "model.optimize.complete",
+                    {
+                        "modelId": model_id,
+                        "runId": real.run_id,
+                        "status": real.status.value,
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001
+                run = self.optimizer.get(pending.run_id)
+                if run is not None and run.status != OptimizationStatus.CANCELLED:
+                    run.status = OptimizationStatus.UNMEASURED
+                    run.error = f"task_failure:{type(exc).__name__}:{exc}"
+                    run.finished_at = time.time()
+                self._emit(
+                    "model.optimize.error",
+                    {
+                        "modelId": model_id,
+                        "runId": pending.run_id,
+                        "error": str(exc),
+                    },
+                )
+                raise
+            finally:
+                self._optimization_tasks.pop(pending.run_id, None)
 
         task = asyncio.create_task(_bound_start())
         self._optimization_tasks[pending.run_id] = task
+
+        def _done(t: asyncio.Task) -> None:
+            self._optimization_tasks.pop(pending.run_id, None)
+            # Retrieve exception to avoid "Task exception was never retrieved"
+            try:
+                exc = t.exception()
+                if exc is not None:
+                    self._emit(
+                        "model.optimize.task_exception",
+                        {"runId": pending.run_id, "error": str(exc)},
+                    )
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # noqa: BLE001
+                pass
+
+        task.add_done_callback(_done)
         return {"queued": True, "optimization": pending.public_dict()}
 
     def get_optimization(self, run_id: str) -> dict[str, Any]:
@@ -1719,6 +1916,10 @@ class ModelControlPlane:
                 message=f"Optimization run not found: {run_id}",
                 http_status=404,
             )
+        # Cancel the real background task so awaited ops can be interrupted.
+        task = self._optimization_tasks.get(run_id)
+        if task is not None and not task.done():
+            task.cancel()
         self._emit("model.optimize.cancel", {"runId": run_id})
         return {"optimization": run.public_dict()}
 

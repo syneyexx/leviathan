@@ -1,11 +1,14 @@
 """Provider dialect adaptation for frontier inference transport (W2).
 
 Maps requested InferenceTransportOptions onto provider payload fields.
-Never silently drops a requested capability: each requested feature is
-reported as SUPPORTED, UNSUPPORTED, or UNMEASURED.
+Dialect adaptation proves WIRE SHAPE ONLY (transport_mappable).
+It does NOT grant model/provider capability authority.
 
-MCP in this repository means Model Context Protocol — not this plane.
-Use ModelControlPlane / dialect naming here.
+Semantics:
+  - transport_mappable: dialect knows how to emit the JSON field
+  - feature_states: never claim CapabilityState.SUPPORTED solely because a
+    field was emitted — use UNMEASURED for wire-mappable-but-unverified
+  - Capability engine / verified probes decide model support
 """
 
 from __future__ import annotations
@@ -33,10 +36,12 @@ class TransportFeature(str, Enum):
     STREAMING = "streaming"
 
 
-# Honest vocabulary aliases used in public responses (CapabilityState values).
-FEATURE_SUPPORTED = CapabilityState.SUPPORTED.value
+# Wire-mappable ≠ model-supported. Dialect emits UNMEASURED for mappable fields.
+FEATURE_SUPPORTED = CapabilityState.SUPPORTED.value  # reserved for verified dialects only
+FEATURE_TRANSPORT_MAPPABLE = CapabilityState.UNMEASURED.value
 FEATURE_UNSUPPORTED = CapabilityState.UNSUPPORTED.value
 FEATURE_UNMEASURED = CapabilityState.UNMEASURED.value
+FEATURE_UNKNOWN = CapabilityState.UNKNOWN.value
 
 
 @dataclass
@@ -58,6 +63,8 @@ class InferenceTransportOptions:
     stream_include_usage: bool | None = None
     # When True (default), unsupported *requested* features raise rather than drop.
     reject_unsupported: bool = True
+    # When True, UNMEASURED (wire-mappable but unverified) hard features also reject.
+    reject_unmeasured: bool = False
 
     def requested_features(self) -> list[TransportFeature]:
         out: list[TransportFeature] = []
@@ -93,6 +100,7 @@ class DialectAdaptation:
     dialect_id: str
     payload_fields: dict[str, Any] = field(default_factory=dict)
     feature_states: dict[str, str] = field(default_factory=dict)
+    transport_mappable: dict[str, bool] = field(default_factory=dict)
     rejected: list[dict[str, str]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
@@ -100,11 +108,13 @@ class DialectAdaptation:
         return {
             "dialectId": self.dialect_id,
             "featureStates": dict(self.feature_states),
+            "transportMappable": dict(self.transport_mappable),
             "rejected": list(self.rejected),
             "notes": list(self.notes),
             "payloadKeys": sorted(self.payload_fields.keys()),
             "truth": {
                 "requested_capability_never_silently_dropped": True,
+                "wire_mappable_is_not_model_supported": True,
                 "mcp_means_model_context_protocol_not_control_plane": True,
             },
         }
@@ -118,6 +128,44 @@ class ProviderDialect:
     def adapt(self, options: InferenceTransportOptions) -> DialectAdaptation:
         raise NotImplementedError
 
+    def _mark_mappable(
+        self,
+        *,
+        adaptation: DialectAdaptation,
+        feature: TransportFeature,
+        options: InferenceTransportOptions,
+        detail: str | None = None,
+    ) -> None:
+        """Record that the dialect can emit the wire field — NOT that the model supports it."""
+        adaptation.transport_mappable[feature.value] = True
+        adaptation.feature_states[feature.value] = FEATURE_TRANSPORT_MAPPABLE
+        note = detail or (
+            f"dialect '{self.dialect_id}' can emit '{feature.value}' wire field; "
+            "model capability must be verified separately"
+        )
+        adaptation.notes.append(note)
+        if options.reject_unmeasured and options.reject_unsupported:
+            adaptation.rejected.append(
+                {
+                    "feature": feature.value,
+                    "state": FEATURE_UNMEASURED,
+                    "detail": note,
+                }
+            )
+            raise ModelControlError(
+                code=CAPABILITY_NOT_SUPPORTED,
+                message=(
+                    f"Transport feature '{feature.value}' is UNMEASURED "
+                    f"(wire-mappable only) for dialect '{self.dialect_id}'"
+                ),
+                details={
+                    "feature": feature.value,
+                    "dialect": self.dialect_id,
+                    "state": FEATURE_UNMEASURED,
+                    "transportMappable": True,
+                },
+            )
+
     def _reject_or_mark(
         self,
         *,
@@ -128,6 +176,7 @@ class ProviderDialect:
         options: InferenceTransportOptions,
     ) -> None:
         adaptation.feature_states[feature.value] = state
+        adaptation.transport_mappable[feature.value] = False
         if state == FEATURE_UNSUPPORTED:
             adaptation.rejected.append(
                 {"feature": feature.value, "state": state, "detail": detail}
@@ -146,48 +195,79 @@ class ProviderDialect:
                         "state": state,
                     },
                 )
-        elif state == FEATURE_UNMEASURED:
+        elif state in {FEATURE_UNMEASURED, FEATURE_UNKNOWN}:
             adaptation.notes.append(detail)
+            adaptation.rejected.append(
+                {"feature": feature.value, "state": state, "detail": detail}
+            )
+            if options.reject_unsupported:
+                raise ModelControlError(
+                    code=CAPABILITY_NOT_SUPPORTED,
+                    message=(
+                        f"Transport feature '{feature.value}' is {state} "
+                        f"for dialect '{self.dialect_id}' and cannot be silently applied"
+                    ),
+                    details={
+                        "feature": feature.value,
+                        "dialect": self.dialect_id,
+                        "state": state,
+                    },
+                )
 
 
 class OpenAICompatibleDialect(ProviderDialect):
-    """OpenAI chat.completions-shaped local/remote providers (LM Studio, vLLM, etc.)."""
+    """OpenAI chat.completions-shaped local/remote providers (LM Studio, vLLM, etc.).
+
+    Wire mapping is shared; capability claims are NOT. Each provider still needs
+    verified probes / authoritative reports for model support.
+    """
 
     dialect_id = "openai_compatible"
 
     def adapt(self, options: InferenceTransportOptions) -> DialectAdaptation:
         adaptation = DialectAdaptation(dialect_id=self.dialect_id)
-        # Usage accounting is always attempted via response parsing when present.
-        adaptation.feature_states[TransportFeature.USAGE_ACCOUNTING.value] = FEATURE_SUPPORTED
+        adaptation.transport_mappable[TransportFeature.USAGE_ACCOUNTING.value] = True
+        adaptation.feature_states[
+            TransportFeature.USAGE_ACCOUNTING.value
+        ] = FEATURE_TRANSPORT_MAPPABLE
 
         if options.tools is not None or options.tool_choice is not None:
             if options.tools is not None:
                 adaptation.payload_fields["tools"] = list(options.tools)
             if options.tool_choice is not None:
                 adaptation.payload_fields["tool_choice"] = options.tool_choice
-            adaptation.feature_states[TransportFeature.TOOL_CALLING.value] = FEATURE_SUPPORTED
+            self._mark_mappable(
+                adaptation=adaptation,
+                feature=TransportFeature.TOOL_CALLING,
+                options=options,
+            )
 
         if options.parallel_tool_calls is not None:
             adaptation.payload_fields["parallel_tool_calls"] = bool(options.parallel_tool_calls)
-            adaptation.feature_states[
-                TransportFeature.PARALLEL_TOOL_CALLS.value
-            ] = FEATURE_SUPPORTED
+            self._mark_mappable(
+                adaptation=adaptation,
+                feature=TransportFeature.PARALLEL_TOOL_CALLS,
+                options=options,
+            )
 
         if options.response_format is not None:
             rf = dict(options.response_format)
             adaptation.payload_fields["response_format"] = rf
-            # json_object / json_schema shapes are OpenAI-compatible; validity is probed separately.
-            adaptation.feature_states[
-                TransportFeature.JSON_SCHEMA_RESPONSE.value
-            ] = FEATURE_SUPPORTED
+            self._mark_mappable(
+                adaptation=adaptation,
+                feature=TransportFeature.JSON_SCHEMA_RESPONSE,
+                options=options,
+                detail=(
+                    "response_format field is wire-mappable; json_schema validity "
+                    "requires verified probe — not assumed from dialect"
+                ),
+            )
             if rf.get("type") == "json_schema" and "json_schema" not in rf:
                 adaptation.notes.append(
                     "response_format.type=json_schema without json_schema body — provider may reject"
                 )
 
         if options.reasoning_effort is not None:
-            # Generic OpenAI-compatible servers do not standardize reasoning_effort.
-            # Do not silently omit — mark UNSUPPORTED unless a specialized dialect handles it.
             self._reject_or_mark(
                 adaptation=adaptation,
                 feature=TransportFeature.REASONING_EFFORT,
@@ -213,56 +293,56 @@ class OpenAICompatibleDialect(ProviderDialect):
                 adaptation.payload_fields["logprobs"] = bool(options.logprobs)
             if options.top_logprobs is not None:
                 adaptation.payload_fields["top_logprobs"] = int(options.top_logprobs)
-            adaptation.feature_states[TransportFeature.LOGPROBS.value] = FEATURE_SUPPORTED
+            self._mark_mappable(
+                adaptation=adaptation,
+                feature=TransportFeature.LOGPROBS,
+                options=options,
+            )
 
         if options.n is not None and int(options.n) > 1:
             adaptation.payload_fields["n"] = int(options.n)
-            adaptation.feature_states[TransportFeature.MULTI_CANDIDATE.value] = FEATURE_SUPPORTED
+            self._mark_mappable(
+                adaptation=adaptation,
+                feature=TransportFeature.MULTI_CANDIDATE,
+                options=options,
+            )
         elif options.n is not None:
             adaptation.payload_fields["n"] = int(options.n)
 
         if options.prompt_cache_key is not None or options.cache_control is not None:
-            # Cache hints are provider-specific; generic dialect does not invent fields.
             detail = (
                 "cache hints not mapped for generic openai_compatible — "
-                "UNMEASURED until provider profile confirms"
+                "UNKNOWN until provider profile confirms"
             )
-            adaptation.feature_states[TransportFeature.CACHE_HINTS.value] = FEATURE_UNMEASURED
-            adaptation.notes.append(detail)
-            adaptation.rejected.append(
-                {
-                    "feature": TransportFeature.CACHE_HINTS.value,
-                    "state": FEATURE_UNMEASURED,
-                    "detail": detail,
-                }
+            self._reject_or_mark(
+                adaptation=adaptation,
+                feature=TransportFeature.CACHE_HINTS,
+                state=FEATURE_UNKNOWN,
+                detail=detail,
+                options=options,
             )
-            if options.reject_unsupported:
-                raise ModelControlError(
-                    code=CAPABILITY_NOT_SUPPORTED,
-                    message=(
-                        "Transport feature 'cache_hints' is UNMEASURED for dialect "
-                        f"'{self.dialect_id}' and cannot be silently applied"
-                    ),
-                    details={
-                        "feature": TransportFeature.CACHE_HINTS.value,
-                        "dialect": self.dialect_id,
-                        "state": FEATURE_UNMEASURED,
-                    },
-                )
 
         if options.stream:
             adaptation.payload_fields["stream"] = True
-            adaptation.feature_states[TransportFeature.STREAMING.value] = FEATURE_SUPPORTED
+            self._mark_mappable(
+                adaptation=adaptation,
+                feature=TransportFeature.STREAMING,
+                options=options,
+            )
             if options.stream_include_usage is not None:
                 adaptation.payload_fields["stream_options"] = {
                     "include_usage": bool(options.stream_include_usage)
                 }
             if options.tools is not None:
-                # Streaming tool deltas are supported by OpenAI wire format when tools present;
-                # measured verification is separate.
-                adaptation.feature_states[
-                    TransportFeature.STREAMING_TOOL_DELTAS.value
-                ] = FEATURE_SUPPORTED
+                self._mark_mappable(
+                    adaptation=adaptation,
+                    feature=TransportFeature.STREAMING_TOOL_DELTAS,
+                    options=options,
+                    detail=(
+                        "stream+tools wire shape is mappable; streamingToolDeltas "
+                        "requires verified probe or authoritative provider capability"
+                    ),
+                )
 
         return adaptation
 
@@ -273,7 +353,6 @@ class OpenAIReasoningDialect(OpenAICompatibleDialect):
     dialect_id = "openai_reasoning"
 
     def adapt(self, options: InferenceTransportOptions) -> DialectAdaptation:
-        # Peel reasoning/cache so the base dialect does not UNSUPPORTED-reject them.
         base_opts = InferenceTransportOptions(
             tools=options.tools,
             tool_choice=options.tool_choice,
@@ -285,31 +364,68 @@ class OpenAIReasoningDialect(OpenAICompatibleDialect):
             stream=options.stream,
             stream_include_usage=options.stream_include_usage,
             reject_unsupported=options.reject_unsupported,
+            reject_unmeasured=options.reject_unmeasured,
         )
         adaptation = OpenAICompatibleDialect.adapt(self, base_opts)
         adaptation.dialect_id = self.dialect_id
 
         if options.reasoning_effort is not None:
             adaptation.payload_fields["reasoning_effort"] = str(options.reasoning_effort)
-            adaptation.feature_states[
-                TransportFeature.REASONING_EFFORT.value
-            ] = FEATURE_SUPPORTED
+            self._mark_mappable(
+                adaptation=adaptation,
+                feature=TransportFeature.REASONING_EFFORT,
+                options=options,
+            )
 
         if options.reasoning_max_tokens is not None:
             adaptation.payload_fields["reasoning"] = {
                 "max_tokens": int(options.reasoning_max_tokens)
             }
-            adaptation.feature_states[
-                TransportFeature.REASONING_TOKEN_BUDGET.value
-            ] = FEATURE_SUPPORTED
+            self._mark_mappable(
+                adaptation=adaptation,
+                feature=TransportFeature.REASONING_TOKEN_BUDGET,
+                options=options,
+            )
 
         if options.prompt_cache_key is not None:
             adaptation.payload_fields["prompt_cache_key"] = str(options.prompt_cache_key)
-            adaptation.feature_states[TransportFeature.CACHE_HINTS.value] = FEATURE_SUPPORTED
+            self._mark_mappable(
+                adaptation=adaptation,
+                feature=TransportFeature.CACHE_HINTS,
+                options=options,
+            )
         elif options.cache_control is not None:
             adaptation.payload_fields["cache_control"] = dict(options.cache_control)
-            adaptation.feature_states[TransportFeature.CACHE_HINTS.value] = FEATURE_SUPPORTED
+            self._mark_mappable(
+                adaptation=adaptation,
+                feature=TransportFeature.CACHE_HINTS,
+                options=options,
+            )
 
+        return adaptation
+
+
+class UnknownDialect(ProviderDialect):
+    """Fail-closed dialect for unrecognized provider ids."""
+
+    dialect_id = "unknown"
+
+    def adapt(self, options: InferenceTransportOptions) -> DialectAdaptation:
+        adaptation = DialectAdaptation(dialect_id=self.dialect_id)
+        for feature in options.requested_features():
+            self._reject_or_mark(
+                adaptation=adaptation,
+                feature=feature,
+                state=FEATURE_UNKNOWN,
+                detail=(
+                    f"unknown dialect '{self.dialect_id}' does not claim "
+                    f"OpenAI-compatible support for '{feature.value}'"
+                ),
+                options=options,
+            )
+        adaptation.notes.append(
+            "unknown dialect is fail-closed; not treated as generic openai_compatible"
+        )
         return adaptation
 
 
@@ -326,10 +442,13 @@ _DIALECTS: dict[str, ProviderDialect] = {
 def get_provider_dialect(dialect_id: str | None) -> ProviderDialect:
     key = (dialect_id or "openai_compatible").strip().lower()
     if key in _DIALECTS:
+        if key not in {"openai_compatible", "openai_reasoning"}:
+            wrapped = OpenAICompatibleDialect()
+            wrapped.dialect_id = key
+            return wrapped
         return _DIALECTS[key]
-    # Unknown dialect: openai-compatible wire shape; report the requested id honestly.
-    unknown = OpenAICompatibleDialect()
-    unknown.dialect_id = key or "openai_compatible"
+    unknown = UnknownDialect()
+    unknown.dialect_id = key or "unknown"
     return unknown
 
 
