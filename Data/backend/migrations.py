@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -4713,6 +4714,66 @@ def _m65_capability_idempotency(conn: sqlite3.Connection) -> None:
         "ON capability_idempotency(capability_id, status)"
     )
 
+def _m66_workflow_execution_idempotency(conn: sqlite3.Connection) -> None:
+    """First-class workflow execution idempotency_key + active unique index."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS workflow_executions (
+            execution_id TEXT PRIMARY KEY,
+            workflow_id TEXT NOT NULL,
+            workflow_version INTEGER NOT NULL,
+            state TEXT NOT NULL,
+            trigger_source TEXT NOT NULL DEFAULT 'MANUAL',
+            requested_by TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            started_at TEXT,
+            ended_at TEXT,
+            duration_ms INTEGER,
+            current_node_id TEXT,
+            node_results_json TEXT NOT NULL DEFAULT '[]',
+            error TEXT,
+            root_job_id TEXT,
+            child_job_ids_json TEXT NOT NULL DEFAULT '[]',
+            run_id TEXT,
+            input_snapshot_json TEXT NOT NULL DEFAULT '{}',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            cursor_json TEXT NOT NULL DEFAULT '{}',
+            name_snapshot TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(workflow_executions)").fetchall()}
+    if cols and "idempotency_key" not in cols:
+        conn.execute("ALTER TABLE workflow_executions ADD COLUMN idempotency_key TEXT")
+    try:
+        rows = conn.execute(
+            "SELECT execution_id, metadata_json FROM workflow_executions "
+            "WHERE idempotency_key IS NULL"
+        ).fetchall()
+        for row in rows:
+            try:
+                meta = json.loads(row["metadata_json"] or "{}")
+            except Exception:  # noqa: BLE001
+                continue
+            key = meta.get("idempotency_key") if isinstance(meta, dict) else None
+            if key:
+                conn.execute(
+                    "UPDATE workflow_executions SET idempotency_key = ? WHERE execution_id = ?",
+                    (str(key), row["execution_id"]),
+                )
+    except Exception:  # noqa: BLE001
+        pass
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_wf_exec_idempotency_active
+        ON workflow_executions(workflow_id, idempotency_key)
+        WHERE idempotency_key IS NOT NULL
+          AND state NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+        """
+    )
+
+
 
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
@@ -4871,6 +4932,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=65,
         name="capability_idempotency",
         apply=_m65_capability_idempotency,
+    ),
+    Migration(
+        version=66,
+        name="workflow_execution_idempotency",
+        apply=_m66_workflow_execution_idempotency,
     ),
 )
 

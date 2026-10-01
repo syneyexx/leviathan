@@ -1250,11 +1250,18 @@ class ExecutionGateway:
         request: CapabilityRequest | None = None,
         authority_decision: str | None = None,
     ) -> CapabilityResult:
-        self.telemetry["rejected"] += 1
+        # Typed wait outcome — callers (workflows) must not treat this as terminal REJECTED.
+        status = (
+            CapabilityStatus.APPROVAL_REQUIRED
+            if reason == "approval_required"
+            else CapabilityStatus.REJECTED
+        )
+        if status != CapabilityStatus.APPROVAL_REQUIRED:
+            self.telemetry["rejected"] += 1
         result = CapabilityResult(
             request_id=request_id,
             capability_id=capability_id,
-            status=CapabilityStatus.REJECTED,
+            status=status,
             error=error,
             side_effects=definition.side_effects if definition else (),
             provider_kind=definition.provider_kind.value if definition else None,
@@ -1281,6 +1288,8 @@ class ExecutionGateway:
             self.telemetry["cancellations"] += 1
         elif status == CapabilityStatus.REJECTED:
             self.telemetry["rejected"] += 1
+        elif status == CapabilityStatus.APPROVAL_REQUIRED:
+            pass
         else:
             self.telemetry["failed"] += 1
 

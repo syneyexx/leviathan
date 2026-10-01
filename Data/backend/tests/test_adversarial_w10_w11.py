@@ -77,7 +77,7 @@ class GatewayUnauthorizedAndIdempotencyTests(unittest.TestCase):
                 },
             )
         )
-        self.assertEqual(result.status, CapabilityStatus.REJECTED)
+        self.assertEqual(result.status, CapabilityStatus.APPROVAL_REQUIRED)
         self.assertEqual(result.telemetry.get("reason"), "approval_required")
         self.assertEqual(_artifact_count(self.artifacts), 0)
 

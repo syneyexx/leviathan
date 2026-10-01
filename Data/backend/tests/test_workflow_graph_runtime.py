@@ -159,6 +159,41 @@ class WorkflowGraphRuntimeTests(unittest.TestCase):
         definition = self.store.create_definition(name="loop", graph=graph, status=WorkflowDefinitionStatus.ACTIVE)
         ex = self.store.create_execution(workflow_id=definition.workflow_id)
         done = self.runtime.run(ex.execution_id)
+        # while stays true at max → LOOP_LIMIT_EXCEEDED (safety ceiling)
+        self.assertEqual(done.state, WorkflowState.FAILED)
+        self.assertEqual(done.error, "LOOP_LIMIT_EXCEEDED")
+        body_runs = [
+            r
+            for r in (self.store.get_execution(ex.execution_id).node_results or [])
+            if r.get("node_id") == "body" and r.get("status") == "COMPLETED"
+        ]
+        self.assertEqual(len(body_runs), 2)
+
+    def test_loop_without_predicate_exits_success_at_max(self) -> None:
+        graph = WorkflowGraph(
+            nodes=[
+                WorkflowNodeDef(node_id="t", kind=WorkflowNodeKind.TRIGGER, label="t", config={}),
+                WorkflowNodeDef(
+                    node_id="loop",
+                    kind=WorkflowNodeKind.LOOP,
+                    label="loop",
+                    config={"max_iterations": 2},
+                ),
+                self._cap("body"),
+                self._cap("after"),
+            ],
+            edges=[
+                WorkflowEdgeDef(edge_id="t-l", source="t", target="loop"),
+                WorkflowEdgeDef(edge_id="l-b", source="loop", target="body", source_handle="body"),
+                WorkflowEdgeDef(edge_id="b-l", source="body", target="loop"),
+                WorkflowEdgeDef(edge_id="l-a", source="loop", target="after", source_handle="done"),
+            ],
+        )
+        definition = self.store.create_definition(
+            name="loop-count", graph=graph, status=WorkflowDefinitionStatus.ACTIVE
+        )
+        ex = self.store.create_execution(workflow_id=definition.workflow_id)
+        done = self.runtime.run(ex.execution_id)
         self.assertEqual(done.state, WorkflowState.COMPLETED)
         body_runs = [
             r
@@ -166,6 +201,81 @@ class WorkflowGraphRuntimeTests(unittest.TestCase):
             if r.get("node_id") == "body" and r.get("status") == "COMPLETED"
         ]
         self.assertEqual(len(body_runs), 2)
+
+    def test_loop_until_exits_success(self) -> None:
+        graph = WorkflowGraph(
+            nodes=[
+                WorkflowNodeDef(node_id="t", kind=WorkflowNodeKind.TRIGGER, label="t", config={}),
+                WorkflowNodeDef(
+                    node_id="loop",
+                    kind=WorkflowNodeKind.LOOP,
+                    label="loop",
+                    config={"max_iterations": 5, "until": {"op": "equals", "left": 1, "right": 1}},
+                ),
+                self._cap("body"),
+                self._cap("after"),
+            ],
+            edges=[
+                WorkflowEdgeDef(edge_id="t-l", source="t", target="loop"),
+                WorkflowEdgeDef(edge_id="l-b", source="loop", target="body", source_handle="body"),
+                WorkflowEdgeDef(edge_id="b-l", source="body", target="loop"),
+                WorkflowEdgeDef(edge_id="l-a", source="loop", target="after", source_handle="done"),
+            ],
+        )
+        definition = self.store.create_definition(
+            name="loop-until", graph=graph, status=WorkflowDefinitionStatus.ACTIVE
+        )
+        ex = self.store.create_execution(workflow_id=definition.workflow_id)
+        done = self.runtime.run(ex.execution_id)
+        self.assertEqual(done.state, WorkflowState.COMPLETED)
+        body_runs = [
+            r
+            for r in (self.store.get_execution(ex.execution_id).node_results or [])
+            if r.get("node_id") == "body"
+        ]
+        self.assertEqual(len(body_runs), 0)
+
+    def test_loop_zero_max_fails(self) -> None:
+        graph = WorkflowGraph(
+            nodes=[
+                WorkflowNodeDef(node_id="t", kind=WorkflowNodeKind.TRIGGER, label="t", config={}),
+                WorkflowNodeDef(
+                    node_id="loop",
+                    kind=WorkflowNodeKind.LOOP,
+                    label="loop",
+                    config={"max_iterations": 0},
+                ),
+            ],
+            edges=[WorkflowEdgeDef(edge_id="t-l", source="t", target="loop")],
+        )
+        definition = self.store.create_definition(
+            name="loop-zero", graph=graph, status=WorkflowDefinitionStatus.ACTIVE
+        )
+        ex = self.store.create_execution(workflow_id=definition.workflow_id)
+        done = self.runtime.run(ex.execution_id)
+        self.assertEqual(done.state, WorkflowState.FAILED)
+        self.assertEqual(done.error, "LOOP_LIMIT_EXCEEDED")
+
+    def test_loop_malformed_predicate_fails(self) -> None:
+        graph = WorkflowGraph(
+            nodes=[
+                WorkflowNodeDef(node_id="t", kind=WorkflowNodeKind.TRIGGER, label="t", config={}),
+                WorkflowNodeDef(
+                    node_id="loop",
+                    kind=WorkflowNodeKind.LOOP,
+                    label="loop",
+                    config={"max_iterations": 2, "while": {"op": "bogus_op"}},
+                ),
+            ],
+            edges=[WorkflowEdgeDef(edge_id="t-l", source="t", target="loop")],
+        )
+        definition = self.store.create_definition(
+            name="loop-bad", graph=graph, status=WorkflowDefinitionStatus.ACTIVE
+        )
+        ex = self.store.create_execution(workflow_id=definition.workflow_id)
+        done = self.runtime.run(ex.execution_id)
+        self.assertEqual(done.state, WorkflowState.FAILED)
+        self.assertIn("CONDITION_INVALID", done.error or "")
 
     def test_delay_zero_and_resume(self) -> None:
         graph = WorkflowGraph(

@@ -348,6 +348,8 @@ class WorkflowExecution:
     # Graph cursor bookkeeping for the runtime
     cursor: dict[str, Any] = field(default_factory=dict)
     name_snapshot: str = ""
+    # First-class idempotency (unique among non-terminal rows when set).
+    idempotency_key: str | None = None
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -371,16 +373,19 @@ class WorkflowExecution:
             "input_snapshot": self.input_snapshot,
             "metadata": self.metadata,
             "cursor": self.cursor,
+            "idempotency_key": self.idempotency_key,
         }
 
 
 @dataclass
 class WorkflowRecord:
-    """Compatibility projection: one execution + its linear steps.
+    """Compatibility projection over a version-pinned execution (not a second model).
 
-    ``workflow_id`` historically identified the conflated record. After
-    separation it equals ``execution_id`` so TaskService / ScheduleRunner /
-    worker entrypoints keep working without a parallel runtime.
+    Canonical engine truth lives in ``WorkflowExecution`` + definition/version
+    rows. ``WorkflowRecord`` is a read/write adapter for TaskService,
+    ScheduleRunner, legacy HTTP clients, and tests: ``workflow_id`` equals
+    ``execution_id``. Do not add new orchestration logic here — advance via
+    ``WorkflowRuntime._advance_execution`` only.
     """
 
     workflow_id: str

@@ -89,7 +89,7 @@ class ExecutionGatewayTests(unittest.TestCase):
                 arguments={"content": "x", "filename": "out.txt"},
             )
         )
-        self.assertEqual(result.status, CapabilityStatus.REJECTED)
+        self.assertEqual(result.status, CapabilityStatus.APPROVAL_REQUIRED)
         self.assertEqual(result.telemetry.get("reason"), "approval_required")
         self.assertGreaterEqual(self.gateway.telemetry["approval_required"], 1)
 

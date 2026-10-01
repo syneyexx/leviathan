@@ -56,6 +56,11 @@ class WorkflowRunRequest(BaseModel):
     idempotency_key: str | None = None
 
 
+class WorkflowResumeApprovalRequest(BaseModel):
+    approval_id: str | None = None
+    decision: str = "approved"
+
+
 class WorkflowDuplicateRequest(BaseModel):
     name: str | None = None
 
@@ -627,6 +632,30 @@ def build_workflows_router(
     def cancel_execution(execution_id: str) -> dict:
         try:
             record = workflow_runtime.cancel(execution_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Execution not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        execution = workflow_store.get_execution(execution_id)
+        return {
+            "execution": execution.public_dict() if execution else None,
+            "workflow": record.public_dict(),
+        }
+
+    @router.post("/api/workflow-executions/{execution_id}/resume")
+    def resume_execution(
+        execution_id: str,
+        payload: WorkflowResumeApprovalRequest | None = None,
+    ) -> dict:
+        """Resume WAITING_APPROVAL after operator approve/reject."""
+        body = payload or WorkflowResumeApprovalRequest()
+        try:
+            record = workflow_runtime.resume_with_approval(
+                execution_id,
+                approval_id=body.approval_id,
+                decision=body.decision,
+                requested_by="api",
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Execution not found") from exc
         except ValueError as exc:
