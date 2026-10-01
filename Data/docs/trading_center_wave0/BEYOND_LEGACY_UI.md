@@ -32,6 +32,7 @@ Format per item:
 - **Where:** Trading Desk → PRIMARY deploy/promote; ADVANCED shadow/drift/calibration
 - **Status:** COMPLETE (calibration PARTIAL evidence depth)
 - **Gap:** Paper page focuses on chart/fleet; shadow/drift/calibration rarely surfaced
+- **WAVE 3:** Wired — `PaperDeploymentAdvancedPanel` (shadow + promote A2–A4). Drift review left gated on measured metrics (not invented).
 
 ### 4. Qualification run write path
 - **Found:** create/get/gates/cancel qualification-runs + durable worker
