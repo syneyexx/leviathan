@@ -1317,14 +1317,16 @@ class SourceIngestionPipeline:
                 "dedupe": "content_hash",
             },
         )
-        if cached.get("brain_document_id") and text:
+        if text:
+            # P2-006: always brain-sync so this source occurrence joins provenance
+            # (source_locations) even when reusing an existing Knowledge doc by hash.
+            synced = self._brain_sync(updated, text)
+        elif cached.get("brain_document_id"):
             synced = self._mark_brain(
                 updated,
                 BrainStatus.SYNCED,
                 document_id=str(cached["brain_document_id"]),
             )
-        elif text:
-            synced = self._brain_sync(updated, text)
         else:
             synced = self._mark_brain(updated, BrainStatus.SKIPPED, error="parse_cache_empty_snapshot")
         if not is_child:
@@ -1368,14 +1370,15 @@ class SourceIngestionPipeline:
             content_hash_override=content_hash,
             extra_meta={"parse_cache_hit": True, "dedupe": "content_hash"},
         )
-        if cached.get("brain_document_id"):
+        if text:
+            # P2-006: multi-source lineage — register this child path on the shared doc.
+            synced = self._brain_sync(updated, text)
+        elif cached.get("brain_document_id"):
             synced = self._mark_brain(
                 updated,
                 BrainStatus.SYNCED,
                 document_id=str(cached["brain_document_id"]),
             )
-        elif text:
-            synced = self._brain_sync(updated, text)
         else:
             synced = self._mark_brain(updated, BrainStatus.SKIPPED, error="parse_cache_empty_snapshot")
         member.outcome = MemberOutcome.DUPLICATE
