@@ -253,68 +253,98 @@ class JobStore:
         )
         with self.connect() as conn:
             self._ensure_schema(conn)
-            conn.execute(
-                """
-                INSERT INTO jobs(
-                    job_id, capability_id, arguments_json, state, run_id, approval_id,
-                    requested_by, result_json, error, metadata_json, created_at, updated_at,
-                    trace_id, idempotency_key, lease_owner, lease_expires_at, last_heartbeat_at,
-                    attempt_number, budget_json, latency_class,
-                    domain, consumer, correlation_id, root_job_id, parent_job_id,
-                    domain_entity_type, domain_entity_id, worker_pool, resource_class,
-                    priority, queued_at, claimed_at, started_at, finished_at,
-                    max_attempts, next_attempt_at, timeout_seconds, deadline_at,
-                    cancel_requested_at, cancel_reason, progress, phase, message,
-                    resource_request_json, result_summary_json, artifact_refs_json,
-                    error_code, retryable
-                ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?,
-                    ?, ?, NULL, NULL, NULL,
-                    ?, ?, ?,
-                    ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?,
-                    ?, NULL, NULL, NULL, NULL,
-                    ?, NULL, ?, ?,
-                    NULL, NULL, NULL, ?, ?,
-                    ?, NULL, ?,
-                    NULL, NULL
+            # Serialize idempotent creates: unique index alone is insufficient —
+            # concurrent losers must reuse the winner, not raise.
+            if idempotency_key:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    "SELECT * FROM jobs WHERE idempotency_key = ? LIMIT 1",
+                    (idempotency_key,),
+                ).fetchone()
+                if row is not None:
+                    return self._from_row(row)
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO jobs(
+                        job_id, capability_id, arguments_json, state, run_id, approval_id,
+                        requested_by, result_json, error, metadata_json, created_at, updated_at,
+                        trace_id, idempotency_key, lease_owner, lease_expires_at, last_heartbeat_at,
+                        attempt_number, budget_json, latency_class,
+                        domain, consumer, correlation_id, root_job_id, parent_job_id,
+                        domain_entity_type, domain_entity_id, worker_pool, resource_class,
+                        priority, queued_at, claimed_at, started_at, finished_at,
+                        max_attempts, next_attempt_at, timeout_seconds, deadline_at,
+                        cancel_requested_at, cancel_reason, progress, phase, message,
+                        resource_request_json, result_summary_json, artifact_refs_json,
+                        error_code, retryable
+                    ) VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?,
+                        ?, ?, NULL, NULL, NULL,
+                        ?, ?, ?,
+                        ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?,
+                        ?, NULL, NULL, NULL, NULL,
+                        ?, NULL, ?, ?,
+                        NULL, NULL, NULL, ?, ?,
+                        ?, NULL, ?,
+                        NULL, NULL
+                    )
+                    """,
+                    (
+                        record.job_id,
+                        record.capability_id,
+                        json.dumps(record.arguments),
+                        record.state.value,
+                        record.run_id,
+                        record.approval_id,
+                        record.requested_by,
+                        json.dumps(record.metadata),
+                        record.created_at,
+                        record.updated_at,
+                        record.trace_id,
+                        record.idempotency_key,
+                        record.attempt_number,
+                        json.dumps(record.budget),
+                        record.latency_class,
+                        record.domain,
+                        record.consumer,
+                        record.correlation_id,
+                        record.root_job_id,
+                        record.parent_job_id,
+                        record.domain_entity_type,
+                        record.domain_entity_id,
+                        record.worker_pool,
+                        record.resource_class,
+                        record.priority,
+                        record.max_attempts,
+                        record.timeout_seconds,
+                        record.deadline_at,
+                        record.phase,
+                        record.message,
+                        json.dumps(record.resource_request),
+                        json.dumps(record.artifact_refs),
+                    ),
                 )
-                """,
-                (
-                    record.job_id,
-                    record.capability_id,
-                    json.dumps(record.arguments),
-                    record.state.value,
-                    record.run_id,
-                    record.approval_id,
-                    record.requested_by,
-                    json.dumps(record.metadata),
-                    record.created_at,
-                    record.updated_at,
-                    record.trace_id,
-                    record.idempotency_key,
-                    record.attempt_number,
-                    json.dumps(record.budget),
-                    record.latency_class,
-                    record.domain,
-                    record.consumer,
-                    record.correlation_id,
-                    record.root_job_id,
-                    record.parent_job_id,
-                    record.domain_entity_type,
-                    record.domain_entity_id,
-                    record.worker_pool,
-                    record.resource_class,
-                    record.priority,
-                    record.max_attempts,
-                    record.timeout_seconds,
-                    record.deadline_at,
-                    record.phase,
-                    record.message,
-                    json.dumps(record.resource_request),
-                    json.dumps(record.artifact_refs),
-                ),
-            )
+            except sqlite3.IntegrityError:
+                if not idempotency_key:
+                    raise
+                try:
+                    conn.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
+                existing = None
+                # Look up outside the failed txn after rollback.
+                row = conn.execute(
+                    "SELECT * FROM jobs WHERE idempotency_key = ? LIMIT 1",
+                    (idempotency_key,),
+                ).fetchone()
+                if row is not None:
+                    return self._from_row(row)
+                existing = self.get_by_idempotency_key(idempotency_key)
+                if existing is None:
+                    raise
+                return existing
         return record
 
     def get(self, job_id: str) -> JobRecord | None:
