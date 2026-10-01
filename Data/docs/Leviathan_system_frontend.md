@@ -287,7 +287,9 @@ Current Chat surfaces:
 - mobile **Gesprekken** + **Context** drawers (mutually exclusive; Escape/backdrop; focus trap);
 - ArtifactStore attachments with honest vision gating;
 - historic per-assistant-message turn chips (model/mode/owner/hits when measured);
-- SafeMarkdown rendering (no raw HTML; blocked `javascript:`/`data:`/`vbscript:`);
+- historic CapabilityResultCards from durable turn `tool_calls` when present (live telemetry preferred for the active turn);
+- historic ActivityTimeline only when the turn persisted an activity projection (never from `activity_ref` alone);
+- SafeMarkdown rendering (no raw HTML; blocked `javascript:`/`data:`/`vbscript:`/`file:`);
 - requested/effective reasoning information when returned (incl. **standard**);
 - Direct vs TEAM collaboration selector (orthogonal to reasoning depth);
 - model identity/status;
