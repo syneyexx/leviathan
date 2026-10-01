@@ -351,6 +351,17 @@ def test_provider_update_enable_and_redaction(plane: ModelControlPlane) -> None:
 
 
 def test_router_persistence(plane: ModelControlPlane) -> None:
+    plane.registry.store.upsert_model(
+        {
+            "model_id": "lm_studio:demo",
+            "display_name": "demo",
+            "provider_id": "lm_studio",
+            "source": "local",
+            "capabilities": ModelCapabilities(chat=CapabilityState.SUPPORTED).public_dict(),
+            "lifecycle_state": "available",
+            "health": "healthy",
+        }
+    )
     plane.router.save_config(
         {
             "fallbackOrder": ["lm_studio:demo"],

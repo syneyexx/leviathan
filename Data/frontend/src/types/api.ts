@@ -733,7 +733,13 @@ export type ModelCapabilities = {
   reasoning: CapabilityState;
   coding: CapabilityState;
   toolCalling: CapabilityState;
+  parallelToolCalls: CapabilityState;
   structuredOutput: CapabilityState;
+  jsonSchemaResponse: CapabilityState;
+  reasoningEffort: CapabilityState;
+  logprobs: CapabilityState;
+  streamingToolDeltas: CapabilityState;
+  multiCandidate: CapabilityState;
   vision: CapabilityState;
   embeddings: CapabilityState;
   streaming: CapabilityState;

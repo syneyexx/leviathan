@@ -295,15 +295,27 @@ class ModelStore:
             return cur.rowcount > 0
 
     def mark_provider_models_offline(self, provider_id: str) -> None:
+        """Mark provider models offline and clear live active/servable flags.
+
+        Preferred/default model id may remain as a preference in settings, but
+        registry rows must not appear live-active while offline.
+        """
         with self.connect() as conn:
             conn.execute(
                 """
                 UPDATE model_registry
-                SET lifecycle_state = 'offline', health = 'offline', loaded = 0, updated_at = ?
+                SET lifecycle_state = 'offline',
+                    health = 'offline',
+                    loaded = 0,
+                    active = 0,
+                    updated_at = ?
                 WHERE provider_id = ?
                 """,
                 (utc_now(), provider_id),
             )
+            # If the configured active_model_id points at an offline model from
+            # this provider, keep the preference string but it is no longer live.
+            # Consumers must check lifecycle before treating it as servable.
 
     # --- Profiles ---
 

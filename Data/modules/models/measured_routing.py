@@ -11,12 +11,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 from Data.modules.model_runtime.serving import InferenceJobClass
+from Data.modules.models.capability_eligibility import capability_satisfies_request
 from Data.modules.models.contracts import (
-    CapabilityState,
     ModelDescriptor,
     ModelRequest,
     RouteDecision,
 )
+from Data.modules.models.locality import is_local_execution_eligible
 from Data.modules.models.store import ModelStore
 
 
@@ -97,38 +98,26 @@ def score_candidate(
             disqualify_reason=f"lifecycle={model.lifecycle_state.value}",
         )
     for cap in request.required_capabilities:
-        attr = {
-            "chat": "chat",
-            "streaming": "streaming",
-            "tool_calling": "tool_calling",
-            "toolCalling": "tool_calling",
-            "structured_output": "structured_output",
-            "structuredOutput": "structured_output",
-            "vision": "vision",
-            "embeddings": "embeddings",
-            "reasoning": "reasoning",
-            "coding": "coding",
-        }.get(cap, cap)
-        state = getattr(model.capabilities, attr, CapabilityState.UNKNOWN)
-        if state == CapabilityState.UNSUPPORTED:
+        decision = capability_satisfies_request(
+            model,
+            cap,
+            request_context={"requirement_mode": "hard"},
+        )
+        if not decision.satisfies:
             return RouteCandidateScore(
                 model_id=model.id,
                 score=None,
-                features=features,
+                features={**features, "capabilityDecision": decision.public_dict()},
                 disqualified=True,
-                disqualify_reason=f"unsupported capability {cap}",
+                disqualify_reason=f"capability {cap}: {decision.reason}",
             )
-    if request.locality == "local_only" and model.source.value not in {
-        "local",
-        "imported",
-        "downloaded",
-    }:
+    if request.locality == "local_only" and not is_local_execution_eligible(model):
         return RouteCandidateScore(
             model_id=model.id,
             score=None,
             features=features,
             disqualified=True,
-            disqualify_reason="local_only locality",
+            disqualify_reason="local_only locality (execution endpoint)",
         )
 
     # Measured composite when we have signals; else None (UNMEASURED, not 0).

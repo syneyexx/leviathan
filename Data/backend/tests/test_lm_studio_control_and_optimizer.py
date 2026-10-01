@@ -263,7 +263,8 @@ def test_optimizer_score_excludes_unmeasured_as_winner_value():
         options=LoadOptions(),
         status=OptimizationStatus.OOM,
     )
-    assert score_candidate(oom, obj) is not None and score_candidate(oom, obj) < 0
+    # OOM is excluded from scoring entirely — never a numeric winner.
+    assert score_candidate(oom, obj) is None
     good = CandidateResult(
         index=3,
         options=LoadOptions(),

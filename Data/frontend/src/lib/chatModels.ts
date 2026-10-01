@@ -22,14 +22,16 @@ export function isObviousNonChatModel(model: ModelDescriptor): boolean {
   return NON_CHAT_FAMILY.test(modelIdentityText(model));
 }
 
+/**
+ * Hard chat-requirement eligibility (fail-closed), aligned with backend
+ * `capability_satisfies_request(..., requirement_mode="hard")`:
+ * only explicit `supported` is eligible. UNKNOWN / UNVERIFIED / UNMEASURED
+ * are rejected unless an explicit documented policy allows them (not used here).
+ */
 export function isChatCapableModel(model: ModelDescriptor): boolean {
   if (model.lifecycleState === "error" || model.lifecycleState === "offline") return false;
-  const chat = model.capabilities?.chat;
-  if (chat === "unsupported") return false;
   if (isObviousNonChatModel(model)) return false;
-  if (chat === "supported" || chat === "unverified") return true;
-  // unknown: allow only when not an obvious non-chat family (already filtered)
-  return chat !== "unmeasured";
+  return model.capabilities?.chat === "supported";
 }
 
 export function chatIneligibilityReason(model: ModelDescriptor): string {
@@ -37,6 +39,8 @@ export function chatIneligibilityReason(model: ModelDescriptor): string {
   if (chat === "unsupported") return "Chat capability unsupported";
   if (isObviousNonChatModel(model)) return "Embedding/rerank model — not for chat";
   if (chat === "unmeasured") return "Chat capability unmeasured";
+  if (chat === "unverified") return "Chat capability unverified";
+  if (chat === "unknown" || chat == null) return "Chat capability unknown";
   if (model.lifecycleState === "error" || model.lifecycleState === "offline") {
     return `Model ${model.lifecycleState}`;
   }

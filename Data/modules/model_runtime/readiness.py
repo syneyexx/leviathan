@@ -62,6 +62,10 @@ def _supervisor_lease_accepts_work(lease: dict[str, Any] | None) -> tuple[bool, 
 
     expires = _parse_iso(lease.get("expires_at"))
     now = datetime.now(timezone.utc)
+    raw_expires = lease.get("expires_at")
+    if raw_expires is not None and expires is None:
+        # Malformed expiry — fail closed.
+        return False, "supervisor_lease_expiry_malformed"
     if expires is not None and now >= expires:
         return False, "supervisor_lease_expired"
 
@@ -78,11 +82,13 @@ def _supervisor_lease_accepts_work(lease: dict[str, Any] | None) -> tuple[bool, 
         if not pid_is_alive(pid):
             return False, "supervisor_pid_dead"
     except Exception:  # noqa: BLE001
-        # If PID check fails unexpectedly, still trust unexpired RUNNING lease.
-        if health != "RUNNING":
-            return False, "supervisor_pid_check_failed"
+        # Fail closed: PID liveness could not be verified.
+        return False, "supervisor_pid_check_failed"
 
-    if health in {"", "RUNNING", "DEGRADED"}:
+    # Empty / unknown health is not runnable.
+    if health in {""}:
+        return False, "supervisor_health_empty"
+    if health in {"RUNNING", "DEGRADED"}:
         return True, "supervisor_running"
     return False, f"supervisor_health_{health.lower()}"
 
@@ -182,19 +188,7 @@ def model_runtime_readiness_snapshot(database_path: Any | None = None) -> dict[s
 
     return {
         "pool": "model_runtime",
-        "state": (
-            "READY"
-            if pool_state == ModelRuntimePoolAvailability.READY
-            else (
-                "STARTING"
-                if pool_state == ModelRuntimePoolAvailability.STARTING
-                else (
-                    "COLD"
-                    if pool_state == ModelRuntimePoolAvailability.COLD
-                    else "UNAVAILABLE"
-                )
-            )
-        ),
+        "state": pool_state.value,
         "poolState": pool_state.value,
         "acceptJobs": accept,
         "reason": reason,

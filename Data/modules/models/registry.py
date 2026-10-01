@@ -13,7 +13,7 @@ from Data.modules.models.contracts import (
     ModelLifecycleState,
     ModelSource,
 )
-from Data.modules.models.errors import MODEL_NOT_FOUND, ModelControlError
+from Data.modules.models.errors import AMBIGUOUS_MODEL_ID, MODEL_NOT_FOUND, ModelControlError
 from Data.modules.models.store import ModelStore, utc_now
 
 
@@ -44,32 +44,80 @@ class ModelRegistry:
         with self._lock:
             return [self._row_to_descriptor(row) for row in self.store.list_models()]
 
+    def _alias_matches(self, row: dict[str, Any], alias: str) -> bool:
+        meta_raw = row.get("metadata_json") or row.get("metadata") or "{}"
+        if isinstance(meta_raw, str):
+            try:
+                meta = json.loads(meta_raw or "{}")
+            except json.JSONDecodeError:
+                meta = {}
+        else:
+            meta = dict(meta_raw or {})
+        return row.get("display_name") == alias or meta.get("provider_model_id") == alias
+
+    def resolve_alias_candidates(self, alias: str) -> list[ModelDescriptor]:
+        """Return all models matching display_name or provider_model_id exactly."""
+        with self._lock:
+            return [
+                self._row_to_descriptor(row)
+                for row in self.store.list_models()
+                if self._alias_matches(row, alias)
+            ]
+
     def get(self, model_id: str) -> ModelDescriptor:
         row = self.store.get_model(model_id)
-        if not row:
-            # Allow lookup by display name / provider model id
-            for candidate in self.store.list_models():
-                meta = json.loads(candidate.get("metadata_json") or "{}")
-                if candidate["display_name"] == model_id or meta.get("provider_model_id") == model_id:
-                    return self._row_to_descriptor(candidate)
+        if row:
+            return self._row_to_descriptor(row)
+        # Convenience lookup by display name / provider model id — EXACTLY one match.
+        matches = self.resolve_alias_candidates(model_id)
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
             raise ModelControlError(
-                code=MODEL_NOT_FOUND,
-                message=f"Model not found: {model_id}",
+                code=AMBIGUOUS_MODEL_ID,
+                message=(
+                    f"Ambiguous model alias '{model_id}' matches "
+                    f"{len(matches)} canonical ids; specify a canonical model id"
+                ),
                 model_id=model_id,
-                http_status=404,
+                http_status=409,
+                details={
+                    "alias": model_id,
+                    "candidateCanonicalIds": [m.id for m in matches],
+                    "candidates": [
+                        {
+                            "id": m.id,
+                            "displayName": m.display_name,
+                            "providerId": m.provider_id,
+                            "providerModelId": (m.metadata or {}).get("provider_model_id"),
+                        }
+                        for m in matches
+                    ],
+                },
             )
-        return self._row_to_descriptor(row)
+        raise ModelControlError(
+            code=MODEL_NOT_FOUND,
+            message=f"Model not found: {model_id}",
+            model_id=model_id,
+            http_status=404,
+        )
 
     def upsert_discovered(self, models: list[ModelDescriptor], *, provider_id: str) -> None:
         with self._lock:
             active_id = self.store.get_active_model_id()
             seen_ids = {m.id for m in models}
             for model in models:
-                model.active = model.id == active_id
+                # Only mark active when the model is the configured preference AND live.
+                model.active = (
+                    model.id == active_id
+                    and model.lifecycle_state
+                    not in {ModelLifecycleState.OFFLINE, ModelLifecycleState.ERROR}
+                )
                 if model.active and model.lifecycle_state == ModelLifecycleState.LOADED:
                     model.lifecycle_state = ModelLifecycleState.ACTIVE
                 self.store.upsert_model(self._descriptor_to_row(model))
             # Models previously known for this provider but missing now → offline
+            # Clear active flag — preference may remain in settings, but not live-active.
             for row in self.store.list_models():
                 if row["provider_id"] != provider_id:
                     continue
@@ -80,7 +128,7 @@ class ModelRegistry:
                             "lifecycle_state": ModelLifecycleState.OFFLINE.value,
                             "health": ModelHealthState.OFFLINE.value,
                             "loaded": 0,
-                            "active": 1 if row["model_id"] == active_id else 0,
+                            "active": 0,
                             "capabilities": json.loads(row.get("capabilities_json") or "{}"),
                             "tags": json.loads(row.get("tags_json") or "[]"),
                             "metadata": json.loads(row.get("metadata_json") or "{}"),
@@ -118,6 +166,28 @@ class ModelRegistry:
 
     def activate(self, model_id: str) -> ModelDescriptor:
         model = self.get(model_id)
+        if model.lifecycle_state in {
+            ModelLifecycleState.OFFLINE,
+            ModelLifecycleState.ERROR,
+        }:
+            raise ModelControlError(
+                code="MODEL_NOT_SERVABLE",
+                message=(
+                    f"Cannot activate model {model_id} while lifecycle is "
+                    f"{model.lifecycle_state.value}"
+                ),
+                model_id=model_id,
+                provider_id=model.provider_id,
+                http_status=409,
+                details={
+                    "lifecycleState": model.lifecycle_state.value,
+                    "health": model.health.value,
+                    "truth": {
+                        "preference_is_not_live_active": True,
+                        "offline_is_not_servable": True,
+                    },
+                },
+            )
         self.store.set_active_model(model_id)
         self.store.append_audit("model_activated", detail={"modelId": model_id})
         # Reflect active flag
@@ -130,6 +200,12 @@ class ModelRegistry:
                 ModelLifecycleState.ACTIVE,
             }:
                 descriptor.lifecycle_state = ModelLifecycleState.ACTIVE
+            elif not descriptor.active and descriptor.lifecycle_state == ModelLifecycleState.ACTIVE:
+                # Demote previously-active row that is no longer the preference.
+                if descriptor.loaded:
+                    descriptor.lifecycle_state = ModelLifecycleState.LOADED
+                else:
+                    descriptor.lifecycle_state = ModelLifecycleState.AVAILABLE
             self.store.upsert_model(self._descriptor_to_row(descriptor))
         return self.get(model_id)
 

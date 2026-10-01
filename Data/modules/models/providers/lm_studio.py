@@ -92,28 +92,42 @@ class LMStudioAdapter(OpenAICompatibleAdapter):
         load_timeout_seconds: float = 600.0,
     ) -> None:
         host = normalize_lm_studio_host(endpoint)
+        # Acquisition/source ≠ execution locality. Loopback / trusted private LM Studio
+        # is a local execution endpoint — do not tag as REMOTE for local_only routing.
+        from Data.modules.provider_io.endpoint_locality import (
+            EndpointLocality,
+            classify_endpoint_locality,
+        )
+
+        locality = classify_endpoint_locality(openai_api_base(host))
+        source = (
+            ModelSource.LOCAL
+            if locality == EndpointLocality.LOCAL_TRUSTED
+            else ModelSource.REMOTE
+        )
         super().__init__(
             provider_id=provider_id,
             endpoint=openai_api_base(host),
             api_key=api_key,
             timeout_seconds=timeout_seconds,
-            source=ModelSource.REMOTE,
+            source=source,
             capabilities=RuntimeCapabilities(
                 discover_models=True,
                 import_model=False,
                 download_model=False,
-                load_model=True,
-                unload_model=True,
+                # Conservative until probe_control_capabilities confirms surfaces.
+                load_model=False,
+                unload_model=False,
                 delete_model=False,
-                list_loaded_models=True,
+                list_loaded_models=False,
                 inference=True,
-                streaming=True,
+                streaming=False,
                 embeddings=False,
                 tool_calling=False,
                 structured_output=False,
                 vision=False,
                 runtime_metrics=False,
-                load_options=_REST_LOAD_OPTIONS,
+                load_options=(),
             ),
         )
         self.host = host
@@ -565,13 +579,29 @@ class LMStudioAdapter(OpenAICompatibleAdapter):
             sdk_config = dict(compiled.rest_body.get("_sdkConfig") or {})
         # Never send private stash keys to provider
         try:
-            result = await asyncio.to_thread(
-                sdk_load_model,
-                endpoint=self.host,
-                model_key=model_key,
-                config=sdk_config,
-                timeout_seconds=self.load_timeout_seconds,
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    sdk_load_model,
+                    endpoint=self.host,
+                    model_key=model_key,
+                    config=sdk_config,
+                    timeout_seconds=self.load_timeout_seconds,
+                ),
+                timeout=float(self.load_timeout_seconds) + 1.0,
             )
+        except asyncio.TimeoutError as exc:
+            raise ModelControlError(
+                code=REQUEST_TIMEOUT,
+                message=f"LM Studio SDK load timed out after {self.load_timeout_seconds}s",
+                provider_id=self.provider_id,
+                http_status=504,
+                details={
+                    "transport": "sdk",
+                    "modelKey": model_key,
+                    "reconcileRequired": True,
+                    "softCancelOnly": True,
+                },
+            ) from exc
         except ModelControlError:
             raise
         except Exception as exc:  # noqa: BLE001

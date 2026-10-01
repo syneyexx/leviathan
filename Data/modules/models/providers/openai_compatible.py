@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 from urllib.parse import urlparse
@@ -96,6 +97,11 @@ class OpenAICompatibleAdapter:
             vision=False,
             runtime_metrics=False,
         )
+        self._last_discovery_stats: dict[str, Any] = {
+            "discoveredCount": 0,
+            "rejectedCount": 0,
+            "rejectionReasons": [],
+        }
 
     def capabilities(self) -> RuntimeCapabilities:
         return self._capabilities
@@ -257,13 +263,51 @@ class OpenAICompatibleAdapter:
             )
 
         models: list[ModelDescriptor] = []
-        for item in data:
+        rejected: list[dict[str, str]] = []
+        for idx, item in enumerate(data):
             if not isinstance(item, dict):
+                rejected.append(
+                    {
+                        "index": str(idx),
+                        "reason": "non_object_entry",
+                    }
+                )
                 continue
             try:
                 models.append(self._normalize_model(item))
-            except ModelControlError:
+            except ModelControlError as exc:
+                rejected.append(
+                    {
+                        "index": str(idx),
+                        "reason": exc.code,
+                        "message": exc.message[:200],
+                    }
+                )
                 continue
+        # Attach discovery honesty on each model metadata + return via side channel
+        # when callers inspect adapter.last_discovery_stats.
+        self._last_discovery_stats = {
+            "discoveredCount": len(models),
+            "rejectedCount": len(rejected),
+            "rejectionReasons": rejected[:50],
+            "providerId": self.provider_id,
+            "truth": {
+                "partial_discovery_is_visible": True,
+                "rejected_entries_not_silent": True,
+            },
+        }
+        if rejected:
+            # Provenance on first model metadata for telemetry without logging raw payloads.
+            for model in models[:1]:
+                meta = dict(model.metadata or {})
+                meta["discoveryStats"] = {
+                    "discoveredCount": len(models),
+                    "rejectedCount": len(rejected),
+                    "rejectionReasonSummary": list(
+                        {r.get("reason") for r in rejected if r.get("reason")}
+                    ),
+                }
+                model.metadata = meta
         return models
 
     async def load(self, model_id: str, options: LoadOptions | None = None) -> dict[str, Any]:
@@ -276,7 +320,12 @@ class OpenAICompatibleAdapter:
         raise UnsupportedOperation("remove", self.provider_id)
 
     async def test_inference(
-        self, model_id: str, *, prompt: str = "ping", max_tokens: int = 8
+        self,
+        model_id: str,
+        *,
+        prompt: str = "ping",
+        max_tokens: int = 8,
+        stream: bool = False,
     ) -> dict[str, Any]:
         provider_model = model_id.split(":", 1)[-1]
         payload = {
@@ -284,7 +333,7 @@ class OpenAICompatibleAdapter:
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": max_tokens,
             "temperature": 0,
-            "stream": False,
+            "stream": bool(stream),
         }
         started = time.perf_counter()
         try:
@@ -295,6 +344,46 @@ class OpenAICompatibleAdapter:
                     json=payload,
                 )
                 response.raise_for_status()
+                if stream:
+                    # Real streaming roundtrip: require at least one SSE/data delta.
+                    text = response.text or ""
+                    deltas = 0
+                    preview_parts: list[str] = []
+                    for line in text.splitlines():
+                        line = line.strip()
+                        if not line.startswith("data:"):
+                            continue
+                        data_str = line[5:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data_str)
+                        except Exception:  # noqa: BLE001
+                            continue
+                        try:
+                            delta = chunk["choices"][0].get("delta") or {}
+                            content = delta.get("content")
+                            if content:
+                                deltas += 1
+                                preview_parts.append(str(content))
+                        except (KeyError, IndexError, TypeError):
+                            continue
+                    latency = (time.perf_counter() - started) * 1000.0
+                    if deltas < 1:
+                        return {
+                            "ok": False,
+                            "stream": True,
+                            "latencyMs": latency,
+                            "preview": "",
+                            "detail": "stream opened but no content deltas",
+                        }
+                    return {
+                        "ok": True,
+                        "stream": True,
+                        "latencyMs": latency,
+                        "preview": "".join(preview_parts)[:200],
+                        "streamingDeltas": deltas,
+                    }
                 data = response.json()
         except httpx.TimeoutException as exc:
             raise ModelControlError(
@@ -329,16 +418,16 @@ class OpenAICompatibleAdapter:
         except (KeyError, IndexError, TypeError) as exc:
             raise ModelControlError(
                 code=PROVIDER_OFFLINE,
-                message="Unexpected chat completion payload",
+                message="Test inference response missing choices",
                 provider_id=self.provider_id,
                 model_id=model_id,
                 http_status=502,
             ) from exc
         return {
             "ok": True,
-            "modelId": model_id,
+            "stream": False,
             "latencyMs": latency,
-            "preview": str(content)[:200] if content is not None else "",
+            "preview": str(content)[:200],
         }
 
     def raise_capability(self, operation: str) -> None:

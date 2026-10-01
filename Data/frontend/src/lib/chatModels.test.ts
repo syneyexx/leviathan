@@ -11,7 +11,13 @@ const BASE_CAPS: ModelCapabilities = {
   reasoning: "unknown",
   coding: "unknown",
   toolCalling: "unknown",
+  parallelToolCalls: "unknown",
   structuredOutput: "unknown",
+  jsonSchemaResponse: "unknown",
+  reasoningEffort: "unknown",
+  logprobs: "unknown",
+  streamingToolDeltas: "unknown",
+  multiCandidate: "unknown",
   vision: "unknown",
   embeddings: "unknown",
   streaming: "unknown",
@@ -72,6 +78,27 @@ describe("chatModels picker eligibility", () => {
     expect(ineligible.map((m) => m.id).sort()).toEqual(["embed", "offline-chat", "rerank"]);
     expect(isChatCapableModel(models[1])).toBe(false);
     expect(chatIneligibilityReason(models[1])).toMatch(/Embedding|rerank|not for chat/i);
+  });
+
+  it("fail-closes UNKNOWN / UNVERIFIED / UNMEASURED for hard chat requirement", () => {
+    expect(isChatCapableModel(model({ id: "u", displayName: "U", capabilities: { chat: "unknown" } }))).toBe(
+      false,
+    );
+    expect(
+      isChatCapableModel(model({ id: "uv", displayName: "UV", capabilities: { chat: "unverified" } })),
+    ).toBe(false);
+    expect(
+      isChatCapableModel(model({ id: "um", displayName: "UM", capabilities: { chat: "unmeasured" } })),
+    ).toBe(false);
+    expect(chatIneligibilityReason(model({ id: "u", displayName: "U", capabilities: { chat: "unknown" } }))).toMatch(
+      /unknown/i,
+    );
+    expect(
+      chatIneligibilityReason(model({ id: "uv", displayName: "UV", capabilities: { chat: "unverified" } })),
+    ).toMatch(/unverified/i);
+    expect(
+      chatIneligibilityReason(model({ id: "um", displayName: "UM", capabilities: { chat: "unmeasured" } })),
+    ).toMatch(/unmeasured/i);
   });
 
   it("Auto remains conceptually available even when no models", () => {

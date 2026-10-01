@@ -1,17 +1,30 @@
 """Capability eligibility policy for ModelRouter / Model Control Plane.
 
-Centralizes how declared/inferred capabilities satisfy request requirements.
+Centralizes how declared/inferred/verified capabilities satisfy request
+requirements. Hard required capabilities are fail-closed.
+
 Do not scatter special-cases for embedding/non-chat models elsewhere.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any
 
+from Data.modules.models.capability_vocabulary import (
+    UnknownCapabilityAlias,
+    capability_attr,
+    normalize_capability_name,
+)
 from Data.modules.models.contracts import CapabilityState, ModelCapabilities, ModelDescriptor
+from Data.modules.models.effective_capability import (
+    EffectiveCapability,
+    EffectiveProvenance,
+    resolve_effective_capability,
+)
+from Data.modules.models.contracts import VerifiedCapability
 
 
 class CapabilityProvenance(str, Enum):
@@ -19,6 +32,7 @@ class CapabilityProvenance(str, Enum):
     RUNTIME_REPORTED = "runtime_reported"
     OPERATOR_CONFIGURED = "operator_configured"
     INFERRED_MODEL_FAMILY = "inferred_model_family"
+    VERIFIED_PROBE = "verified_probe"
     UNVERIFIED = "unverified"
 
 
@@ -68,21 +82,8 @@ class CapabilityDecision:
 
 
 def _cap_attr(name: str) -> str:
-    mapping = {
-        "chat": "chat",
-        "reasoning": "reasoning",
-        "coding": "coding",
-        "tool_calling": "tool_calling",
-        "toolCalling": "tool_calling",
-        "structured_output": "structured_output",
-        "structuredOutput": "structured_output",
-        "vision": "vision",
-        "embeddings": "embeddings",
-        "embedding": "embeddings",
-        "rerank": "embeddings",
-        "streaming": "streaming",
-    }
-    return mapping.get(name, name)
+    """Backward-compatible attribute resolver — uses canonical vocabulary."""
+    return capability_attr(name)
 
 
 def model_identity_text(model: ModelDescriptor) -> str:
@@ -103,8 +104,6 @@ def infer_non_chat_family(model: ModelDescriptor) -> bool:
     if not text.strip():
         return False
     if _NON_CHAT_FAMILY.search(text):
-        # Avoid false positives on generative models that mention "embedding" in metadata
-        # only as a secondary capability — require the family token to dominate identity.
         return True
     return False
 
@@ -122,8 +121,9 @@ def apply_family_capability_inference(
 ) -> tuple[ModelCapabilities, dict[str, str]]:
     """Return capabilities with obvious non-chat families marked UNSUPPORTED for chat.
 
+    Uses dataclasses.replace so unrelated / frontier fields are NEVER reset.
     When provider_authoritative is True and chat is already known (supported/unsupported),
-    do not override. Provenance map is returned for telemetry.
+    do not override.
     """
     provenance: dict[str, str] = {}
     chat = capabilities.chat
@@ -135,45 +135,54 @@ def apply_family_capability_inference(
 
     if infer_non_chat_family(model):
         chat = CapabilityState.UNSUPPORTED
-        if embeddings in {CapabilityState.UNKNOWN, CapabilityState.UNVERIFIED, CapabilityState.UNMEASURED}:
+        # Rerank/cross-encoder families are NOT embeddings — do not coerce.
+        identity = model_identity_text(model)
+        is_rerank = bool(
+            re.search(r"(?i)rerank(?:er|ing)?|cross[-_]?encoder|colbert", identity)
+        )
+        if (
+            not is_rerank
+            and embeddings
+            in {CapabilityState.UNKNOWN, CapabilityState.UNVERIFIED, CapabilityState.UNMEASURED}
+        ):
             embeddings = CapabilityState.SUPPORTED
+            provenance["embeddings"] = CapabilityProvenance.INFERRED_MODEL_FAMILY.value
+        elif is_rerank:
+            # Leave embeddings as-is (typically UNKNOWN) — rerank ≠ embeddings.
+            provenance["embeddings"] = CapabilityProvenance.UNVERIFIED.value
         provenance["chat"] = CapabilityProvenance.INFERRED_MODEL_FAMILY.value
-        provenance["embeddings"] = CapabilityProvenance.INFERRED_MODEL_FAMILY.value
+        if not is_rerank and "embeddings" not in provenance:
+            provenance["embeddings"] = CapabilityProvenance.INFERRED_MODEL_FAMILY.value
+        reasoning = (
+            CapabilityState.UNSUPPORTED
+            if capabilities.reasoning in {CapabilityState.UNKNOWN, CapabilityState.UNVERIFIED}
+            else capabilities.reasoning
+        )
+        coding = (
+            CapabilityState.UNSUPPORTED
+            if capabilities.coding in {CapabilityState.UNKNOWN, CapabilityState.UNVERIFIED}
+            else capabilities.coding
+        )
+        streaming = (
+            CapabilityState.UNSUPPORTED
+            if capabilities.streaming in {CapabilityState.UNKNOWN, CapabilityState.UNVERIFIED}
+            else capabilities.streaming
+        )
         return (
-            ModelCapabilities(
+            replace(
+                capabilities,
                 chat=chat,
-                reasoning=CapabilityState.UNSUPPORTED
-                if capabilities.reasoning in {CapabilityState.UNKNOWN, CapabilityState.UNVERIFIED}
-                else capabilities.reasoning,
-                coding=CapabilityState.UNSUPPORTED
-                if capabilities.coding in {CapabilityState.UNKNOWN, CapabilityState.UNVERIFIED}
-                else capabilities.coding,
-                tool_calling=capabilities.tool_calling,
-                structured_output=capabilities.structured_output,
-                vision=capabilities.vision,
+                reasoning=reasoning,
+                coding=coding,
                 embeddings=embeddings,
-                streaming=CapabilityState.UNSUPPORTED
-                if capabilities.streaming in {CapabilityState.UNKNOWN, CapabilityState.UNVERIFIED}
-                else capabilities.streaming,
+                streaming=streaming,
             ),
             provenance,
         )
 
     if chat == CapabilityState.UNKNOWN and infer_likely_generative(model):
         provenance["chat"] = CapabilityProvenance.UNVERIFIED.value
-        return (
-            ModelCapabilities(
-                chat=CapabilityState.UNVERIFIED,
-                reasoning=capabilities.reasoning,
-                coding=capabilities.coding,
-                tool_calling=capabilities.tool_calling,
-                structured_output=capabilities.structured_output,
-                vision=capabilities.vision,
-                embeddings=capabilities.embeddings,
-                streaming=capabilities.streaming,
-            ),
-            provenance,
-        )
+        return replace(capabilities, chat=CapabilityState.UNVERIFIED), provenance
 
     provenance["chat"] = (
         CapabilityProvenance.PROVIDER_REPORTED.value
@@ -202,11 +211,25 @@ def enrich_descriptor_capabilities(model: ModelDescriptor) -> ModelDescriptor:
         }
     if caps == model.capabilities and meta == (model.metadata or {}):
         return model
-    # ModelDescriptor is a dataclass — rebuild via public fields.
     payload = {k: v for k, v in model.__dict__.items()}
     payload["capabilities"] = caps
     payload["metadata"] = meta
     return ModelDescriptor(**payload)  # type: ignore[arg-type]
+
+
+def _map_effective_provenance(eff: EffectiveCapability) -> CapabilityProvenance:
+    if eff.provenance == EffectiveProvenance.OPERATOR_OVERRIDE:
+        return CapabilityProvenance.OPERATOR_CONFIGURED
+    if eff.provenance in {
+        EffectiveProvenance.VERIFIED_PROBE,
+        EffectiveProvenance.VERIFIED_PROBE_STALE,
+    }:
+        return CapabilityProvenance.VERIFIED_PROBE
+    if eff.provenance == EffectiveProvenance.PROVIDER_REPORTED:
+        return CapabilityProvenance.PROVIDER_REPORTED
+    if eff.provenance == EffectiveProvenance.FAMILY_INFERENCE:
+        return CapabilityProvenance.INFERRED_MODEL_FAMILY
+    return CapabilityProvenance.UNVERIFIED
 
 
 def capability_satisfies_request(
@@ -214,112 +237,153 @@ def capability_satisfies_request(
     capability: str,
     *,
     request_context: dict[str, Any] | None = None,
+    verified: VerifiedCapability | None = None,
+    requirement_mode: str = "hard",
 ) -> CapabilityDecision:
     """Decide whether ``model`` satisfies a required ``capability``.
 
-    Policy for critical generative capabilities such as ``chat``:
-      SUPPORTED / UNVERIFIED (generative-runtime evidence) → eligible
-      UNSUPPORTED → ineligible
-      UNKNOWN on obvious non-chat families → ineligible
-      UNMEASURED → conservative (ineligible for chat)
-      UNKNOWN otherwise → eligible only when runtime supports generative chat
-        and there is reasonable generative-family evidence
+    ``requirement_mode``:
+      - ``hard`` (default for ModelRequest.required_capabilities): fail-closed
+        SUPPORTED / recent-verified SUPPORTED → eligible
+        UNSUPPORTED / UNKNOWN / UNVERIFIED / UNMEASURED → reject
+      - ``soft`` / ``preference``: scoring preference only — UNKNOWN may pass
+      - ``best_effort``: attempt when not UNSUPPORTED
+
+    Reasoning/coding are NOT soft-satisfied when explicitly required as hard.
+    Soft preference belongs in scoring, not by weakening required capabilities.
     """
     ctx = request_context or {}
-    attr = _cap_attr(capability)
-    state = getattr(model.capabilities, attr, CapabilityState.UNKNOWN)
-    if not isinstance(state, CapabilityState):
-        try:
-            state = CapabilityState(str(state))
-        except ValueError:
-            state = CapabilityState.UNKNOWN
+    mode = str(ctx.get("requirement_mode") or requirement_mode or "hard").lower()
 
-    critical = capability in {"chat", "reasoning", "coding"} or attr == "chat"
+    # Reject unsupported aliases (e.g. rerank) honestly.
+    try:
+        canonical = normalize_capability_name(capability, strict=False)
+        if canonical is None:
+            # Distinguish empty vs unsupported alias
+            lower = str(capability or "").strip().lower().replace("-", "_")
+            from Data.modules.models.capability_vocabulary import UNSUPPORTED_CAPABILITY_ALIASES
 
-    if state == CapabilityState.SUPPORTED:
-        return CapabilityDecision(
-            True, state, CapabilityProvenance.PROVIDER_REPORTED, "capability_supported"
-        )
-
-    if state == CapabilityState.UNSUPPORTED:
-        return CapabilityDecision(
-            False, state, CapabilityProvenance.PROVIDER_REPORTED, "capability_unsupported"
-        )
-
-    # Apply family inference for unknown/unmeasured chat-like requirements.
-    if critical and attr == "chat" and infer_non_chat_family(model):
+            if lower in UNSUPPORTED_CAPABILITY_ALIASES:
+                return CapabilityDecision(
+                    False,
+                    CapabilityState.UNSUPPORTED,
+                    CapabilityProvenance.UNVERIFIED,
+                    "capability_alias_unsupported",
+                )
+            return CapabilityDecision(
+                False,
+                CapabilityState.UNKNOWN,
+                CapabilityProvenance.UNVERIFIED,
+                "capability_name_unknown",
+            )
+        attr = capability_attr(canonical)
+    except UnknownCapabilityAlias:
         return CapabilityDecision(
             False,
             CapabilityState.UNSUPPORTED,
-            CapabilityProvenance.INFERRED_MODEL_FAMILY,
-            "inferred_non_chat_model_family",
+            CapabilityProvenance.UNVERIFIED,
+            "capability_alias_unsupported",
         )
+
+    # Prefer pre-merged effective state on the descriptor when present.
+    eff_meta = (model.metadata or {}).get("effectiveCapabilities") or {}
+    if isinstance(eff_meta, dict) and canonical in eff_meta:
+        raw_state = eff_meta[canonical].get("state") if isinstance(eff_meta[canonical], dict) else None
+        try:
+            state = CapabilityState(str(raw_state)) if raw_state else CapabilityState.UNKNOWN
+        except ValueError:
+            state = CapabilityState.UNKNOWN
+        provenance = CapabilityProvenance.VERIFIED_PROBE if (
+            isinstance(eff_meta[canonical], dict)
+            and str(eff_meta[canonical].get("provenance") or "").startswith("verified")
+        ) else CapabilityProvenance.UNVERIFIED
+    elif verified is not None or ctx.get("use_effective", True):
+        eff = resolve_effective_capability(model, canonical, verified=verified)
+        # Family inference may still refine UNKNOWN chat before hard check.
+        if (
+            eff.state in {CapabilityState.UNKNOWN, CapabilityState.UNVERIFIED, CapabilityState.UNMEASURED}
+            and attr == "chat"
+            and infer_non_chat_family(model)
+            and eff.provenance
+            not in {
+                EffectiveProvenance.VERIFIED_PROBE,
+                EffectiveProvenance.VERIFIED_PROBE_STALE,
+                EffectiveProvenance.OPERATOR_OVERRIDE,
+            }
+        ):
+            return CapabilityDecision(
+                False,
+                CapabilityState.UNSUPPORTED,
+                CapabilityProvenance.INFERRED_MODEL_FAMILY,
+                "inferred_non_chat_model_family",
+            )
+        state = eff.state
+        provenance = _map_effective_provenance(eff)
+    else:
+        state = getattr(model.capabilities, attr, CapabilityState.UNKNOWN)
+        if not isinstance(state, CapabilityState):
+            try:
+                state = CapabilityState(str(state))
+            except ValueError:
+                state = CapabilityState.UNKNOWN
+        provenance = CapabilityProvenance.PROVIDER_REPORTED
+
+    if state == CapabilityState.SUPPORTED:
+        return CapabilityDecision(True, state, provenance, "capability_supported")
+
+    if state == CapabilityState.UNSUPPORTED:
+        return CapabilityDecision(False, state, provenance, "capability_unsupported")
+
+    # Soft preference / best-effort modes — used by scoring only.
+    if mode in {"soft", "preference"}:
+        if state == CapabilityState.UNMEASURED:
+            return CapabilityDecision(True, state, provenance, "soft_unmeasured_permitted")
+        return CapabilityDecision(True, state, provenance, "soft_unknown_permitted")
+
+    if mode == "best_effort":
+        if state == CapabilityState.UNSUPPORTED:
+            return CapabilityDecision(False, state, provenance, "best_effort_unsupported")
+        return CapabilityDecision(True, state, provenance, "best_effort_attempt")
+
+    # ---- HARD REQUIREMENT (default) — fail closed ----
+    if attr == "chat" and infer_non_chat_family(model) and provenance != CapabilityProvenance.VERIFIED_PROBE:
+        # Verified SUPPORTED already returned; verified UNSUPPORTED already returned.
+        # Name heuristic may still reject when state is unresolved.
+        if state in {
+            CapabilityState.UNKNOWN,
+            CapabilityState.UNVERIFIED,
+            CapabilityState.UNMEASURED,
+        }:
+            return CapabilityDecision(
+                False,
+                CapabilityState.UNSUPPORTED,
+                CapabilityProvenance.INFERRED_MODEL_FAMILY,
+                "inferred_non_chat_model_family",
+            )
 
     if state == CapabilityState.UNMEASURED:
         return CapabilityDecision(
-            False if critical else True,
-            state,
-            CapabilityProvenance.UNVERIFIED,
-            "unmeasured_treated_conservatively" if critical else "unmeasured_non_critical",
+            False, state, provenance, "hard_unmeasured_rejected"
         )
 
     if state == CapabilityState.UNVERIFIED:
-        # Eligible when the provider/runtime itself supports generative chat inference
-        # and there is reasonable evidence this is a generative model.
-        runtime_chat = bool(ctx.get("runtime_supports_chat", True))
-        if attr == "chat" and not runtime_chat:
+        # Hard requirements reject UNVERIFIED unless an explicit documented policy
+        # allows it for this exact request (operator override / explicit policy flag).
+        if bool(ctx.get("allow_unverified_hard", False)):
             return CapabilityDecision(
-                False, state, CapabilityProvenance.RUNTIME_REPORTED, "runtime_lacks_chat"
-            )
-        if attr == "chat" and infer_non_chat_family(model):
-            return CapabilityDecision(
-                False,
-                CapabilityState.UNSUPPORTED,
-                CapabilityProvenance.INFERRED_MODEL_FAMILY,
-                "unverified_but_non_chat_family",
+                True, state, provenance, "hard_unverified_explicitly_allowed"
             )
         return CapabilityDecision(
-            True, state, CapabilityProvenance.UNVERIFIED, "unverified_generative_ok"
+            False, state, provenance, "hard_unverified_rejected"
         )
 
     # UNKNOWN
-    if not critical:
+    if bool(ctx.get("allow_unknown_hard", False)):
         return CapabilityDecision(
-            True, state, CapabilityProvenance.UNVERIFIED, "unknown_non_critical_permitted"
+            True, state, provenance, "hard_unknown_explicitly_allowed"
         )
-
-    runtime_chat = bool(ctx.get("runtime_supports_chat", True))
-    if attr == "chat":
-        if not runtime_chat:
-            return CapabilityDecision(
-                False, state, CapabilityProvenance.RUNTIME_REPORTED, "unknown_runtime_lacks_chat"
-            )
-        if infer_non_chat_family(model):
-            return CapabilityDecision(
-                False,
-                CapabilityState.UNSUPPORTED,
-                CapabilityProvenance.INFERRED_MODEL_FAMILY,
-                "unknown_inferred_non_chat",
-            )
-        if infer_likely_generative(model) or bool(ctx.get("allow_unknown_generative", False)):
-            return CapabilityDecision(
-                True, state, CapabilityProvenance.UNVERIFIED, "unknown_likely_generative"
-            )
-        # Conservative for critical chat: do not silently admit unknown embedding-like IDs.
-        # If neither generative nor non-chat evidence, treat as ineligible for Auto routing
-        # unless explicitly selected with operator override (caller decides).
-        if bool(ctx.get("explicit_selection", False)):
-            return CapabilityDecision(
-                False, state, CapabilityProvenance.UNVERIFIED, "unknown_chat_explicit_rejected"
-            )
-        return CapabilityDecision(
-            False, state, CapabilityProvenance.UNVERIFIED, "unknown_chat_conservative"
-        )
-
-    # Other critical caps (reasoning/coding): UNKNOWN is soft — do not hard-block
-    # unless explicitly marked unsupported.
     return CapabilityDecision(
-        True, state, CapabilityProvenance.UNVERIFIED, "unknown_soft_critical"
+        False, state, provenance, "hard_unknown_rejected"
     )
 
 
@@ -328,6 +392,7 @@ def is_chat_capable(
     *,
     explicit_selection: bool = False,
     runtime_supports_chat: bool = True,
+    verified: VerifiedCapability | None = None,
 ) -> CapabilityDecision:
     return capability_satisfies_request(
         model,
@@ -336,4 +401,6 @@ def is_chat_capable(
             "explicit_selection": explicit_selection,
             "runtime_supports_chat": runtime_supports_chat,
         },
+        verified=verified,
+        requirement_mode="hard",
     )
