@@ -78,9 +78,11 @@ class McpBridge:
             store=store,
             plugin_registry=plugin_registry,
             limits=self.limits,
+            observability=observability,
         )
         self._sessions: dict[str, McpServerSession] = {}
         self._lock = threading.RLock()
+        self._projected_generations: dict[str, int] = {}
         self.telemetry: dict[str, Any] = {
             "registers": 0,
             "connects": 0,
@@ -89,6 +91,7 @@ class McpBridge:
             "tool_call_failures": 0,
             "schema_changes": 0,
             "sessions_active": 0,
+            "catalog_reconciles": 0,
         }
 
     def initialize(self) -> None:
@@ -101,6 +104,8 @@ class McpBridge:
             self.sync.mark_unavailable(config)
             # Eager connect is deferred to mcp_execution when workers are externalized.
             # Cached metadata remains Control Plane; live spawn/network is not.
+        # Project durable (now unavailable) tool rows into in-process catalog.
+        self.reconcile_catalog_from_store()
 
     def shutdown(self) -> None:
         with self._lock:
@@ -206,8 +211,11 @@ class McpBridge:
         if config is None:
             raise McpError(MCP_SERVER_NOT_FOUND, f"Unknown MCP server: {server_id}", http_status=404)
         if not force and config.source_kind == McpSourceKind.CONFIG:
-            # Config-owned servers require explicit force.
-            pass
+            raise McpError(
+                MCP_SERVER_CONFLICT,
+                f"Config-owned MCP server requires force=true to unregister: {server_id}",
+                details={"server_id": server_id, "source_kind": config.source_kind.value},
+            )
         try:
             self.disconnect(server_id)
         except McpError:
@@ -216,6 +224,7 @@ class McpBridge:
             self.plugin_registry.unregister(f"mcp:{server_id}")
         self.store.delete_tools_for_server(server_id)
         self.store.delete_server(server_id)
+        self._projected_generations.pop(server_id, None)
 
     def update_server(self, server_id: str, **patch: Any) -> McpServerConfig:
         config = self.require_server(server_id)
@@ -382,8 +391,63 @@ class McpBridge:
             available=True,
         )
         self.telemetry["schema_changes"] += len(self.sync.schema_change_events) - before
+        self._projected_generations[server_id] = self.store.get_catalog_generation(server_id)
         self.store.update_runtime_state(server_id, state=session.runtime.state, seen=True)
         return records
+
+    def reconcile_catalog_from_store(self, server_id: str | None = None) -> dict[str, Any]:
+        """Project durable McpStore tools into CapabilityCatalog + PluginRegistry."""
+        if server_id is not None:
+            configs = [self.require_server(server_id)]
+        else:
+            configs = self.store.list_servers()
+        projected = 0
+        generations: dict[str, int] = {}
+        for config in configs:
+            tools = self.sync.project_server_into_catalog(config.server_id)
+            gen = self.store.get_catalog_generation(config.server_id)
+            self._projected_generations[config.server_id] = gen
+            generations[config.server_id] = gen
+            projected += len(tools)
+        self.telemetry["catalog_reconciles"] = int(self.telemetry.get("catalog_reconciles", 0)) + 1
+        return {
+            "projected_tools": projected,
+            "servers": len(configs),
+            "catalog_generations": generations,
+        }
+
+    def reconcile_if_stale(self, server_id: str | None = None) -> dict[str, Any] | None:
+        """Rehydrate catalog when durable catalog_generation advanced (worker sync)."""
+        if server_id is not None:
+            targets = [server_id]
+        else:
+            targets = [c.server_id for c in self.store.list_servers()]
+        stale: list[str] = []
+        for sid in targets:
+            durable = self.store.get_catalog_generation(sid)
+            projected = int(self._projected_generations.get(sid, -1))
+            if durable != projected:
+                stale.append(sid)
+        if not stale:
+            return None
+        if server_id is not None:
+            return self.reconcile_catalog_from_store(server_id)
+        # Reconcile only stale servers to avoid needless work.
+        projected = 0
+        generations: dict[str, int] = {}
+        for sid in stale:
+            tools = self.sync.project_server_into_catalog(sid)
+            gen = self.store.get_catalog_generation(sid)
+            self._projected_generations[sid] = gen
+            generations[sid] = gen
+            projected += len(tools)
+        self.telemetry["catalog_reconciles"] = int(self.telemetry.get("catalog_reconciles", 0)) + 1
+        return {
+            "projected_tools": projected,
+            "servers": len(stale),
+            "catalog_generations": generations,
+            "stale_servers": stale,
+        }
 
     # --- invoke (bridge only — callers should use gateway) ---
 
@@ -465,10 +529,14 @@ class McpBridge:
         return out
 
     def get_server_public(self, server_id: str) -> dict[str, Any]:
+        self.reconcile_if_stale(server_id)
         config = self.require_server(server_id)
-        return {**config.public_dict(), "runtime": self.server_health(server_id).public_dict()}
+        payload = {**config.public_dict(), "runtime": self.server_health(server_id).public_dict()}
+        payload["catalog_generation"] = self.store.get_catalog_generation(server_id)
+        return payload
 
     def list_tools(self, *, server_id: str | None = None) -> list[McpToolRecord]:
+        self.reconcile_if_stale(server_id)
         return self.store.list_tools(server_id=server_id)
 
     def list_calls(self, *, limit: int = 100, server_id: str | None = None) -> list[McpToolCallRecord]:

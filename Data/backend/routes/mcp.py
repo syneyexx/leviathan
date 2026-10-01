@@ -192,9 +192,9 @@ def build_mcp_router(
             raise_mcp_error(exc)
 
     @router.delete("/api/mcp/servers/{server_id}")
-    def delete_server(server_id: str) -> dict:
+    def delete_server(server_id: str, force: bool = Query(False)) -> dict:
         try:
-            bridge.unregister_server(server_id)
+            bridge.unregister_server(server_id, force=force)
         except McpError as exc:
             raise_mcp_error(exc)
         return {"ok": True, "server_id": server_id}
@@ -273,7 +273,10 @@ def build_mcp_router(
         except McpError as exc:
             raise_mcp_error(exc)
         tools = bridge.list_tools(server_id=server_id)
-        return {"tools": [item.public_dict() for item in tools]}
+        return {
+            "tools": [item.public_dict() for item in tools],
+            "catalog_generation": bridge.store.get_catalog_generation(server_id),
+        }
 
     @router.get("/api/mcp/servers/{server_id}/health")
     def server_health(server_id: str) -> dict:
@@ -286,7 +289,21 @@ def build_mcp_router(
     @router.get("/api/mcp/tools")
     def list_tools(server_id: str | None = None) -> dict:
         tools = bridge.list_tools(server_id=server_id)
-        return {"tools": [item.public_dict() for item in tools]}
+        payload: dict[str, Any] = {"tools": [item.public_dict() for item in tools]}
+        if server_id:
+            payload["catalog_generation"] = bridge.store.get_catalog_generation(server_id)
+        return payload
+
+    @router.post("/api/mcp/reconcile-catalog")
+    def reconcile_catalog(server_id: str | None = None) -> dict:
+        """Rehydrate CapabilityCatalog from durable McpStore (post-worker sync)."""
+        try:
+            if server_id:
+                bridge.require_server(server_id)
+            result = bridge.reconcile_catalog_from_store(server_id)
+        except McpError as exc:
+            raise_mcp_error(exc)
+        return {"reconcile": result}
 
     @router.get("/api/mcp/calls")
     def list_calls(

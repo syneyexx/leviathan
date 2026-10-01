@@ -4665,6 +4665,33 @@ def _m63_dataset_query_indexes(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m64_mcp_catalog_generation(conn: sqlite3.Connection) -> None:
+    """Durable MCP catalog generation + structured sync issues for worker reconciliation."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(mcp_servers)").fetchall()}
+    if cols and "catalog_generation" not in cols:
+        conn.execute(
+            "ALTER TABLE mcp_servers ADD COLUMN catalog_generation INTEGER NOT NULL DEFAULT 0"
+        )
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS mcp_sync_issues (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id TEXT NOT NULL,
+            tool_name TEXT,
+            error_code TEXT NOT NULL,
+            message TEXT NOT NULL,
+            degraded INTEGER NOT NULL DEFAULT 1,
+            catalog_generation INTEGER,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(server_id) REFERENCES mcp_servers(server_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mcp_sync_issues_server
+            ON mcp_sync_issues(server_id, created_at DESC);
+        """
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -4812,6 +4839,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=63,
         name="dataset_query_indexes",
         apply=_m63_dataset_query_indexes,
+    ),
+    Migration(
+        version=64,
+        name="mcp_catalog_generation",
+        apply=_m64_mcp_catalog_generation,
     ),
 )
 
