@@ -318,10 +318,11 @@ class CriticalGapHardeningTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"LEVIATHAN_WORKERS_EXTERNALIZE_API": "1"}):
             client = TestClient(app)
             resp = client.post("/api/mcp/servers/s1/connect")
-        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.status_code, 202)
         body = resp.json()
         self.assertTrue(body.get("queued"))
         self.assertEqual(body.get("worker_pool"), "mcp_execution")
+        self.assertEqual(body.get("job_id"), "queued-1")
 
     def test_process_service_env_does_not_inherit_api_secrets(self) -> None:
         from Data.modules.common.process_control import scrub_child_environment

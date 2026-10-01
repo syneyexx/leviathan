@@ -115,10 +115,13 @@ def resolve_effective_isolation(
 
 
 def sanitize_text_for_log(text: str, *, secret_values: list[str] | None = None, max_chars: int = 2000) -> str:
+    from Data.modules.common.secrets import redact_secrets
+
     out = text or ""
     for secret in secret_values or []:
         if secret:
             out = out.replace(secret, "***REDACTED***")
+    out = redact_secrets(out)
     if len(out) > max_chars:
         out = out[: max_chars - 3] + "..."
     return out

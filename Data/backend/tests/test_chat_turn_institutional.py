@@ -355,8 +355,8 @@ class ResponseOwnerInvariantTests(unittest.TestCase):
 
 class MigrationHeadTests(unittest.TestCase):
     def test_migration_head_is_65(self) -> None:
-        self.assertEqual(MIGRATIONS[-1].version, 66)
-        self.assertEqual(MIGRATIONS[-1].name, "workflow_execution_idempotency")
+        self.assertEqual(MIGRATIONS[-1].version, 67)
+        self.assertEqual(MIGRATIONS[-1].name, "mcp_scrub_plaintext_secrets")
 
 
 class UpgradeMigrationWithExistingMessagesTests(unittest.TestCase):

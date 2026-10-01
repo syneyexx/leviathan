@@ -68,7 +68,8 @@ def build_minimal_job_context() -> dict[str, Any]:
     artifact_root = getattr(getattr(settings, "artifacts", None), "root", None) or (
         db_parent / "artifacts"
     )
-    artifact_store = ArtifactStore(db_parent / "artifacts.db", Path(artifact_root))
+    # CONTROL DB ownership — never invent a fourth product DB (artifacts.db sidecar).
+    artifact_store = ArtifactStore(settings.database_path, Path(artifact_root))
     try:
         artifact_store.initialize()
     except Exception:  # noqa: BLE001
@@ -76,8 +77,20 @@ def build_minimal_job_context() -> dict[str, Any]:
     filesystem_root = getattr(settings, "project_root", None) or getattr(
         getattr(settings, "coding", None), "workspace", None
     )
+    catalog = build_default_catalog()
+    # Reconstruct dynamic catalog slices so workers match API process after
+    # custom CRUD / plugin changes (durable generation in CONTROL).
+    try:
+        from Data.modules.execution.catalog_reconcile import reconcile_dynamic_catalog
+        from Data.modules.execution.custom_store import CustomCapabilityStore
+
+        custom_store = CustomCapabilityStore(settings.database_path)
+        custom_store.initialize()
+        reconcile_dynamic_catalog(catalog, custom_store=custom_store, force=True)
+    except Exception:  # noqa: BLE001 — workers must still start without custom hydrate
+        pass
     gateway = ExecutionGateway(
-        catalog=build_default_catalog(),
+        catalog=catalog,
         function_runtime=function_runtime,
         artifact_store=artifact_store,
         filesystem_root=filesystem_root,

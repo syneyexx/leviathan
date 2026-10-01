@@ -34,6 +34,8 @@ class CapabilityStatus(str, Enum):
     APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
     CANCELLED = "CANCELLED"
     TIMEOUT = "TIMEOUT"
+    # Durable job accepted; poll /api/jobs/{job_id}. Not a terminal outcome.
+    QUEUED = "QUEUED"
 
 
 @dataclass(frozen=True)

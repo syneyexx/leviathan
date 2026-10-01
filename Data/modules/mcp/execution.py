@@ -27,18 +27,27 @@ from Data.modules.mcp.types import McpCallStatus, McpServerState
 class McpExecutionExecutor:
     """Ephemeral per-job MCP session for tools/call (HTTP or stdio)."""
 
-    def __init__(self, *, db_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        db_path: str | Path | None = None,
+        artifact_store: Any | None = None,
+    ) -> None:
         from Data.modules.common.database_domains import resolve_control_database_path
 
         path = resolve_control_database_path(explicit=db_path)
         self.db_path = path
         self.store = McpStore(path)
         self.store.initialize()
+        self.artifact_store = artifact_store
         allow = (os.environ.get("LEVIATHAN_NETWORK_ALLOW_OUTBOUND") or "").strip().lower()
         self.allow_outbound = allow in {"1", "true", "yes", "on"}
 
     def close(self) -> None:
         return None
+
+    def _resolve_artifact_store(self, ctx: dict[str, Any]) -> Any | None:
+        return self.artifact_store or ctx.get("artifact_store")
 
     def execute_job(self, ctx: dict[str, Any], job: Any) -> dict[str, Any]:
         store = ctx["job_store"]
@@ -176,6 +185,7 @@ class McpExecutionExecutor:
             config=config,
             limits=DEFAULT_MCP_LIMITS,
             allow_outbound=self.allow_outbound,
+            artifact_store=self._resolve_artifact_store(ctx),
         )
         try:
             session.connect()
@@ -189,6 +199,7 @@ class McpExecutionExecutor:
                 "content": result.content,
                 "is_error": result.is_error,
                 "truncated": result.truncated,
+                "artifact_ref": result.artifact_ref,
                 "error_code": result.error_code,
                 "error_message": result.error_message,
                 "duration_ms": result.duration_ms,
@@ -342,6 +353,7 @@ class McpExecutionExecutor:
             config=config,
             limits=DEFAULT_MCP_LIMITS,
             allow_outbound=self.allow_outbound,
+            artifact_store=self._resolve_artifact_store(ctx),
         )
         try:
             runtime = session.connect()

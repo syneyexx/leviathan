@@ -22,6 +22,7 @@ from .errors import (
 )
 from .limits import DEFAULT_MCP_LIMITS, McpLimits
 from .policy import sanitize_text_for_log
+from .secrets import normalize_secret_refs, redact_for_payload, validate_public_env
 from .session import McpServerSession
 from .store import McpStore, utc_now
 from .types import (
@@ -61,6 +62,7 @@ class McpBridge:
         limits: McpLimits | None = None,
         secret_overrides: dict[str, str] | None = None,
         observability: Any | None = None,
+        artifact_store: Any | None = None,
     ) -> None:
         self.store = store
         self.catalog = catalog
@@ -73,6 +75,7 @@ class McpBridge:
         self.limits = limits or DEFAULT_MCP_LIMITS
         self.secret_overrides = secret_overrides or {}
         self.observability = observability
+        self.artifact_store = artifact_store
         self.sync = McpCatalogSync(
             catalog=catalog,
             store=store,
@@ -175,6 +178,10 @@ class McpBridge:
         for tool_name, values in (semantic_effects or {}).items():
             effects[str(tool_name)] = tuple(str(v) for v in values)
 
+        # Plaintext secrets NEVER persist in public env — secret_refs only.
+        safe_env = validate_public_env(env)
+        safe_refs = normalize_secret_refs(secret_refs)
+
         config = McpServerConfig(
             server_id=sid,
             display_name=display_name,
@@ -185,8 +192,8 @@ class McpBridge:
             args=tuple(args or ()),
             url=url,
             cwd=cwd,
-            env_public=dict(env or {}),
-            secret_refs=dict(secret_refs or {}),
+            env_public=safe_env,
+            secret_refs=safe_refs,
             timeout_seconds=timeout_seconds,
             enabled=enabled,
             trust=McpTrust(trust) if isinstance(trust, str) else trust,
@@ -232,6 +239,10 @@ class McpBridge:
         # Never accept plaintext secrets via patch.
         patch.pop("env_secrets", None)
         patch.pop("secrets", None)
+        if "env" in patch and patch["env"] is not None:
+            patch["env"] = validate_public_env(patch["env"])
+        if "secret_refs" in patch and patch["secret_refs"] is not None:
+            patch["secret_refs"] = normalize_secret_refs(patch["secret_refs"])
         mapping = {
             "display_name": "display_name",
             "command": "command",
@@ -314,10 +325,12 @@ class McpBridge:
                     limits=self.limits,
                     allow_outbound=self.allow_outbound,
                     secret_overrides=self.secret_overrides,
+                    artifact_store=self.artifact_store,
                 )
                 self._sessions[server_id] = session
             else:
                 session.config = config
+                session.artifact_store = self.artifact_store
         runtime = session.connect()
         self.store.update_runtime_state(
             server_id,
@@ -525,7 +538,8 @@ class McpBridge:
         out: list[dict[str, Any]] = []
         for config in self.store.list_servers():
             runtime = self.server_health(config.server_id)
-            out.append({**config.public_dict(), "runtime": runtime.public_dict()})
+            row = {**config.public_dict(), "runtime": runtime.public_dict()}
+            out.append(redact_for_payload(row))
         return out
 
     def get_server_public(self, server_id: str) -> dict[str, Any]:
@@ -533,7 +547,9 @@ class McpBridge:
         config = self.require_server(server_id)
         payload = {**config.public_dict(), "runtime": self.server_health(server_id).public_dict()}
         payload["catalog_generation"] = self.store.get_catalog_generation(server_id)
-        return payload
+        payload["sync_issues"] = self.store.list_sync_issues(server_id)
+        # Defense in depth — never surface resolved secret material.
+        return redact_for_payload(payload)
 
     def list_tools(self, *, server_id: str | None = None) -> list[McpToolRecord]:
         self.reconcile_if_stale(server_id)

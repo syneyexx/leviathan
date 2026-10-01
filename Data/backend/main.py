@@ -516,6 +516,7 @@ mcp_bridge = McpBridge(
     auto_expand_modules=settings.features.mcp_auto_expand_modules,
     allow_outbound=settings.network.allow_outbound,
     observability=observability,
+    artifact_store=artifacts,
 )
 mcp_provider = McpProvider(mcp_bridge, job_runtime=job_runtime)
 execution_gateway.mcp_executor = mcp_provider
@@ -946,8 +947,8 @@ def _gate_fixture_production_separation() -> GateCheck:
         gate_id="fixture_production_separation",
         name="Fixture ≠ production",
         severity=GateSeverity.WARN,
-        passed=True,
-        detail="browser backend unmeasured",
+        passed=False,
+        detail="browser backend unmeasured — UNMEASURED ≠ PASS",
         measurement=GateMeasurement.UNMEASURED,
     )
 

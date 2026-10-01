@@ -754,6 +754,10 @@ class ExecutionGateway:
         if result.status == CapabilityStatus.COMPLETED:
             self._maybe_consume_approval(request, result)
             return
+        if result.status == CapabilityStatus.QUEUED:
+            # Job accepted — keep reservation until worker terminal outcome.
+            result.telemetry["approval_held_for_queued_job"] = True
+            return
         if not reserved:
             return
         # Non-success after reservation: release when outcome is clean cancel/reject;
@@ -1288,7 +1292,7 @@ class ExecutionGateway:
             self.telemetry["cancellations"] += 1
         elif status == CapabilityStatus.REJECTED:
             self.telemetry["rejected"] += 1
-        elif status == CapabilityStatus.APPROVAL_REQUIRED:
+        elif status in {CapabilityStatus.APPROVAL_REQUIRED, CapabilityStatus.QUEUED}:
             pass
         else:
             self.telemetry["failed"] += 1

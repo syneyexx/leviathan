@@ -4774,6 +4774,42 @@ def _m66_workflow_execution_idempotency(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m67_mcp_scrub_plaintext_secrets(conn: sqlite3.Connection) -> None:
+    """Scrub plaintext secrets from mcp_servers.env_public_json into secret_refs.
+
+    Report (via observability pragma note) lists key *names* only — never values.
+    """
+    from Data.modules.mcp.secrets import scrub_mcp_server_secrets
+
+    report = scrub_mcp_server_secrets(conn)
+    # Persist a non-secret audit row if schema_migrations notes are unavailable —
+    # store counts on a one-shot marker table so operators can inspect scrub volume.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mcp_secret_scrub_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now')),
+            servers_scanned INTEGER NOT NULL,
+            servers_scrubbed INTEGER NOT NULL,
+            keys_scrubbed INTEGER NOT NULL,
+            scrubbed_key_names_json TEXT NOT NULL DEFAULT '[]'
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO mcp_secret_scrub_reports(
+            servers_scanned, servers_scrubbed, keys_scrubbed, scrubbed_key_names_json
+        ) VALUES (?, ?, ?, ?)
+        """,
+        (
+            int(report.get("servers_scanned") or 0),
+            int(report.get("servers_scrubbed") or 0),
+            int(report.get("keys_scrubbed") or 0),
+            json.dumps(list(report.get("scrubbed_key_names") or [])),
+        ),
+    )
+
 
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
@@ -4937,6 +4973,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=66,
         name="workflow_execution_idempotency",
         apply=_m66_workflow_execution_idempotency,
+    ),
+    Migration(
+        version=67,
+        name="mcp_scrub_plaintext_secrets",
+        apply=_m67_mcp_scrub_plaintext_secrets,
     ),
 )
 

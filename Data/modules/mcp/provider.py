@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import time
 from typing import Any
 
 from Data.modules.execution.types import CapabilityResult, CapabilityStatus
@@ -19,6 +18,10 @@ class McpProvider:
     Live connect / handshake / tools/list / tools/call that touch network or
     spawn stdio processes execute via ``mcp_execution``. Cached server/tool
     metadata remains Control Plane.
+
+    Contract (externalized): enqueue durable job and return QUEUED immediately.
+    Never poll the job on the Control Plane / FastAPI request thread.
+    Callers poll ``/api/jobs/{job_id}`` (HTTP 202 accepted pattern).
     """
 
     def __init__(self, bridge: McpBridge, *, job_runtime: Any | None = None) -> None:
@@ -150,6 +153,10 @@ class McpProvider:
         requested_by: str,
         capability_id: str,
     ) -> CapabilityResult:
+        """Enqueue mcp.call and return immediately (HTTP 202 / QUEUED contract).
+
+        Control Plane must not poll worker completion on the request thread.
+        """
         job = self.job_runtime.enqueue(
             capability_id="mcp.call",
             arguments={
@@ -169,63 +176,30 @@ class McpProvider:
             timeout_seconds=float(getattr(tool, "timeout_seconds", None) or 60.0),
             metadata={"transport": getattr(getattr(tool, "transport", None), "value", None)},
         )
-        deadline = time.monotonic() + float(getattr(job, "timeout_seconds", None) or 60.0) + 15.0
-        while time.monotonic() < deadline:
-            current = self.job_runtime.get(job.job_id)
-            if current is None:
-                break
-            from Data.modules.jobs.states import TERMINAL_JOB_STATES, JobState
-
-            if current.state in TERMINAL_JOB_STATES:
-                raw = current.result if isinstance(current.result, dict) else {}
-                if current.state == JobState.COMPLETED:
-                    return CapabilityResult(
-                        request_id=request_id,
-                        capability_id=capability_id,
-                        status=CapabilityStatus.COMPLETED,
-                        output={
-                            "content": raw.get("content"),
-                            "is_error": raw.get("is_error"),
-                            "truncated": raw.get("truncated"),
-                            "truth": {
-                                "mcp_output_is_observation_not_evidence": True,
-                                "untrusted_external_content": True,
-                                "executed_via": "mcp_execution",
-                            },
-                        },
-                        error=raw.get("error_message"),
-                        telemetry={
-                            "provider": "mcp",
-                            "duration_ms": raw.get("duration_ms"),
-                            "server_id": tool.server_id,
-                            "external_name": tool.external_name,
-                            "worker_pid": raw.get("worker_pid"),
-                            "executed_via": "mcp_execution",
-                        },
-                    )
-                status = CapabilityStatus.CANCELLED if current.state == JobState.CANCELLED else CapabilityStatus.FAILED
-                if (raw.get("error") or {}).get("code") == "MCP_CALL_TIMEOUT" or current.error == "MCP_CALL_TIMEOUT":
-                    status = CapabilityStatus.TIMEOUT
-                err = raw.get("error") if isinstance(raw.get("error"), dict) else {}
-                return CapabilityResult(
-                    request_id=request_id,
-                    capability_id=capability_id,
-                    status=status,
-                    error=f"{err.get('code') or current.error or 'MCP_TOOL_CALL_FAILED'}: {err.get('message') or current.error}",
-                    telemetry={
-                        "provider": "mcp",
-                        "error_code": err.get("code") or current.error,
-                        "worker_pid": raw.get("worker_pid"),
-                        "executed_via": "mcp_execution",
-                    },
-                )
-            time.sleep(0.05)
+        job_id = getattr(job, "job_id", None)
         return CapabilityResult(
             request_id=request_id,
             capability_id=capability_id,
-            status=CapabilityStatus.TIMEOUT,
-            error="MCP_CALL_TIMEOUT: timed out waiting for mcp_execution worker",
-            telemetry={"provider": "mcp", "error_code": "MCP_CALL_TIMEOUT"},
+            status=CapabilityStatus.QUEUED,
+            output={
+                "queued": True,
+                "job_id": job_id,
+                "worker_pool": "mcp_execution",
+                "truth": {
+                    "mcp_output_is_observation_not_evidence": True,
+                    "untrusted_external_content": True,
+                    "executed_via": "mcp_execution",
+                    "control_plane_does_not_poll_mcp_jobs": True,
+                },
+            },
+            telemetry={
+                "provider": "mcp",
+                "server_id": tool.server_id,
+                "external_name": tool.external_name,
+                "job_id": job_id,
+                "executed_via": "mcp_execution",
+                "queued": True,
+            },
         )
 
     def _result_from_bridge(

@@ -68,10 +68,13 @@ class McpBridgeTestCase(unittest.TestCase):
                 startup_timeout_seconds=10.0,
             ),
             secret_overrides={"secret:test_token": "SUPER_SECRET_VALUE_XYZ"},
+            artifact_store=None,
         )
         self.bridge.initialize()
         artifacts = ArtifactStore(self.db, self.root / "artifacts")
         artifacts.initialize()
+        self.bridge.artifact_store = artifacts
+        self.artifacts = artifacts
         knowledge = KnowledgeStore(
             self.db, data_root=self.root / "corp", chunk_max_chars=200, chunk_overlap=20
         )

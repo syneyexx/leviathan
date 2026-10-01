@@ -3278,7 +3278,14 @@ export const api = {
     return request(`/api/mcp/servers/${encodeURIComponent(serverId)}/disable`, { method: "POST" });
   },
 
-  mcpConnectServer(serverId: string): Promise<{ server: McpServerPublic }> {
+  mcpConnectServer(serverId: string): Promise<{
+    server?: McpServerPublic;
+    queued?: boolean;
+    job_id?: string | null;
+    worker_pool?: string;
+    capability_id?: string;
+    truth?: Record<string, boolean>;
+  }> {
     return request(`/api/mcp/servers/${encodeURIComponent(serverId)}/connect`, { method: "POST" });
   },
 
@@ -3288,7 +3295,13 @@ export const api = {
     });
   },
 
-  mcpRefreshTools(serverId: string): Promise<{ tools: McpToolRecord[] }> {
+  mcpRefreshTools(serverId: string): Promise<{
+    tools?: McpToolRecord[];
+    queued?: boolean;
+    job_id?: string | null;
+    worker_pool?: string;
+    truth?: Record<string, boolean>;
+  }> {
     return request(`/api/mcp/servers/${encodeURIComponent(serverId)}/refresh-tools`, {
       method: "POST",
     });
@@ -3298,7 +3311,11 @@ export const api = {
     return request(`/api/mcp/servers/${encodeURIComponent(serverId)}`, { method: "DELETE" });
   },
 
-  mcpTools(serverId?: string): Promise<{ tools: McpToolRecord[] }> {
+  mcpTools(serverId?: string): Promise<{
+    tools: McpToolRecord[];
+    catalog_generation?: number;
+    sync_issues?: Array<Record<string, unknown>>;
+  }> {
     const q = serverId ? `?server_id=${encodeURIComponent(serverId)}` : "";
     return request(`/api/mcp/tools${q}`);
   },
@@ -3312,7 +3329,12 @@ export const api = {
     arguments?: Record<string, unknown>;
     approval_id?: string;
     approved_by_user?: boolean;
-  }): Promise<{ result: unknown; truth: Record<string, boolean> }> {
+  }): Promise<{
+    result: unknown;
+    truth: Record<string, boolean>;
+    queued?: boolean;
+    job_id?: string | null;
+  }> {
     return request("/api/mcp/call", { method: "POST", body: JSON.stringify(payload) });
   },
 
