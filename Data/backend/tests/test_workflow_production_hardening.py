@@ -488,36 +488,27 @@ class WorkflowHardeningTests(unittest.TestCase):
                     var_type="secret_ref",
                     required=True,
                     secret=True,
-                    default="plaintext-not-allowed",
                 )
             ],
         )
+        # Plaintext input rejected.
         with self.assertRaises(ValueError) as ctx:
-            self.runtime.run_definition(definition.workflow_id)
+            self.runtime.run_definition(
+                definition.workflow_id, inputs={"api_token": "plaintext-not-allowed"}
+            )
         self.assertIn("VARIABLE_VALIDATION_FAILED", str(ctx.exception))
+        self.assertIn("secret ref", str(ctx.exception))
 
-        # Resolvable secret ref is accepted.
-        ok_def = self.store.create_definition(
-            name="secrets-ok",
-            steps=[
-                WorkflowStepDef(
-                    step_id="s1",
-                    capability_id="file.read",
-                    arguments={"path": str(self.note)},
-                )
-            ],
-            status=WorkflowDefinitionStatus.ACTIVE,
-            variables=[
-                WorkflowVariableDef(
-                    name="api_token",
-                    var_type="secret_ref",
-                    required=True,
-                    secret=True,
-                    default="secret:LEVIATHAN_TEST_TOKEN",
-                )
-            ],
+        # Missing required secret rejected.
+        with self.assertRaises(ValueError) as ctx2:
+            self.runtime.run_definition(definition.workflow_id)
+        self.assertIn("VARIABLE_VALIDATION_FAILED", str(ctx2.exception))
+
+        # Resolvable secret ref via inputs is accepted (defaults are redacted at rest).
+        ex, _ = self.runtime.run_definition(
+            definition.workflow_id,
+            inputs={"api_token": "secret:LEVIATHAN_TEST_TOKEN"},
         )
-        ex, _ = self.runtime.run_definition(ok_def.workflow_id)
         snap = ex.input_snapshot.get("api_token")
         self.assertTrue(isinstance(snap, dict) and snap.get("secret"))
 
