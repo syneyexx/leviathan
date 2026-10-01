@@ -135,10 +135,24 @@ def apply_family_capability_inference(
 
     if infer_non_chat_family(model):
         chat = CapabilityState.UNSUPPORTED
-        if embeddings in {CapabilityState.UNKNOWN, CapabilityState.UNVERIFIED, CapabilityState.UNMEASURED}:
+        # Rerank/cross-encoder families are NOT embeddings — do not coerce.
+        identity = model_identity_text(model)
+        is_rerank = bool(
+            re.search(r"(?i)rerank(?:er|ing)?|cross[-_]?encoder|colbert", identity)
+        )
+        if (
+            not is_rerank
+            and embeddings
+            in {CapabilityState.UNKNOWN, CapabilityState.UNVERIFIED, CapabilityState.UNMEASURED}
+        ):
             embeddings = CapabilityState.SUPPORTED
+            provenance["embeddings"] = CapabilityProvenance.INFERRED_MODEL_FAMILY.value
+        elif is_rerank:
+            # Leave embeddings as-is (typically UNKNOWN) — rerank ≠ embeddings.
+            provenance["embeddings"] = CapabilityProvenance.UNVERIFIED.value
         provenance["chat"] = CapabilityProvenance.INFERRED_MODEL_FAMILY.value
-        provenance["embeddings"] = CapabilityProvenance.INFERRED_MODEL_FAMILY.value
+        if not is_rerank and "embeddings" not in provenance:
+            provenance["embeddings"] = CapabilityProvenance.INFERRED_MODEL_FAMILY.value
         reasoning = (
             CapabilityState.UNSUPPORTED
             if capabilities.reasoning in {CapabilityState.UNKNOWN, CapabilityState.UNVERIFIED}

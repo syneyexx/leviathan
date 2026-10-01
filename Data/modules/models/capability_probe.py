@@ -181,6 +181,10 @@ class CapabilityProbeService:
             except asyncio.CancelledError:
                 verified = CapabilityState.UNKNOWN
                 detail = "probe_cancelled"
+                # Cooperative cancel: return partial results already committed;
+                # do not re-raise so callers receive honest partial evidence.
+                if cancel.is_set():
+                    break
                 raise
             except asyncio.TimeoutError:
                 verified = CapabilityState.UNKNOWN

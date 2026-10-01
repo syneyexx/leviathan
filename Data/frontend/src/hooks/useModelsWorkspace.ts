@@ -178,7 +178,7 @@ function gbToBytes(gb: number): number {
 }
 
 /** Convert bytes → GB; null/undefined input yields null (caller may fall back). */
-function bytesToGb(bytes: number | null | undefined): number | null {
+export function bytesToGb(bytes: number | null | undefined): number | null {
   if (bytes == null) return null;
   return Math.round((bytes / GIB) * 100) / 100;
 }
