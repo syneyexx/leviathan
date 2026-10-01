@@ -2,11 +2,103 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
+import tempfile
 from pathlib import Path
 from typing import Iterator
 
 from .memory_policy import DEFAULT_MAX_RECORD_BYTES, resolve_dataset_memory_policy
 from .types import DatasetError
+
+DEFAULT_IO_CHUNK_BYTES = 1024 * 1024
+
+
+def read_prefix(path: Path | str, n: int) -> bytes:
+    """Read at most ``n`` bytes from the start of a file without loading the rest.
+
+    Production large-data paths must use this (or equivalent open+read) instead of
+    ``path.read_bytes()[:n]``, which materializes the entire file first.
+    """
+    if n < 0:
+        raise ValueError("n must be >= 0")
+    if n == 0:
+        return b""
+    with Path(path).open("rb") as handle:
+        return handle.read(n)
+
+
+def hash_file_streaming(
+    path: Path | str,
+    *,
+    chunk_size: int = DEFAULT_IO_CHUNK_BYTES,
+    expected_size: int | None = None,
+) -> tuple[str, int]:
+    """SHA-256 a file in bounded chunks. Returns (hex_digest, byte_count)."""
+    digest = hashlib.sha256()
+    total = 0
+    with Path(path).open("rb") as handle:
+        while True:
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+            total += len(chunk)
+    if expected_size is not None and total != int(expected_size):
+        raise DatasetError(
+            f"File size mismatch: expected={expected_size} observed={total}",
+            code="SIZE_MISMATCH",
+            details={"expectedSize": int(expected_size), "observedSize": total},
+        )
+    return digest.hexdigest(), total
+
+
+def stream_copy_and_hash(
+    src: Path | str,
+    dest: Path | str,
+    *,
+    chunk_size: int = DEFAULT_IO_CHUNK_BYTES,
+    fsync: bool = True,
+) -> tuple[str, int]:
+    """Copy ``src`` → ``dest`` via unique temp sibling, streaming hash, atomic replace.
+
+    Never holds the full file contents in a Python bytes object.
+    Returns (sha256_hex, byte_count).
+    """
+    src_path = Path(src)
+    dest_path = Path(dest)
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{dest_path.name}.",
+        suffix=".partial",
+        dir=str(dest_path.parent),
+    )
+    tmp_path = Path(tmp_name)
+    digest = hashlib.sha256()
+    total = 0
+    try:
+        with os.fdopen(fd, "wb") as out, src_path.open("rb") as inp:
+            while True:
+                chunk = inp.read(chunk_size)
+                if not chunk:
+                    break
+                out.write(chunk)
+                digest.update(chunk)
+                total += len(chunk)
+            out.flush()
+            if fsync:
+                try:
+                    os.fsync(out.fileno())
+                except OSError:
+                    pass
+        os.replace(tmp_path, dest_path)
+    except Exception:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    return digest.hexdigest(), total
 
 
 def iter_bounded_text_lines(

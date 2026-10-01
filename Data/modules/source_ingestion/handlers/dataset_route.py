@@ -24,12 +24,25 @@ import hashlib
 
 
 class DatasetRouteHandler:
-    """Route dataset-like files to Dataset architecture instead of Brain text."""
+    """Route dataset-like files to Dataset architecture instead of Brain text.
+
+    Explicit rule (P2-005):
+    - Always route ``.parquet``.
+    - Always route extensions listed in ``settings.dataset_route_formats`` when
+      size >= ``dataset_route_min_bytes`` OR the format is parquet/jsonl always-
+      dataset for large policy (jsonl small remains structured text).
+    - Small ``.jsonl`` / ``.ndjson`` below the threshold stay structured text with
+      ``dataset_candidate=True``.
+    - Large ``.csv`` / ``.tsv`` / ``.json`` route to DatasetService (never full
+      string+rows materialization in SourceIngestion).
+    """
 
     capabilities = HandlerCapabilities(
         handler_id="dataset",
         kinds=frozenset({SourceKind.DATASET}),
-        extensions=frozenset({".parquet", ".jsonl", ".ndjson"}),
+        extensions=frozenset(
+            {".parquet", ".jsonl", ".ndjson", ".csv", ".tsv", ".json"}
+        ),
         requires_path=True,
     )
 
@@ -40,6 +53,21 @@ class DatasetRouteHandler:
 
     def inspect(self, path: Path, *, detection: DetectionResult, settings: SourceIngestionSettings) -> dict[str, Any]:
         return {"handler": "dataset", "size": path.stat().st_size}
+
+    def _should_route(
+        self, *, ext: str, size: int, settings: SourceIngestionSettings
+    ) -> tuple[bool, str]:
+        if ext == ".parquet":
+            return True, "parquet_always"
+        if ext in {".jsonl", ".ndjson"} and size < settings.dataset_route_min_bytes:
+            return False, "small_jsonl_structured"
+        if ext in settings.dataset_route_formats and size >= settings.dataset_route_min_bytes:
+            return True, "format_and_size"
+        if ext in {".csv", ".tsv", ".json"} and size >= settings.dataset_route_min_bytes:
+            return True, "large_tabular_or_json"
+        if ext in {".jsonl", ".ndjson"}:
+            return True, "jsonl_ge_threshold"
+        return False, "keep_structured"
 
     def ingest(
         self,
@@ -52,9 +80,8 @@ class DatasetRouteHandler:
     ) -> NormalizedArtifact:
         ext = detection.extension.lower() or Path(relative_path).suffix.lower()
         size = path.stat().st_size
-        # Always route parquet. Route large jsonl/ndjson. Small jsonl may still be structured text.
-        route = ext == ".parquet" or size >= settings.dataset_route_min_bytes or ext in settings.dataset_route_formats
-        if ext in {".jsonl", ".ndjson"} and size < settings.dataset_route_min_bytes:
+        route, route_reason = self._should_route(ext=ext, size=size, settings=settings)
+        if not route:
             # Small jsonl: ingest as structured text AND mark dataset-candidate.
             text = _read_text_streaming(path)
             return NormalizedArtifact(
@@ -67,7 +94,11 @@ class DatasetRouteHandler:
                 content_hash=sha256_text(text),
                 content=ContentRef(text=text),
                 structured_metadata={"line_count": text.count("\n") + (1 if text else 0)},
-                provenance={"relative_path": relative_path, "dataset_candidate": True},
+                provenance={
+                    "relative_path": relative_path,
+                    "dataset_candidate": True,
+                    "route_reason": route_reason,
+                },
                 outcome=MemberOutcome.SUCCESS,
                 warnings=["small_jsonl_ingested_as_text"],
             )
@@ -87,8 +118,17 @@ class DatasetRouteHandler:
             parser_version=PARSER_VERSION,
             content_hash=digest.hexdigest(),
             content=ContentRef(text=""),
-            structured_metadata={"size_bytes": size, "format": ext.lstrip(".")},
-            provenance={"relative_path": relative_path, "raw_path": str(path), "size_bytes": size},
+            structured_metadata={
+                "size_bytes": size,
+                "format": ext.lstrip("."),
+                "route_reason": route_reason,
+            },
+            provenance={
+                "relative_path": relative_path,
+                "raw_path": str(path),
+                "size_bytes": size,
+                "route_reason": route_reason,
+            },
             outcome=MemberOutcome.ROUTED,
             route_target="dataset",
             skip_reason="routed_to_dataset",

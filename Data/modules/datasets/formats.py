@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .streaming_io import read_prefix
 from .types import DetectedFormat, FormatDetection
 
 
@@ -71,7 +72,7 @@ def detect_format(path: Path, *, sample_bytes: int = 64_000) -> FormatDetection:
     if suffix_hint == DetectedFormat.PARQUET or suffix == "parquet":
         details: dict[str, Any] = {"suffixHint": suffix}
         try:
-            raw = path.read_bytes()[:4]
+            raw = read_prefix(path, 4)
             if raw == b"PAR1":
                 return FormatDetection(
                     format=DetectedFormat.PARQUET,
@@ -87,7 +88,7 @@ def detect_format(path: Path, *, sample_bytes: int = 64_000) -> FormatDetection:
         return FormatDetection(format=DetectedFormat.PARQUET, confidence=0.85, details=details)
 
     try:
-        raw = path.read_bytes()[:sample_bytes]
+        raw = read_prefix(path, sample_bytes)
     except OSError as exc:
         return FormatDetection(
             format=suffix_hint or DetectedFormat.UNKNOWN,

@@ -239,6 +239,8 @@ def iter_json_array_streaming(
             http_status=500,
         ) from exc
 
+    last_stream_error: Exception | None = None
+
     with path.open("rb") as handle:
         # Try top-level array items first
         try:
@@ -259,8 +261,8 @@ def iter_json_array_streaming(
                 idx += 1
             if yielded:
                 return
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001 — try alternate selectors; never full-read
+            last_stream_error = exc
 
     # Common wrappers: data / rows / examples / items
     for prefix in ("data.item", "rows.item", "examples.item", "items.item"):
@@ -282,15 +284,25 @@ def iter_json_array_streaming(
                     idx += 1
                 if found:
                     return
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 — classify below; never fall through to full read
+                last_stream_error = exc
                 continue
 
-    # Small-object fallback
-    data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
-    if isinstance(data, dict):
-        yield dict_to_canonical(data, index=0, source=source, split=split, provenance=provenance)
-        return
-    raise DatasetError("JSON root must be object or array", code="invalid_json")
+    # Large files must never fall back to path.read_text() / json.loads(full).
+    # At this point streaming selectors failed — classify and refuse honestly.
+    size = path.stat().st_size if path.exists() else 0
+    detail = {
+        "path": str(path),
+        "sizeBytes": size,
+        "streamError": str(last_stream_error) if last_stream_error else None,
+        "streamErrorType": type(last_stream_error).__name__ if last_stream_error else None,
+    }
+    raise DatasetError(
+        "Large JSON could not be streamed as a supported array/object-wrapper shape; "
+        "full-file materialization is refused",
+        code="unsupported_json_shape",
+        details=detail,
+    )
 
 
 def iter_canonical_from_path(

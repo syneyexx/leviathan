@@ -264,7 +264,9 @@ def _sample_columns_from_path(path: Path, *, max_bytes: int = 256_000) -> list[s
                         return [str(k) for k in obj.keys()]
                     break
         if suffix == ".json":
-            raw = path.read_bytes()[:max_bytes]
+            from .streaming_io import read_prefix
+
+            raw = read_prefix(path, max_bytes)
             obj = json.loads(raw.decode("utf-8", errors="replace"))
             if isinstance(obj, dict):
                 if isinstance(obj.get("columns"), list):
