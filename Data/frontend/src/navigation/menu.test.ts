@@ -120,23 +120,23 @@ describe("navigation menu", () => {
     expect(findSubMenuItem(media, "/media/distributie")?.label).toBe("Distributie");
     // Deep platform routes remain under Media Control even when not in primary submenu.
     expect(findMainMenuByPath("/media/youtube").id).toBe("media");
-    expect(findMainMenuByPath("/trading/command-hub").id).toBe("trading");
-    expect(findMainMenuByPath("/trading/command-hub").label).toBe("Trading Center");
-    expect(findSubMenuItem(findMainMenuByPath("/trading/command-hub"), "/trading/command-hub")?.label).toBe(
-      "Command Hub",
+    expect(findMainMenuByPath("/trading/agents").id).toBe("trading");
+    expect(findMainMenuByPath("/trading/agents").label).toBe("Trading Center");
+    expect(findSubMenuItem(findMainMenuByPath("/trading/agents"), "/trading/agents")?.label).toBe(
+      "Agent Overzicht",
     );
-    expect(findSubMenuItem(findMainMenuByPath("/trading/trading-desk"), "/trading/trading-desk")?.id).toBe(
-      "trading-desk",
+    expect(findSubMenuItem(findMainMenuByPath("/trading/live-agents"), "/trading/live-agents")?.id).toBe(
+      "live-agents",
     );
-    expect(findSubMenuItem(findMainMenuByPath("/trading/strategy-lab"), "/trading/strategy-lab")?.label).toBe(
-      "Strategy Lab",
+    expect(findSubMenuItem(findMainMenuByPath("/trading/research"), "/trading/research")?.label).toBe(
+      "Research Centrum",
     );
-    expect(findSubMenuItem(findMainMenuByPath("/trading/market-data"), "/trading/market-data")?.label).toBe(
-      "Market Data",
-    );
-    // Legacy paths still belong to Trading Center section via /trading prefix match.
+    expect(findMainMenuByPath("/trading/agents").submenu).toHaveLength(3);
+    // Legacy / former four-workspace paths still belong to Trading Center via /trading prefix.
     expect(findMainMenuByPath("/trading/paper").id).toBe("trading");
     expect(findMainMenuByPath("/trading/simulatie").id).toBe("trading");
+    expect(findMainMenuByPath("/trading/command-hub").id).toBe("trading");
+    expect(findMainMenuByPath("/trading/trading-desk").id).toBe("trading");
     expect(findMainMenuByPath("/evidence").id).toBe("research");
     expect(findSubMenuItem(findMainMenuByPath("/evidence"), "/evidence")?.label).toBe("Evidence Vault");
   });

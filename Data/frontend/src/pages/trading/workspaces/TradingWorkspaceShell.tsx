@@ -37,7 +37,7 @@ export function TradingWorkspaceShell({
         <header className="lv-tc-workspace__header">
           <div>
             <p className="lv-tc-workspace__crumb">
-              <Link to="/trading/command-hub">Trading Center</Link>
+              <Link to="/trading/agents">Trading Center</Link>
               <span aria-hidden="true"> / </span>
               <span>{workspace.label}</span>
             </p>

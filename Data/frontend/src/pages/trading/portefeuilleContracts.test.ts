@@ -2,31 +2,35 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const pagePath = resolve(__dirname, "PortefeuillePage.tsx");
-const cssPath = resolve(__dirname, "../../styles/trading-portefeuille.css");
+const deskDrawerPath = resolve(__dirname, "workspaces/tradingDesk/TradingDeskDrawers.tsx");
+const deskHookPath = resolve(__dirname, "workspaces/tradingDesk/useTradingDeskData.ts");
+const agentPagePath = resolve(__dirname, "agentOverview/AgentOverviewPage.tsx");
 const clientPath = resolve(__dirname, "../../api/client.ts");
 const typesPath = resolve(__dirname, "../../types/api.ts");
 
-describe("Portefeuille page contracts", () => {
-  const page = readFileSync(pagePath, "utf8");
-  const css = readFileSync(cssPath, "utf8");
+describe("Portefeuille capabilities absorbed by Agent Overzicht", () => {
+  const drawers = readFileSync(deskDrawerPath, "utf8");
+  const hook = readFileSync(deskHookPath, "utf8");
+  const agentPage = readFileSync(agentPagePath, "utf8");
   const client = readFileSync(clientPath, "utf8");
   const types = readFileSync(typesPath, "utf8");
 
-  it("keeps user-facing PORTEFEUILLE name and wraps lv-main", () => {
-    expect(page).toContain("PORTEFEUILLE");
-    expect(page).toContain('className="lv-main lv-tp-main lv-portefeuille-page"');
-    expect(page).not.toMatch(/PORTFOLIO TRADINGCENTER/);
+  it("Agent Overzicht opens portfolio advanced controls (no separate page route)", () => {
+    expect(agentPage).toContain("CreatePortfolioDrawer");
+    expect(agentPage).toContain("AdvancedDrawer");
+    expect(agentPage).toContain('section === "portfolio"');
+    expect(agentPage).not.toContain("PortefeuillePage");
   });
 
-  it("wires real API methods instead of hardcoded screenshot equity", () => {
+  it("wires real portfolio API methods instead of hardcoded screenshot equity", () => {
     expect(client).toContain("portfolioDashboard");
     expect(client).toContain("createPortfolio");
     expect(client).toContain("closeSelectedPortfolioPositions");
-    expect(page).toContain("api.portfolioDashboard");
-    expect(page).toContain("api.createPortfolio");
-    expect(page).not.toContain("1428351");
-    expect(page).not.toContain("1,428,351");
+    expect(hook).toContain("createPortfolio");
+    expect(hook).toContain("exportPortfolio");
+    expect(hook).toContain("rebalancePreview");
+    expect(drawers).not.toContain("1428351");
+    expect(drawers).not.toContain("1,428,351");
   });
 
   it("declares typed dashboard models", () => {
@@ -35,20 +39,11 @@ describe("Portefeuille page contracts", () => {
     expect(types).toContain("export type PortfolioRecommendation");
   });
 
-  it("scopes visual styles under lv-portefeuille-*", () => {
-    expect(css).toContain(".lv-portefeuille-page");
-    expect(css).toContain(".lv-portefeuille-kpis");
-    expect(css).toContain(".lv-portefeuille-positions-tools");
-    expect(page).toContain("trading-portefeuille.css");
-  });
-
-  it("exposes empty / create / lifecycle / export controls", () => {
-    expect(page).toContain("Create Paper Portefeuille");
-    expect(page).toContain("PAPER / SIMULATED");
-    expect(page).toContain("Execute All");
-    expect(page).toContain("Export Report");
-    expect(page).toContain("Save Allocation");
-    expect(page).toContain("View Detailed Analysis");
-    expect(page).toContain('lifecycle("start")');
+  it("exposes create / lifecycle / rebalance / export controls via desk drawers", () => {
+    expect(drawers).toContain("Create wallet");
+    expect(drawers).toMatch(/PAPER|paper/);
+    expect(hook).toContain("lifecycle");
+    expect(hook).toContain("saveAllocations");
+    expect(hook).toContain("exportPortfolio");
   });
 });

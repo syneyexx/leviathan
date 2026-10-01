@@ -270,8 +270,8 @@ export function useResearchCommand() {
     pollFeeds,
     toggleFeed,
     removeFeed,
-    openPaper: () => navigate("/trading/paper"),
-    openAgent: (agentId: string) => navigate(`/agents?agent=${encodeURIComponent(agentId)}`),
+    openPaper: () => navigate("/trading/live-agents?mode=realtime"),
+    openAgent: (agentId: string) => navigate(`/trading/agents?agent=${encodeURIComponent(agentId)}`),
     dismissError: () => setError(null),
   };
 }

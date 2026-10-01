@@ -64,13 +64,12 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
   {
     id: "trading",
     label: "Trading Center",
-    to: "/trading/command-hub",
+    to: "/trading/agents",
     match: ["/trading"],
     submenu: [
-      { id: "command-hub", label: "Command Hub", to: "/trading/command-hub" },
-      { id: "strategy-lab", label: "Strategy Lab", to: "/trading/strategy-lab" },
-      { id: "trading-desk", label: "Trading Desk", to: "/trading/trading-desk" },
-      { id: "market-data", label: "Market Data", to: "/trading/market-data" },
+      { id: "agents", label: "Agent Overzicht", to: "/trading/agents" },
+      { id: "live-agents", label: "Live Agents", to: "/trading/live-agents" },
+      { id: "research", label: "Research Centrum", to: "/trading/research" },
     ],
   },
   {

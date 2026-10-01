@@ -34,6 +34,23 @@ class SealDatasetRequest(BaseModel):
     role: str = "SEALED_TEST"
 
 
+class OfflineScenarioCreate(BaseModel):
+    """Structured offline replay scenario (deterministic OHLCV from constraints)."""
+
+    symbol: str = "BTCUSDT"
+    timeframe: str = "1h"
+    seed: int = 42
+    preset: str | None = None
+    startPrice: float | None = None
+    startTs: str | None = None
+    segments: list[dict[str, Any]] | None = None
+    narrative: str = ""
+    prompt: str = ""
+    modelId: str | None = None
+    modelConstraints: dict[str, Any] | None = None
+    scenarioId: str | None = None
+
+
 class StrategyCreate(BaseModel):
     name: str = Field(min_length=1, max_length=240)
     description: str = ""
@@ -170,6 +187,16 @@ class PortfolioPatch(BaseModel):
     benchmarkSymbol: str | None = None
     settings: dict[str, Any] | None = None
     approvalId: str | None = None
+
+
+class PortfolioFundingRequest(BaseModel):
+    """Paper capital top-up / withdrawal. Never alters trading PnL."""
+
+    delta: float
+    reason: str = Field(min_length=1, max_length=500)
+    idempotencyKey: str = Field(min_length=8, max_length=120)
+    operatorId: str | None = None
+    kind: str | None = None  # TOP_UP | WITHDRAWAL | INITIAL_ALLOCATION | TRANSFER_IN | TRANSFER_OUT
 
 
 class PortfolioOrderRequest(BaseModel):
@@ -369,6 +396,22 @@ def build_market_sim_router(
                 "no_fastapi_recursive_scan": True,
             },
         }
+
+    @router.get("/api/market-sim/scenarios/presets")
+    def list_scenario_presets() -> dict:
+        try:
+            return service.list_offline_scenario_presets()
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/scenarios")
+    def create_offline_scenario(payload: OfflineScenarioCreate) -> dict:
+        """Generate deterministic offline replay dataset from structured scenario spec."""
+        try:
+            body = payload.model_dump(exclude_none=True)
+            return service.create_offline_scenario(body)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
 
     @router.post("/api/market-sim/data/register")
     def register_data(payload: RegisterDataRequest, response: Response) -> dict:
@@ -915,6 +958,21 @@ def build_market_sim_router(
     def get_portfolio(portfolio_id: str) -> dict:
         try:
             return {"portfolio": service.get_portfolio(portfolio_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/portfolios/{portfolio_id}/funding")
+    def fund_portfolio(portfolio_id: str, payload: PortfolioFundingRequest) -> dict:
+        """Adjust paper capital (top-up / withdrawal). Funding ≠ PnL."""
+        try:
+            return service.fund_portfolio(
+                portfolio_id,
+                delta=payload.delta,
+                reason=payload.reason,
+                idempotency_key=payload.idempotencyKey,
+                operator_id=payload.operatorId,
+                kind=payload.kind,
+            )
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 

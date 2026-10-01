@@ -114,10 +114,16 @@ describe("G66 — trading cards render only backend truth", () => {
     expect(universeLabel({ universe: [] })).toContain("leeg");
   });
 
-  it("registers the Onderzoek page under Trading Center", () => {
+  it("registers exactly three Trading Center primary pages (onderzoek/lab redirect)", () => {
     const trading = MAIN_MENU.find((m) => m.id === "trading");
     expect(trading?.label).toBe("Trading Center");
-    expect(trading?.submenu?.some((s) => s.to === "/trading/onderzoek")).toBe(true);
-    expect(trading?.submenu?.some((s) => s.to === "/trading/lab")).toBe(true);
+    expect(trading?.to).toBe("/trading/agents");
+    expect(trading?.submenu?.map((s) => s.to)).toEqual([
+      "/trading/agents",
+      "/trading/live-agents",
+      "/trading/research",
+    ]);
+    expect(trading?.submenu?.some((s) => s.to === "/trading/onderzoek")).toBe(false);
+    expect(trading?.submenu?.some((s) => s.to === "/trading/lab")).toBe(false);
   });
 });

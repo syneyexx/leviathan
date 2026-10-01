@@ -115,7 +115,7 @@ Tests include `shellStatus.test.ts` / `useShellStatus.test.ts` and page-specific
 | Hades AI | Chatten, Coding Agent, Taken |
 | LLM | Modellen, Agents, Training, Statistieken |
 | Media Control | Overview, YouTube, TikTok, Instagram, Facebook, Queue, Viral Radar, Calendar, Analytics, Library, Personas |
-| TradingCenter | Command Hub, Strategy Lab, Trading Desk, Market Data (WAVE 1 four-workspace IA; legacy routes redirect) |
+| TradingCenter | Agent Overzicht, Live Agents, Research Centrum (3-page IA; former four workspaces + legacy nine routes redirect) |
 | Onderzoek & Kennis | Research, Brain, Geheugen, Knowledge, Evidence, Datasets |
 | Runtime & Tools | Performance, Tools, Modules, Skills, MCP, Workflows, Console |
 | Settings | General plus behavior, studio, security, benchmarks, media, storage, runtime, logs, RAG, cognition, agents, tools, market-sim and data/research sections |
@@ -164,16 +164,18 @@ The “Hades AI” navigation label is UI naming. It does not make `Data/HADES/`
 
 Trading pages are lazy-loaded and rendered inside Suspense/ErrorBoundary.
 
-WAVE 1 four-workspace architecture (`src/pages/trading/workspaces/`). Discovery matrices: `Data/docs/trading_center_wave0/`.
+**Canonical 3-page IA** (`src/pages/trading/agentOverview|liveAgents|researchCenter/`). Migration map: `Data/docs/trading_center_wave0/WAVE0_4TO3_MIGRATION_MAP.md`. Visual refs: `Data/docs/ui_reference/trading-center-3page/`.
 
 | Route | Page |
 |---|---|
-| `/trading` | redirect to `/trading/command-hub` |
-| `/trading/command-hub` | `CommandHubPage` (Research Command + Control Room surfaces) |
-| `/trading/strategy-lab` | `StrategyLabWorkspacePage` (Lab + Strategies + Simulation) |
-| `/trading/trading-desk` | `TradingDeskPage` (Paper + Portefeuille + Broker boundary) |
-| `/trading/market-data` | `MarketDataWorkspacePage` (Marktdata library) |
-| Legacy `/trading/{simulatie,strategieen,lab,marktdata,portefeuille,paper,broker,onderzoek,control-room}` | redirect into the matching workspace `?surface=` |
+| `/trading` | redirect to `/trading/agents` |
+| `/trading/agents` | `AgentOverviewPage` — agent registry, wallets/funding, portfolios, risk, orchestra, control-room drawer |
+| `/trading/live-agents` | `LiveAgentsPage` — realtime feed / offline replay + PAPER execution, orders, kill switch, AI scenarios |
+| `/trading/research` | `ResearchCenterPage` — strategies, lab (`?section=lab`), research command (`?section=research-command`), qualification, datasets (`?section=market-data`), strategy→agent paper assignment |
+| Former four `/trading/{command-hub,strategy-lab,trading-desk,market-data}` | redirect into the three pages (query preserved) |
+| Legacy `/trading/{simulatie,strategieen,lab,marktdata,portefeuille,paper,broker,onderzoek,control-room}` | redirect into the three pages with `section`/`drawer` query |
+
+**Safety:** LIVE MARKET DATA is allowed; LIVE MONEY remains BLOCKED. Paper wallet funding (`POST /api/market-sim/portfolios/{id}/funding`) never alters trading PnL. Offline AI scenarios use structured constraints → deterministic OHLCV (`market_sim.scenario_generator`), never freehand LLM candles.
 
 ## Research/knowledge
 
@@ -678,19 +680,15 @@ Operational numbers use backend telemetry and domain read models. Zero is a meas
 
 Primary tree: `src/pages/trading/`.
 
-Shared page support: `src/pages/trading/shared.tsx` and trading-specific view-model/helper folders. Backend authority is MarketSim; the UI does not calculate canonical PnL/qualification itself.
+**Canonical pages (exactly three):**
 
-Current top-level pages:
+- `agentOverview/` — Agent Overzicht (`/trading/agents`)
+- `liveAgents/` — Live Agents (`/trading/live-agents`)
+- `researchCenter/` — Research Centrum (`/trading/research`)
 
-- `SimulatiePage.tsx` — simulation;
-- `StrategieenPage.tsx` — strategy definitions/versions;
-- `MarktdataPage.tsx` — data registration/inspection;
-- `PortefeuillePage.tsx` — portfolio;
-- `PaperTradingPage.tsx` — paper execution/operator page;
-- `BrokerTradingPage.tsx` — explicit live broker boundary;
-- `OnderzoekPage.tsx` — re-exports Research Command page;
-- `researchLab/ResearchLabPage.tsx` — autonomous Research Lab;
-- institutional Control Room page under trading tree.
+Shared libraries retained under `workspaces/` (strategyLab / tradingDesk / marketData hooks+drawers), plus embedded `researchLab/` and `researchCommand/` modules opened via Research Centrum sections. Redirects: `TradingLegacyRedirect.tsx` + `workspaceConfig.ts`.
+
+Backend authority is MarketSim; the UI does not calculate canonical PnL/qualification itself.
 
 `/api/market-sim/capabilities` is the UI capability authority: family support, operating modes, execution granularity and action matrix. BAR_OHLCV must never be drawn/labeled as L2/L3. Unknown/unmeasured/blocked capability uses neutral/degraded styling.
 
@@ -698,38 +696,27 @@ Current top-level pages:
 
 ---
 
-# 19. Simulation, strategies and market data pages
+# 19. Simulation, strategies and market data (absorbed)
 
-## Simulation — `/trading/simulatie`
+Legacy routes `/trading/simulatie`, `/trading/strategieen`, and `/trading/marktdata` redirect into Research Centrum / Live Agents. Implementations live under:
 
-`src/pages/trading/SimulatiePage.tsx` builds causal MarketSim runs. Run builder explicitly exposes capital/engine/cadence instead of silently creating a multi-agent topology. Activity/orders/metrics are API-backed.
+- Research Centrum inventory + Strategy Lab drawers (`researchCenter/`, `workspaces/strategyLab/`)
+- Market data library/feeds/certify/seal (`workspaces/marketData/`, `?section=market-data`)
+- Offline replay / AI scenarios on Live Agents (`liveAgents/`, `POST /api/market-sim/scenarios`)
 
-## Strategies — `/trading/strategieen`
+Old page modules (`SimulatiePage`, `StrategieenPage`, `MarktdataPage`) were removed after redirect + capability absorption.
 
-`StrategieenPage.tsx` lists/creates/inspects strategy definitions and versions from MarketSim. Status/lineage/compatibility are backend truth.
+## Portfolio — absorbed by Agent Overzicht
 
-## Market data — `/trading/marktdata`
-
-`MarktdataPage.tsx` handles registered/imported sources, readiness and provider metadata. Historical data version/seal/split state comes from MarketSim; frontend does not infer data quality from file presence.
-
-## Portfolio — `/trading/portefeuille`
-
-`PortefeuillePage.tsx` displays canonical MarketSim portfolio/accounting state.
+`/trading/portefeuille` redirects to `/trading/agents?section=portfolio`. Portfolio create/lifecycle/rebalance/export remain via Trading Desk drawers on Agent Overzicht. `PortefeuillePage.tsx` was removed.
 
 ---
 
-# 20. Paper Trading UI
+# 20. Paper Trading UI (absorbed by Live Agents)
 
-Route `/trading/paper`; source is `PaperTradingPage.tsx` plus `pages/trading/paper/`.
+`/trading/paper` and `/trading/broker` redirect to `/trading/live-agents`. Paper deployments, positions/orders, kill switch, shadow observe, and broker-boundary advanced controls live on Live Agents (`liveAgents/` + `workspaces/tradingDesk/` drawers). The former `paper/` page tree was removed after absorption.
 
-Important components include:
-
-- `PaperTradingChartPanel.tsx` — chart from backend OHLCV;
-- `PaperTradingChartShell.tsx` — chart panel chrome/state;
-- additional paper orchestrator/portfolio/positions/orders/analytics/risk/activity components in the same directory;
-- styles in `src/styles/trading-paper.css`.
-
-The page consumes real paper-session/portfolio/capability APIs. Equity/PnL/positions/orders are backend sourced. If profit factor or another metric is not exposed, it remains unavailable rather than being synthesized.
+**Safety:** PAPER EXECUTION only. LIVE MONEY remains BLOCKED.
 
 Durable A3/A4 deployments are simulated capital. Kill switch/flatten/pause controls call canonical paper APIs.
 
@@ -737,9 +724,7 @@ Durable A3/A4 deployments are simulated capital. Kill switch/flatten/pause contr
 
 # 21. Trading Research Command UI
 
-Route `/trading/onderzoek`.
-
-`src/pages/trading/OnderzoekPage.tsx` re-exports `researchCommand/ResearchCommandPage.tsx`. Supporting code:
+`/trading/onderzoek` redirects to `/trading/research?section=research-command`. Research Centrum embeds `researchCommand/ResearchCommandPage.tsx` (embedded mode). Supporting code:
 
 - `researchCommand/ResearchCommandPage.tsx` — composition;
 - `researchCommand/ResearchCommandPanels.tsx` — panels;
@@ -748,25 +733,21 @@ Route `/trading/onderzoek`.
 
 Research Command is an operator **composition** over existing TradingOrchestra, paper portfolio, news and Research Lab. It is not a frontend or backend second learner.
 
-Current projections include session state, orchestration/decision/news state, paper portfolio, bound lab run mode/stage, active hypotheses, best-candidate/qualification summary and paper-forward drift tickets when available.
-
-Start/pause/flatten/kill-switch/evolution actions call their backend owners. Live remains blocked.
+Paper Mode opens Live Agents (`/trading/live-agents`). Agent deep-links open Agent Overzicht. Live remains blocked.
 
 ---
 
 # 22. Autonomous Research Lab UI
 
-Route `/trading/lab`; root `src/pages/trading/researchLab/`.
+`/trading/lab` redirects to `/trading/research?section=lab`. Research Centrum embeds `researchLab/ResearchLabPage.tsx`. Strategy Lab drawers on Research Centrum retain create/lifecycle/explain/qualification/cost-pack controls.
 
 Current files/directories:
 
-- `ResearchLabPage.tsx` — three-column operator workspace and modal composition;
+- `researchLab/ResearchLabPage.tsx` — three-column operator workspace and modal composition;
 - `hooks/useResearchLab.ts` — API-backed state, polling, lifecycle and create flow;
 - `components/` — run rail, tabs/panels/details/create dialog support;
 - `viewModels.ts` — backend→display derivation;
-- `viewModels.test.ts` — truth/derivation tests;
-- API domain: `src/api/domains/marketSimLab.ts`;
-- relevant styles under `src/styles/` trading/research-lab files.
+- API domain: `src/api/domains/marketSimLab.ts`.
 
 ## 22.1 Create modes
 
@@ -789,45 +770,27 @@ The frontend must not manufacture a dummy seed strategy for autonomous discovery
 
 Current lab APIs/client methods cover overview, cost pack, feed health, list/get/create/start/pause/resume/cancel, learning state, generations, candidates, run trials, lessons, hypotheses, perception, strategy-family labels and candidate explainability.
 
-Tabs/panels expose only backend-backed data:
-
-- overview/progress;
-- generations/population and family probabilities;
-- candidate lineage/proposal method;
-- hypotheses;
-- causal numeric/chart perception when measured;
-- validation/qualification information when returned;
-- evidence-linked lessons;
-- paper/forward/drift context;
-- public run events/logs.
-
 Candidate labels distinguish TRAIN leader, validation/sealed/qualified states. A high TRAIN score is not rendered as “profitable/qualified” without the corresponding backend evidence.
 
 ## 22.3 Chart perception
 
-Chart vision is advisory. The page may render a deterministic backend artifact and typed observation if the backend measured a chart-capable model. `UNAVAILABLE` chart vision is a valid state; numeric perception continues. Visual observations never create order controls.
+Chart vision is advisory. `UNAVAILABLE` chart vision is a valid state. Visual observations never create order controls.
 
 ## 22.4 Explain candidate
 
-`GET /api/market-sim/lab/runs/{labId}/candidates/{candidateId}/explain` returns structured evidence for explanation drawers/cards. The UI should display the hypothesis, proposal origin/lineage, measured trials, rejection gates and evidence refs rather than asking an LLM to invent a retroactive story.
+`GET /api/market-sim/lab/runs/{labId}/candidates/{candidateId}/explain` returns structured evidence. The UI displays hypothesis, lineage, measured trials and rejection gates rather than inventing a retroactive story.
 
 ---
 
 # 23. Institutional Control Room UI
 
-Route `/trading/control-room`.
-
-The page consumes `GET /api/market-sim/institutional/control-room` and related institutional projections. It surfaces live-trading BLOCKED state, qualification/research/data-plane/fabric information, reconciliation breaks/exceptions and audit-chain state when measured.
-
-A catalog entry or missing metric must never be painted green. Empty/unmeasured is explicit.
+`/trading/control-room` redirects to `/trading/agents?drawer=control-room`. Agent Overzicht `ControlRoomDrawer` consumes `GET /api/market-sim/institutional/control-room`. Live-trading BLOCKED state and measured institutional projections are shown; empty/unmeasured stays explicit (never painted green).
 
 ---
 
 # 24. Broker/live boundary UI
 
-Route `/trading/broker`; `BrokerTradingPage.tsx`.
-
-This page is a boundary/status surface. It must preserve backend LiveTradingGuard posture and cannot add a hidden UI-only bypass. Paper controls are not live controls. External finance modules/tools remain research/analytics capabilities unless MarketSim explicitly exposes a safe paper action.
+`/trading/broker` redirects to `/trading/live-agents?section=broker-boundary`. Live Agents Advanced drawer surfaces broker boundary / LiveTradingGuard posture. Paper controls are not live controls. No UI-only bypass.
 
 ---
 
@@ -1125,16 +1088,16 @@ Always inspect the current client function and backend route before adding a pag
 | Datasets | `src/pages/DatasetsPage.tsx`, `src/pages/datasets/`, `src/components/datasets/`; redirects: `DatasetManagementPage`, `OfflineDatasetsPixelPage` |
 | Training | route in `App.tsx`, training/pixel page family |
 | Analytics | `src/pages/AnalyticsPage.tsx` |
-| Trading shared | `src/pages/trading/` |
-| Simulation | `src/pages/trading/SimulatiePage.tsx` |
-| Strategies | `src/pages/trading/StrategieenPage.tsx` |
-| Market data | `src/pages/trading/MarktdataPage.tsx` |
-| Portfolio | `src/pages/trading/PortefeuillePage.tsx` |
-| Paper | `src/pages/trading/PaperTradingPage.tsx`, `src/pages/trading/paper/` |
-| Broker boundary | `src/pages/trading/BrokerTradingPage.tsx` |
-| Research Command | `src/pages/trading/researchCommand/`, `OnderzoekPage.tsx` |
-| Research Lab | `src/pages/trading/researchLab/`, `src/api/domains/marketSimLab.ts` |
-| Control Room | trading institutional Control Room page |
+| Trading shared | `src/pages/trading/` (3-page IA + shared workspace hooks/drawers) |
+| Agent Overzicht | `src/pages/trading/agentOverview/` |
+| Live Agents | `src/pages/trading/liveAgents/` |
+| Research Centrum | `src/pages/trading/researchCenter/` |
+| Research Command (embedded) | `src/pages/trading/researchCommand/` via `/trading/research?section=research-command` |
+| Research Lab (embedded) | `src/pages/trading/researchLab/`, `src/api/domains/marketSimLab.ts` via `/trading/research?section=lab` |
+| Control Room (drawer) | Agent Overzicht `ControlRoomDrawer` + `controlRoom/` view-model helpers |
+| Market data workspace | `src/pages/trading/workspaces/marketData/` |
+| Strategy Lab drawers | `src/pages/trading/workspaces/strategyLab/` |
+| Trading Desk drawers | `src/pages/trading/workspaces/tradingDesk/` |
 | Media | `src/pages/media/`, `src/components/media/`, `src/assets/media-control/` |
 | Tools | `src/pages/ToolsPage.tsx` |
 | Modules | `src/pages/plugin-runtime/ModulesPage.tsx`, `src/pages/plugin-runtime/modules/` |

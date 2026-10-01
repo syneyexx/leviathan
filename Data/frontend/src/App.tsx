@@ -43,21 +43,19 @@ import { McpPage } from "./pages/McpPage";
 import { ConsolePage } from "./pages/ConsolePage";
 import { WorkflowsPage } from "./pages/WorkflowsPage";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { TradingLegacyRedirect } from "./pages/trading/TradingLegacyRedirect";
 
-const CommandHubPage = lazy(() =>
-  import("./pages/trading/workspaces/CommandHubPage").then((m) => ({ default: m.CommandHubPage })),
-);
-const StrategyLabWorkspacePage = lazy(() =>
-  import("./pages/trading/workspaces/StrategyLabWorkspacePage").then((m) => ({
-    default: m.StrategyLabWorkspacePage,
+const AgentOverviewPage = lazy(() =>
+  import("./pages/trading/agentOverview/AgentOverviewPage").then((m) => ({
+    default: m.AgentOverviewPage,
   })),
 );
-const TradingDeskPage = lazy(() =>
-  import("./pages/trading/workspaces/TradingDeskPage").then((m) => ({ default: m.TradingDeskPage })),
+const LiveAgentsPage = lazy(() =>
+  import("./pages/trading/liveAgents/LiveAgentsPage").then((m) => ({ default: m.LiveAgentsPage })),
 );
-const MarketDataWorkspacePage = lazy(() =>
-  import("./pages/trading/workspaces/MarketDataWorkspacePage").then((m) => ({
-    default: m.MarketDataWorkspacePage,
+const ResearchCenterPage = lazy(() =>
+  import("./pages/trading/researchCenter/ResearchCenterPage").then((m) => ({
+    default: m.ResearchCenterPage,
   })),
 );
 
@@ -105,49 +103,45 @@ export default function App() {
       <Route path="/media/analytics" element={<SectionPage title="Media Analytics" />} />
       <Route path="/media/personas" element={<MediaPersonasPage />} />
 
-      <Route path="/trading" element={<Navigate to="/trading/command-hub" replace />} />
+      <Route path="/trading" element={<Navigate to="/trading/agents" replace />} />
       <Route
-        path="/trading/command-hub"
+        path="/trading/agents"
         element={
           <TradingSuspense>
-            <CommandHubPage />
+            <AgentOverviewPage />
           </TradingSuspense>
         }
       />
       <Route
-        path="/trading/strategy-lab"
+        path="/trading/live-agents"
         element={
           <TradingSuspense>
-            <StrategyLabWorkspacePage />
+            <LiveAgentsPage />
           </TradingSuspense>
         }
       />
       <Route
-        path="/trading/trading-desk"
+        path="/trading/research"
         element={
           <TradingSuspense>
-            <TradingDeskPage />
+            <ResearchCenterPage />
           </TradingSuspense>
         }
       />
-      <Route
-        path="/trading/market-data"
-        element={
-          <TradingSuspense>
-            <MarketDataWorkspacePage />
-          </TradingSuspense>
-        }
-      />
-      {/* Legacy Trading Center routes → four native workspaces (WAVE 5+) */}
-      <Route path="/trading/simulatie" element={<Navigate to="/trading/strategy-lab" replace />} />
-      <Route path="/trading/strategieen" element={<Navigate to="/trading/strategy-lab" replace />} />
-      <Route path="/trading/lab" element={<Navigate to="/trading/strategy-lab" replace />} />
-      <Route path="/trading/marktdata" element={<Navigate to="/trading/market-data" replace />} />
-      <Route path="/trading/portefeuille" element={<Navigate to="/trading/trading-desk" replace />} />
-      <Route path="/trading/paper" element={<Navigate to="/trading/trading-desk" replace />} />
-      <Route path="/trading/broker" element={<Navigate to="/trading/trading-desk" replace />} />
-      <Route path="/trading/onderzoek" element={<Navigate to="/trading/command-hub" replace />} />
-      <Route path="/trading/control-room" element={<Navigate to="/trading/command-hub" replace />} />
+      {/* Former four workspaces + older Trading Center routes → three-page IA */}
+      <Route path="/trading/command-hub" element={<TradingLegacyRedirect from="/trading/command-hub" />} />
+      <Route path="/trading/strategy-lab" element={<TradingLegacyRedirect from="/trading/strategy-lab" />} />
+      <Route path="/trading/trading-desk" element={<TradingLegacyRedirect from="/trading/trading-desk" />} />
+      <Route path="/trading/market-data" element={<TradingLegacyRedirect from="/trading/market-data" />} />
+      <Route path="/trading/simulatie" element={<TradingLegacyRedirect from="/trading/simulatie" />} />
+      <Route path="/trading/strategieen" element={<TradingLegacyRedirect from="/trading/strategieen" />} />
+      <Route path="/trading/lab" element={<TradingLegacyRedirect from="/trading/lab" />} />
+      <Route path="/trading/marktdata" element={<TradingLegacyRedirect from="/trading/marktdata" />} />
+      <Route path="/trading/portefeuille" element={<TradingLegacyRedirect from="/trading/portefeuille" />} />
+      <Route path="/trading/paper" element={<TradingLegacyRedirect from="/trading/paper" />} />
+      <Route path="/trading/broker" element={<TradingLegacyRedirect from="/trading/broker" />} />
+      <Route path="/trading/onderzoek" element={<TradingLegacyRedirect from="/trading/onderzoek" />} />
+      <Route path="/trading/control-room" element={<TradingLegacyRedirect from="/trading/control-room" />} />
 
       <Route path="/research" element={<ResearchPage />} />
       <Route path="/brain" element={<BrainPage />} />

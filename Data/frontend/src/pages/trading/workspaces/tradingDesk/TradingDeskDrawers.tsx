@@ -118,46 +118,138 @@ export function CreatePortfolioDrawer({
 
 /* -------------------------------------------------------------- deploy paper */
 
+export type DeployStrategyOption = { id: string; label: string };
+
 export function DeployPaperDrawer({
   data,
   onClose,
+  initialStrategyId = "",
+  strategyOptions,
+  onDeployed,
 }: {
   data: TradingDeskData;
   onClose: () => void;
+  /** Prefill from Research Centrum “Toewijzen aan agent”. */
+  initialStrategyId?: string;
+  strategyOptions?: DeployStrategyOption[];
+  onDeployed?: (result: Record<string, unknown>) => void;
 }) {
-  const [strategyId, setStrategyId] = useState("");
+  const [strategyId, setStrategyId] = useState(initialStrategyId);
   const [symbol, setSymbol] = useState(data.market);
-  const [mode, setMode] = useState<"shadow" | "autonomous_paper">("shadow");
+  const [mode, setMode] = useState<"shadow" | "autonomous_paper">(
+    initialStrategyId ? "autonomous_paper" : "shadow",
+  );
   const [initialCash, setInitialCash] = useState(100_000);
+  const [orchestraId, setOrchestraId] = useState(data.orchestras[0]?.orchestraId ?? "");
+  const [agentId, setAgentId] = useState("");
+  const [members, setMembers] = useState<{ agentId: string; name: string; role: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!orchestraId) {
+      setMembers([]);
+      setAgentId("");
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await api.getTradeOrchestra(orchestraId);
+        if (cancelled) return;
+        const list = (res.orchestra.members || []).map((m) => ({
+          agentId: m.agentId,
+          name: m.name,
+          role: m.role || m.canonicalRole || "—",
+        }));
+        setMembers(list);
+        setAgentId((prev) => prev || list[0]?.agentId || "");
+      } catch {
+        if (!cancelled) {
+          setMembers([]);
+          setAgentId("");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [orchestraId]);
 
   async function submit() {
     if (!strategyId.trim()) {
-      setError("Strategy ID is required (create/find one in Strategy Lab).");
+      setError("Strategy ID is required (select or create one in Research Centrum).");
       return;
     }
     setError(null);
+    const qualificationRefs: Record<string, unknown> = {
+      assignedVia: "research_center_toewijzen",
+      paperOnly: true,
+      liveMoney: "BLOCKED",
+    };
+    if (orchestraId) qualificationRefs.orchestraId = orchestraId;
+    if (agentId) qualificationRefs.agentId = agentId;
     const res = await data.createPaperDeployment({
       strategyId: strategyId.trim(),
       symbol,
       universe: [symbol],
       mode,
       initialCash,
+      qualificationRefs,
     });
-    if (res) onClose();
+    if (res) {
+      onDeployed?.(res as Record<string, unknown>);
+      onClose();
+    }
   }
 
   return (
-    <Drawer title="Deploy paper strategy" onClose={onClose}>
+    <Drawer title="Toewijzen aan agent (paper deployment)" onClose={onClose}>
       <p className="lv-td-muted">
-        Creates a real market_sim paper deployment (shadow observe or autonomous paper). Live money stays
-        BLOCKED — this only ever touches paper capital.
+        Wijs een strategie toe via een echte market_sim paper deployment (shadow observe of autonomous
+        paper). LIVE MONEY blijft BLOCKED — alleen PAPER EXECUTION / PAPER CAPITAL.
       </p>
       {error ? <p className="lv-td-drawer__error">{error}</p> : null}
       <div className="lv-td-form">
         <label>
-          Strategy ID
-          <input value={strategyId} onChange={(e) => setStrategyId(e.target.value)} placeholder="strategy-id from Strategy Lab" />
+          Strategie
+          {strategyOptions && strategyOptions.length > 0 ? (
+            <select value={strategyId} onChange={(e) => setStrategyId(e.target.value)}>
+              <option value="">— kies strategie —</option>
+              {strategyOptions.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              value={strategyId}
+              onChange={(e) => setStrategyId(e.target.value)}
+              placeholder="strategy-id uit Research Centrum"
+            />
+          )}
+        </label>
+        <label>
+          Orchestra
+          <select value={orchestraId} onChange={(e) => setOrchestraId(e.target.value)}>
+            <option value="">— optioneel —</option>
+            {data.orchestras.map((o) => (
+              <option key={o.orchestraId} value={o.orchestraId}>
+                {o.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Agent (provenance)
+          <select value={agentId} onChange={(e) => setAgentId(e.target.value)} disabled={!members.length}>
+            <option value="">{members.length ? "— kies agent —" : "Geen members geladen"}</option>
+            {members.map((m) => (
+              <option key={m.agentId} value={m.agentId}>
+                {m.name} · {m.role}
+              </option>
+            ))}
+          </select>
         </label>
         <label>
           Symbol
@@ -166,12 +258,12 @@ export function DeployPaperDrawer({
         <label>
           Mode
           <select value={mode} onChange={(e) => setMode(e.target.value as "shadow" | "autonomous_paper")}>
-            <option value="shadow">Shadow observe</option>
+            <option value="shadow">Shadow observe (PAPER)</option>
             <option value="autonomous_paper">Autonomous paper</option>
           </select>
         </label>
         <label>
-          Initial cash
+          Initial paper cash
           <input type="number" value={initialCash} onChange={(e) => setInitialCash(Number(e.target.value) || 100000)} />
         </label>
       </div>
@@ -183,9 +275,9 @@ export function DeployPaperDrawer({
           type="button"
           className="lv-td-btn lv-td-btn--primary"
           onClick={() => void submit()}
-          disabled={!!data.busy}
+          disabled={!!data.busy || !strategyId.trim()}
         >
-          {data.busy === "create-deployment" ? "Deploying…" : "Deploy"}
+          {data.busy === "create-deployment" ? "Toewijzen…" : "Toewijzen (paper)"}
         </button>
       </footer>
     </Drawer>

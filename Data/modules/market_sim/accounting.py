@@ -134,6 +134,102 @@ class WalletLedger:
     def available_cash(self) -> Decimal:
         return money(self.cash - self.reserved_cash)
 
+    def apply_funding(
+        self,
+        *,
+        delta: Any,
+        tx_id: str,
+        reason: str,
+        operator_id: str | None = None,
+        kind: str = "TOP_UP",
+        as_of: str | None = None,
+    ) -> dict[str, Any]:
+        """Operator paper capital contribution/withdrawal.
+
+        CRITICAL: funding MUST NOT alter ``realized_pnl`` / trading PnL.
+        Idempotent on ``tx_id``. Withdrawals that would breach available cash
+        or reserved/open-position capital invariants are refused.
+        """
+        tid = str(tx_id or "").strip()
+        if not tid:
+            raise ValueError("funding_tx_id_required")
+        if any(t.get("tx_id") == tid for t in self.transactions):
+            return {
+                "applied": False,
+                "reason": "duplicate_tx_id",
+                "tx_id": tid,
+                "cash_before": str(self.cash),
+                "cash_after": str(self.cash),
+                "delta": "0",
+                "realized_pnl_unchanged": True,
+            }
+        amt = money(delta)
+        if amt == ZERO:
+            return {
+                "applied": False,
+                "reason": "zero_delta",
+                "tx_id": tid,
+                "cash_before": str(self.cash),
+                "cash_after": str(self.cash),
+                "delta": "0",
+                "realized_pnl_unchanged": True,
+            }
+        kind_u = str(kind or "TOP_UP").strip().upper()
+        if amt < ZERO and kind_u in ("TOP_UP", "INITIAL_ALLOCATION", "TRANSFER_IN"):
+            kind_u = "WITHDRAWAL"
+        if amt > ZERO and kind_u in ("WITHDRAWAL", "TRANSFER_OUT"):
+            kind_u = "TOP_UP"
+
+        cash_before = self.cash
+        if amt < ZERO:
+            need = money(-amt)
+            if need > self.available_cash + MONEY_QUANT:
+                raise ValueError(
+                    "insufficient_available_cash_for_withdrawal:"
+                    f"need={need} available={self.available_cash} reserved={self.reserved_cash}"
+                )
+            if money(self.cash + amt) < ZERO - MONEY_QUANT:
+                raise ValueError("withdrawal_would_make_cash_negative")
+
+        self.cash = money(self.cash + amt)
+        if self.cash > self.peak_equity:
+            self.peak_equity = self.cash
+
+        event = {
+            "tx_id": tid,
+            "side": "FUNDING",
+            "funding_kind": kind_u,
+            "symbol": None,
+            "qty": "0",
+            "price": "0",
+            "fee": "0",
+            "cash_before": str(cash_before),
+            "delta": str(amt),
+            "cash_after": str(self.cash),
+            "position_after": str(self.position_qty),
+            "reason": str(reason or ""),
+            "operator_id": operator_id,
+            "as_of": as_of,
+            "realized_pnl_unchanged": True,
+            "truth": {
+                "funding_is_not_pnl": True,
+                "paper_only": True,
+            },
+        }
+        self.transactions.append(event)
+        return {
+            "applied": True,
+            "tx_id": tid,
+            "funding_kind": kind_u,
+            "cash_before": str(cash_before),
+            "delta": str(amt),
+            "cash_after": str(self.cash),
+            "realized_pnl": str(self.realized_pnl),
+            "realized_pnl_unchanged": True,
+            "reason": str(reason or ""),
+            "operator_id": operator_id,
+        }
+
     def equity(self, price: Any) -> Decimal:
         if self.valuation_mode == "futures_vm":
             # Cash includes posted variation margin; residual only on unposted mark move.
