@@ -113,6 +113,9 @@ export function LiveAgentsView({
                   </div>
                   <span className={`lv-hub-pill lv-hub-tone-${a.statusTone}`}>{a.status}</span>
                 </header>
+                <p className="lv-ao-muted" style={{ margin: "0.2rem 0 0" }}>
+                  Execution={a.executionMode} · Data={a.dataMode === "realtime" ? "REALTIME FEED" : "OFFLINE REPLAY"}
+                </p>
                 <Spark values={a.spark} />
                 <dl className="lv-la-card__stats">
                   <div>

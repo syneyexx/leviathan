@@ -43,11 +43,20 @@ async function safe<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
 
 function tone(status: string): LiveAgentCard["statusTone"] {
   const s = status.toUpperCase();
-  if (["ACTIVE", "RUNNING", "READY", "LIVE", "WARM"].includes(s)) return "green";
-  if (["PAUSE", "PAUSED", "SHADOW"].includes(s)) return "gold";
+  if (["ACTIVE", "RUNNING", "READY", "LIVE", "LIVE DATA", "WARM"].includes(s)) return "green";
+  if (["PAUSE", "PAUSED", "SHADOW", "PAUZE"].includes(s)) return "gold";
   if (["SIMULATION", "REPLAY", "OFFLINE"].includes(s)) return "purple";
   if (["KILLED", "ERROR", "FAILED", "STOPPED"].includes(s)) return "red";
   return "muted";
+}
+
+/** Never label a card simply "LIVE" — that can be read as live-money. */
+function publicAgentStatus(raw: string, enabled: boolean): string {
+  if (!enabled) return "Pauze";
+  const s = raw.trim();
+  if (!s || s.toLowerCase() === "unknown") return "Ready";
+  if (/^live$/i.test(s)) return "LIVE DATA";
+  return s;
 }
 
 export function useLiveAgentsData(market: string) {
@@ -138,7 +147,7 @@ export function useLiveAgentsData(market: string) {
             name: m.name || m.agentId || "Agent",
             role: m.role || m.canonicalRole || UNMEASURED,
             strategy: UNMEASURED,
-            status: m.enabled ? health : "Pauze",
+            status: publicAgentStatus(health, m.enabled),
             statusTone: tone(m.enabled ? health : "PAUSED"),
             dataMode,
             executionMode: "PAPER",
@@ -159,7 +168,7 @@ export function useLiveAgentsData(market: string) {
             name: o.name,
             role: o.role || "orchestra",
             strategy: UNMEASURED,
-            status: String(o.health || (o.enabled ? "Ready" : "Pauze")),
+            status: publicAgentStatus(String(o.health || (o.enabled ? "Ready" : "Pauze")), o.enabled),
             statusTone: tone(String(o.health || (o.enabled ? "READY" : "PAUSED"))),
             dataMode,
             executionMode: "PAPER",
