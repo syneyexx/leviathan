@@ -435,17 +435,8 @@ class NetworkHostileW14Tests(unittest.TestCase):
                 sleep_fn=lambda _s: None,
                 policy=RetryPolicy(max_attempts=3, base_seconds=0.01, max_seconds=0.05),
             )
-        # Exhaustion after 5xx continues falls through the shared retry terminal
-        # (currently coded as hf_rate_limited) or a typed download failure.
-        self.assertIn(
-            ctx.exception.code,
-            {
-                "hf_rate_limited",
-                "hf_http_error",
-                "hf_download_failed",
-                "hf_server_error",
-            },
-        )
+        self.assertEqual(ctx.exception.code, "hf_server_error")
+        self.assertEqual(ctx.exception.http_status, 502)
         self.assertFalse(dest.exists())
 
     def test_invalid_range_and_changed_etag_covered(self) -> None:

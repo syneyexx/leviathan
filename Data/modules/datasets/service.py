@@ -51,7 +51,7 @@ from .checkpoint import (
 )
 from .compute_planner import BackendPlan, ComputeBackend, ComputeBackendPlanner
 from .contamination import scan_contamination
-from .dedupe import exact_dedupe, iter_exact_dedupe_external
+from .dedupe import iter_exact_dedupe_external
 from .export import export_jsonl, preview_jsonl
 from .formats import detect_format
 from .huggingface import (
@@ -77,7 +77,6 @@ from .knowledge_identity import (
 )
 from .materialize import (
     iter_version_records,
-    load_materialized_jsonl,
     materialize_from_raw,
     materialize_from_sources,
     write_canonical_jsonl,
@@ -109,10 +108,10 @@ from .sidecar import (
     write_sidecar,
     write_tombstone,
 )
-from .splits import deterministic_split, iter_deterministic_split
+from .splits import iter_deterministic_split
 from .store import DatasetStore, utc_now
 from .tokenize_stats import compute_token_stats
-from .transforms import apply_transforms, apply_transforms_streaming
+from .transforms import apply_transforms_streaming
 from .types import (
     CAPABILITY_PROCESS,
     DatasetError,
@@ -4500,16 +4499,6 @@ class DatasetService:
         fmt_name = job.config.get("format")
         fmt = DetectedFormat(fmt_name) if fmt_name else ds.detected_format
         return self._materialize_dataset(job.dataset_id, raw_path=Path(ds.raw_path), fmt=fmt)
-
-    def _load_version_records(self, version_id: str) -> tuple[DatasetVersion, list]:
-        """Compatibility helper — refused for large files; prefer ``iter_version_records``."""
-        ver = self.get_version(version_id)
-        if not ver.storage_path:
-            raise DatasetError("Version has no storage", code="no_storage")
-        return ver, load_materialized_jsonl(
-            Path(ver.storage_path),
-            max_bytes=self.memory_policy.full_load_refuse_bytes,
-        )
 
     def _write_derived_version_stream(
         self,

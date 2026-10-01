@@ -21,7 +21,9 @@ function typeClass(type: string): string {
 
 function statusClass(row: DhRow): string {
   if (row.embeddings.kind === "indexed" && row.status === "ready") return "ready";
-  if (row.embeddings.kind === "indexing" || row.embeddings.kind === "queued") return "validating";
+  if (row.embeddings.kind === "indexing") return "validating";
+  // Queued stays processing tone — never green/ready.
+  if (row.embeddings.kind === "queued") return "processing";
   return row.status;
 }
 

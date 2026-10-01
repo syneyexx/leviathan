@@ -127,9 +127,12 @@ def _empty_stats(*, memory_mode: str, scratch_path: str | None = None) -> dict[s
 
 
 def exact_dedupe(records: list[CanonicalRecord]) -> tuple[list[CanonicalRecord], dict[str, Any]]:
-    """In-memory exact dedupe — compatibility for small corpora / tests.
+    """In-memory exact dedupe — retained for small corpora / unit tests (Wave 12).
 
+    Proof of retention: called by ``test_dataset_provenance_w8`` and
+    ``test_native_data_plane_streaming_w142`` (parity vs external spill).
     Production large-corpus path: ``iter_exact_dedupe_external``.
+    DatasetService must not import this list wrapper.
     """
     seen: dict[str, int] = {}
     kept: list[CanonicalRecord] = []

@@ -248,10 +248,12 @@ def apply_transforms(
     records: Iterable[CanonicalRecord],
     transforms: list[dict[str, Any]],
 ) -> tuple[list[CanonicalRecord], list[dict[str, Any]]]:
-    """Compatibility wrapper — materializes output list (for small/tests).
+    """List materialization wrapper — retained for small corpora / unit tests (Wave 12).
 
-    Production handlers should stream via ``apply_transforms_streaming`` into
-    ``write_canonical_jsonl_stream`` instead of calling this for large corpora.
+    Proof of retention: called by ``test_dataset_provenance_w8`` transform
+    lineage tests. Production handlers must stream via
+    ``apply_transforms_streaming`` into ``write_canonical_jsonl_stream``.
+    DatasetService must not import this list wrapper.
     """
     it, lineage_fn = apply_transforms_streaming(records, transforms)
     out = list(it)

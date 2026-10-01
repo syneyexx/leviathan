@@ -1474,11 +1474,20 @@ def download_hf_file(
                     ) from exc
                 sleep_fn(delay)
 
+        # Honesty: do not label pure 5xx exhaustion as rate-limited (Wave 15 NEW-W15-001).
+        if cp.rate_limit_events > 0:
+            raise DatasetError(
+                f"HF download exhausted retries after {policy.max_attempts} attempts "
+                f"(429 events={cp.rate_limit_events})",
+                code="hf_rate_limited",
+                http_status=429,
+            )
         raise DatasetError(
             f"HF download exhausted retries after {policy.max_attempts} attempts "
-            f"(429 events={cp.rate_limit_events})",
-            code="hf_rate_limited",
-            http_status=429,
+            f"(last HTTP status={cp.last_status})",
+            code="hf_server_error",
+            http_status=502,
+            details={"lastStatus": cp.last_status, "attempts": policy.max_attempts},
         )
     finally:
         if owns_client:

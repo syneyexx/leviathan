@@ -12,7 +12,6 @@ from ..types import (
     ContentRef,
     DetectionResult,
     ERROR_OCR_REQUIRED,
-    ERROR_OCR_UNAVAILABLE,
     MemberOutcome,
     NormalizedArtifact,
     PARSER_VERSION,
