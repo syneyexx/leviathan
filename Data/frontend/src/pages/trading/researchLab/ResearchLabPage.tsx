@@ -138,6 +138,15 @@ export function ResearchLabPage({ embedded = false }: { embedded?: boolean } = {
                   ) : null}
                   {state.tab === "population" ? (
                     <ResearchLabPopulationPanel
+                      labId={
+                        state.selectedLab
+                          ? String(
+                              (state.selectedLab as { lab_id?: string; id?: string }).lab_id ||
+                                (state.selectedLab as { id?: string }).id ||
+                                "",
+                            ) || null
+                          : null
+                      }
                       candidates={state.candidates}
                       populationRefs={populationRefs}
                       loading={centerBusy}

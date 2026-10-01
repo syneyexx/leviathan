@@ -2,6 +2,7 @@ import { useSearchParams } from "react-router-dom";
 import { BrokerTradingPage } from "../BrokerTradingPage";
 import { PaperTradingPage } from "../PaperTradingPage";
 import { PortefeuillePage } from "../PortefeuillePage";
+import { AgentWalletsPanel } from "./AgentWalletsPanel";
 import { TradingWorkspaceShell } from "./TradingWorkspaceShell";
 import { getTradingWorkspace, resolveWorkspaceSurface } from "./workspaceConfig";
 
@@ -12,6 +13,7 @@ export function TradingDeskPage() {
 
   return (
     <TradingWorkspaceShell workspaceId="trading_desk">
+      {surface.id === "paper" || surface.id === "portfolio" ? <AgentWalletsPanel /> : null}
       {surface.id === "paper" ? <PaperTradingPage embedded /> : null}
       {surface.id === "portfolio" ? <PortefeuillePage embedded /> : null}
       {surface.id === "broker" ? <BrokerTradingPage embedded /> : null}
