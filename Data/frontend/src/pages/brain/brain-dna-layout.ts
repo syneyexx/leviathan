@@ -116,8 +116,10 @@ function categoryRank(category: BrainSemanticCategory): number {
       return 2;
     case "document":
       return 3;
-    default:
+    case "unclassified":
       return 4;
+    default:
+      return 5;
   }
 }
 

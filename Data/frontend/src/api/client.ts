@@ -2770,13 +2770,22 @@ export const api = {
   probeResearchWeb(payload?: {
     query?: string;
     limit?: number;
-  }): Promise<{
-    probe: ResearchWebProbe;
-    queued?: boolean;
-    job?: JobRecord;
-    job_id?: string;
-    truth?: Record<string, unknown>;
-  }> {
+  }): Promise<
+    | {
+        /** Queued accept — probe not executed yet; do not treat as finished. */
+        queued: true;
+        probe: ResearchWebProbe;
+        job?: JobRecord;
+        job_id?: string;
+        status?: string;
+        truth?: Record<string, unknown>;
+      }
+    | {
+        queued?: false;
+        probe: ResearchWebProbe;
+        truth?: Record<string, unknown>;
+      }
+  > {
     return request("/api/research/web/probe", {
       method: "POST",
       body: JSON.stringify(payload ?? {}),
@@ -2811,22 +2820,32 @@ export const api = {
   planResearchProject(
     projectId: string,
     payload: Record<string, unknown> = {},
-  ): Promise<{
-    project: ResearchProject;
-    plan: ResearchPlan | null;
-    queued?: boolean;
-    job?: JobRecord;
-    job_id?: string;
-    status?: string;
-    truth?: Record<string, unknown>;
-  }> {
+  ): Promise<
+    | {
+        queued: true;
+        project: ResearchProject;
+        plan: ResearchPlan | null;
+        job?: JobRecord;
+        job_id?: string;
+        status?: string;
+        truth?: Record<string, unknown>;
+      }
+    | {
+        queued?: false;
+        project: ResearchProject;
+        plan: ResearchPlan | null;
+        status?: string;
+        truth?: Record<string, unknown>;
+      }
+  > {
     return request(`/api/research/${encodeURIComponent(projectId)}/plan`, {
       method: "POST",
       body: JSON.stringify(payload),
     });
   },
 
-  runResearchProject(projectId: string): Promise<{ project: ResearchProject }> {
+  /** Returns project in QUEUED (accepted) or already-running/completed state. */
+  runResearchProject(projectId: string): Promise<{ project: ResearchProject; queued?: boolean }> {
     return request(`/api/research/${encodeURIComponent(projectId)}/run`, { method: "POST" });
   },
 
@@ -2945,7 +2964,25 @@ export const api = {
     );
   },
 
-  addResearchUrlSource(projectId: string, url: string): Promise<{ source: ResearchSource }> {
+  addResearchUrlSource(
+    projectId: string,
+    url: string,
+  ): Promise<
+    | {
+        queued: true;
+        source: ResearchSource;
+        job?: JobRecord;
+        job_id?: string;
+        status?: string;
+        truth?: Record<string, unknown>;
+      }
+    | {
+        queued?: false;
+        source: ResearchSource;
+        status?: string;
+        truth?: Record<string, unknown>;
+      }
+  > {
     return request(`/api/research/${encodeURIComponent(projectId)}/sources/url`, {
       method: "POST",
       body: JSON.stringify({ url }),
@@ -3034,7 +3071,23 @@ export const api = {
     return request(`/api/research/${encodeURIComponent(projectId)}/report`);
   },
 
-  regenerateResearchReport(projectId: string): Promise<{ report: ResearchReport }> {
+  regenerateResearchReport(
+    projectId: string,
+  ): Promise<
+    | {
+        queued: true;
+        job?: JobRecord;
+        job_id?: string;
+        project_id?: string;
+        status?: string;
+        truth?: Record<string, unknown>;
+        report?: ResearchReport | null;
+      }
+    | {
+        queued?: false;
+        report: ResearchReport;
+      }
+  > {
     return request(`/api/research/${encodeURIComponent(projectId)}/report`, { method: "POST" });
   },
 

@@ -187,8 +187,9 @@ class ResearchSourceCollector:
         query: str | None = None,
         rank: int | None = None,
         provider: str | None = None,
+        reserved_source_id: str | None = None,
     ) -> tuple[ResearchSource, str]:
-        source_id = str(uuid.uuid4())
+        source_id = reserved_source_id or str(uuid.uuid4())
         snapshot = self._snapshot(project_id, source_id, page.text)
         robots = (page.metadata or {}).get("robots") or {}
         provenance = {
@@ -208,11 +209,16 @@ class ResearchSourceCollector:
             **{k: v for k, v in (page.metadata or {}).items() if k not in {"robots"}},
             "robots": robots,
         }
+        if reserved_source_id:
+            provenance["reserved_source_id"] = reserved_source_id
+            provenance["pending_fetch"] = False
         if discovery is not None:
             provenance["discovery_source_id"] = discovery.source_id
             provenance.setdefault("provider", (discovery.provenance or {}).get("provider"))
             provenance.setdefault("query", (discovery.provenance or {}).get("query"))
             provenance.setdefault("rank", (discovery.provenance or {}).get("rank"))
+        metadata = dict(page.metadata)
+        metadata["fetch_status"] = "FETCHED" if page.status_code < 400 else "FAILED"
         source = ResearchSource(
             source_id=source_id,
             project_id=project_id,
@@ -228,10 +234,26 @@ class ResearchSourceCollector:
             parse_status=ParseStatus.OK if page.status_code < 400 else ParseStatus.FAILED,
             parser=str((page.metadata or {}).get("extractor") or "http_fetch"),
             provenance=provenance,
-            metadata=dict(page.metadata),
+            metadata=metadata,
             created_at=utc_now(),
         )
-        stored = self.store.upsert_source(source)
+        # When reusing a reserved PENDING row, update in place via save_source when
+        # the identity already exists; otherwise upsert (content-hash dedupe may still apply).
+        if reserved_source_id:
+            existing = self.store.get_source(reserved_source_id)
+            if existing is not None and existing.project_id == project_id:
+                from dataclasses import replace
+
+                source = replace(
+                    source,
+                    created_at=existing.created_at or source.created_at,
+                    brain_status=existing.brain_status,
+                )
+                stored = self.store.save_source(source)
+            else:
+                stored = self.store.upsert_source(source)
+        else:
+            stored = self.store.upsert_source(source)
         if discovery is not None and discovery.parse_status == ParseStatus.PENDING:
             # Link discovery → fetched page without promoting snippet to evidence.
             from dataclasses import replace

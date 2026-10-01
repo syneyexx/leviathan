@@ -12,6 +12,35 @@ import {
   type RdInputTab,
   type RdTemplateCategory,
 } from "../config/research";
+import {
+  applyProbeAccept,
+  beginPollGeneration,
+  canStartPollTick,
+  createPollController,
+  idleWebProbeState,
+  isJobTerminal,
+  isPollResultCurrent,
+  isResearchTerminalStatus,
+  jobStateFromRecord,
+  mapJobStateToProbePhase,
+  markPollFinished,
+  markPollStarted,
+  normalizeProbeResponse,
+  normalizeRunResponse,
+  normalizeUrlResponse,
+  probeToastMessage,
+  shouldRefreshMeasuredReachability,
+  shouldSkipPollForVisibility,
+  abortPoll,
+  type WebProbeExecutionState,
+} from "../lib/researchAsyncContracts";
+import {
+  applySettledResource,
+  emptyResource,
+  firstResourceError,
+  resourceLoading,
+  type ResourceState,
+} from "../lib/resourceState";
 import { useAppToast } from "../state/useAppToast";
 import type {
   DatasetJob,
@@ -59,6 +88,8 @@ const RECENT_DISPLAY_MAX = 8;
 const ACTIVE_POLL_MS = 2500;
 const INGEST_POLL_MS = 2000;
 const HEALTH_POLL_MS = 30_000;
+const PROBE_POLL_MS = 1500;
+const PROBE_POLL_MAX_TICKS = 40;
 
 export type ResearchMetricCell = {
   value: number | null;
@@ -138,7 +169,21 @@ export type ResearchWorkspace = {
   conflicts: ResearchConflict[];
   gaps: Array<Record<string, unknown>>;
   report: ResearchReport | null;
+  /** Per-resource fetch truth — failures never look like empty success. */
+  sourcesState: ResourceState<ResearchSource[]>;
+  evidenceState: ResourceState<ResearchEvidence[]>;
+  claimsState: ResourceState<ResearchClaim[]>;
+  conflictsState: ResourceState<ResearchConflict[]>;
+  gapsState: ResourceState<Array<Record<string, unknown>>>;
+  reportState: ResourceState<ResearchReport | null>;
+  workersState: ResourceState<ResearchWorker[]>;
+  artifactsStale: boolean;
+  artifactsError: string | null;
   webReadiness: ResearchWebReadiness | null;
+  /** Probe job lifecycle — separate from static web readiness. */
+  webProbeExecution: WebProbeExecutionState;
+  webProbeBusy: boolean;
+  probeWeb: () => Promise<void>;
 
   metrics: {
     activeResearch: ResearchMetricCell;
@@ -212,8 +257,6 @@ export type ResearchWorkspace = {
   ingestionProgress: SourceIngestionProgress | null;
   ingestionMembers: SourceIngestionMember[];
   ingestionTotal: number;
-  webProbeBusy: boolean;
-  probeWeb: () => Promise<void>;
 
   evidenceRows: ReturnType<typeof mapSourcesToEvidence>;
   webRows: ReturnType<typeof mapSourcesToWeb>;
@@ -231,6 +274,9 @@ export function useResearchWorkspace(): ResearchWorkspace {
   const refreshGate = useRef(false);
   const selectGen = useRef(0);
   const visibleRef = useRef(true);
+  const activePoll = useRef(createPollController());
+  const ingestPoll = useRef(createPollController());
+  const projectStaleRef = useRef(false);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -244,15 +290,40 @@ export function useResearchWorkspace(): ResearchWorkspace {
   const [showAllRecent, setShowAllRecent] = useState(false);
 
   const [project, setProject] = useState<ResearchProject | null>(null);
-  const [workers, setWorkers] = useState<ResearchWorker[]>([]);
   const [poolWorkers, setPoolWorkers] = useState<ResearchAgentRow[]>([]);
-  const [sources, setSources] = useState<ResearchSource[]>([]);
-  const [evidence, setEvidence] = useState<ResearchEvidence[]>([]);
-  const [claims, setClaims] = useState<ResearchClaim[]>([]);
-  const [conflicts, setConflicts] = useState<ResearchConflict[]>([]);
-  const [gaps, setGaps] = useState<Array<Record<string, unknown>>>([]);
-  const [report, setReport] = useState<ResearchReport | null>(null);
+  const [sourcesState, setSourcesState] = useState<ResourceState<ResearchSource[]>>(() =>
+    emptyResource<ResearchSource[]>([]),
+  );
+  const [evidenceState, setEvidenceState] = useState<ResourceState<ResearchEvidence[]>>(() =>
+    emptyResource<ResearchEvidence[]>([]),
+  );
+  const [claimsState, setClaimsState] = useState<ResourceState<ResearchClaim[]>>(() =>
+    emptyResource<ResearchClaim[]>([]),
+  );
+  const [conflictsState, setConflictsState] = useState<ResourceState<ResearchConflict[]>>(() =>
+    emptyResource<ResearchConflict[]>([]),
+  );
+  const [gapsState, setGapsState] = useState<ResourceState<Array<Record<string, unknown>>>>(() =>
+    emptyResource<Array<Record<string, unknown>>>([]),
+  );
+  const [reportState, setReportState] = useState<ResourceState<ResearchReport | null>>(() =>
+    emptyResource<ResearchReport | null>(null),
+  );
+  const [workersState, setWorkersState] = useState<ResourceState<ResearchWorker[]>>(() =>
+    emptyResource<ResearchWorker[]>([]),
+  );
   const [webReadiness, setWebReadiness] = useState<ResearchWebReadiness | null>(null);
+  const [webProbeExecution, setWebProbeExecution] = useState<WebProbeExecutionState>(() =>
+    idleWebProbeState(),
+  );
+
+  const sources = sourcesState.data;
+  const evidence = evidenceState.data;
+  const claims = claimsState.data;
+  const conflicts = conflictsState.data;
+  const gaps = gapsState.data;
+  const report = reportState.data;
+  const workers = workersState.data;
 
   const [knowledgeDocCount, setKnowledgeDocCount] = useState<number | null>(null);
   const [knowledgeDocError, setKnowledgeDocError] = useState(false);
@@ -293,6 +364,26 @@ export function useResearchWorkspace(): ResearchWorkspace {
   const [ingestionTotal, setIngestionTotal] = useState(0);
   const [ingestionOffset] = useState(0);
   const [webProbeBusy, setWebProbeBusy] = useState(false);
+  const [projectPollStale, setProjectPollStale] = useState(false);
+
+  const artifactsStale =
+    sourcesState.stale ||
+    evidenceState.stale ||
+    claimsState.stale ||
+    conflictsState.stale ||
+    gapsState.stale ||
+    reportState.stale ||
+    workersState.stale ||
+    projectPollStale;
+  const artifactsError = firstResourceError(
+    sourcesState,
+    evidenceState,
+    claimsState,
+    conflictsState,
+    gapsState,
+    reportState,
+    workersState,
+  );
 
   const selectedModel = useMemo(
     () => (modelId ? models.find((m) => m.id === modelId) ?? null : null),
@@ -342,30 +433,157 @@ export function useResearchWorkspace(): ResearchWorkspace {
       setConnectedDatasetLabel(first.label ?? first.datasetId ?? "Connected");
       setContext((c) => ({ ...c, datasets: true }));
     }
-    if (p.workers?.length) setWorkers(p.workers);
+    if (p.workers?.length) {
+      setWorkersState((prev) => ({
+        ...prev,
+        data: p.workers ?? prev.data,
+        measured: true,
+        fetchedAt: prev.fetchedAt ?? new Date().toISOString(),
+        loading: false,
+        error: null,
+        stale: false,
+      }));
+    }
   }, []);
 
-  const refreshArtifacts = useCallback(async (projectId: string) => {
-    const [src, ev, cl, gapRes, confRes, reportRes] = await Promise.all([
-      api.listResearchSources(projectId).catch(() => ({ sources: [] as ResearchSource[] })),
-      api.listResearchEvidence(projectId).catch(() => ({ evidence: [] as ResearchEvidence[] })),
-      api.listResearchClaims(projectId).catch(() => ({ claims: [] as ResearchClaim[] })),
-      api.getResearchGaps(projectId).catch(() => ({ gaps: [] as Array<Record<string, unknown>> })),
-      api.listResearchConflicts(projectId).catch(() => ({ conflicts: [] as ResearchConflict[] })),
-      api.getResearchReport(projectId).catch(() => ({ report: null as ResearchReport | null })),
+  const resetArtifactStates = useCallback(() => {
+    setSourcesState(emptyResource<ResearchSource[]>([]));
+    setEvidenceState(emptyResource<ResearchEvidence[]>([]));
+    setClaimsState(emptyResource<ResearchClaim[]>([]));
+    setConflictsState(emptyResource<ResearchConflict[]>([]));
+    setGapsState(emptyResource<Array<Record<string, unknown>>>([]));
+    setReportState(emptyResource<ResearchReport | null>(null));
+    setWorkersState(emptyResource<ResearchWorker[]>([]));
+    projectStaleRef.current = false;
+    setProjectPollStale(false);
+  }, []);
+
+  const refreshArtifacts = useCallback(async (projectId: string, opts?: { signal?: AbortSignal }) => {
+    const signal = opts?.signal;
+    setSourcesState((s) => resourceLoading(s));
+    setEvidenceState((s) => resourceLoading(s));
+    setClaimsState((s) => resourceLoading(s));
+    setGapsState((s) => resourceLoading(s));
+    setConflictsState((s) => resourceLoading(s));
+    setReportState((s) => resourceLoading(s));
+
+    const settled = await Promise.allSettled([
+      api.listResearchSources(projectId),
+      api.listResearchEvidence(projectId),
+      api.listResearchClaims(projectId),
+      api.getResearchGaps(projectId),
+      api.listResearchConflicts(projectId),
+      api.getResearchReport(projectId),
     ]);
-    setSources(src.sources);
-    setEvidence(ev.evidence);
-    setClaims(cl.claims);
-    setGaps(gapRes.gaps ?? []);
-    setConflicts(confRes.conflicts ?? []);
-    setReport(reportRes.report ?? null);
-    if (src.sources.length > 0) setContext((c) => ({ ...c, files: true }));
+    if (signal?.aborted) return;
+
+    const fetchedAt = new Date().toISOString();
+    const [srcS, evS, clS, gapS, confS, reportS] = settled;
+
+    setSourcesState((prev) =>
+      applySettledResource(
+        prev,
+        srcS.status === "fulfilled"
+          ? { status: "fulfilled", value: srcS.value.sources }
+          : { status: "rejected", reason: srcS.reason },
+        "Sources unavailable",
+        fetchedAt,
+      ),
+    );
+    setEvidenceState((prev) =>
+      applySettledResource(
+        prev,
+        evS.status === "fulfilled"
+          ? { status: "fulfilled", value: evS.value.evidence }
+          : { status: "rejected", reason: evS.reason },
+        "Evidence unavailable",
+        fetchedAt,
+      ),
+    );
+    setClaimsState((prev) =>
+      applySettledResource(
+        prev,
+        clS.status === "fulfilled"
+          ? { status: "fulfilled", value: clS.value.claims }
+          : { status: "rejected", reason: clS.reason },
+        "Claims unavailable",
+        fetchedAt,
+      ),
+    );
+    setGapsState((prev) =>
+      applySettledResource(
+        prev,
+        gapS.status === "fulfilled"
+          ? { status: "fulfilled", value: gapS.value.gaps ?? [] }
+          : { status: "rejected", reason: gapS.reason },
+        "Gaps unavailable",
+        fetchedAt,
+      ),
+    );
+    setConflictsState((prev) =>
+      applySettledResource(
+        prev,
+        confS.status === "fulfilled"
+          ? { status: "fulfilled", value: confS.value.conflicts ?? [] }
+          : { status: "rejected", reason: confS.reason },
+        "Conflicts unavailable",
+        fetchedAt,
+      ),
+    );
+    setReportState((prev) => {
+      if (reportS.status === "fulfilled") {
+        return applySettledResource(
+          prev,
+          { status: "fulfilled", value: reportS.value.report ?? null },
+          "Report unavailable",
+          fetchedAt,
+        );
+      }
+      // 404 = no report yet is a measured empty, not UNAVAILABLE.
+      const reason = reportS.reason;
+      if (reason instanceof ApiError && reason.status === 404) {
+        return applySettledResource(
+          prev,
+          { status: "fulfilled", value: null },
+          "Report unavailable",
+          fetchedAt,
+        );
+      }
+      return applySettledResource(
+        prev,
+        { status: "rejected", reason },
+        "Report unavailable",
+        fetchedAt,
+      );
+    });
+
+    if (srcS.status === "fulfilled" && srcS.value.sources.length > 0) {
+      setContext((c) => ({ ...c, files: true }));
+    }
   }, []);
 
-  const refreshWorkers = useCallback(async (projectId: string) => {
-    const res = await api.listResearchWorkers(projectId).catch(() => ({ workers: [] as ResearchWorker[] }));
-    setWorkers(res.workers);
+  const refreshWorkers = useCallback(async (projectId: string, opts?: { signal?: AbortSignal }) => {
+    setWorkersState((s) => resourceLoading(s));
+    try {
+      const res = await api.listResearchWorkers(projectId);
+      if (opts?.signal?.aborted) return;
+      setWorkersState((prev) =>
+        applySettledResource(
+          prev,
+          { status: "fulfilled", value: res.workers },
+          "Workers unavailable",
+        ),
+      );
+    } catch (err) {
+      if (opts?.signal?.aborted) return;
+      setWorkersState((prev) =>
+        applySettledResource(
+          prev,
+          { status: "rejected", reason: err },
+          "Workers unavailable",
+        ),
+      );
+    }
   }, []);
 
   const loadPoolWorkers = useCallback(async () => {
@@ -409,20 +627,17 @@ export function useResearchWorkspace(): ResearchWorkspace {
   const selectProject = useCallback(
     async (projectId: string | null) => {
       const gen = ++selectGen.current;
+      abortPoll(activePoll.current);
       if (!projectId) {
         setProject(null);
-        setWorkers([]);
-        setSources([]);
-        setEvidence([]);
-        setClaims([]);
-        setConflicts([]);
-        setGaps([]);
-        setReport(null);
+        resetArtifactStates();
         return;
       }
       try {
         const detail = await api.getResearchProject(projectId);
         if (gen !== selectGen.current) return;
+        projectStaleRef.current = false;
+        setProjectPollStale(false);
         hydrateFromProject(detail.project);
         await refreshArtifacts(projectId);
         if (gen !== selectGen.current) return;
@@ -434,7 +649,7 @@ export function useResearchWorkspace(): ResearchWorkspace {
         toast(errMsg(err, "Failed to load research project"));
       }
     },
-    [hydrateFromProject, refreshArtifacts, refreshWorkers, toast],
+    [hydrateFromProject, refreshArtifacts, refreshWorkers, resetArtifactStates, toast],
   );
 
   const clearSelection = useCallback(() => {
@@ -535,40 +750,78 @@ export function useResearchWorkspace(): ResearchWorkspace {
     const onVis = () => {
       visibleRef.current = document.visibilityState === "visible";
     };
+    visibleRef.current = document.visibilityState === "visible";
     document.addEventListener("visibilitychange", onVis);
     return () => document.removeEventListener("visibilitychange", onVis);
   }, []);
 
   useEffect(() => {
-    if (!project || !isActiveStatus(project.status)) return;
+    if (!project || isResearchTerminalStatus(project.status) || !isActiveStatus(project.status)) {
+      abortPoll(activePoll.current);
+      return;
+    }
     const projectId = project.project_id;
-    let cancelled = false;
+    const ctrl = activePoll.current;
+    const generation = beginPollGeneration(ctrl);
+    const ac = new AbortController();
+
     const tick = async () => {
-      if (!visibleRef.current) return;
+      if (shouldSkipPollForVisibility(visibleRef.current)) return;
+      if (!canStartPollTick(ctrl, generation)) return;
+      markPollStarted(ctrl);
       try {
         const res = await api.getResearchProject(projectId);
-        if (cancelled) return;
+        if (!isPollResultCurrent(ctrl, generation) || ac.signal.aborted) return;
+        projectStaleRef.current = false;
+        setProjectPollStale(false);
         setProject(res.project);
         setProjects((prev) =>
           prev.map((p) => (p.project_id === res.project.project_id ? res.project : p)),
         );
-        if (res.project.workers?.length) setWorkers(res.project.workers);
-        else await refreshWorkers(projectId);
+        if (res.project.workers?.length) {
+          setWorkersState((prev) =>
+            applySettledResource(
+              prev,
+              { status: "fulfilled", value: res.project.workers ?? [] },
+              "Workers unavailable",
+            ),
+          );
+        } else if (isActiveStatus(res.project.status)) {
+          await refreshWorkers(projectId, { signal: ac.signal });
+        }
+        if (!isPollResultCurrent(ctrl, generation) || ac.signal.aborted) return;
         const countsChanged =
           res.project.source_count !== project.source_count ||
           res.project.evidence_count !== project.evidence_count ||
           res.project.claim_count !== project.claim_count;
-        if (countsChanged || !isActiveStatus(res.project.status)) {
-          await refreshArtifacts(projectId);
+        if (countsChanged || isResearchTerminalStatus(res.project.status) || !isActiveStatus(res.project.status)) {
+          await refreshArtifacts(projectId, { signal: ac.signal });
         }
       } catch {
-        /* keep last known */
+        if (!isPollResultCurrent(ctrl, generation) || ac.signal.aborted) return;
+        projectStaleRef.current = true;
+        setProjectPollStale(true);
+        setSourcesState((s) => (s.measured ? { ...s, stale: true, error: s.error || "Project poll failed" } : s));
+        setEvidenceState((s) => (s.measured ? { ...s, stale: true, error: s.error || "Project poll failed" } : s));
+        setClaimsState((s) => (s.measured ? { ...s, stale: true, error: s.error || "Project poll failed" } : s));
+      } finally {
+        markPollFinished(ctrl);
       }
     };
+
+    void tick();
     const id = window.setInterval(() => void tick(), ACTIVE_POLL_MS);
+    const onVis = () => {
+      if (document.visibilityState === "visible" && isPollResultCurrent(ctrl, generation)) {
+        void tick();
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
     return () => {
-      cancelled = true;
+      ac.abort();
+      abortPoll(ctrl);
       window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
     };
   }, [
     project?.project_id,
@@ -582,35 +835,48 @@ export function useResearchWorkspace(): ResearchWorkspace {
 
   useEffect(() => {
     if (!ingestionFocusId || !project?.project_id) return;
-    let cancelled = false;
     const projectId = project.project_id;
     const sourceId = ingestionFocusId;
+    const ctrl = ingestPoll.current;
+    const generation = beginPollGeneration(ctrl);
+    const ac = new AbortController();
 
     async function tick() {
-      if (!visibleRef.current) return;
+      if (shouldSkipPollForVisibility(visibleRef.current)) return;
+      if (!canStartPollTick(ctrl, generation)) return;
+      markPollStarted(ctrl);
       try {
         const status = await api.getSourceIngestionStatus(projectId, sourceId);
-        if (cancelled) return;
+        if (!isPollResultCurrent(ctrl, generation) || ac.signal.aborted) return;
         if (status.progress) setIngestionProgress(status.progress);
         const kids = await api.listSourceIngestionChildren(projectId, sourceId, {
           offset: ingestionOffset,
           limit: 50,
         });
-        if (cancelled) return;
+        if (!isPollResultCurrent(ctrl, generation) || ac.signal.aborted) return;
         setIngestionMembers(kids.members);
         setIngestionTotal(kids.total);
-        await refreshArtifacts(projectId);
+        await refreshArtifacts(projectId, { signal: ac.signal });
       } catch {
-        /* ignore */
+        if (!isPollResultCurrent(ctrl, generation) || ac.signal.aborted) return;
+        setSourcesState((s) => (s.measured ? { ...s, stale: true, error: s.error || "Ingestion poll failed" } : s));
+      } finally {
+        markPollFinished(ctrl);
       }
     }
 
     void tick();
     const phase = ingestionProgress?.phase || ingestionProgress?.status || "";
-    if (!INGEST_ACTIVE.has(phase)) return;
+    if (!INGEST_ACTIVE.has(phase)) {
+      return () => {
+        ac.abort();
+        abortPoll(ctrl);
+      };
+    }
     const id = window.setInterval(() => void tick(), INGEST_POLL_MS);
     return () => {
-      cancelled = true;
+      ac.abort();
+      abortPoll(ctrl);
       window.clearInterval(id);
     };
   }, [
@@ -720,14 +986,20 @@ export function useResearchWorkspace(): ResearchWorkspace {
 
     let webCount: number | null = null;
     let webAvailable = false;
-    if (sources.length > 0) {
+    let webSublabel = stillLoading ? "—" : "UNKNOWN";
+    if (sourcesState.measured) {
       webCount = sources.filter(isWebSource).length;
       webAvailable = true;
+      webSublabel = "huidig project";
+    } else if (sourcesState.error) {
+      webCount = null;
+      webAvailable = false;
+      webSublabel = "UNAVAILABLE";
     }
 
     let docCount: number | null = knowledgeDocCount;
     let docAvailable = knowledgeDocCount != null && !knowledgeDocError;
-    if (!docAvailable && sources.length > 0) {
+    if (!docAvailable && sourcesState.measured && sources.length > 0) {
       docCount = sources.filter(isDocumentSource).length;
       docAvailable = true;
     }
@@ -755,11 +1027,7 @@ export function useResearchWorkspace(): ResearchWorkspace {
       },
       webSources: {
         value: stillLoading ? null : webCount,
-        sublabel: webAvailable
-          ? "huidig project"
-          : stillLoading
-            ? "—"
-            : "UNMEASURED",
+        sublabel: webSublabel,
         available: webAvailable,
         loading: stillLoading,
       },
@@ -776,7 +1044,7 @@ export function useResearchWorkspace(): ResearchWorkspace {
         loading: stillLoading,
       },
     };
-  }, [loading, projects, workers.length, poolWorkers.length, sources, knowledgeDocCount, knowledgeDocError]);
+  }, [loading, projects, workers.length, poolWorkers.length, sources, sourcesState.measured, sourcesState.error, knowledgeDocCount, knowledgeDocError]);
 
   const stats7d = useMemo(() => aggregateProjectStats(projects, 7, clockNow()), [projects]);
 
@@ -1139,10 +1407,21 @@ export function useResearchWorkspace(): ResearchWorkspace {
     setBusy(true);
     try {
       const draft = await ensureDraftProject();
+      let queued = 0;
+      let completed = 0;
       for (const url of urls) {
-        await api.addResearchUrlSource(draft.project_id, url);
+        const raw = await api.addResearchUrlSource(draft.project_id, url);
+        const classified = normalizeUrlResponse(raw as unknown as Record<string, unknown>);
+        if (classified.outcome === "queued") queued += 1;
+        else completed += 1;
       }
-      toast(`${urls.length} URL(s) added`);
+      if (queued > 0 && completed === 0) {
+        toast(`${queued} URL fetch(es) queued`);
+      } else if (queued > 0) {
+        toast(`${completed} URL(s) added · ${queued} queued`);
+      } else {
+        toast(`${completed} URL(s) added`);
+      }
       setUrlDraft("");
       await refreshArtifacts(draft.project_id);
       const detail = await api.getResearchProject(draft.project_id);
@@ -1244,16 +1523,18 @@ export function useResearchWorkspace(): ResearchWorkspace {
         setProject(created.project);
       }
       const started = await api.runResearchProject(projectId);
+      const runOutcome = normalizeRunResponse(started.project);
       setProject(started.project);
-      setWorkers(started.project.workers ?? []);
-      setSources([]);
-      setEvidence([]);
-      setClaims([]);
-      setConflicts([]);
-      setGaps([]);
-      setReport(null);
+      resetArtifactStates();
+      setWorkersState(
+        applySettledResource(
+          emptyResource<ResearchWorker[]>([]),
+          { status: "fulfilled", value: started.project.workers ?? [] },
+          "Workers unavailable",
+        ),
+      );
       setProjects((prev) => [started.project, ...prev.filter((p) => p.project_id !== projectId)]);
-      toast("Onderzoek gestart");
+      toast(runOutcome.outcome === "queued" ? "Onderzoek queued" : "Onderzoek gestart");
     } catch (err) {
       toast(errMsg(err, "Failed to start research"));
     } finally {
@@ -1278,11 +1559,100 @@ export function useResearchWorkspace(): ResearchWorkspace {
   async function probeWeb() {
     setWebProbeBusy(true);
     try {
-      const res = await api.probeResearchWeb();
-      toast(res.probe?.status === "ok" ? "Web research probe OK" : res.probe?.error || "Web probe finished");
-      const readiness = await api.getResearchWebReadiness();
-      setWebReadiness(readiness.readiness);
+      const raw = await api.probeResearchWeb();
+      const response = normalizeProbeResponse(raw as unknown as Record<string, unknown>);
+      const next = applyProbeAccept(idleWebProbeState(), response);
+      setWebProbeExecution(next);
+      toast(probeToastMessage(response.outcome, response.probe));
+
+      if (response.outcome === "queued") {
+        const jobId = next.jobId;
+        if (!jobId) {
+          setWebProbeBusy(false);
+          return;
+        }
+        // Poll job until terminal — do not refresh measured reachability until then.
+        for (let i = 0; i < PROBE_POLL_MAX_TICKS; i += 1) {
+          if (shouldSkipPollForVisibility(visibleRef.current)) {
+            await new Promise((r) => window.setTimeout(r, PROBE_POLL_MS * 2));
+            continue;
+          }
+          await new Promise((r) => window.setTimeout(r, PROBE_POLL_MS));
+          try {
+            const jobRes = await api.getJob(jobId);
+            const job = jobRes.job as unknown as Record<string, unknown>;
+            const state = String(jobStateFromRecord(job));
+            const phase = mapJobStateToProbePhase(state);
+            setWebProbeExecution((prev) => ({
+              ...prev,
+              phase: phase === "completed" || phase === "failed" ? phase : phase,
+              jobId,
+            }));
+            if (!isJobTerminal(state) && phase !== "completed" && phase !== "failed") continue;
+
+            if (state === "FAILED" || state === "CANCELLED") {
+              const err =
+                (typeof job.error === "string" && job.error) ||
+                `Web probe ${state.toLowerCase()}`;
+              setWebProbeExecution({
+                phase: "failed",
+                jobId,
+                probe: { status: "FAILED", error: err },
+                error: err,
+                measuredReachability: true,
+              });
+              toast(err);
+              // Refresh readiness only after terminal failure so last_probe_* can update.
+              if (shouldRefreshMeasuredReachability("failed")) {
+                const readiness = await api.getResearchWebReadiness();
+                setWebReadiness(readiness.readiness);
+              }
+              return;
+            }
+
+            // COMPLETED — refresh readiness (worker recorded probe) for measured reachability.
+            const readiness = await api.getResearchWebReadiness();
+            setWebReadiness(readiness.readiness);
+            const status = readiness.readiness.last_probe_status || "OK";
+            const completedProbe = {
+              status,
+              error: readiness.readiness.last_error_message || undefined,
+              error_code: readiness.readiness.last_error_code || undefined,
+            };
+            setWebProbeExecution({
+              phase: "completed",
+              jobId,
+              probe: completedProbe,
+              error: null,
+              measuredReachability: true,
+            });
+            toast(probeToastMessage("completed", completedProbe));
+            return;
+          } catch (err) {
+            setWebProbeExecution((prev) => ({
+              ...prev,
+              error: errMsg(err, "Probe status poll failed"),
+              // Keep queued/running; do not invent completion.
+            }));
+          }
+        }
+        toast("Web probe still running — check readiness later");
+        return;
+      }
+
+      // Inline completed probe — update measured reachability from readiness.
+      if (shouldRefreshMeasuredReachability(next.phase)) {
+        const readiness = await api.getResearchWebReadiness();
+        setWebReadiness(readiness.readiness);
+      }
     } catch (err) {
+      setWebProbeExecution({
+        phase: "failed",
+        jobId: null,
+        probe: null,
+        error: errMsg(err, "Web probe failed"),
+        measuredReachability: false,
+      });
       toast(errMsg(err, "Web probe failed"));
     } finally {
       setWebProbeBusy(false);
@@ -1328,7 +1698,17 @@ export function useResearchWorkspace(): ResearchWorkspace {
     conflicts,
     gaps,
     report,
+    sourcesState,
+    evidenceState,
+    claimsState,
+    conflictsState,
+    gapsState,
+    reportState,
+    workersState,
+    artifactsStale,
+    artifactsError,
     webReadiness,
+    webProbeExecution,
     metrics,
     stats7d,
     knowledgeStatus,

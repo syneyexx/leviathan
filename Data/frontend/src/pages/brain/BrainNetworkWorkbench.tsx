@@ -559,19 +559,23 @@ export async function startResearchFromGap(
     }
     try {
       const planned = await api.planResearchProject(projectId, {});
-      const plannedJob =
-        typeof planned.job_id === "string"
-          ? planned.job_id
-          : typeof planned.job?.job_id === "string"
-            ? planned.job.job_id
-            : null;
-      if (planned.queued && plannedJob) {
-        return {
-          status: "running",
-          jobId: plannedJob,
-          projectId,
-          message: `Plan gequeued (job ${plannedJob}).`,
-        };
+      if (planned.queued === true) {
+        const plannedJob =
+          typeof planned.job_id === "string"
+            ? planned.job_id
+            : typeof planned.job?.job_id === "string"
+              ? String(planned.job.job_id)
+              : typeof (planned.job as { jobId?: unknown } | undefined)?.jobId === "string"
+                ? String((planned.job as { jobId?: string }).jobId)
+                : null;
+        if (plannedJob) {
+          return {
+            status: "running",
+            jobId: plannedJob,
+            projectId,
+            message: `Plan gequeued (job ${plannedJob}).`,
+          };
+        }
       }
       const run = await api.runResearchProject(projectId);
       const runRecord = run as { job_id?: unknown; job?: { job_id?: unknown } };

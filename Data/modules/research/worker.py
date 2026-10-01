@@ -74,6 +74,92 @@ def _construct_research_service(ctx: dict[str, Any]) -> Any:
     return built["research_service"]
 
 
+def _cancel_job(
+    store: Any,
+    job: Any,
+    *,
+    reason: str,
+    metadata: dict[str, Any] | None = None,
+    ctx: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    from Data.modules.jobs.leases import fenced_transition
+    from Data.modules.jobs.states import JobState
+
+    worker_id = str((ctx or {}).get("worker_id") or getattr(job, "lease_owner", None) or "")
+    target = JobState.CANCELLED
+    # Prefer ack_cancel when kernel already asked for cancel.
+    try:
+        current = store.get(job.job_id) if hasattr(store, "get") else job
+        state = getattr(current, "state", None)
+        state_val = state.value if hasattr(state, "value") else str(state or "")
+        if state_val == JobState.CANCEL_REQUESTED.value and hasattr(store, "ack_cancel"):
+            store.ack_cancel(job.job_id, worker_id=worker_id, reason=reason)
+            return {"cancelled": True, "reason": reason, "state": "CANCELLED"}
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        fenced_transition(
+            store,
+            job.job_id,
+            target,
+            worker_id=worker_id,
+            ctx=ctx,
+            error=reason,
+            metadata_update=metadata or {},
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    return {"cancelled": True, "reason": reason, "state": "CANCELLED"}
+
+
+def _interrupt_job(
+    store: Any,
+    job: Any,
+    *,
+    reason: str,
+    metadata: dict[str, Any] | None = None,
+    ctx: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Lease loss / fencing — not user cancellation. Prefer retryable FAILED/INTERRUPTED."""
+    from Data.modules.jobs.leases import fenced_transition
+    from Data.modules.jobs.states import JobState
+
+    worker_id = str((ctx or {}).get("worker_id") or getattr(job, "lease_owner", None) or "")
+    # Use FAILED with explicit LEASE_LOST code when INTERRUPTED job state is unavailable.
+    target = JobState.FAILED
+    meta = {"interrupt_kind": "LEASE_LOST", "retryable": True, **(metadata or {})}
+    try:
+        fenced_transition(
+            store,
+            job.job_id,
+            target,
+            worker_id=worker_id,
+            ctx=ctx,
+            error=reason,
+            error_code="LEASE_LOST",
+            metadata_update=meta,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    return {"interrupted": True, "reason": reason, "code": "LEASE_LOST", "state": "FAILED"}
+
+
+def _fence_reason(ctx: dict[str, Any]) -> str | None:
+    """Return 'cancel' | 'lease_lost' | None — never conflate the two."""
+    cancel_check = ctx.get("job_cancel_check")
+    lease_lost = ctx.get("lease_lost")
+    cancel_hit = bool(callable(cancel_check) and cancel_check())
+    lease_hit = bool(lease_lost is not None and getattr(lease_lost, "is_set", lambda: False)())
+    if cancel_hit and not lease_hit:
+        return "cancel"
+    if lease_hit and not cancel_hit:
+        return "lease_lost"
+    if cancel_hit and lease_hit:
+        # Prefer explicit cancel when both are set in the same tick.
+        return "cancel"
+    return None
+
+
 def process_research_job(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
     """Advance one research job without blocking on all children.
 
@@ -146,16 +232,10 @@ def process_research_job(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None
             ctx=ctx,
         )
 
-    cancel_check = ctx.get("job_cancel_check")
-    lease_lost = ctx.get("lease_lost")
     worker_id = ctx.get("worker_id") or getattr(job, "lease_owner", None)
 
     def _fence() -> bool:
-        if callable(cancel_check) and cancel_check():
-            return True
-        if lease_lost is not None and getattr(lease_lost, "is_set", lambda: False)():
-            return True
-        return False
+        return _fence_reason(ctx) is not None
 
     try:
         deepen = bool(args.get("deepen"))
@@ -163,14 +243,24 @@ def process_research_job(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None
         resume = bool(args.get("resume"))
 
         if action in {"advance", "run"}:
-            # Worker owns the kernel lease — execute claimed QUEUED run.
-            # Never call service.run(background=False): QUEUED is ACTIVE and
-            # would no-op (the 1% freeze bug).
-            if _fence():
-                return _fail(
+            reason = _fence_reason(ctx)
+            if reason == "cancel":
+                try:
+                    service.cancel(project_id)
+                except Exception:  # noqa: BLE001
+                    pass
+                return _cancel_job(
                     store,
                     job,
-                    "lease_lost_or_cancel_before_execution",
+                    reason="RESEARCH_CANCELLED",
+                    metadata={"research_action": action, "project_id": project_id},
+                    ctx=ctx,
+                )
+            if reason == "lease_lost":
+                return _interrupt_job(
+                    store,
+                    job,
+                    reason="LEASE_LOST before execution",
                     metadata={"research_action": action, "project_id": project_id},
                     ctx=ctx,
                 )
@@ -181,17 +271,56 @@ def process_research_job(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None
                 resume=resume,
                 job_id=getattr(job, "job_id", None),
                 worker_id=str(worker_id) if worker_id else None,
-                cancel_check=_fence,
+                cancel_check=lambda: _fence_reason(ctx) == "cancel",
             )
-            if _fence() and getattr(result, "status", None) is not None:
+            reason = _fence_reason(ctx)
+            if reason == "cancel":
                 status_val = getattr(getattr(result, "status", None), "value", None) or str(
                     getattr(result, "status", "")
                 )
                 if status_val not in {"completed", "cancelled", "failed"}:
-                    return _fail(
+                    try:
+                        service.cancel(project_id)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    return _cancel_job(
                         store,
                         job,
-                        "lease_lost_during_execution",
+                        reason="RESEARCH_CANCELLED during execution",
+                        metadata={
+                            "research_action": action,
+                            "project_id": project_id,
+                            "project_status": status_val,
+                        },
+                        ctx=ctx,
+                    )
+            if reason == "lease_lost":
+                status_val = getattr(getattr(result, "status", None), "value", None) or str(
+                    getattr(result, "status", "")
+                )
+                if status_val not in {"completed", "cancelled", "failed"}:
+                    # Domain must stop mutating; mark interrupted when possible.
+                    try:
+                        from Data.modules.research.types import ResearchPhase, ResearchStatus
+                        from Data.modules.research.store import utc_now
+
+                        latest = service.get_project(project_id)
+                        if latest.status not in {
+                            ResearchStatus.COMPLETED,
+                            ResearchStatus.CANCELLED,
+                            ResearchStatus.FAILED,
+                        }:
+                            latest.status = ResearchStatus.INTERRUPTED
+                            latest.phase = ResearchPhase.FAILED
+                            latest.error = "LEASE_LOST"
+                            latest.finished_at = utc_now()
+                            service.store.save_project(latest)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    return _interrupt_job(
+                        store,
+                        job,
+                        reason="LEASE_LOST during execution",
                         metadata={
                             "research_action": action,
                             "project_id": project_id,
@@ -208,7 +337,7 @@ def process_research_job(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None
                 resume=True,
                 job_id=getattr(job, "job_id", None),
                 worker_id=str(worker_id) if worker_id else None,
-                cancel_check=_fence,
+                cancel_check=lambda: _fence_reason(ctx) == "cancel",
             )
         elif action == "deepen":
             result = service.execute_queued_run(
@@ -217,7 +346,7 @@ def process_research_job(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None
                 extra_rounds=max(1, extra_rounds),
                 job_id=getattr(job, "job_id", None),
                 worker_id=str(worker_id) if worker_id else None,
-                cancel_check=_fence,
+                cancel_check=lambda: _fence_reason(ctx) == "cancel",
             )
         elif action == "verify":
             # Prefer real service methods when present; otherwise honest failure.
@@ -250,16 +379,22 @@ def process_research_job(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None
             result = service.execute_fetch_url(project_id, url, source_id=source_id)
         elif action in {"regenerate_report", "report", "report.generate"}:
             result = service._regenerate_report_inline(project_id)
-        elif action in {"retrieve", "synthesize"}:
-            # These are coordinator-internal phases; durable entry is research.advance.
+        elif action in {"retrieve", "synthesize", "synth"}:
+            # Coordinator-internal phases — not standalone public capabilities.
+            # Fail with CAPABILITY_UNSUPPORTED so catalogs must not advertise AVAILABLE.
             return _fail(
                 store,
                 job,
                 (
-                    f"research.{action} is not a standalone ResearchService method; "
-                    "enqueue research.advance to run the orchestration loop"
+                    f"CAPABILITY_UNSUPPORTED: research.{action} is not a standalone "
+                    "execution capability; use research.advance"
                 ),
-                metadata={"research_action": action, "project_id": project_id},
+                metadata={
+                    "research_action": action,
+                    "project_id": project_id,
+                    "error_code": "CAPABILITY_UNSUPPORTED",
+                    "canonical_capability": "research.advance",
+                },
                 ctx=ctx,
             )
         else:

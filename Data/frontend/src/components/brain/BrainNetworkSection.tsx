@@ -39,8 +39,10 @@ export function BrainNetworkSection({ overview }: Props) {
     relevancePct,
     linkedMemories,
     linkedMemoriesAvailable,
+    linkedMemoriesHeuristic,
     evidenceForNode,
     evidenceForNodeAvailable,
+    evidenceForNodeHeuristic,
     selectedConfidence,
     selectedConfidenceLabel,
     categoryFilter,
@@ -69,7 +71,10 @@ export function BrainNetworkSection({ overview }: Props) {
         ? formatDateTime(selected.created_at)
         : "—";
 
-  const truncated = Boolean(graphTruth?.bounded_projection);
+  const truncated =
+    graphTruth?.pagination_complete === false ||
+    Boolean(graphTruth?.bounded_projection) ||
+    graphTruth?.catalog_complete === false;
   const maxNodes = null;
 
   return (
@@ -161,7 +166,8 @@ export function BrainNetworkSection({ overview }: Props) {
               <li>
                 <span>
                   Gelinkte geheugens (
-                  {linkedMemoriesAvailable ? linkedMemories ?? 0 : "—"})
+                  {linkedMemoriesAvailable ? linkedMemories ?? 0 : "—"}
+                  {linkedMemoriesHeuristic ? " · heuristiek" : ""})
                 </span>
                 <Link className="lv-v2-brain-link" to="/memory">
                   Bekijk geheugen
@@ -169,7 +175,8 @@ export function BrainNetworkSection({ overview }: Props) {
               </li>
               <li>
                 <span>
-                  Bewijs items ({evidenceForNodeAvailable ? evidenceForNode ?? 0 : "—"})
+                  Bewijs items ({evidenceForNodeAvailable ? evidenceForNode ?? 0 : "—"}
+                  {evidenceForNodeHeuristic ? " · heuristiek" : ""})
                 </span>
                 <Link className="lv-v2-brain-link" to={evidenceLink(overview)}>
                   Bekijk bewijs

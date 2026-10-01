@@ -298,9 +298,9 @@ export function BrainClustersView({ nodes, edges, onToast }: { nodes: LiveBrainN
       <div className="lv-bc-grid">
         <Panel title="Cluster Overview" className="lv-bc-overview">
           <div className="lv-bc-summary">
-            <div><strong>{clusters.length}</strong><span>Total Clusters</span></div>
-            <div><strong>{formatCount(totalNodes)}</strong><span>Total Nodes</span></div>
-            <div><strong>{formatCount(edges.length)}</strong><span>Total Connections</span></div>
+            <div><strong>{clusters.length}</strong><span>Loaded Clusters</span></div>
+            <div><strong>{formatCount(totalNodes)}</strong><span>Loaded Nodes</span></div>
+            <div><strong>{formatCount(edges.length)}</strong><span>Loaded Connections</span></div>
           </div>
           <div className="lv-bc-overview-tools">
             <label className="lv-bc-search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search clusters..." aria-label="Search clusters" /></label>

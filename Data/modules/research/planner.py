@@ -200,6 +200,12 @@ def build_plan(
     )
 
     # Enrich from ResearchQuestionModel when available; keep deterministic fallback.
+    # Provenance must distinguish success vs intentional deterministic path vs error.
+    provenance: dict = {
+        "path": "deterministic_core",
+        "enrichment": "not_attempted",
+        "enrichment_ok": False,
+    }
     try:
         from .question_model import build_question_model
 
@@ -225,8 +231,20 @@ def build_plan(
             coverage_targets = {**coverage_targets, **edits["evidence_coverage_targets"]}
         if edits.get("notes"):
             notes = f"{notes} {edits['notes']}"
-    except Exception:
-        pass
+        provenance = {
+            "path": "question_model_enriched",
+            "enrichment": "succeeded",
+            "enrichment_ok": True,
+            "question_model": "ResearchQuestionModel",
+        }
+    except Exception as exc:  # noqa: BLE001 — deterministic plan must survive
+        provenance = {
+            "path": "deterministic_fallback",
+            "enrichment": "error",
+            "enrichment_ok": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:240],
+        }
 
     return ResearchPlan(
         interpreted_question=interpreted,
@@ -242,6 +260,7 @@ def build_plan(
         notes=notes,
         stopping_criteria=stopping,
         evidence_coverage_targets=coverage_targets,
+        plan_provenance=provenance,
     )
 
 

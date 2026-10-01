@@ -203,6 +203,18 @@ export function StatusPage() {
                 </strong>
               </div>
               <div className="lv-world-stat">
+                <span>Production grade</span>
+                <strong>
+                  {state.residual?.production_grade === true || neuro?.residual_production === true
+                    ? state.residual?.production_grade === true
+                      ? "YES"
+                      : "FLAG ONLY (not measured)"
+                    : state.residual?.supports_residuals
+                      ? "NO (experimental)"
+                      : "NO"}
+                </strong>
+              </div>
+              <div className="lv-world-stat">
                 <span>Load weights</span>
                 <strong>{neuro?.residual_load_weights || state.residual?.load_weights ? "ON" : "OFF"}</strong>
               </div>

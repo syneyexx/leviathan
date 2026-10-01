@@ -501,6 +501,13 @@ Execution and external modules should return refs for large payloads rather than
 
 `Data/modules/neuro/` (`advisor.py`, `cortex.py`, `cortex_runtime.py`, `critic.py`, `residual.py`, `residual_orchestrator.py`, `memory_tiers.py`, `receipts.py`, `snapshots.py`, `soak.py`) is advisory. Neural associations may influence retrieval/planning/hypotheses but do not become factual or execution authority merely because a model produced them.
 
+**Production boundary:** `supports_residuals == true` is not production grade.
+`production_grade` on `/api/neuro/residual` requires feature flag **and** runtime
+`runtime_info().production_grade` **and** `supports_residuals`. Deterministic/toy
+residual runtimes are test-only (`LEVIATHAN_NEURO_ALLOW_DETERMINISTIC_TOY` / pytest);
+they are refused as a production fallback. HF residual hash-delta injection is
+explicitly experimental / non-production (`hash_delta_is_not_learned_neural_memory`).
+
 ---
 
 # 10. Model Control Plane and provider runtime
@@ -1000,6 +1007,20 @@ Production ownership (fail closed — no FastAPI inline heavy fallback when exte
 | Report regenerate | `research.report.generate` → research worker |
 | Physical source parse | `source_ingestion` (unchanged) |
 | Embedding / rerank batches | `embedding` / `rerank` specialist pools |
+
+**Mechanical gate:** `Data/modules/research/execution_gate.py` (mirrors Source Ingestion).
+When execution mode is `external`, unbound `JobRuntime` raises typed
+`RESEARCH_RUNTIME_UNAVAILABLE` — never `_spawn_run` / inline URL fetch / inline report.
+Worker availability is structured (`can_enqueue`, `worker_state`, `worker_measured`);
+`UNKNOWN` never becomes `AVAILABLE`. Cancel vs lease-loss are distinct outcomes.
+URL fetch preserves a reserved `source_id` lifecycle (`PENDING` → `FETCHING` → terminal).
+Dataset connect verifies `DatasetService.learning_state_for_dataset` — client `indexed`
+is advisory only. Knowledge promotion status is separate from research completion
+(`knowledge_promotion_status` / receipt / error on the project public contract).
+Plan provenance records enrichment success vs deterministic fallback vs error.
+`research.retrieve` / `research.synthesize` are coordinator-internal phases of
+`research.advance` and are catalogued as `public_availability=UNSUPPORTED`
+(standalone invoke → `CAPABILITY_UNSUPPORTED`).
 
 Web permission and web search readiness are different. Outbound enabled does not mean a search provider is configured. Best-effort public search must remain labeled best-effort; fetch-only/search-unavailable states are explicit.
 

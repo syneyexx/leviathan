@@ -166,6 +166,9 @@ class UnsupportedResidualRuntime:
         return False
 
     def runtime_info(self) -> dict[str, Any]:
+        override = getattr(self, "_runtime_info_override", None)
+        if isinstance(override, dict):
+            return dict(override)
         return {
             "kind": "unsupported",
             "protocol_version": self.protocol_version,

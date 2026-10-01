@@ -2146,26 +2146,47 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
     )
     _ext(
         cap_id="research.retrieve",
-        name="Retrieve Research Evidence",
-        description="Run a retrieval wave for an active research project.",
+        name="Retrieve Research Evidence (internal phase)",
+        description=(
+            "NOT a standalone public capability. Retrieve is a coordinator-internal "
+            "phase of research.advance. Invoking this capability fails with "
+            "CAPABILITY_UNSUPPORTED — enqueue research.advance instead."
+        ),
         side_effects=(SideEffect.READ, SideEffect.NETWORK),
         worker_kind="research",
         required_args=["project_id"],
         properties={"project_id": {"type": "string"}, "query": {"type": "string"}},
         permissions=("knowledge.read",),
-        tags=["research", "retrieve"],
+        tags=["research", "retrieve", "internal_phase", "unsupported_standalone"],
+        extra_meta={
+            "public_availability": "UNSUPPORTED",
+            "canonical_capability": "research.advance",
+            "error_code": "CAPABILITY_UNSUPPORTED",
+            "advertise_as_available": False,
+        },
     )
     _ext(
         cap_id="research.synthesize",
-        name="Synthesize Research Findings",
-        description="Synthesize claims/report from gathered evidence (reasoning-tier work).",
+        name="Synthesize Research Findings (internal phase)",
+        description=(
+            "NOT a standalone public capability. Synthesize is a coordinator-internal "
+            "phase of research.advance. Invoking this capability fails with "
+            "CAPABILITY_UNSUPPORTED — enqueue research.advance instead."
+        ),
         side_effects=(SideEffect.EXECUTE,),
         worker_kind="research",
         required_args=["project_id"],
         properties={"project_id": {"type": "string"}},
         permissions=("process.execute",),
-        tags=["research", "synthesize"],
-        extra_meta={"requires_reasoning": True, "compute_tier_hint": 3},
+        tags=["research", "synthesize", "internal_phase", "unsupported_standalone"],
+        extra_meta={
+            "public_availability": "UNSUPPORTED",
+            "canonical_capability": "research.advance",
+            "error_code": "CAPABILITY_UNSUPPORTED",
+            "advertise_as_available": False,
+            "requires_reasoning": True,
+            "compute_tier_hint": 3,
+        },
     )
     _ext(
         cap_id="research.verify",

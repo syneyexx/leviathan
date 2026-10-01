@@ -18,6 +18,14 @@ from .budgets import (
     resolve_execution_budget,
 )
 from .evidence import EvidenceLedger
+from .execution_gate import (
+    WorkerMeasuredState,
+    allow_inprocess_research_execution,
+    probe_research_worker_availability,
+    refuse_inline_research,
+    require_job_runtime_for_external,
+    runners_externalized,
+)
 from .local_retrieval import LocalResearchRetriever, build_default_local_retriever
 from .planner import apply_plan_edits, build_plan
 from .reports import ReportBuilder
@@ -27,6 +35,7 @@ from .store import ResearchStore, utc_now
 from .types import (
     ACTIVE_STATUSES,
     AnalysisMode,
+    KnowledgePromotionStatus,
     ResearchDepth,
     ResearchError,
     ResearchExecutionMode,
@@ -376,6 +385,10 @@ class ResearchService:
                 self.enqueue_queued_projects()
             return
 
+        # Inprocess dispatcher only under mechanical allow gate.
+        if not allow_inprocess_research_execution():
+            return
+
         # Even when externalize flag is off, SI background threads require the
         # mechanical inprocess_test allow gate (no silent reactivation).
         if self.source_ingestion is not None:
@@ -404,28 +417,15 @@ class ResearchService:
 
     @staticmethod
     def _runners_externalized() -> bool:
-        import os
+        """True when API must not own heavy research execution (fail-closed)."""
+        return runners_externalized()
 
-        ext = (os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API") or "").strip().lower()
-        if ext in {"1", "true", "yes", "on"}:
-            return True
-        if ext in {"0", "false", "no", "off"}:
-            return False
-        for key in (
-            "LEVIATHAN_RESEARCH_RUNNER",
-            "LEVIATHAN_SOURCE_INGESTION_RUNNER",
-            "LEVIATHAN_DATASET_JOBS_RUNNER",
-        ):
-            raw = (os.environ.get(key) or "").strip().lower()
-            if raw in {"external", "worker", "process", "fabric"}:
-                return True
-        try:
-            from Data.modules.workers.settings import load_worker_settings
-
-            return bool(load_worker_settings().externalize_api_runners)
-        except Exception:  # noqa: BLE001
-            return False
-
+    def _require_external_runtime(self, *, capability: str) -> None:
+        require_job_runtime_for_external(
+            self.job_runtime,
+            capability=capability,
+            reason="job_runtime_unbound",
+        )
     def enqueue_advance(
         self,
         project_id: str,
@@ -468,35 +468,69 @@ class ResearchService:
         )
 
     def enqueue_queued_projects(self) -> list[str]:
-        """Enqueue advance jobs for all QUEUED projects (idempotent keys)."""
+        """Enqueue advance jobs for all QUEUED projects (idempotent keys).
+
+        Uses bounded page traversal so projects beyond the first page are not starved.
+        """
         job_ids: list[str] = []
         if self.job_runtime is None:
             return job_ids
-        for project in self.store.list_projects(limit=100):
-            if project.status != ResearchStatus.QUEUED:
-                continue
-            try:
-                job = self.enqueue_advance(project.project_id)
-                job_ids.append(job.job_id)
-            except Exception:  # noqa: BLE001
-                continue
+        page_size = 100
+        offset = 0
+        seen: set[str] = set()
+        while True:
+            batch = self.store.list_projects(limit=page_size, offset=offset)
+            if not batch:
+                break
+            for project in batch:
+                if project.project_id in seen:
+                    continue
+                seen.add(project.project_id)
+                if project.status != ResearchStatus.QUEUED:
+                    continue
+                try:
+                    job = self.enqueue_advance(project.project_id)
+                    job_ids.append(job.job_id)
+                except Exception:  # noqa: BLE001
+                    continue
+            if len(batch) < page_size:
+                break
+            offset += page_size
+            # Safety ceiling: avoid infinite loops if catalog mutates rapidly.
+            if offset > 100_000:
+                break
         return job_ids
 
     def stop_background(self) -> None:
         self._dispatcher_stop.set()
 
     def _dispatch_queued(self) -> None:
-        if self._runners_externalized() and self.job_runtime is not None:
+        if self._runners_externalized():
+            if self.job_runtime is None:
+                return
             self.enqueue_queued_projects()
             return
-        for project in self.store.list_projects(limit=100):
-            if project.status != ResearchStatus.QUEUED:
-                continue
-            with self._bg_lock:
-                t = self._bg_threads.get(project.project_id)
-                if t and t.is_alive():
+        if not allow_inprocess_research_execution():
+            return
+        page_size = 100
+        offset = 0
+        while True:
+            batch = self.store.list_projects(limit=page_size, offset=offset)
+            if not batch:
+                break
+            for project in batch:
+                if project.status != ResearchStatus.QUEUED:
                     continue
-            self._spawn_run(project.project_id, deepen=False, extra_rounds=0, resume=False)
+                with self._bg_lock:
+                    t = self._bg_threads.get(project.project_id)
+                    if t and t.is_alive():
+                        continue
+                self._spawn_run(project.project_id, deepen=False, extra_rounds=0, resume=False)
+            if len(batch) < page_size:
+                break
+            offset += page_size
+            if offset > 100_000:
+                break
 
     def recover(self) -> list[str]:
         recovered = self.runner.recover_interrupted()
@@ -521,105 +555,122 @@ class ResearchService:
 
         from Data.modules.jobs.states import JobState
 
-        for project in self.store.list_projects(limit=200):
-            if project.status in TERMINAL_STATUSES:
-                continue
-            if project.status != ResearchStatus.QUEUED:
-                continue
-
-            job = None
-            if project.kernel_job_id and hasattr(store, "get"):
-                try:
-                    job = store.get(project.kernel_job_id)
-                except Exception:  # noqa: BLE001
-                    job = None
-            if job is None and hasattr(store, "list"):
-                try:
-                    from Data.modules.jobs.states import TERMINAL_JOB_STATES
-
-                    candidates = [
-                        j
-                        for j in store.list(limit=200)
-                        if getattr(j, "domain_entity_id", None) == project.project_id
-                        and str(getattr(j, "capability_id", "") or "").startswith("research.")
-                    ]
-                    # Prefer non-terminal, else most recent
-                    active = [
-                        j
-                        for j in candidates
-                        if getattr(j, "state", None) not in TERMINAL_JOB_STATES
-                    ]
-                    job = (active or candidates or [None])[0]
-                except Exception:  # noqa: BLE001
-                    job = None
-
-            run = (
-                self.store.get_run(project.active_run_id)
-                if project.active_run_id
-                else self.store.get_latest_run(project.project_id)
-            )
-            run_started = run is not None and run.started_at is not None
-
-            if job is None:
-                try:
-                    enqueued = self.enqueue_advance(project.project_id)
-                    project.kernel_job_id = getattr(enqueued, "job_id", None)
-                    available, wait_reason = self._research_worker_availability()
-                    project.wait_reason = None if available else wait_reason
-                    self.store.save_project(project)
-                    fixed.append(project.project_id)
-                    self.store.add_event(
-                        project.project_id,
-                        "reconciled",
-                        "Re-enqueued missing research.advance job",
-                        {"job_id": project.kernel_job_id},
-                    )
-                except Exception:  # noqa: BLE001
+        page_size = 100
+        offset = 0
+        while True:
+            batch = self.store.list_projects(limit=page_size, offset=offset)
+            if not batch:
+                break
+            for project in batch:
+                if project.status in TERMINAL_STATUSES:
                     continue
-                continue
+                if project.status != ResearchStatus.QUEUED:
+                    continue
 
-            state = getattr(job, "state", None)
-            state_val = state.value if hasattr(state, "value") else str(state or "")
-            if state_val in {JobState.COMPLETED.value, "COMPLETED"} and not run_started:
-                # False success / empty completion — bump generation and re-enqueue.
-                try:
-                    gen = f"reconcile:{utc_now()}"
-                    enqueued = self.enqueue_advance(
-                        project.project_id,
-                        generation=gen,
-                    )
-                    project.kernel_job_id = getattr(enqueued, "job_id", None)
+                job = None
+                if project.kernel_job_id and hasattr(store, "get"):
+                    try:
+                        job = store.get(project.kernel_job_id)
+                    except Exception:  # noqa: BLE001
+                        job = None
+                if job is None and hasattr(store, "list"):
+                    try:
+                        from Data.modules.jobs.states import TERMINAL_JOB_STATES
+
+                        candidates = [
+                            j
+                            for j in store.list(limit=500)
+                            if getattr(j, "domain_entity_id", None) == project.project_id
+                            and str(getattr(j, "capability_id", "") or "").startswith("research.")
+                        ]
+                        active = [
+                            j
+                            for j in candidates
+                            if getattr(j, "state", None) not in TERMINAL_JOB_STATES
+                        ]
+                        job = (active or candidates or [None])[0]
+                    except Exception:  # noqa: BLE001
+                        job = None
+
+                run = (
+                    self.store.get_run(project.active_run_id)
+                    if project.active_run_id
+                    else self.store.get_latest_run(project.project_id)
+                )
+                run_started = run is not None and run.started_at is not None
+
+                if job is None:
+                    try:
+                        enqueued = self.enqueue_advance(project.project_id)
+                        project.kernel_job_id = getattr(enqueued, "job_id", None)
+                        availability = self._research_worker_availability()
+                        project.wait_reason = (
+                            None
+                            if availability.worker_state == WorkerMeasuredState.AVAILABLE
+                            else availability.wait_reason
+                        )
+                        self.store.save_project(project)
+                        fixed.append(project.project_id)
+                        self.store.add_event(
+                            project.project_id,
+                            "reconciled",
+                            "Re-enqueued missing research.advance job",
+                            {"job_id": project.kernel_job_id},
+                        )
+                    except Exception:  # noqa: BLE001
+                        continue
+                    continue
+
+                state = getattr(job, "state", None)
+                state_val = state.value if hasattr(state, "value") else str(state or "")
+                if state_val in {JobState.COMPLETED.value, "COMPLETED"} and not run_started:
+                    try:
+                        gen = f"reconcile:{utc_now()}"
+                        enqueued = self.enqueue_advance(
+                            project.project_id,
+                            generation=gen,
+                        )
+                        project.kernel_job_id = getattr(enqueued, "job_id", None)
+                        project.wait_reason = None
+                        project.error = None
+                        self.store.save_project(project)
+                        fixed.append(project.project_id)
+                        self.store.add_event(
+                            project.project_id,
+                            "reconciled",
+                            "Kernel job completed without ResearchRun; re-enqueued",
+                            {"job_id": project.kernel_job_id, "prior_job_id": job.job_id},
+                        )
+                    except Exception:  # noqa: BLE001
+                        continue
+                    continue
+
+                if state_val in {JobState.FAILED.value, "FAILED"} and not run_started:
+                    project.status = ResearchStatus.FAILED
+                    project.phase = ResearchPhase.FAILED
+                    project.error = getattr(job, "error", None) or "research.advance job failed"
+                    project.finished_at = utc_now()
                     project.wait_reason = None
-                    project.error = None
                     self.store.save_project(project)
                     fixed.append(project.project_id)
-                    self.store.add_event(
-                        project.project_id,
-                        "reconciled",
-                        "Kernel job completed without ResearchRun; re-enqueued",
-                        {"job_id": project.kernel_job_id, "prior_job_id": job.job_id},
-                    )
-                except Exception:  # noqa: BLE001
                     continue
-                continue
 
-            if state_val in {JobState.FAILED.value, "FAILED"} and not run_started:
-                project.status = ResearchStatus.FAILED
-                project.phase = ResearchPhase.FAILED
-                project.error = getattr(job, "error", None) or "research.advance job failed"
-                project.finished_at = utc_now()
-                project.wait_reason = None
-                self.store.save_project(project)
-                fixed.append(project.project_id)
-                continue
+                availability = self._research_worker_availability()
+                desired = (
+                    None
+                    if availability.worker_state == WorkerMeasuredState.AVAILABLE
+                    else availability.wait_reason
+                )
+                if project.wait_reason != desired or project.kernel_job_id != job.job_id:
+                    project.kernel_job_id = job.job_id
+                    project.wait_reason = desired
+                    self.store.save_project(project)
 
-            # Valid queued/running job — refresh wait_reason from pool health.
-            available, wait_reason = self._research_worker_availability()
-            desired = None if available else wait_reason
-            if project.wait_reason != desired or project.kernel_job_id != job.job_id:
-                project.kernel_job_id = job.job_id
-                project.wait_reason = desired
-                self.store.save_project(project)
+            if len(batch) < page_size:
+                break
+            offset += page_size
+            if offset > 100_000:
+                break
 
         return fixed
 
@@ -865,19 +916,25 @@ class ResearchService:
                 http_status=503,
                 details={"capability": "research.plan"},
             )
-        available, wait_reason = self._research_worker_availability()
+        availability = self._research_worker_availability()
         project.status = ResearchStatus.DRAFT
         project.phase = ResearchPhase.PLANNING
         project.wait_reason = (
-            wait_reason if not available else "QUEUED — research.plan pending"
+            availability.wait_reason
+            if availability.worker_state != WorkerMeasuredState.AVAILABLE
+            else "QUEUED — research.plan pending"
         )
         project.error = None
         self.store.save_project(project)
         self.store.add_event(
             project_id,
             "plan_queued",
-            wait_reason or "Research plan queued for worker execution",
-            {"worker_available": available},
+            availability.wait_reason or "Research plan queued for worker execution",
+            {
+                "can_enqueue": availability.can_enqueue,
+                "worker_state": availability.worker_state.value,
+                "worker_measured": availability.worker_measured,
+            },
         )
         gen = project.updated_at or project.created_at or project_id
         job = self.job_runtime.enqueue(
@@ -943,6 +1000,8 @@ class ResearchService:
             return self.apply_manual_plan_edits(project_id, edits)
         if self._runners_externalized():
             return self.enqueue_plan(project_id, edits=edits or None)
+        if not allow_inprocess_research_execution():
+            refuse_inline_research(reason="inprocess_not_allowed", capability="research.plan")
         # Legacy / test in-process path when externalize is off.
         return self.plan(project_id, edits=edits or None)
 
@@ -952,7 +1011,7 @@ class ResearchService:
         """Enqueue live web probe — never perform network I/O in FastAPI."""
         if self.job_runtime is None:
             raise ResearchError(
-                "RESEARCH_WORKER_UNAVAILABLE",
+                "RESEARCH_RUNTIME_UNAVAILABLE",
                 "JobRuntime not bound; cannot enqueue research.web.probe",
                 http_status=503,
                 details={"capability": "research.web.probe"},
@@ -1007,7 +1066,13 @@ class ResearchService:
     ) -> dict[str, Any]:
         """Control-plane entry for web probe — external when runners externalized."""
         if self._runners_externalized():
+            self._require_external_runtime(capability="research.web.probe")
             return self.enqueue_web_probe(query=query, limit=limit)
+        if not allow_inprocess_research_execution():
+            refuse_inline_research(
+                reason="inprocess_not_allowed",
+                capability="research.web.probe",
+            )
         return {"probe": self.probe_web_research(query=query, limit=limit)}
 
     def run(self, project_id: str, *, background: bool = False) -> ResearchProject:
@@ -1030,6 +1095,8 @@ class ResearchService:
 
             if not os.environ.get("LEVIATHAN_WORKER_ID"):
                 return self.enqueue_run(project_id)
+        if not allow_inprocess_research_execution():
+            return self.enqueue_run(project_id)
         self.runner.run(project_id)
         project = self.get_project(project_id)
         self._maybe_promote_knowledge(project)
@@ -1169,7 +1236,10 @@ class ResearchService:
         project = self.get_project(project_id)
         if project.status in ACTIVE_STATUSES and not deepen and not resume:
             return project
-        available, wait_reason = self._research_worker_availability()
+        # Production external mode must never fall open into API threads.
+        if self._runners_externalized():
+            self._require_external_runtime(capability="research.advance")
+        availability = self._research_worker_availability()
         project.status = ResearchStatus.QUEUED
         project.phase = ResearchPhase.PLANNING
         project.error = None
@@ -1177,16 +1247,20 @@ class ResearchService:
         project.finished_at = None
         project.progress_pct = max(1.0, float(project.progress_pct or 0))
         project.wait_reason = (
-            wait_reason
-            if not available
+            availability.wait_reason
+            if availability.worker_state != WorkerMeasuredState.AVAILABLE
             else None
         )
         self.store.save_project(project)
         self.store.add_event(
             project_id,
             "queued",
-            wait_reason or "Research queued for execution",
-            {"worker_available": available},
+            availability.wait_reason or "Research queued for execution",
+            {
+                "can_enqueue": availability.can_enqueue,
+                "worker_state": availability.worker_state.value,
+                "worker_measured": availability.worker_measured,
+            },
         )
         self._emit_obs(
             "research.requested",
@@ -1194,7 +1268,7 @@ class ResearchService:
             level="INFO",
             research_project_id=project_id,
         )
-        if self._runners_externalized() and self.job_runtime is not None:
+        if self._runners_externalized():
             job = self.enqueue_advance(
                 project_id,
                 deepen=deepen,
@@ -1203,8 +1277,13 @@ class ResearchService:
             )
             project = self.get_project(project_id)
             project.kernel_job_id = getattr(job, "job_id", None) or project.kernel_job_id
-            if not available and not project.wait_reason:
-                project.wait_reason = "QUEUED — waiting for research worker"
+            if (
+                availability.worker_state != WorkerMeasuredState.AVAILABLE
+                and not project.wait_reason
+            ):
+                project.wait_reason = availability.wait_reason or (
+                    "QUEUED — waiting for research worker"
+                )
             self.store.save_project(project)
             self._emit_obs(
                 "research.job_enqueued",
@@ -1212,12 +1291,18 @@ class ResearchService:
                     "project_id": project_id,
                     "job_id": project.kernel_job_id,
                     "wait_reason": project.wait_reason,
+                    "worker_state": availability.worker_state.value,
                 },
                 level="INFO",
                 research_project_id=project_id,
                 job_id=project.kernel_job_id,
             )
         else:
+            if not allow_inprocess_research_execution():
+                refuse_inline_research(
+                    reason="inprocess_not_allowed",
+                    capability="research.advance",
+                )
             self._spawn_run(project_id, deepen=deepen, extra_rounds=extra_rounds, resume=resume)
         return self.get_project(project_id)
 
@@ -1249,39 +1334,12 @@ class ResearchService:
         except Exception:  # noqa: BLE001
             pass
 
-    def _research_worker_availability(self) -> tuple[bool, str | None]:
-        """Return (available, wait_reason) for the physical research pool."""
-        try:
-            from Data.modules.workers.protocol import WorkerInstanceState
-            from Data.modules.workers.registry import WorkerRegistry
-            from Data.modules.workers.settings import load_worker_settings
-
-            wsettings = load_worker_settings()
-            count = int((wsettings.pool_counts or {}).get("research", 0) or 0)
-            if not wsettings.enabled:
-                return False, "QUEUED — waiting for research worker (workers disabled)"
-            if count <= 0:
-                return False, "QUEUED — waiting for research worker (pool count 0)"
-            if not self._runners_externalized():
-                return True, None
-            registry = WorkerRegistry(self.store.db_path)
-            registry.initialize()
-            rows = registry.list(pool_id="research")
-            live = [
-                r
-                for r in rows
-                if getattr(r, "state", None)
-                in {
-                    WorkerInstanceState.READY,
-                    WorkerInstanceState.BUSY,
-                }
-            ]
-            if not live:
-                return False, "QUEUED — waiting for research worker"
-            return True, None
-        except Exception:  # noqa: BLE001
-            # If we cannot probe, do not block enqueue — supervisor may still start.
-            return True, None
+    def _research_worker_availability(self):
+        """Return structured availability — UNKNOWN never becomes AVAILABLE."""
+        return probe_research_worker_availability(
+            db_path=getattr(self.store, "db_path", None),
+            runners_are_external=self._runners_externalized(),
+        )
 
     def _spawn_run(
         self,
@@ -1291,6 +1349,11 @@ class ResearchService:
         extra_rounds: int,
         resume: bool,
     ) -> None:
+        if self._runners_externalized() or not allow_inprocess_research_execution():
+            refuse_inline_research(
+                reason="spawn_run_refused_outside_inprocess_test",
+                capability="research.advance",
+            )
         with self._bg_lock:
             existing = self._bg_threads.get(project_id)
             if existing and existing.is_alive():
@@ -1334,7 +1397,11 @@ class ResearchService:
             )
         self.store.request_cancel(project_id)
         self.store.add_event(project_id, "cancelled", "Cancel requested")
-        # Mirror cancel onto the kernel job when linked.
+
+        kernel_cancel_error: str | None = None
+        kernel_cancel_state: str | None = None
+        kernel_cancel_acked = False
+        # Mirror cancel onto the kernel job when linked — failures must be observable.
         if project.kernel_job_id and self.job_runtime is not None:
             try:
                 from Data.modules.jobs.states import JobState
@@ -1347,11 +1414,20 @@ class ResearchService:
                         JobState.FAILED,
                         JobState.CANCELLED,
                     }:
-                        if hasattr(jstore, "request_cancel"):
+                        if hasattr(self.job_runtime, "cancel"):
+                            cancelled_job = self.job_runtime.cancel(
+                                project.kernel_job_id,
+                                reason="research project cancel",
+                            )
+                            state = getattr(cancelled_job, "state", None) or getattr(
+                                job, "state", None
+                            )
+                        elif hasattr(jstore, "request_cancel"):
                             jstore.request_cancel(
                                 project.kernel_job_id,
                                 reason="research project cancel",
                             )
+                            state = JobState.CANCEL_REQUESTED
                         else:
                             jstore.transition(
                                 project.kernel_job_id,
@@ -1360,48 +1436,125 @@ class ResearchService:
                                 else JobState.CANCELLED,
                                 error="research project cancel",
                             )
-            except Exception:  # noqa: BLE001
-                pass
+                            state = JobState.CANCEL_REQUESTED
+                        kernel_cancel_state = (
+                            state.value if hasattr(state, "value") else str(state)
+                        )
+                        kernel_cancel_acked = True
+                    elif job is not None:
+                        kernel_cancel_state = (
+                            job.state.value if hasattr(job.state, "value") else str(job.state)
+                        )
+                        kernel_cancel_acked = True
+            except Exception as exc:  # noqa: BLE001 — record, do not pretend cancelled
+                kernel_cancel_error = f"{type(exc).__name__}: {exc}"
+                self.store.add_event(
+                    project_id,
+                    "cancel_kernel_failed",
+                    kernel_cancel_error,
+                    {"kernel_job_id": project.kernel_job_id},
+                )
+                self._emit_obs(
+                    "research.cancel_kernel_failed",
+                    {
+                        "project_id": project_id,
+                        "kernel_job_id": project.kernel_job_id,
+                        "error": kernel_cancel_error,
+                    },
+                    level="ERROR",
+                    research_project_id=project_id,
+                    job_id=project.kernel_job_id,
+                )
+        elif project.kernel_job_id and self.job_runtime is None:
+            kernel_cancel_error = "job_runtime_unbound"
+            self.store.add_event(
+                project_id,
+                "cancel_kernel_failed",
+                "JobRuntime unbound; kernel cancel not acknowledged",
+                {"kernel_job_id": project.kernel_job_id},
+            )
+
         latest = self.get_project(project_id)
+        profile = dict(latest.model_profile or {})
+        profile["cancel_ack_at"] = utc_now()
+        profile["cancel_ack_job_state"] = kernel_cancel_state
+        profile["cancel_ack_error"] = kernel_cancel_error
+        latest.model_profile = profile
+        self.store.save_project(latest)
+
         with self._bg_lock:
             alive = bool(
                 self._bg_threads.get(project_id) and self._bg_threads[project_id].is_alive()
             )
-        if latest.status in {
-            ResearchStatus.DRAFT,
-            ResearchStatus.PLANNED,
-            ResearchStatus.QUEUED,
-            ResearchStatus.INTERRUPTED,
-            ResearchStatus.CANCELLING,
-        } and not alive:
-            if latest.worker_pid is None:
-                latest.status = ResearchStatus.CANCELLED
-                latest.phase = ResearchPhase.CANCELLED
-                latest.cancel_requested = False
-                latest.worker_pid = None
-                latest.finished_at = utc_now()
-                latest.error = latest.error or "Cancelled by request"
-                latest.progress_pct = min(95.0, float(latest.progress_pct or 0))
-                latest.wait_reason = None
-                self.store.save_project(latest)
-                # If kernel job still queued, cancel it to avoid COMPLETED mismatch.
-                if latest.kernel_job_id and self.job_runtime is not None:
-                    try:
-                        from Data.modules.jobs.states import JobState
+        # Only mark terminal CANCELLED when execution is not running AND kernel
+        # cancel was acknowledged (or there was no kernel job).
+        can_terminal_cancel = (
+            latest.status
+            in {
+                ResearchStatus.DRAFT,
+                ResearchStatus.PLANNED,
+                ResearchStatus.QUEUED,
+                ResearchStatus.INTERRUPTED,
+                ResearchStatus.CANCELLING,
+            }
+            and not alive
+            and latest.worker_pid is None
+            and (not latest.kernel_job_id or kernel_cancel_acked)
+        )
+        if can_terminal_cancel:
+            latest = self.get_project(project_id)
+            latest.status = ResearchStatus.CANCELLED
+            latest.phase = ResearchPhase.CANCELLED
+            latest.cancel_requested = False
+            latest.worker_pid = None
+            latest.finished_at = utc_now()
+            latest.error = latest.error or "Cancelled by request"
+            latest.progress_pct = min(95.0, float(latest.progress_pct or 0))
+            latest.wait_reason = None
+            profile = dict(latest.model_profile or {})
+            profile["cancel_ack_at"] = profile.get("cancel_ack_at") or utc_now()
+            profile["cancel_ack_job_state"] = kernel_cancel_state or profile.get(
+                "cancel_ack_job_state"
+            )
+            profile["cancel_ack_error"] = kernel_cancel_error
+            latest.model_profile = profile
+            self.store.save_project(latest)
+            if latest.kernel_job_id and self.job_runtime is not None and kernel_cancel_acked:
+                try:
+                    from Data.modules.jobs.states import JobState
 
-                        jstore = self.job_runtime.store
-                        job = jstore.get(latest.kernel_job_id)
-                        if job is not None and job.state in {
-                            JobState.QUEUED,
-                            JobState.CANCEL_REQUESTED,
-                        }:
-                            jstore.transition(
-                                latest.kernel_job_id,
-                                JobState.CANCELLED,
-                                error="research project cancelled before claim",
-                            )
-                    except Exception:  # noqa: BLE001
-                        pass
+                    jstore = self.job_runtime.store
+                    job = jstore.get(latest.kernel_job_id)
+                    if job is not None and job.state in {
+                        JobState.QUEUED,
+                        JobState.CANCEL_REQUESTED,
+                    }:
+                        jstore.transition(
+                            latest.kernel_job_id,
+                            JobState.CANCELLED,
+                            error="research project cancelled before claim",
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    latest = self.get_project(project_id)
+                    profile = dict(latest.model_profile or {})
+                    profile["cancel_ack_error"] = f"{type(exc).__name__}: {exc}"
+                    latest.model_profile = profile
+                    latest.status = ResearchStatus.CANCELLING
+                    latest.cancel_requested = True
+                    self.store.save_project(latest)
+                    self.store.add_event(
+                        project_id,
+                        "cancel_kernel_failed",
+                        profile["cancel_ack_error"],
+                        {"kernel_job_id": latest.kernel_job_id, "phase": "terminal_transition"},
+                    )
+        elif kernel_cancel_error and latest.kernel_job_id:
+            # Keep CANCELLING — do not claim CANCELLED while kernel may still run.
+            latest = self.get_project(project_id)
+            if latest.status not in TERMINAL_STATUSES:
+                latest.status = ResearchStatus.CANCELLING
+                latest.cancel_requested = True
+                self.store.save_project(latest)
         return self.get_project(project_id)
 
     def resume(self, project_id: str, *, background: bool = False) -> ResearchProject:
@@ -1476,17 +1629,36 @@ class ResearchService:
         return self.get_project(project_id)
 
     def _maybe_promote_knowledge(self, project: ResearchProject) -> None:
-        """Promote verified claims after COMPLETED. Never fails research completion."""
+        """Promote verified claims after COMPLETED. Never fails research completion.
+
+        Research COMPLETED ≠ knowledge learned. Status is stored separately.
+        """
         if project.status != ResearchStatus.COMPLETED:
             return
         if not bool(getattr(self, "auto_promote_verified_knowledge", True)):
+            profile = dict(project.model_profile or {})
+            profile["knowledge_promotion_status"] = KnowledgePromotionStatus.NOT_REQUESTED.value
+            project.model_profile = profile
+            self.store.save_project(project)
             return
         if self.assimilation_service is None or self.knowledge is None:
+            profile = dict(project.model_profile or {})
+            profile["knowledge_promotion_status"] = KnowledgePromotionStatus.NOT_REQUESTED.value
+            project.model_profile = profile
+            self.store.save_project(project)
             return
         if not hasattr(self.assimilation_service, "assimilate_research_project"):
+            profile = dict(project.model_profile or {})
+            profile["knowledge_promotion_status"] = KnowledgePromotionStatus.NOT_REQUESTED.value
+            project.model_profile = profile
+            self.store.save_project(project)
             return
         claims = self.store.list_claims(project.project_id)
         evidence = self.store.list_evidence(project.project_id)
+        profile = dict(project.model_profile or {})
+        profile["knowledge_promotion_status"] = KnowledgePromotionStatus.RUNNING.value
+        project.model_profile = profile
+        self.store.save_project(project)
         try:
             receipt = self.assimilation_service.assimilate_research_project(
                 project,
@@ -1498,9 +1670,21 @@ class ResearchService:
             receipt_dict = (
                 receipt.public_dict() if hasattr(receipt, "public_dict") else dict(receipt or {})
             )
+            failures = int(receipt_dict.get("failure_count") or 0)
+            successes = int(receipt_dict.get("success_count") or 0)
+            if receipt_dict.get("ok") is False or (failures > 0 and successes == 0):
+                promo_status = KnowledgePromotionStatus.FAILED.value
+            elif failures > 0 and successes > 0:
+                promo_status = KnowledgePromotionStatus.PARTIAL.value
+            elif receipt_dict.get("ok") is True or successes > 0:
+                promo_status = KnowledgePromotionStatus.COMPLETED.value
+            else:
+                promo_status = KnowledgePromotionStatus.UNKNOWN.value
             project.model_profile = {
                 **dict(project.model_profile or {}),
                 "knowledge_promotion": receipt_dict,
+                "knowledge_promotion_status": promo_status,
+                "knowledge_promotion_error": None,
             }
             self.store.save_project(project)
             self.store.add_event(
@@ -1510,6 +1694,7 @@ class ResearchService:
                 {
                     "receipt_id": receipt_dict.get("receipt_id"),
                     "ok": receipt_dict.get("ok"),
+                    "status": promo_status,
                     "success_count": receipt_dict.get("success_count"),
                     "skipped_count": receipt_dict.get("skipped_count"),
                     "failure_count": receipt_dict.get("failure_count"),
@@ -1523,6 +1708,7 @@ class ResearchService:
                         "project_id": project.project_id,
                         "receipt_id": receipt_dict.get("receipt_id"),
                         "ok": receipt_dict.get("ok"),
+                        "status": promo_status,
                         "success_count": receipt_dict.get("success_count"),
                         "document_ids": list(receipt_dict.get("document_ids") or [])[:20],
                     },
@@ -1532,11 +1718,13 @@ class ResearchService:
             error_payload = {
                 "error": f"{type(exc).__name__}: {exc}",
                 "project_id": project.project_id,
+                "code": "KNOWLEDGE_PROMOTION_FAILED",
             }
             try:
                 project.model_profile = {
                     **dict(project.model_profile or {}),
                     "knowledge_promotion_error": error_payload,
+                    "knowledge_promotion_status": KnowledgePromotionStatus.FAILED.value,
                 }
                 self.store.save_project(project)
                 self.store.add_event(
@@ -1826,8 +2014,14 @@ class ResearchService:
                 http_status=400,
                 details={"url": cleaned, "reason": decision.reason},
             )
-        if self._runners_externalized() and self.job_runtime is not None:
+        if self._runners_externalized():
+            self._require_external_runtime(capability="research.fetch_url")
             return self._enqueue_url_fetch(project_id, cleaned)
+        if not allow_inprocess_research_execution():
+            refuse_inline_research(
+                reason="inprocess_not_allowed",
+                capability="research.fetch_url",
+            )
         return self._fetch_url_source_inline(project_id, cleaned)
 
     def _enqueue_url_fetch(self, project_id: str, url: str) -> dict[str, Any]:
@@ -1888,7 +2082,13 @@ class ResearchService:
             "truth": {"executed_via": "research_worker", "fetch_deferred": True},
         }
 
-    def _fetch_url_source_inline(self, project_id: str, cleaned: str) -> dict[str, Any]:
+    def _fetch_url_source_inline(
+        self,
+        project_id: str,
+        cleaned: str,
+        *,
+        reserved_source_id: str | None = None,
+    ) -> dict[str, Any]:
         project = self.get_project(project_id)
         reason = web_unavailable_reason(
             allow_web=True,
@@ -1917,20 +2117,50 @@ class ResearchService:
                 "SOURCE_FETCH_FAILED",
                 str(exc),
                 http_status=502,
-                details={"url": cleaned},
+                details={"url": cleaned, "source_id": reserved_source_id},
             ) from exc
         from .sources import ResearchSourceCollector
 
         ingestor = ResearchSourceCollector(self.store, self.snapshots_root)
-        source, text = ingestor.from_web_page(project_id, page)
-        synced = self.brain.sync_web_page(source, text)
+        source, text = ingestor.from_web_page(
+            project_id,
+            page,
+            reserved_source_id=reserved_source_id,
+        )
+        try:
+            synced = self.brain.sync_web_page(source, text)
+        except Exception as exc:  # noqa: BLE001 — source fetched; brain sync failure visible
+            from dataclasses import replace
+
+            from .types import BrainStatus
+
+            meta = dict(source.metadata or {})
+            meta["fetch_status"] = "FETCHED"
+            meta["brain_sync_error"] = f"{type(exc).__name__}: {exc}"
+            failed = self.store.save_source(
+                replace(
+                    source,
+                    brain_status=BrainStatus.FAILED,
+                    metadata=meta,
+                )
+            )
+            self.store.add_event(
+                project_id,
+                "brain_sync_failed",
+                str(exc),
+                {"source_id": failed.source_id, "url": cleaned, "stage": "web_page"},
+            )
+            return {
+                "source": failed.public_dict(),
+                "brain_sync": {"ok": False, "error": str(exc)},
+            }
         self.store.add_event(
             project_id,
             "source_fetched",
             synced.title or cleaned,
             {"source_id": synced.source_id, "url": cleaned},
         )
-        return {"source": synced.public_dict()}
+        return {"source": synced.public_dict(), "brain_sync": {"ok": True}}
 
     def execute_fetch_url(
         self,
@@ -1939,9 +2169,80 @@ class ResearchService:
         *,
         source_id: str | None = None,
     ) -> dict[str, Any]:
-        """Worker-owned URL fetch + Brain sync."""
-        result = self._fetch_url_source_inline(project_id, url)
-        # If a pending placeholder exists, prefer returning the synced source.
+        """Worker-owned URL fetch + Brain sync.
+
+        When ``source_id`` names a reserved PENDING source, that durable identity
+        is transitioned (PENDING → OK/FAILED) rather than minting a second row.
+        """
+        from dataclasses import replace
+
+        from .sources import ResearchSourceCollector
+        from .types import BrainStatus, ParseStatus
+
+        reserved = None
+        if source_id:
+            reserved = self.store.get_source(source_id)
+            if reserved is None or reserved.project_id != project_id:
+                raise ResearchError(
+                    "SOURCE_IDENTITY_CONFLICT",
+                    f"Reserved source_id {source_id} not found for project",
+                    http_status=409,
+                    details={"source_id": source_id, "project_id": project_id},
+                )
+            # Mark FETCHING for operator truth before network I/O.
+            meta = dict(reserved.metadata or {})
+            meta["fetch_status"] = "FETCHING"
+            prov = dict(reserved.provenance or {})
+            prov["pending_fetch"] = True
+            reserved = self.store.save_source(
+                replace(reserved, metadata=meta, provenance=prov)
+            )
+
+        try:
+            result = self._fetch_url_source_inline(
+                project_id,
+                url,
+                reserved_source_id=source_id,
+            )
+        except ResearchError as exc:
+            if reserved is not None:
+                meta = dict(reserved.metadata or {})
+                meta["fetch_status"] = "FAILED"
+                meta["fetch_error"] = exc.message
+                reserved = self.store.save_source(
+                    replace(
+                        reserved,
+                        parse_status=ParseStatus.FAILED,
+                        brain_status=BrainStatus.FAILED,
+                        metadata=meta,
+                    )
+                )
+                self.store.add_event(
+                    project_id,
+                    "source_fetch_failed",
+                    exc.message,
+                    {"source_id": reserved.source_id, "code": exc.code},
+                )
+            raise
+        except Exception as exc:  # noqa: BLE001
+            if reserved is not None:
+                meta = dict(reserved.metadata or {})
+                meta["fetch_status"] = "FAILED"
+                meta["fetch_error"] = f"{type(exc).__name__}: {exc}"
+                reserved = self.store.save_source(
+                    replace(
+                        reserved,
+                        parse_status=ParseStatus.FAILED,
+                        brain_status=BrainStatus.FAILED,
+                        metadata=meta,
+                    )
+                )
+            raise ResearchError(
+                "SOURCE_FETCH_FAILED",
+                str(exc),
+                http_status=502,
+                details={"url": url, "source_id": source_id},
+            ) from exc
         return result
 
     def connect_dataset(
@@ -1953,33 +2254,84 @@ class ResearchService:
         indexed: bool | None = None,
         label: str | None = None,
     ) -> ResearchProject:
+        """Connect a dataset only after DatasetService canonical learning verification.
+
+        Caller-supplied ``indexed`` is advisory/backward-compatible and never grants
+        authority.
+        """
         project = self.get_project(project_id)
         if not dataset_id:
             raise ResearchError("VALIDATION_ERROR", "dataset_id is required", http_status=422)
+
+        learning = self._resolve_canonical_dataset_learning(
+            dataset_id, version_id=version_id
+        )
+        canonical_state = str(learning.get("canonical_state") or "")
+        index_usable = bool(learning.get("index_usable") or learning.get("learned"))
+        if not index_usable:
+            raise ResearchError(
+                "DATASET_NOT_LEARNED",
+                (
+                    "Dataset is not in a usable learned/indexed state "
+                    f"(canonical={canonical_state or 'UNKNOWN'}; "
+                    f"client_indexed={indexed!r} ignored as authority)"
+                ),
+                http_status=409,
+                details={
+                    "dataset_id": dataset_id,
+                    "version_id": version_id or learning.get("version_id"),
+                    "canonical_state": canonical_state or "UNKNOWN",
+                    "client_indexed": indexed,
+                    "learning": {
+                        k: learning.get(k)
+                        for k in (
+                            "canonical_state",
+                            "version_id",
+                            "index_ref",
+                            "learned",
+                            "index_usable",
+                            "brainStatus",
+                            "usableIndexId",
+                        )
+                        if k in learning
+                    },
+                },
+            )
+
+        if version_id and learning.get("version_matches") is False:
+            raise ResearchError(
+                "DATASET_VERSION_MISMATCH",
+                "Requested dataset version is not the learned/indexed version",
+                http_status=409,
+                details={
+                    "dataset_id": dataset_id,
+                    "requested_version_id": version_id,
+                    "learned_version_id": learning.get("learned_version_id"),
+                },
+            )
+
+        resolved_version = str(
+            version_id or learning.get("version_id") or ""
+        ) or None
         entry = {
             "dataset_id": dataset_id,
-            "version_id": version_id,
-            "indexed": bool(indexed) if indexed is not None else False,
+            "version_id": resolved_version,
+            "indexed": True,
             "label": label or dataset_id,
+            "canonical_state": canonical_state or None,
+            "client_indexed_advisory": indexed,
+            "verified_by": "DatasetService",
+            "index_ref": learning.get("index_ref"),
         }
-        if indexed is False:
-            raise ResearchError(
-                "DATASET_NOT_INDEXED",
-                "Dataset is not indexed into Brain yet",
-                http_status=409,
-                details=entry,
-            )
-        # Scope local retrieval to dataset knowledge source if provided as label/source.
         scope = f"dataset:{dataset_id}"
-        if version_id:
-            scope = f"dataset:{dataset_id}:{version_id}"
+        if resolved_version:
+            scope = f"dataset:{dataset_id}:{resolved_version}"
         datasets = [d for d in project.connected_datasets if d.get("dataset_id") != dataset_id]
         datasets.append(entry)
         project.connected_datasets = datasets
         scopes = list(project.local_scopes)
         if scope not in scopes:
             scopes.append(scope)
-        # Also allow generic dataset source tag used by Knowledge ingest pipelines.
         for candidate in (f"dataset:{dataset_id}", "dataset"):
             if candidate not in scopes:
                 scopes.append(candidate)
@@ -1992,6 +2344,80 @@ class ResearchService:
             entry,
         )
         return self.get_project(project_id)
+
+    def _resolve_canonical_dataset_learning(
+        self,
+        dataset_id: str,
+        *,
+        version_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Resolve learning truth via DatasetService — never from client booleans."""
+        ds = getattr(self, "dataset_service", None)
+        if ds is None:
+            ds = getattr(self, "_dataset_service", None)
+        if ds is None:
+            raise ResearchError(
+                "DATASET_NOT_LEARNED",
+                "DatasetService not bound; cannot verify canonical learning state",
+                http_status=503,
+                details={"dataset_id": dataset_id, "version_id": version_id},
+            )
+        try:
+            if hasattr(ds, "learning_state_for_dataset"):
+                state = ds.learning_state_for_dataset(dataset_id)
+            elif hasattr(ds, "brain_status_for_dataset"):
+                state = ds.brain_status_for_dataset(dataset_id)
+            else:
+                raise ResearchError(
+                    "DATASET_NOT_LEARNED",
+                    "DatasetService lacks learning_state_for_dataset",
+                    http_status=503,
+                    details={"dataset_id": dataset_id},
+                )
+        except ResearchError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise ResearchError(
+                "DATASET_NOT_LEARNED",
+                f"Failed to resolve dataset learning state: {type(exc).__name__}: {exc}",
+                http_status=503,
+                details={"dataset_id": dataset_id},
+            ) from exc
+        if not isinstance(state, dict):
+            state = dict(getattr(state, "public_dict", lambda: {})())
+        out = dict(state)
+        # Normalize camelCase DatasetLearningState.public_dict → snake for Research.
+        canon = (
+            out.get("canonical_state")
+            or out.get("canonicalState")
+            or out.get("state")
+            or out.get("learning_state")
+            or ""
+        )
+        out["canonical_state"] = str(canon)
+        out["version_id"] = out.get("version_id") or out.get("versionId")
+        out["learned_version_id"] = out.get("version_id")
+        out["index_version_id"] = out.get("version_id")
+        out["learned"] = bool(out.get("learned"))
+        out["index_usable"] = bool(
+            out.get("learned")
+            or out.get("usableIndexId")
+            or out.get("usable_index_id")
+            or str(canon).upper() in {"LEARNED", "STALE_JOB"}
+        )
+        out["retrieval_ready"] = out["index_usable"]
+        out["index_ref"] = out.get("usableIndexId") or out.get("indexId") or out.get("index_id")
+        if version_id:
+            out["requested_version_id"] = version_id
+            # Reject if a specific version was requested but learned version differs.
+            learned_v = out.get("version_id")
+            if learned_v and str(version_id) != str(learned_v):
+                out["version_matches"] = False
+            else:
+                out["version_matches"] = True
+        else:
+            out["version_matches"] = True
+        return out
 
     def retry_brain_sync(self, project_id: str, source_id: str) -> dict[str, Any]:
         self.get_project(project_id)
@@ -2058,7 +2484,8 @@ class ResearchService:
 
     def regenerate_report(self, project_id: str):
         project = self.get_project(project_id)
-        if self._runners_externalized() and self.job_runtime is not None:
+        if self._runners_externalized():
+            self._require_external_runtime(capability="research.report.generate")
             job = self.job_runtime.enqueue(
                 capability_id="research.report.generate",
                 arguments={"action": "regenerate_report", "project_id": project_id},
@@ -2083,6 +2510,11 @@ class ResearchService:
                 "status": "QUEUED",
                 "truth": {"executed_via": "research_worker"},
             }
+        if not allow_inprocess_research_execution():
+            refuse_inline_research(
+                reason="inprocess_not_allowed",
+                capability="research.report.generate",
+            )
         return self._regenerate_report_inline(project_id)
 
     def _regenerate_report_inline(self, project_id: str):

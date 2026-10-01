@@ -458,7 +458,9 @@ def build_question_model(
             enriched = enricher(model)
             if isinstance(enriched, ResearchQuestionModel):
                 return enriched
-        except Exception:
-            # Deterministic core must survive enrichment failures.
+        except Exception as exc:  # noqa: BLE001 — deterministic core must survive
+            model.ambiguities = list(model.ambiguities) + [
+                f"enrichment_unavailable:{type(exc).__name__}"
+            ]
             return model
     return model

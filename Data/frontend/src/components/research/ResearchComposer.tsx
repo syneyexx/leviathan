@@ -317,7 +317,10 @@ export function ResearchComposer({ ws }: Props) {
 
             {ws.webReadiness && !ws.webReadiness.search_available ? (
               <p className="lv-v2-muted" role="status">
-                Web: {ws.webReadiness.operator_summary || "search unavailable"}
+                Web readiness: {ws.webReadiness.operator_summary || "search unavailable"}
+                {ws.webProbeExecution.phase !== "idle" ? (
+                  <> · probe {ws.webProbeExecution.phase}</>
+                ) : null}
                 <Button
                   variant="ghost"
                   size="sm"

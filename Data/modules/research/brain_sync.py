@@ -71,9 +71,6 @@ class ResearchBrainSync:
             return self._mark(source, BrainStatus.SKIPPED, error="Not a full web page")
         if source.parse_status != ParseStatus.OK or not (text or "").strip():
             return self._mark(source, BrainStatus.SKIPPED, error="No page text")
-        # Do not sync bare search snippets.
-        if source.source_type == SourceType.WEB_SEARCH:
-            return self._mark(source, BrainStatus.SKIPPED, error="Search snippets are not full documents")
 
         doc_id = f"research-web:{source.content_hash or source.source_id}"
         try:
