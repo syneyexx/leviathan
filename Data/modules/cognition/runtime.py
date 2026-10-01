@@ -673,8 +673,8 @@ class CognitiveRuntime:
     # --- public API continued ---
 
     def run_placeholder_keep_order(self) -> None:
-        """Placeholder removed — keep structure for patch targeting."""
-        return None
+        """Removed no-op kept only for external monkeypatch targeting; do not call."""
+        raise NotImplementedError("cognition placeholder path removed")
 
     def run(self, run_id: str, *, history: list[dict[str, str]] | None = None) -> dict[str, Any]:
         state = self._require(run_id)

@@ -31,8 +31,12 @@ class SkillExecuteRequest(BaseModel):
 def _gateway_status_http_code(status: CapabilityStatus | str) -> int | None:
     """Map gateway result statuses that must not return HTTP 200."""
     value = status.value if isinstance(status, CapabilityStatus) else str(status or "").upper()
+    if value == CapabilityStatus.APPROVAL_REQUIRED.value:
+        return 403
     if value == CapabilityStatus.REJECTED.value:
         return 422
+    if value == CapabilityStatus.QUEUED.value:
+        return 202
     if value == CapabilityStatus.TIMEOUT.value:
         return 504
     if value == CapabilityStatus.CANCELLED.value:
@@ -587,6 +591,8 @@ def build_skills_router(
                     reason = (getattr(result, "telemetry", None) or {}).get("reason")
                     if reason in {"approval_required", "approval_denied"}:
                         code = 403
+                if code == 202:
+                    return body
                 raise HTTPException(status_code=code, detail=body)
         return body
 

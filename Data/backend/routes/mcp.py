@@ -369,6 +369,18 @@ def build_mcp_router(
             body["queued"] = True
             body["job_id"] = job_id
             return _accepted(body)
+        if result.status == CapabilityStatus.APPROVAL_REQUIRED:
+            raise HTTPException(status_code=403, detail=body)
+        if result.status == CapabilityStatus.REJECTED:
+            reason = (result.telemetry or {}).get("reason")
+            code = 403 if reason in {"approval_required", "approval_denied"} else 422
+            raise HTTPException(status_code=code, detail=body)
+        if result.status == CapabilityStatus.TIMEOUT:
+            raise HTTPException(status_code=504, detail=body)
+        if result.status == CapabilityStatus.CANCELLED:
+            raise HTTPException(status_code=409, detail=body)
+        if result.status == CapabilityStatus.FAILED:
+            raise HTTPException(status_code=500, detail=body)
         return body
 
     return router

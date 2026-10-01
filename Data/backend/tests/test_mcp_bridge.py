@@ -240,7 +240,8 @@ class McpBridgeTestCase(unittest.TestCase):
                 arguments={"text": "x", "approved_by_user": True},
             )
         )
-        self.assertEqual(result.status, CapabilityStatus.REJECTED)
+        self.assertEqual(result.status, CapabilityStatus.APPROVAL_REQUIRED)
+        self.assertEqual(result.telemetry.get("reason"), "approval_required")
         self.assertIn("approval", (result.error or "").lower())
 
     def test_gateway_honors_real_approval(self) -> None:

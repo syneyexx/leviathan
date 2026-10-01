@@ -195,6 +195,30 @@ class SkillsFailClosedTests(unittest.TestCase):
         self.assertEqual(gateway.last_request.idempotency_key, "idem-1")
         self.assertEqual(gateway.last_request.approval_id, "a1")
 
+    def test_approval_required_execute_is_http_403(self) -> None:
+        skill = {
+            "skill_id": "skill:apr",
+            "name": "apr",
+            "content_hash": "abc",
+            "enabled": True,
+            "required_capabilities": ["cap.a"],
+        }
+        catalog = _FakeCatalog({"cap.a": _Cap("cap.a")})
+        gateway = _FakeGateway(
+            _FakeResult(
+                CapabilityStatus.APPROVAL_REQUIRED,
+                telemetry={"reason": "approval_required"},
+            )
+        )
+        client = self._client(skill=skill, catalog=catalog, gateway=gateway)
+        resp = client.post(
+            "/api/skills/skill:apr/execute",
+            json={"capability_id": "cap.a", "requested_by": "skills_page"},
+        )
+        self.assertEqual(resp.status_code, 403)
+        detail = resp.json()["detail"]
+        self.assertEqual(detail["result"]["status"], CapabilityStatus.APPROVAL_REQUIRED.value)
+
     def test_timeout_maps_504(self) -> None:
         skill = {
             "skill_id": "skill:to",

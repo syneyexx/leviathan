@@ -831,11 +831,27 @@ def _default_gateway_execute(
                 result={"output": getattr(cap_result, "output", None) or cap_result.public_dict()},
                 expected_lease_owner=worker_id,
             )
+        elif cap_result.status == CapabilityStatus.APPROVAL_REQUIRED:
+            # No WAITING_APPROVAL job state — fail closed; client must re-submit with approval.
+            store.transition(
+                job.job_id,
+                JobState.FAILED,
+                error=str(getattr(cap_result, "error", None) or "approval_required"),
+                expected_lease_owner=worker_id,
+            )
         elif cap_result.status == CapabilityStatus.REJECTED:
             store.transition(
                 job.job_id,
                 JobState.FAILED,
                 error=str(getattr(cap_result, "error", "rejected")),
+                expected_lease_owner=worker_id,
+            )
+        elif cap_result.status == CapabilityStatus.QUEUED:
+            # Nested enqueue is not terminal success for this job.
+            store.transition(
+                job.job_id,
+                JobState.FAILED,
+                error="nested_capability_queued_not_completed",
                 expected_lease_owner=worker_id,
             )
         else:

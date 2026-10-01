@@ -332,15 +332,21 @@ def build_capabilities_router(
             level="info" if result.status.value == "COMPLETED" else "warn",
         )
         status_code = 200
-        if result.status == CapabilityStatus.REJECTED:
+        if result.status == CapabilityStatus.APPROVAL_REQUIRED:
+            status_code = 403
+        elif result.status == CapabilityStatus.REJECTED:
             reason = (result.telemetry or {}).get("reason")
             status_code = 403 if reason in {"approval_required", "approval_denied"} else 422
+        elif result.status == CapabilityStatus.QUEUED:
+            status_code = 202
         elif result.status == CapabilityStatus.TIMEOUT:
             status_code = 504
         elif result.status == CapabilityStatus.CANCELLED:
             status_code = 409
         elif result.status == CapabilityStatus.FAILED:
             status_code = 500
+        if status_code == 202:
+            return {"result": result.public_dict()}
         if status_code != 200:
             raise HTTPException(status_code=status_code, detail=result.public_dict())
         return {"result": result.public_dict()}

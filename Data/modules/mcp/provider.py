@@ -131,7 +131,7 @@ class McpProvider:
             status = {
                 "MCP_CALL_TIMEOUT": CapabilityStatus.TIMEOUT,
                 "MCP_CALL_CANCELLED": CapabilityStatus.CANCELLED,
-                "MCP_APPROVAL_REQUIRED": CapabilityStatus.REJECTED,
+                "MCP_APPROVAL_REQUIRED": CapabilityStatus.APPROVAL_REQUIRED,
             }.get(exc.code, CapabilityStatus.FAILED)
             return CapabilityResult(
                 request_id=request_id,
