@@ -236,29 +236,34 @@ export function LiveAgentsView({
 
           <div className="lv-la-control__block">
             <h4>Risk &amp; Execution</h4>
+            <p className="lv-ao-muted">
+              Paper trading is verplicht. Limit fields below are operator intent chrome until applied via Advanced
+              deployment / portfolio risk settings (Requested ≠ Effective until backend confirms).
+            </p>
             <label>
-              Max. posities per agent
+              Max. posities per agent (requested)
               <input value={data.maxPositions} onChange={(e) => data.setMaxPositions(e.target.value)} />
             </label>
             <label>
-              Max. positie grootte (%)
+              Max. positie grootte % (requested)
               <input value={data.maxPosSize} onChange={(e) => data.setMaxPosSize(e.target.value)} />
             </label>
             <label className="lv-la-check">
               <input type="checkbox" checked={data.paperOnly} onChange={(e) => data.setPaperOnly(e.target.checked)} disabled />
-              Paper trading modus (verplicht)
+              Paper trading modus (verplicht / effective)
             </label>
             <label className="lv-la-check">
               <input
                 type="checkbox"
                 checked={data.riskGuards}
                 onChange={(e) => data.setRiskGuards(e.target.checked)}
+                disabled
               />
-              Risk guards actief
+              RiskGuard path (always on for paper orders)
             </label>
             <div className="lv-la-card__actions">
               <button type="button" className="lv-hub-btn lv-hub-btn--primary" onClick={onOpenAdvanced}>
-                Start paper trading
+                Start paper trading / deploy
               </button>
               <button
                 type="button"
@@ -266,7 +271,7 @@ export function LiveAgentsView({
                 disabled={!!data.busy}
                 onClick={() => void data.killAll()}
               >
-                Stop alle agents / kill
+                Kill switch alle agents
               </button>
             </div>
           </div>

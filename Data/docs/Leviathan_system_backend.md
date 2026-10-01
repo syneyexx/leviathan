@@ -1591,6 +1591,8 @@ Agent/VLM confidence is never a competing gate. Caller `passed=true` booleans ar
 Key files:
 
 - `portefeuille/service.py` — canonical paper portfolio lifecycle/accounting/order service used by Research Command/Orchestra paper routing;
+  - **Paper capital funding:** `POST /api/market-sim/portfolios/{id}/funding` → `PortfolioService.fund_portfolio` / `PortfolioBook.apply_funding` (+ `WalletLedger.apply_funding` for agent wallets). Funding is capital contribution/withdrawal — **never** alters `realized_pnl`. Idempotent on `idempotencyKey`; unsafe withdrawals refuse when available cash / reserved capital would break.
+- `scenario_generator.py` — deterministic offline replay datasets from structured scenario specs/presets (`POST /api/market-sim/scenarios`). Optional model constraints refine segments only; LLMs never emit freehand OHLCV rows.
 - `paper_broker.py` — paper-broker abstraction and local paper sessions;
 - `paper_forward.py` — paper-forward runner;
 - `paper_deployment.py` — durable deployment/feed health;
