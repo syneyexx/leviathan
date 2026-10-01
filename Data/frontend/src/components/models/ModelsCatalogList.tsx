@@ -93,6 +93,7 @@ export function ModelsCatalogList({ ws }: Props) {
                       {model.quantization ? ` / ${model.quantization}` : ""}
                     </span>
                   </span>
+                  {model.active ? <span className="lv-v2-badge">ACTIVE</span> : null}
                   {model.format ? <span className="lv-v2-badge lv-v2-badge--muted">{model.format.toUpperCase()}</span> : null}
                   {model.loaded ? <span className="lv-v2-status-dot lv-v2-status-dot--success" title="Geladen" /> : null}
                 </button>

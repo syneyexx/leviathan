@@ -21,7 +21,9 @@ export type ChatConfigurationState = {
   setCollaborationStrategy: (value: CollaborationStrategy) => void;
   toolPolicy: Record<string, unknown> | null;
   setToolPolicy: (policy: Record<string, unknown> | null) => void;
+  /** All selectable registry models (chat picker shows every model). */
   chatModels: ModelDescriptor[];
+  /** Models that fail hard chat eligibility — still listed, with UI warning. */
   nonChatModels: ModelDescriptor[];
   modelLabel: string;
   contextWindow: number | null;
@@ -41,10 +43,9 @@ export function useChatConfiguration(
     useState<CollaborationStrategy>("direct");
   const [toolPolicy, setToolPolicy] = useState<Record<string, unknown> | null>(null);
 
-  const { eligible: chatModels, ineligible: nonChatModels } = useMemo(
-    () => partitionChatModels(models),
-    [models],
-  );
+  // Picker shows every discovered model; partition only for warning labels.
+  const { ineligible: nonChatModels } = useMemo(() => partitionChatModels(models), [models]);
+  const chatModels = models;
 
   const setReasoningMode = (mode: ReasoningModeId | string) => {
     setReasoningModeRaw(parseReasoningMode(mode));
@@ -52,26 +53,31 @@ export function useChatConfiguration(
 
   useEffect(() => {
     if (!selectedModelId) return;
-    const stillEligible = chatModels.some((item) => item.id === selectedModelId);
-    if (!stillEligible) {
+    const match = models.find((item) => item.id === selectedModelId);
+    if (!match) {
+      setSelectedModelId(null);
+      opts?.onIneligibleModel?.("Selected model is no longer available — switched to Auto");
+      return;
+    }
+    if (match.lifecycleState === "error" || match.lifecycleState === "offline") {
       setSelectedModelId(null);
       opts?.onIneligibleModel?.(
-        "Selected model is not chat-capable — switched to Auto",
+        `Selected model is ${match.lifecycleState} — switched to Auto`,
       );
     }
-  }, [chatModels, selectedModelId, opts]);
+  }, [models, selectedModelId, opts]);
 
   const modelLabel = useMemo(() => {
     if (!selectedModelId) return "Auto";
-    const match = chatModels.find((item) => item.id === selectedModelId);
+    const match = models.find((item) => item.id === selectedModelId);
     return match?.displayName || match?.id || selectedModelId;
-  }, [chatModels, selectedModelId]);
+  }, [models, selectedModelId]);
 
   const contextWindow = useMemo(() => {
     if (!selectedModelId) return null;
-    const match = chatModels.find((item) => item.id === selectedModelId);
+    const match = models.find((item) => item.id === selectedModelId);
     return match?.contextWindow ?? null;
-  }, [chatModels, selectedModelId]);
+  }, [models, selectedModelId]);
 
   return {
     selectedModelId,

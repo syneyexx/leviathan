@@ -309,6 +309,7 @@ export type ModelsWorkspace = {
   activeJobId: string | null;
   loadSelected: () => Promise<void>;
   unloadSelected: () => Promise<void>;
+  activateSelected: () => Promise<void>;
   stop: () => Promise<void>;
   /** Worker Fabric model_runtime readiness (separate from provider health). */
   modelRuntime: ModelsStatus["modelRuntime"];
@@ -887,6 +888,20 @@ export function useModelsWorkspace(): ModelsWorkspace {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, loadAll, toast, busy, awaitJob]);
 
+  const activateSelected = useCallback(async () => {
+    if (!selectedId) return;
+    await withOp("activate", async () => {
+      try {
+        await api.activateModel(selectedId);
+        toast("Model geactiveerd — beschikbaar voor Chat (Auto)");
+        await loadAll();
+      } catch (err) {
+        toast(errMsg(err, "Activeren mislukt"));
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, loadAll, toast, busy]);
+
   const stop = useCallback(async () => {
     // Cancel Leviathan-owned operation only — never kill external LM Studio.
     const jobId = activeJobId;
@@ -1087,6 +1102,7 @@ export function useModelsWorkspace(): ModelsWorkspace {
     activeJobId,
     loadSelected,
     unloadSelected,
+    activateSelected,
     stop,
     modelRuntime: status?.modelRuntime ?? null,
     capField,

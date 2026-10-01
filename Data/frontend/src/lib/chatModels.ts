@@ -47,6 +47,20 @@ export function chatIneligibilityReason(model: ModelDescriptor): string {
   return "Not eligible for chat";
 }
 
+/**
+ * Soft picker warning — only for models that will still fail even when the
+ * operator explicitly selects them (embeddings / verified unsupported / offline).
+ * Unverified LM Studio models are selectable and must not look "hidden".
+ */
+export function modelPickerWarning(model: ModelDescriptor): string | null {
+  if (model.lifecycleState === "error" || model.lifecycleState === "offline") {
+    return `Model ${model.lifecycleState}`;
+  }
+  if (isObviousNonChatModel(model)) return "Embedding/rerank — niet voor chat";
+  if (model.capabilities?.chat === "unsupported") return "Chat niet ondersteund";
+  return null;
+}
+
 export function partitionChatModels(models: ModelDescriptor[]): {
   eligible: ModelDescriptor[];
   ineligible: ModelDescriptor[];
