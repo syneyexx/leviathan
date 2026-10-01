@@ -551,6 +551,38 @@ Leviathan placement policy — not an LM Studio field.
 
 A configured/listed model is not automatically resident, healthy or tool/vision/reasoning capable. Capability probes and runtime evidence determine support.
 
+### 10.1.0 Capability vocabulary and effective truth
+
+Canonical capability names live in `capability_vocabulary.py` (snake↔camel alias
+normalization). Frontend must not maintain a divergent taxonomy.
+
+**Effective capability precedence** (`effective_capability.py`) — strongest first:
+
+1. Operator override / configured (`capabilityOverrides` metadata)
+2. Recent verified probe result (`model_capability_results`) — SUPPORTED or UNSUPPORTED
+3. Authoritative provider/runtime declared state
+4. Declared model metadata
+5. Bounded family inference (never stronger than verified truth; rerank ≠ embeddings)
+6. UNKNOWN
+
+Router eligibility and UI/API share this effective decision. Hard
+`ModelRequest.required_capabilities` are **fail-closed**: UNKNOWN / UNVERIFIED /
+UNMEASURED / UNSUPPORTED reject. Soft preferences belong in scoring only.
+
+Dialect adaptation (`model_runtime/dialect.py`) proves **wire mappability only**
+(`transport_mappable` / UNMEASURED). Emitting `tools` / `logprobs` / `stream`
+does **not** claim model capability SUPPORTED. Unknown dialects fail closed.
+
+**Execution locality** (`models/locality.py`) is distinct from `ModelSource`
+acquisition provenance. `local_only` uses trusted endpoint locality (loopback /
+configured private hosts via `provider_io.endpoint_locality`), so localhost LM Studio
+is eligible when otherwise suitable.
+
+Optimizer lifecycle: exactly one `OptimizationRun` identity from start→terminal;
+cancel reaches that object and cancels the background task; HEADROOM_VIOLATION /
+OOM / UNSTABLE never become BEST; provider estimate + hardware fingerprint are
+wired; each estimate/preflight/load/benchmark/unload is bounded.
+
 ### 10.1.1 Model selection authority (production inference)
 
 The Model Control Plane router (`router.py`) is the sole production selection authority.
