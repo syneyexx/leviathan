@@ -68,11 +68,16 @@ class SourceCodeHandler:
         staging_root: Path | None = None,
     ) -> NormalizedArtifact:
         ref, digest = materialize_text_content(path, staging_root=staging_root)
-        # Symbol extraction needs text; for large files load only when python.
+        # Symbol extraction needs text; for large files skip in-memory AST (honest).
         lang = _LANG_BY_EXT.get(detection.extension.lower()) or _LANG_BY_EXT.get(Path(relative_path).suffix.lower())
         text_for_meta = ref.text if ref.text is not None else ""
-        if lang == "python" and ref.path is not None:
+        size = path.stat().st_size if path.is_file() else 0
+        from .documents import INLINE_TEXT_BYTES
+
+        if lang == "python" and ref.path is not None and size <= INLINE_TEXT_BYTES:
             text_for_meta = ref.read_text()
+        elif lang == "python" and ref.path is not None and size > INLINE_TEXT_BYTES:
+            text_for_meta = ""  # refuse full-string symbol pass on large sources
         elif ref.text is not None:
             text_for_meta = ref.text
         meta: dict[str, Any] = {
@@ -85,6 +90,9 @@ class SourceCodeHandler:
         }
         if lang == "python" and text_for_meta:
             meta.update(_python_symbols(text_for_meta))
+        elif lang == "python" and size > INLINE_TEXT_BYTES:
+            meta["symbols_skipped"] = "file_exceeds_inline_bound"
+            meta["symbols_skipped_bytes"] = size
         # Honest text ingestion for other languages — no fragile regex AST claims.
         return NormalizedArtifact(
             source_kind=SourceKind.SOURCE_CODE,
