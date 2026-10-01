@@ -18,10 +18,18 @@ export function deriveAssistantTelemetry(data: ChatResponse): AssistantTurnTelem
     return {
       ...fromPayload,
       model: fromPayload.model ?? data.model ?? null,
-      knowledge_hits:
-        fromPayload.knowledge_hits ?? data.knowledge_sources?.length ?? 0,
-      memory_hits:
-        fromPayload.memory_hits ?? data.memory_sources?.length ?? 0,
+      // Prefer explicit payload; fall back to measured array lengths only when present.
+      // Never coerce missing evidence/knowledge/memory to 0.
+      knowledge_hits: numberOrNull(
+        fromPayload.knowledge_hits,
+        data.knowledge_sources != null ? data.knowledge_sources.length : null,
+      ),
+      memory_hits: numberOrNull(
+        fromPayload.memory_hits,
+        data.memory_sources != null ? data.memory_sources.length : null,
+      ),
+      evidence_hits: numberOrNull(fromPayload.evidence_hits),
+      brain_hits: numberOrNull(fromPayload.brain_hits),
       tool_calls: mergeToolCalls(fromPayload.tool_calls, cog?.tool_calls, fromPayload.tools_invoked),
       agent_delegations: mergeDelegations(
         fromPayload.agent_delegations,
@@ -38,6 +46,7 @@ export function deriveAssistantTelemetry(data: ChatResponse): AssistantTurnTelem
         no_fabricated_brain_percent: true,
         no_hidden_cot: true,
         no_mock_tools_or_agents: true,
+        unknown_hits_are_not_zero: true,
         ...(fromPayload.truth || {}),
       },
     };
@@ -65,10 +74,11 @@ export function deriveAssistantTelemetry(data: ChatResponse): AssistantTurnTelem
     context_budget: cog?.context_budget ?? null,
     context_used: cog?.context_used ?? null,
     context_tokens: cog?.context_used ?? cog?.context_budget ?? null,
-    brain_hits: numberOr(hits.brain, hits.knowledge, data.knowledge_sources?.length),
-    knowledge_hits: numberOr(hits.knowledge, data.knowledge_sources?.length),
-    memory_hits: numberOr(hits.memory, data.memory_sources?.length),
-    evidence_hits: numberOr(hits.evidence, 0),
+    brain_hits: numberOrNull(hits.brain, hits.knowledge, data.knowledge_sources?.length),
+    knowledge_hits: numberOrNull(hits.knowledge, data.knowledge_sources?.length),
+    memory_hits: numberOrNull(hits.memory, data.memory_sources?.length),
+    // Evidence: unknown ≠ zero. Only use a measured value; never default to 0.
+    evidence_hits: numberOrNull(hits.evidence),
     tools_invoked: tools,
     tool_calls: mergeToolCalls(undefined, cog?.tool_calls, tools),
     agents,
@@ -90,6 +100,7 @@ export function deriveAssistantTelemetry(data: ChatResponse): AssistantTurnTelem
       no_fabricated_brain_percent: true,
       no_hidden_cot: true,
       no_mock_tools_or_agents: true,
+      unknown_hits_are_not_zero: true,
     },
   };
 }
@@ -154,14 +165,20 @@ function list(value: unknown): string[] {
   return value.map((item) => String(item ?? "")).filter(Boolean);
 }
 
-function numberOr(...candidates: Array<number | null | undefined>): number {
+/** First finite number among candidates; otherwise null (UNMEASURED). Never returns 0 for absence. */
+function numberOrNull(...candidates: Array<number | null | undefined>): number | null {
   for (const c of candidates) {
     if (typeof c === "number" && Number.isFinite(c)) return c;
   }
-  return 0;
+  return null;
 }
 
 export type DiagnosticStripItem = { label: string; value: string };
+
+function formatHitCount(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "UNMEASURED";
+  return `${n} hit${n === 1 ? "" : "s"}`;
+}
 
 /** Optional factual self-diagnostic strip — measured fields only. */
 export function buildDiagnosticStrip(tel: AssistantTurnTelemetry | null): DiagnosticStripItem[] {
@@ -172,8 +189,14 @@ export function buildDiagnosticStrip(tel: AssistantTurnTelemetry | null): Diagno
   if (tel.model) items.push({ label: "model", value: String(tel.model) });
   items.push({
     label: "brain",
-    value: `${tel.brain_hits ?? 0} hit${(tel.brain_hits ?? 0) === 1 ? "" : "s"}`,
+    value: formatHitCount(tel.brain_hits),
   });
+  if (tel.evidence_hits != null || tel.truth?.unknown_hits_are_not_zero) {
+    items.push({
+      label: "evidence",
+      value: formatHitCount(tel.evidence_hits),
+    });
+  }
   const webCount = tel.web_sources?.length ?? 0;
   items.push({
     label: "web",

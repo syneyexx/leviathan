@@ -98,30 +98,77 @@ class Database:
         }
 
     def list_conversations(self, limit: int = 50, *, q: str | None = None) -> list[dict]:
+        page = self.list_conversations_page(limit=limit, q=q)
+        return page["items"]
+
+    def list_conversations_page(
+        self,
+        *,
+        limit: int = 50,
+        q: str | None = None,
+        cursor: str | None = None,
+    ) -> dict:
+        """Cursor-paginated conversation catalog.
+
+        Cursor format: ``{pinned}|{updated_at}|{id}`` where pinned is 0|1.
+        Ordering: pinned DESC, updated_at DESC, id DESC (deterministic).
+        """
+        limit = max(1, min(int(limit), 200))
         with self.connect() as conn:
+            params: list = []
+            where_parts: list[str] = []
             if q and q.strip():
-                like = f"%{q.strip()}%"
-                rows = conn.execute(
-                    """
-                    SELECT id, title, created_at, updated_at, pinned
-                    FROM conversations
-                    WHERE title LIKE ?
-                    ORDER BY pinned DESC, updated_at DESC
-                    LIMIT ?
-                    """,
-                    (like, limit),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    """
-                    SELECT id, title, created_at, updated_at, pinned
-                    FROM conversations
-                    ORDER BY pinned DESC, updated_at DESC
-                    LIMIT ?
-                    """,
-                    (limit,),
-                ).fetchall()
-        return [self._conversation_row(row) for row in rows]  # type: ignore[misc]
+                where_parts.append("title LIKE ?")
+                params.append(f"%{q.strip()}%")
+            if cursor:
+                try:
+                    pinned_s, updated_at, cid = cursor.split("|", 2)
+                    pinned_v = int(pinned_s)
+                except ValueError as exc:
+                    raise ValueError("invalid conversation cursor") from exc
+                # Keyset: (pinned, updated_at, id) lexicographic under DESC order.
+                where_parts.append(
+                    "("
+                    "pinned < ? OR "
+                    "(pinned = ? AND updated_at < ?) OR "
+                    "(pinned = ? AND updated_at = ? AND id < ?)"
+                    ")"
+                )
+                params.extend([pinned_v, pinned_v, updated_at, pinned_v, updated_at, cid])
+            where_sql = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+            rows = conn.execute(
+                f"""
+                SELECT id, title, created_at, updated_at, pinned
+                FROM conversations
+                {where_sql}
+                ORDER BY pinned DESC, updated_at DESC, id DESC
+                LIMIT ?
+                """,
+                (*params, limit + 1),
+            ).fetchall()
+            items = [self._conversation_row(row) for row in rows[:limit]]  # type: ignore[misc]
+            has_more = len(rows) > limit
+            next_cursor = None
+            if has_more and items:
+                last = items[-1]
+                next_cursor = f"{1 if last.get('pinned') else 0}|{last['updated_at']}|{last['id']}"
+            # Total count only when cheap (no cursor / unbounded search avoided).
+            total = None
+            if cursor is None:
+                if q and q.strip():
+                    total_row = conn.execute(
+                        "SELECT COUNT(*) AS c FROM conversations WHERE title LIKE ?",
+                        (f"%{q.strip()}%",),
+                    ).fetchone()
+                else:
+                    total_row = conn.execute("SELECT COUNT(*) AS c FROM conversations").fetchone()
+                total = int(total_row[0] if not isinstance(total_row, sqlite3.Row) else total_row["c"])
+        return {
+            "items": items,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+            "total": total,
+        }
 
     def get_conversation(self, conversation_id: str) -> dict | None:
         with self.connect() as conn:
@@ -179,7 +226,71 @@ class Database:
         return {"id": message_id, "conversation_id": conversation_id, "role": role, "content": content, "created_at": now}
 
     def get_messages(self, conversation_id: str, limit: int = 100) -> list[dict]:
+        page = self.get_messages_page(conversation_id, limit=limit)
+        return page["items"]
+
+    def get_messages_page(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 100,
+        before_id: int | None = None,
+        after_id: int | None = None,
+    ) -> dict:
+        """Paginated message history.
+
+        Default: most recent ``limit`` messages (ascending within page).
+        ``before_id``: older page (scroll upward) — messages with id < before_id.
+        ``after_id``: newer page — messages with id > after_id.
+        """
+        limit = max(1, min(int(limit), 500))
         with self.connect() as conn:
+            if before_id is not None:
+                rows = conn.execute(
+                    """
+                    SELECT id, conversation_id, role, content, created_at
+                    FROM (
+                        SELECT id, conversation_id, role, content, created_at
+                        FROM messages
+                        WHERE conversation_id = ? AND id < ?
+                        ORDER BY id DESC
+                        LIMIT ?
+                    )
+                    ORDER BY id ASC
+                    """,
+                    (conversation_id, int(before_id), limit + 1),
+                ).fetchall()
+                raw = [dict(row) for row in rows]
+                has_more = len(raw) > limit
+                items = raw[-limit:] if has_more else raw
+                next_before = items[0]["id"] if has_more and items else None
+                return {
+                    "items": items,
+                    "has_more": has_more,
+                    "next_before_id": next_before,
+                    "next_after_id": None,
+                }
+            if after_id is not None:
+                rows = conn.execute(
+                    """
+                    SELECT id, conversation_id, role, content, created_at
+                    FROM messages
+                    WHERE conversation_id = ? AND id > ?
+                    ORDER BY id ASC
+                    LIMIT ?
+                    """,
+                    (conversation_id, int(after_id), limit + 1),
+                ).fetchall()
+                raw = [dict(row) for row in rows]
+                has_more = len(raw) > limit
+                items = raw[:limit]
+                return {
+                    "items": items,
+                    "has_more": has_more,
+                    "next_before_id": None,
+                    "next_after_id": items[-1]["id"] if has_more and items else None,
+                }
+            # Recent window.
             rows = conn.execute(
                 """
                 SELECT id, conversation_id, role, content, created_at
@@ -192,9 +303,27 @@ class Database:
                 )
                 ORDER BY id ASC
                 """,
-                (conversation_id, limit),
+                (conversation_id, limit + 1),
             ).fetchall()
-        return [dict(row) for row in rows]
+            raw = [dict(row) for row in rows]
+            # We fetched limit+1 newest; if more than limit, older exist.
+            has_more = len(raw) > limit
+            items = raw[-limit:] if has_more else raw
+            next_before = items[0]["id"] if has_more and items else None
+            return {
+                "items": items,
+                "has_more": has_more,
+                "next_before_id": next_before,
+                "next_after_id": None,
+            }
+
+    def count_messages(self, conversation_id: str) -> int:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM messages WHERE conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()
+        return int(row[0] if not isinstance(row, sqlite3.Row) else row["c"])
 
     def upsert_knowledge(self, title: str, content: str, source: str = "manual", document_id: str | None = None) -> dict:
         from Data.modules.knowledge import KnowledgeStore

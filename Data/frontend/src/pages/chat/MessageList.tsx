@@ -10,6 +10,7 @@ import type {
   DecisionReceipt,
 } from "../../types/activity";
 import { ActivityTimeline } from "../../components/activity/ActivityTimeline";
+import { SafeMarkdown } from "../../lib/chat/safeMarkdown";
 import { formatMessageTime } from "./chatHelpers";
 import { CapabilityResultCards } from "./CapabilityResultCards";
 
@@ -261,7 +262,11 @@ export function MessageList({
                     message.error ? " is-error" : ""
                   }`}
                 >
-                  {renderPlainContent(message.content)}
+                  {message.role === "assistant" && !message.pending ? (
+                    <SafeMarkdown content={message.content} className="lv-md" />
+                  ) : (
+                    renderPlainContent(message.content)
+                  )}
                 </div>
                 {showTools ? (
                   <CapabilityResultCards toolCalls={lastTurn?.telemetry?.tool_calls} />

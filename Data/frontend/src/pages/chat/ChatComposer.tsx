@@ -1,5 +1,9 @@
 import { useMemo, type RefObject } from "react";
 import type { CapabilityListItem } from "../../types/api";
+import {
+  REASONING_MODE_OPTIONS,
+  type ReasoningModeId,
+} from "../../lib/chat/reasoningModes";
 import { classifyCapability, isCapabilityActive } from "./chatHelpers";
 
 export type ChatComposerQuickPrompt = {
@@ -14,10 +18,10 @@ export type ChatComposerProps = {
   onStop?: () => void;
   busy?: boolean;
   disabled?: boolean;
-  reasoningMode: "auto" | "fast" | "deep";
-  onReasoningChange: (value: "auto" | "fast" | "deep") => void;
+  reasoningMode: ReasoningModeId;
+  onReasoningChange: (value: ReasoningModeId) => void;
   capabilities?: CapabilityListItem[];
-  /** Selected model context window; null/undefined → Auto / UNMEASURED denominator. */
+  /** Selected model context window — shown as estimate only, never as char/budget ratio. */
   contextWindow?: number | null;
   selectedModelId?: string | null;
   quickPrompts?: ChatComposerQuickPrompt[];
@@ -84,13 +88,14 @@ export function ChatComposer({
   placeholder = "Stel een vraag aan Hades AI...",
 }: ChatComposerProps) {
   const tools = useMemo(() => toolStatuses(capabilities), [capabilities]);
-  const denom =
-    selectedModelId == null
-      ? "UNMEASURED"
-      : contextWindow != null && Number.isFinite(contextWindow) && contextWindow > 0
-        ? String(Math.round(contextWindow))
-        : "UNMEASURED";
-  const counter = `${value.length}/${denom}`;
+  // Characters are not tokens — never show "423 / 32768" with mixed units.
+  const counter =
+    selectedModelId != null &&
+    contextWindow != null &&
+    Number.isFinite(contextWindow) &&
+    contextWindow > 0
+      ? `${value.length} characters · ~${Math.max(1, Math.ceil(value.length / 4))} estimated tokens / ${Math.round(contextWindow / 1000)}K context`
+      : `${value.length} characters`;
   const canSend = !busy && !disabled && value.trim().length > 0;
 
   return (
@@ -150,12 +155,10 @@ export function ChatComposer({
           <button
             key={tool.id}
             type="button"
-            className={`lv-v2-composer__tool${tool.available ? " is-active" : ""}`}
-            aria-pressed={tool.available}
-            aria-disabled={!tool.available}
-            title={tool.reason}
-            disabled={!tool.available || busy}
-            onClick={(e) => e.preventDefault()}
+            className={`lv-v2-composer__tool${tool.available ? " is-available" : ""}`}
+            aria-disabled="true"
+            title={`${tool.reason} — status indicator, not a toggle`}
+            disabled
           >
             {tool.label}
           </button>
@@ -172,11 +175,13 @@ export function ChatComposer({
           aria-label="Reasoning modus"
           disabled={busy || disabled}
           value={reasoningMode}
-          onChange={(e) => onReasoningChange(e.target.value as "auto" | "fast" | "deep")}
+          onChange={(e) => onReasoningChange(e.target.value as ReasoningModeId)}
         >
-          <option value="auto">Auto</option>
-          <option value="fast">Snel</option>
-          <option value="deep">Diep Redeneren</option>
+          {REASONING_MODE_OPTIONS.map((opt) => (
+            <option key={opt.id} value={opt.id}>
+              {opt.shortLabel}
+            </option>
+          ))}
         </select>
 
         {busy ? (

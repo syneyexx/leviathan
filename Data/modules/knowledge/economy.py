@@ -49,7 +49,7 @@ class CognitiveEconomyGovernor:
         *,
         complexity: str = "low",
         intent: str = "conversation",
-        memory_coverage: float = 1.0,
+        memory_coverage: float | None = 1.0,
         residual_available: bool = False,
         deep_recall_enabled: bool = False,
         explicit_deep_recall: bool = False,
@@ -73,7 +73,8 @@ class CognitiveEconomyGovernor:
             "knowledge",
             "coding",
         }
-        coverage_gap = memory_coverage < 0.35
+        # None = UNMEASURED — knowledge existence must not imply coverage gap or completeness.
+        coverage_gap = memory_coverage is not None and memory_coverage < 0.35
         allow = bool(
             deep_recall_enabled
             and (explicit_deep_recall or (needs_depth and coverage_gap) or working_memory_load >= 0.85)
@@ -99,9 +100,10 @@ class CognitiveEconomyGovernor:
         if burden == "low":
             budget = int(self.default_deep_recall_budget * 0.5)
 
+        coverage_label = "UNMEASURED" if memory_coverage is None else f"{memory_coverage:.2f}"
         reason = (
             f"depth_on_demand complexity={complexity_l} intent={intent_l} "
-            f"coverage={memory_coverage:.2f} allow_deep_recall={allow}"
+            f"coverage={coverage_label} allow_deep_recall={allow}"
         )
         return EconomyDecision(
             allow_deep_recall=allow,

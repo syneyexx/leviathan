@@ -37,7 +37,7 @@ class ReasoningEngine:
         *,
         deep_recall_enabled: bool = False,
         economy_allow_deep_recall: bool = False,
-        memory_coverage: float = 1.0,
+        memory_coverage: float | None = 1.0,
         retrieval_enabled: bool = True,
         retrieval_mode: str = "auto",
         memory_enabled: bool = True,

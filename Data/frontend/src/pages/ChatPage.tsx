@@ -26,6 +26,12 @@ import type {
 } from "../types/activity";
 import { parseActivityProjection } from "../types/activity";
 import { buildDiagnosticStrip, deriveAssistantTelemetry } from "./chatTelemetry";
+import { chatQuickPrompts } from "../lib/chat/promptPresets";
+import {
+  parseReasoningMode,
+  reasoningModeForApi,
+  type ReasoningModeId,
+} from "../lib/chat/reasoningModes";
 import { ChatComposer } from "./chat/ChatComposer";
 import { ChatInspector } from "./chat/ChatInspector";
 import { ConversationHistoryPanel } from "./chat/ConversationHistoryPanel";
@@ -120,7 +126,7 @@ function visualFixtureNow(): Date | undefined {
 type ChatVisualFixtureUi = {
   activeConversationId?: string;
   selectedModelId?: string | null;
-  reasoningMode?: "auto" | "fast" | "deep";
+  reasoningMode?: ReasoningModeId;
   collaborationStrategy?: "direct" | "team";
   lastTurn?: LastTurnMeta;
 };
@@ -139,7 +145,7 @@ function applyChatVisualFixtureUi(
   fixtureUi: ChatVisualFixtureUi,
   setters: {
     setSelectedModelId: (id: string | null) => void;
-    setReasoningMode: (mode: "auto" | "fast" | "deep") => void;
+    setReasoningMode: (mode: ReasoningModeId) => void;
     setCollaborationStrategy: (strategy: "direct" | "team") => void;
     setLastTurn: (turn: LastTurnMeta) => void;
   },
@@ -147,7 +153,7 @@ function applyChatVisualFixtureUi(
   if (fixtureUi.selectedModelId !== undefined) {
     setters.setSelectedModelId(fixtureUi.selectedModelId);
   }
-  if (fixtureUi.reasoningMode) setters.setReasoningMode(fixtureUi.reasoningMode);
+  if (fixtureUi.reasoningMode) setters.setReasoningMode(parseReasoningMode(fixtureUi.reasoningMode));
   if (fixtureUi.collaborationStrategy) {
     setters.setCollaborationStrategy(fixtureUi.collaborationStrategy);
   }
@@ -224,24 +230,7 @@ function buildChatSidebarStatus(
   return rows;
 }
 
-const QUICK_PROMPTS: Array<{ label: string; text: string }> = [
-  {
-    label: "Deep Research",
-    text: "Research this topic deeply and structure the important questions first: ",
-  },
-  {
-    label: "Analyze Data",
-    text: "Analyze the following data and explain the important patterns: ",
-  },
-  {
-    label: "Generate Code",
-    text: "Help me design and implement the following code: ",
-  },
-  {
-    label: "Create Plan",
-    text: "Create a concrete step-by-step plan for: ",
-  },
-];
+const QUICK_PROMPTS = chatQuickPrompts();
 
 export function ChatPage() {
   const toast = useAppToast();
@@ -261,7 +250,7 @@ export function ChatPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [models, setModels] = useState<ModelDescriptor[]>([]);
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
-  const [reasoningMode, setReasoningMode] = useState<"auto" | "fast" | "deep">("auto");
+  const [reasoningMode, setReasoningMode] = useState<ReasoningModeId>("auto");
   const [collaborationStrategy, setCollaborationStrategy] = useState<"direct" | "team">("direct");
   const [teamPanel, setTeamPanel] = useState<Record<string, unknown> | null>(null);
   const [capabilities, setCapabilities] = useState<CapabilityListItem[]>([]);
@@ -455,25 +444,16 @@ export function ChatPage() {
 
   async function createConversation() {
     if (busyRef.current || creatingRef.current) return;
-    setCreating(true);
-    creatingRef.current = true;
+    // Draft only — durable conversation is created on first Send.
     setNewChatMenuOpen(false);
-    try {
-      const data = await api.createConversation();
-      setConversationId(data.conversation.id);
-      setTitle(data.conversation.title);
-      setMessages([]);
-      setLastTurn(EMPTY_TURN);
-      setTeamPanel(null);
-      syncUrl(data.conversation.id);
-      await refreshConversations(data.conversation.id);
-      requestAnimationFrame(() => composerRef.current?.focus());
-    } catch (error) {
-      toast(`Could not create chat: ${error instanceof Error ? error.message : "unknown error"}`);
-    } finally {
-      creatingRef.current = false;
-      setCreating(false);
-    }
+    setConversationId(null);
+    setTitle("New conversation");
+    setMessages([]);
+    setLastTurn(EMPTY_TURN);
+    setTeamPanel(null);
+    setComposer("");
+    syncUrl(null);
+    requestAnimationFrame(() => composerRef.current?.focus());
   }
 
   async function onV2Refresh() {
@@ -727,9 +707,13 @@ export function ChatPage() {
         {
           conversationId: activeId,
           modelId: selectedModelId,
-          reasoningMode: reasoningMode === "auto" ? null : reasoningMode,
+          reasoningMode: reasoningModeForApi(reasoningMode),
           collaborationStrategy:
             collaborationStrategy === "team" ? "team" : null,
+          idempotencyKey:
+            typeof crypto !== "undefined" && "randomUUID" in crypto
+              ? crypto.randomUUID()
+              : `chat-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         },
         {
           onMeta: (meta) => {

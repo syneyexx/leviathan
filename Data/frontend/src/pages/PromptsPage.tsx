@@ -1,25 +1,6 @@
 import { Link } from "react-router-dom";
 import { AppShell } from "../layouts/AppShell";
-
-/** Same presets as legacy ChatPage — copy-into-chat via location state. */
-const QUICK_PROMPTS: Array<{ label: string; text: string }> = [
-  {
-    label: "Deep Research",
-    text: "Research this topic deeply and structure the important questions first: ",
-  },
-  {
-    label: "Analyze Data",
-    text: "Analyze the following data and explain the important patterns: ",
-  },
-  {
-    label: "Generate Code",
-    text: "Help me design and implement the following code: ",
-  },
-  {
-    label: "Create Plan",
-    text: "Create a concrete step-by-step plan for: ",
-  },
-];
+import { CHAT_PROMPT_PRESETS } from "../lib/chat/promptPresets";
 
 /**
  * Minimal Hades AI / Prompts V2 surface.
@@ -49,8 +30,8 @@ export function PromptsPage() {
               generatieparameters) zit in Settings.
             </p>
             <ul className="lv-v2-list" style={{ listStyle: "none", padding: 0, margin: 0 }}>
-              {QUICK_PROMPTS.map((item) => (
-                <li key={item.label}>
+              {CHAT_PROMPT_PRESETS.map((item) => (
+                <li key={item.id}>
                   <Link
                     className="lv-v2-list-row"
                     to="/chat"

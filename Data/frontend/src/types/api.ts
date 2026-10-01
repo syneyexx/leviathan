@@ -12,16 +12,147 @@ export type Message = {
   role: "system" | "user" | "assistant";
   content: string;
   created_at: string;
+  /** Optional durable turn id when hydrated from include_turns. */
+  turn_id?: string | null;
 };
+
+/** Tri-state measurement — absent must never collapse to zero. */
+export type MeasurementPublic = {
+  state: "MEASURED" | "UNMEASURED" | "UNAVAILABLE";
+  value: number | null;
+};
+
+/** Durable chat turn metadata from GET /api/chat/turns/{id} or conversation hydration. */
+export type ChatTurn = {
+  turn_id: string;
+  conversation_id: string;
+  user_message_id?: number | null;
+  assistant_message_id?: number | null;
+  chat_run_id?: string | null;
+  cognition_run_id?: string | null;
+  team_run_id?: string | null;
+  operation_id?: string | null;
+  activity_run_id?: string | null;
+  requested_model?: string | null;
+  effective_model?: string | null;
+  requested_reasoning_mode?: string | null;
+  effective_reasoning_mode?: string | null;
+  collaboration_strategy?: string | null;
+  behavior_profile_id?: string | null;
+  behavior_version?: string | null;
+  behavior_hash?: string | null;
+  response_owner?: string | null;
+  execution_path?: string | null;
+  run_state?: string | null;
+  streaming_effective?: boolean;
+  streaming_degraded?: boolean;
+  provisional?: boolean;
+  cancelled?: boolean;
+  failure_classification?: string | null;
+  knowledge_hit_count?: number | null;
+  memory_hit_count?: number | null;
+  evidence_hit_count?: number | null;
+  retrieval?: {
+    knowledge_hit_count?: MeasurementPublic;
+    memory_hit_count?: MeasurementPublic;
+    evidence_hit_count?: MeasurementPublic;
+    retrieval_coverage?: MeasurementPublic;
+    knowledge_available?: boolean | null;
+    retrieval_requested?: boolean | null;
+  };
+  streaming?: {
+    effective?: boolean;
+    degraded?: boolean;
+  };
+  usage?: {
+    input_tokens?: MeasurementPublic;
+    output_tokens?: MeasurementPublic;
+    total_tokens?: MeasurementPublic;
+    context_used?: MeasurementPublic;
+    context_budget?: MeasurementPublic;
+    latency_ms?: MeasurementPublic;
+  };
+  verification_mode?: string | null;
+  verification_state?: string | null;
+  quality_state?: string | null;
+  detected_language?: string | null;
+  response_language?: string | null;
+  created_at?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  latency_ms?: number | null;
+  idempotency_key?: string | null;
+  error_summary?: string | null;
+  [key: string]: unknown;
+};
+
+/** Alias used by conversation hydration hooks / client. */
+export type ChatTurnPublic = ChatTurn;
+
+export type ConversationListPage = {
+  conversations: Conversation[];
+  items?: Conversation[];
+  next_cursor?: string | null;
+  has_more?: boolean;
+  total?: number | null;
+};
+
+export type ConversationDetailPage = {
+  conversation: Conversation;
+  messages: Message[];
+  has_more?: boolean;
+  next_before_id?: number | null;
+  next_after_id?: number | null;
+  message_count?: number | null;
+  /** Map of assistant message id (string) → ChatTurn public dict. */
+  turns?: Record<string, ChatTurn>;
+};
+
+export type ChatCancelRequest = {
+  turn_id?: string | null;
+  chat_run_id?: string | null;
+  run_id?: string | null;
+  reason?: string;
+};
+
+export type ChatCancelResult = {
+  cancelled?: boolean;
+  turn_id?: string | null;
+  chat_run_id?: string | null;
+  run_state?: string | null;
+  reason?: string | null;
+  [key: string]: unknown;
+};
+
+export type ChatRunStatus = {
+  chat_run_id: string;
+  run?: {
+    run_id?: string;
+    state?: string;
+    conversation_id?: string | null;
+    error?: string | null;
+  } | null;
+  turn?: ChatTurn | null;
+  truth?: Record<string, boolean>;
+};
+
+/** Reasoning depth: auto | fast | standard | deep */
+export type ReasoningMode = "auto" | "fast" | "standard" | "deep";
 
 export type ChatOptions = {
   conversationId?: string | null;
   modelId?: string | null;
   preferredRole?: string | null;
-  reasoningMode?: string | null;
+  reasoningMode?: ReasoningMode | string | null;
   /** Orthogonal to reasoning depth: direct | team */
   collaborationStrategy?: string | null;
   stream?: boolean;
+  /** Client-generated idempotency key for durable turn acceptance. */
+  idempotencyKey?: string | null;
+  /** Optional artifact refs attached to the turn. */
+  artifactIds?: string[];
+  /** Tool policy override for the turn (backend-defined shape). */
+  toolPolicy?: Record<string, unknown> | string | null;
 };
 
 export type ReasoningSummary = {
@@ -68,6 +199,10 @@ export type ChatResponse = {
   cortex?: unknown;
   cognition?: CognitionRunStatus | { error?: string; truth?: Record<string, boolean> };
   assistant_telemetry?: AssistantTurnTelemetry;
+  /** Durable turn identity (also available as chat_turn.turn_id). */
+  turn_id?: string;
+  chat_turn?: ChatTurn;
+  chat_run_id?: string | null;
   /** Structured operational activity projection (preferred over reasoning.steps). */
   activity?: import("./activity").ActivityProjection | null;
   activity_events?: import("./activity").ActivityEvent[] | null;
@@ -137,10 +272,10 @@ export type AssistantTurnTelemetry = {
   context_budget?: number | null;
   context_used?: number | null;
   context_tokens?: number | null;
-  brain_hits?: number;
-  knowledge_hits?: number;
-  memory_hits?: number;
-  evidence_hits?: number;
+  brain_hits?: number | null;
+  knowledge_hits?: number | null;
+  memory_hits?: number | null;
+  evidence_hits?: number | null;
   tools_invoked?: string[];
   tool_calls?: AssistantToolCallTelemetry[];
   agents?: string[];

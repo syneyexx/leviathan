@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CapabilityListItem, ModelDescriptor } from "../../types/api";
+import { formatParameterCount } from "../../lib/chat/formatModelParams";
+import {
+  REASONING_MODE_OPTIONS,
+  type ReasoningModeId,
+} from "../../lib/chat/reasoningModes";
 import {
   classifyCapability,
-  formatModelParams,
   isCapabilityActive,
 } from "./chatHelpers";
 
@@ -13,23 +17,15 @@ export type HadesConfigStripProps = {
   onSelectModel: (modelId: string | null) => void;
   collaborationStrategy: "direct" | "team";
   onCollaborationChange: (value: "direct" | "team") => void;
-  reasoningMode: "auto" | "fast" | "deep";
-  onReasoningChange: (value: "auto" | "fast" | "deep") => void;
+  reasoningMode: ReasoningModeId;
+  onReasoningChange: (value: ReasoningModeId) => void;
   capabilities: CapabilityListItem[];
   busy?: boolean;
 };
 
 type OpenMenu = "model" | "agent" | "reason" | "tools" | null;
 
-const REASONING_OPTIONS: Array<{
-  id: "auto" | "fast" | "deep";
-  label: string;
-  meta: string;
-}> = [
-  { id: "auto", label: "Auto", meta: "Laat Hades de diepte kiezen" },
-  { id: "fast", label: "Snel", meta: "Korte, snelle antwoorden" },
-  { id: "deep", label: "Diep Redeneren", meta: "Stap-voor-stap analyse" },
-];
+const REASONING_OPTIONS = REASONING_MODE_OPTIONS;
 
 const AGENT_OPTIONS: Array<{
   id: "direct" | "team";
@@ -66,7 +62,7 @@ function Chevron() {
 
 function modelMetaLine(model: ModelDescriptor): string {
   const family = model.family || model.providerId || "Model";
-  const params = formatModelParams(model.parameterCount);
+  const params = formatParameterCount(model.parameterCount);
   const quant = model.quantization?.trim();
   const bits = [family, params].filter(Boolean).join(" / ");
   if (quant) return `${bits} • ${quant}`;
