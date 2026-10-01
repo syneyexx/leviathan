@@ -44,34 +44,21 @@ import { ConsolePage } from "./pages/ConsolePage";
 import { WorkflowsPage } from "./pages/WorkflowsPage";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 
-const BrokerTradingPage = lazy(() =>
-  import("./pages/trading/BrokerTradingPage").then((m) => ({ default: m.BrokerTradingPage })),
+const CommandHubPage = lazy(() =>
+  import("./pages/trading/workspaces/CommandHubPage").then((m) => ({ default: m.CommandHubPage })),
 );
-const MarktdataPage = lazy(() =>
-  import("./pages/trading/MarktdataPage").then((m) => ({ default: m.MarktdataPage })),
-);
-const OnderzoekPage = lazy(() =>
-  import("./pages/trading/OnderzoekPage").then((m) => ({ default: m.OnderzoekPage })),
-);
-const ResearchLabPage = lazy(() =>
-  import("./pages/trading/ResearchLabPage").then((m) => ({ default: m.ResearchLabPage })),
-);
-const PaperTradingPage = lazy(() =>
-  import("./pages/trading/PaperTradingPage").then((m) => ({ default: m.PaperTradingPage })),
-);
-const PortefeuillePage = lazy(() =>
-  import("./pages/trading/PortefeuillePage").then((m) => ({ default: m.PortefeuillePage })),
-);
-const InstitutionalControlRoomPage = lazy(() =>
-  import("./pages/trading/InstitutionalControlRoomPage").then((m) => ({
-    default: m.InstitutionalControlRoomPage,
+const StrategyLabWorkspacePage = lazy(() =>
+  import("./pages/trading/workspaces/StrategyLabWorkspacePage").then((m) => ({
+    default: m.StrategyLabWorkspacePage,
   })),
 );
-const SimulatiePage = lazy(() =>
-  import("./pages/trading/SimulatiePage").then((m) => ({ default: m.SimulatiePage })),
+const TradingDeskPage = lazy(() =>
+  import("./pages/trading/workspaces/TradingDeskPage").then((m) => ({ default: m.TradingDeskPage })),
 );
-const StrategieenPage = lazy(() =>
-  import("./pages/trading/StrategieenPage").then((m) => ({ default: m.StrategieenPage })),
+const MarketDataWorkspacePage = lazy(() =>
+  import("./pages/trading/workspaces/MarketDataWorkspacePage").then((m) => ({
+    default: m.MarketDataWorkspacePage,
+  })),
 );
 
 function TradingSuspense({ children }: { children: ReactNode }) {
@@ -118,23 +105,49 @@ export default function App() {
       <Route path="/media/analytics" element={<SectionPage title="Media Analytics" />} />
       <Route path="/media/personas" element={<MediaPersonasPage />} />
 
-      <Route path="/trading" element={<Navigate to="/trading/simulatie" replace />} />
-      <Route path="/trading/simulatie" element={<TradingSuspense><SimulatiePage /></TradingSuspense>} />
-      <Route path="/trading/strategieen" element={<TradingSuspense><StrategieenPage /></TradingSuspense>} />
-      <Route path="/trading/marktdata" element={<TradingSuspense><MarktdataPage /></TradingSuspense>} />
-      <Route path="/trading/portefeuille" element={<TradingSuspense><PortefeuillePage /></TradingSuspense>} />
-      <Route path="/trading/paper" element={<TradingSuspense><PaperTradingPage /></TradingSuspense>} />
-      <Route path="/trading/broker" element={<TradingSuspense><BrokerTradingPage /></TradingSuspense>} />
-      <Route path="/trading/onderzoek" element={<TradingSuspense><OnderzoekPage /></TradingSuspense>} />
-      <Route path="/trading/lab" element={<TradingSuspense><ResearchLabPage /></TradingSuspense>} />
+      <Route path="/trading" element={<Navigate to="/trading/command-hub" replace />} />
       <Route
-        path="/trading/control-room"
+        path="/trading/command-hub"
         element={
           <TradingSuspense>
-            <InstitutionalControlRoomPage />
+            <CommandHubPage />
           </TradingSuspense>
         }
       />
+      <Route
+        path="/trading/strategy-lab"
+        element={
+          <TradingSuspense>
+            <StrategyLabWorkspacePage />
+          </TradingSuspense>
+        }
+      />
+      <Route
+        path="/trading/trading-desk"
+        element={
+          <TradingSuspense>
+            <TradingDeskPage />
+          </TradingSuspense>
+        }
+      />
+      <Route
+        path="/trading/market-data"
+        element={
+          <TradingSuspense>
+            <MarketDataWorkspacePage />
+          </TradingSuspense>
+        }
+      />
+      {/* Legacy Trading Center routes → four workspaces (WAVE 1 supersets redirects) */}
+      <Route path="/trading/simulatie" element={<Navigate to="/trading/strategy-lab?surface=simulation" replace />} />
+      <Route path="/trading/strategieen" element={<Navigate to="/trading/strategy-lab?surface=strategies" replace />} />
+      <Route path="/trading/lab" element={<Navigate to="/trading/strategy-lab?surface=lab" replace />} />
+      <Route path="/trading/marktdata" element={<Navigate to="/trading/market-data?surface=library" replace />} />
+      <Route path="/trading/portefeuille" element={<Navigate to="/trading/trading-desk?surface=portfolio" replace />} />
+      <Route path="/trading/paper" element={<Navigate to="/trading/trading-desk?surface=paper" replace />} />
+      <Route path="/trading/broker" element={<Navigate to="/trading/trading-desk?surface=broker" replace />} />
+      <Route path="/trading/onderzoek" element={<Navigate to="/trading/command-hub?surface=research-command" replace />} />
+      <Route path="/trading/control-room" element={<Navigate to="/trading/command-hub?surface=control-room" replace />} />
 
       <Route path="/research" element={<ResearchPage />} />
       <Route path="/brain" element={<BrainPage />} />
