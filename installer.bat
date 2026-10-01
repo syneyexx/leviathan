@@ -87,6 +87,27 @@ echo        Source Ingestion OCR: install Tesseract OCR and ensure tesseract.exe
 echo        Windows example: winget install UB-Mannheim.TesseractOCR
 echo        Verify: tesseract --version
 echo.
+echo        Source Ingestion RAR: install UnRAR or 7-Zip so .rar archives can be extracted.
+echo        WinRAR installs UnRAR.exe automatically. 7-Zip also works when 7z.exe is on PATH.
+echo        Optional override: set LEVIATHAN_UNRAR_TOOL in .env to the full UnRAR/7z path.
+echo.
+where UnRAR >nul 2>&1
+if errorlevel 1 (
+  where unrar >nul 2>&1
+  if errorlevel 1 (
+    where 7z >nul 2>&1
+    if errorlevel 1 (
+      echo        [WARN] UnRAR/7z not found on PATH — .rar uploads will fail until installed.
+    ) else (
+      echo        OK - 7z found for RAR extraction
+    )
+  ) else (
+    echo        OK - unrar found for RAR extraction
+  )
+) else (
+  echo        OK - UnRAR found for RAR extraction
+)
+echo.
 REM ---- Environment file ----
 echo [4/8] Environment file...
 if not exist ".env" (

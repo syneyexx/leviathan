@@ -20,6 +20,13 @@ from Data.modules.research.types import (
 )
 
 from .archives.security import project_signals
+from .archives.rar_safe import (
+    extract_member_to_staging as extract_rar_member_to_staging,
+    inspect_rar,
+    member_to_manifest as rar_member_to_manifest,
+    open_rar,
+    read_member_sample as read_rar_member_sample,
+)
 from .archives.tar_safe import decompress_gzip_single, extract_tar_member, inspect_tar
 from .archives.zip_safe import (
     extract_member_to_staging,
@@ -444,7 +451,27 @@ class SourceIngestionPipeline:
                 return self._process_tar(source, raw_path, detection, staging, nested_depth=nested_depth)
             if detection.extension == ".gz":
                 return self._process_gzip_single(source, raw_path, detection, staging, nested_depth=nested_depth)
-            if detection.extension in {".7z", ".rar"}:
+            if archive_type == "rar" or detection.extension == ".rar":
+                if not self.settings.allow_rar:
+                    reason = "unsupported_archive_format"
+                    self._save_source_state(
+                        source,
+                        parse_status=ParseStatus.FAILED,
+                        brain_status=BrainStatus.SKIPPED,
+                        parser="archive",
+                        text="",
+                        detection=detection,
+                        extra_meta={"skip_reason": reason, "format": detection.extension},
+                    )
+                    self.ingestion.upsert_container(
+                        container_source_id=source.source_id,
+                        project_id=source.project_id,
+                        phase=IngestionPhase.FAILED,
+                        error=reason,
+                    )
+                    return self.get_progress(source.source_id)
+                return self._process_rar(source, raw_path, detection, staging, nested_depth=nested_depth)
+            if detection.extension == ".7z":
                 reason = "unsupported_archive_format"
                 self._save_source_state(
                     source,
@@ -890,6 +917,287 @@ class SourceIngestionPipeline:
         member.child_source_id = synced.source_id
         member.content_hash = artifact.content_hash
         self.ingestion.upsert_member(member)
+
+    def _process_rar(
+        self,
+        source: ResearchSource,
+        raw_path: Path,
+        detection: Any,
+        staging: Path,
+        *,
+        nested_depth: int,
+    ) -> IngestionProgress:
+        existing_counts = self.ingestion.count_members(source.source_id)
+        if int(existing_counts.get("total") or 0) == 0:
+            rar_members, meta = inspect_rar(
+                raw_path,
+                container_source_id=source.source_id,
+                settings=self.settings,
+            )
+            rels = [m.relative_path for m in rar_members if not m.is_dir]
+            signals = project_signals(rels)
+            self.ingestion.upsert_container(
+                container_source_id=source.source_id,
+                project_id=source.project_id,
+                archive_type="rar",
+                phase=IngestionPhase.CLASSIFYING,
+                compressed_bytes=int(meta.get("compressed_bytes") or 0),
+                uncompressed_bytes=int(meta.get("declared_uncompressed_bytes") or 0),
+                manifest_meta={**meta, **signals},
+            )
+            for rm in rar_members:
+                mm = rar_member_to_manifest(
+                    rm,
+                    container_source_id=source.source_id,
+                    member_id=str(uuid.uuid4()),
+                )
+                self.ingestion.upsert_member(mm)
+            self._event(
+                "archive_manifest_completed",
+                f"{len(rels)} members",
+                {"source_id": source.source_id, "files": len(rels), "archive_type": "rar"},
+            )
+            self._mark_container_source(source, detection, meta={**meta, **signals})
+
+        return self._process_pending_rar_members(
+            source, raw_path, staging, nested_depth=nested_depth
+        )
+
+    def _process_pending_rar_members(
+        self,
+        source: ResearchSource,
+        raw_path: Path,
+        staging: Path,
+        *,
+        nested_depth: int,
+    ) -> IngestionProgress:
+        self.ingestion.upsert_container(
+            container_source_id=source.source_id,
+            project_id=source.project_id,
+            phase=IngestionPhase.PARSING,
+        )
+        from .archives.security import normalize_member_path
+        from Data.modules.common.paths import PathEscapeError
+
+        processed = 0
+        with open_rar(raw_path) as rf:
+            while True:
+                if self.ingestion.is_cancel_requested(source.source_id):
+                    self.ingestion.upsert_container(
+                        container_source_id=source.source_id,
+                        project_id=source.project_id,
+                        phase=IngestionPhase.CANCELLED,
+                    )
+                    return self.get_progress(source.source_id)
+
+                batch_size = max(1, int(getattr(self.settings, "archive_batch_size", 50) or 50))
+                batch = self.ingestion.list_pending_members(source.source_id, limit=batch_size)
+                if not batch:
+                    break
+
+                norm_map: dict[str, Any] = {}
+                for info in rf.infolist():
+                    raw_name = str(getattr(info, "filename", "") or "")
+                    try:
+                        norm_map[normalize_member_path(raw_name)] = info
+                    except PathEscapeError:
+                        continue
+
+                for member in batch:
+                    self._process_one_rar_member(
+                        source,
+                        rf,
+                        member,
+                        norm_map.get(member.relative_path),
+                        staging,
+                        nested_depth=nested_depth,
+                    )
+                    processed += 1
+                if processed % 25 == 0:
+                    prog = self.get_progress(source.source_id)
+                    self._event(
+                        "ingestion_progress",
+                        f"{prog.files_ingested}/{prog.files_discovered}",
+                        prog.public_dict(),
+                    )
+
+        return self._finalize_container(source.source_id)
+
+    def _process_one_rar_member(
+        self,
+        source: ResearchSource,
+        rf: Any,
+        member: ManifestMember,
+        info: Any | None,
+        staging: Path,
+        *,
+        nested_depth: int,
+    ) -> None:
+        if member.is_directory:
+            member.outcome = MemberOutcome.SKIPPED
+            member.skip_reason = "directory"
+            self.ingestion.upsert_member(member)
+            return
+        if member.is_symlink:
+            member.outcome = MemberOutcome.SKIPPED
+            member.skip_reason = "symlink"
+            self.ingestion.upsert_member(member)
+            return
+        encrypted = member.is_encrypted
+        if info is not None and callable(getattr(info, "needs_password", None)):
+            encrypted = encrypted or bool(info.needs_password())
+        if encrypted:
+            member.outcome = MemberOutcome.QUARANTINED
+            member.skip_reason = "encrypted"
+            member.parse_status = "skipped"
+            self.ingestion.upsert_member(member)
+            return
+        if info is None:
+            member.outcome = MemberOutcome.FAILED
+            member.error_code = "MEMBER_MISSING"
+            member.skip_reason = "member_not_found_in_archive"
+            member.parse_status = "failed"
+            self.ingestion.upsert_member(member)
+            return
+
+        skip, skip_reason = should_skip_path(
+            member.relative_path,
+            enabled=self.settings.code_repo_ignore_defaults,
+        )
+        if skip:
+            member.outcome = MemberOutcome.SKIPPED
+            member.skip_reason = skip_reason
+            member.parse_status = "skipped"
+            self.ingestion.upsert_member(member)
+            return
+
+        try:
+            sample = read_rar_member_sample(rf, info)
+        except Exception:  # noqa: BLE001
+            sample = b""
+
+        quarantine, q_reason = should_quarantine(
+            relative_path=member.relative_path,
+            sample=sample,
+            policy=self.settings.secret_policy,
+        )
+        if quarantine:
+            member.outcome = MemberOutcome.QUARANTINED
+            member.skip_reason = q_reason
+            member.parse_status = "skipped"
+            member.brain_status = "skipped"
+            self.ingestion.upsert_member(member)
+            self._event(
+                "security_skip",
+                q_reason or "quarantined",
+                {"source_id": source.source_id, "relative_path": member.relative_path},
+            )
+            return
+
+        detection = detect_source_type(
+            filename=member.relative_path,
+            sample=sample,
+            allow_unknown_text=self.settings.allow_unknown_text,
+        )
+        member.detection = detection.public_dict()
+        member.detected_kind = detection.kind.value
+        member.mime_type = detection.mime_type
+
+        if detection.is_archive and nested_depth + 1 > self.settings.max_nested_archive_depth:
+            member.outcome = MemberOutcome.SKIPPED
+            member.skip_reason = "nested_depth_exceeded"
+            member.parse_status = "skipped"
+            self.ingestion.upsert_member(member)
+            return
+
+        try:
+            dest, content_hash, size = extract_rar_member_to_staging(
+                rf,
+                info,
+                relative_path=member.relative_path,
+                staging_root=staging,
+                settings=self.settings,
+            )
+        except IngestionError as exc:
+            member.outcome = MemberOutcome.FAILED
+            member.error_code = exc.code
+            member.skip_reason = redact_secrets(exc.message)
+            member.parse_status = "failed"
+            self.ingestion.upsert_member(member)
+            return
+
+        member.content_hash = content_hash
+        member.size_bytes = size
+
+        if detection.is_archive:
+            child = self._ensure_child_source(
+                parent=source,
+                member=member,
+                detection=detection,
+                raw_path=dest,
+            )
+            self._mark_container_source(
+                child, detection, meta={"nested": True, "parent": source.source_id}
+            )
+            try:
+                nested_progress = self.process_source(child.source_id, nested_depth=nested_depth + 1)
+                member.outcome = MemberOutcome.SUCCESS
+                member.parse_status = "ok"
+                member.brain_status = "not_applicable"
+                member.child_source_id = child.source_id
+                member.parser = "archive"
+                member.metadata = {
+                    **member.metadata,
+                    "nested_status": nested_progress.status.value,
+                    "nested_ingested": nested_progress.files_ingested,
+                }
+            except Exception as exc:  # noqa: BLE001
+                member.outcome = MemberOutcome.FAILED
+                member.error_code = "NESTED_ARCHIVE_FAILED"
+                member.skip_reason = redact_secrets(str(exc))[:200]
+                member.parse_status = "failed"
+                member.child_source_id = child.source_id
+            self.ingestion.upsert_member(member)
+            return
+
+        child = self._ensure_child_source(
+            parent=source,
+            member=member,
+            detection=detection,
+            raw_path=dest,
+        )
+
+        if content_hash:
+            cached = self.ingestion.get_parse_cache(content_hash, parser_version=PARSER_VERSION)
+            if cached and cached.get("parse_status") == "ok":
+                self._apply_parse_cache_to_member(
+                    parent=source,
+                    child=child,
+                    member=member,
+                    detection=detection,
+                    content_hash=content_hash,
+                    cached=cached,
+                )
+                return
+
+        handler = self.registry.resolve(detection, filename=member.relative_path)
+        if handler is None:
+            member.outcome = MemberOutcome.SKIPPED
+            member.skip_reason = "unsupported"
+            member.parse_status = "skipped"
+            member.child_source_id = child.source_id
+            self.ingestion.upsert_member(member)
+            return
+
+        artifact = handler.ingest(
+            dest,
+            detection=detection,
+            relative_path=member.relative_path,
+            settings=self.settings,
+            staging_root=staging,
+        )
+        self._write_artifact_progress(source.source_id, source.project_id, artifact)
+        self._apply_child_artifact(source, child, member, detection, artifact)
 
     def _process_tar(
         self,

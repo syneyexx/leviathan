@@ -450,7 +450,16 @@ class FormatCapabilityTests(unittest.TestCase):
         self.assertTrue(caps["formats"][".txt"]["supported"])
         self.assertTrue(caps["formats"][".7z"]["intentionally_unsupported"])
         self.assertTrue(caps["formats"][".rar"]["intentionally_unsupported"])
+        self.assertFalse(caps["formats"][".rar"]["supported"])
         self.assertIn("ocr_readiness", caps)
+
+    def test_matrix_reports_rar_enabled_when_allowed(self) -> None:
+        caps = build_format_capabilities(SourceIngestionSettings(allow_7z=False, allow_rar=True))
+        self.assertFalse(caps["formats"][".rar"]["intentionally_unsupported"])
+        self.assertTrue(caps["formats"][".rar"]["enabled"])
+        # supported depends on UnRAR/7z presence on the host
+        self.assertIn("supported", caps["formats"][".rar"])
+        self.assertIn("rar", caps["archive"])
 
 
 class LegacyGateTests(unittest.TestCase):
