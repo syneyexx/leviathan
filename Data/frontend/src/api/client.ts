@@ -49,12 +49,15 @@ import type {
   DatasetLearningEnrichedJob,
   DatasetLearningState,
   DatasetLearningStatus,
+  DatasetLearningFleetResponse,
   DatasetOverview,
   DatasetPreviewRow,
   DatasetRecord,
   DatasetRecoveryAssessment,
   DatasetSemanticProfileSummary,
   DatasetVersion,
+  ListDatasetJobsParams,
+  ListDatasetJobsResult,
   DownloadJob,
   GatewaySnapshot,
   HardwareSnapshot,
@@ -2166,6 +2169,9 @@ export const api = {
       tags?: string;
       split?: string;
       sort?: string;
+      updatedAfter?: string;
+      updatedBefore?: string;
+      cursor?: string;
       includeBrain?: boolean;
       includeQuality?: boolean;
     },
@@ -2177,6 +2183,7 @@ export const api = {
     sort?: string;
     hasMore?: boolean;
     nextOffset?: number | null;
+    nextCursor?: string | null;
     truth?: Record<string, unknown>;
   }> {
     const sp = new URLSearchParams();
@@ -2194,6 +2201,9 @@ export const api = {
     if (params?.tags) sp.set("tags", params.tags);
     if (params?.split) sp.set("split", params.split);
     if (params?.sort) sp.set("sort", params.sort);
+    if (params?.updatedAfter) sp.set("updatedAfter", params.updatedAfter);
+    if (params?.updatedBefore) sp.set("updatedBefore", params.updatedBefore);
+    if (params?.cursor) sp.set("cursor", params.cursor);
     if (params?.includeBrain === false) sp.set("includeBrain", "false");
     if (params?.includeQuality === false) sp.set("includeQuality", "false");
     return request(`/api/datasets?${sp.toString()}`);
@@ -2514,9 +2524,22 @@ export const api = {
     );
   },
 
-  listDatasetJobs(datasetId?: string, limit = 100): Promise<{ jobs: DatasetJob[] }> {
-    const params = new URLSearchParams({ limit: String(limit) });
-    if (datasetId) params.set("datasetId", datasetId);
+  listDatasetJobs(
+    datasetIdOrOptions?: string | ListDatasetJobsParams,
+    limit = 100,
+  ): Promise<ListDatasetJobsResult> {
+    const opts: ListDatasetJobsParams =
+      typeof datasetIdOrOptions === "string" || datasetIdOrOptions == null
+        ? { datasetId: datasetIdOrOptions, limit }
+        : { limit, ...datasetIdOrOptions };
+    const params = new URLSearchParams();
+    params.set("limit", String(opts.limit ?? 100));
+    if (opts.offset != null) params.set("offset", String(opts.offset));
+    if (opts.datasetId) params.set("datasetId", opts.datasetId);
+    if (opts.status) params.set("status", opts.status);
+    if (opts.jobType) params.set("jobType", opts.jobType);
+    if (opts.createdAfter) params.set("createdAfter", opts.createdAfter);
+    if (opts.createdBefore) params.set("createdBefore", opts.createdBefore);
     return request(`/api/datasets/jobs?${params.toString()}`);
   },
 
@@ -2602,6 +2625,10 @@ export const api = {
     truth?: Record<string, boolean>;
   }> {
     return request(`/api/datasets/learned?limit=${encodeURIComponent(String(limit))}`);
+  },
+
+  listLearningFleet(limit = 200): Promise<DatasetLearningFleetResponse> {
+    return request(`/api/datasets/learning/fleet?limit=${encodeURIComponent(String(limit))}`);
   },
 
   listOfflineBrainIndexes(limit = 100): Promise<{ indexes: DatasetIndex[] }> {

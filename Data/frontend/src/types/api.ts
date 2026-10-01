@@ -1374,6 +1374,12 @@ export type DatasetOverview = {
   criticalValidationIssues: number;
   warningValidationIssues: number;
   versionsWithValidation: number;
+  /** Catalog-wide count of datasets whose latest version has validation evidence. */
+  datasetsWithValidation?: number;
+  /** Catalog-wide count of datasets without validation evidence. */
+  datasetsWithoutValidation?: number;
+  /** Catalog-wide ready status count. */
+  readyDatasets?: number;
   exportVersionCount: number;
   byStatus: Record<string, number>;
   bySourceType: Record<string, number>;
@@ -1387,6 +1393,62 @@ export type DatasetOverview = {
   services: DatasetServiceProjection[];
   qualityModel?: Record<string, unknown>;
   truth?: Record<string, unknown>;
+};
+
+/** Embedded dataset summary on learning fleet / job payloads (avoids N+1 getDataset). */
+export type DatasetFleetSummary = {
+  datasetId: string;
+  name?: string | null;
+  status?: string | null;
+  sourceType?: string | null;
+  rowCount?: number | null;
+  byteSize?: number | null;
+  updatedAt?: string | null;
+};
+
+export type DatasetLearningFleetRow = {
+  datasetId: string;
+  name?: string | null;
+  learningState?: DatasetLearningState | DatasetBrainStatus | null;
+  activeJob?: (DatasetJob & {
+    dataset?: DatasetFleetSummary | null;
+    learningState?: DatasetLearningState | null;
+    indexStats?: Record<string, unknown> | null;
+  }) | null;
+  indexStats?: {
+    readyCount?: number;
+    chunkCount?: number;
+    indexes?: DatasetIndex[];
+  } | null;
+  dataset?: DatasetFleetSummary | null;
+};
+
+export type DatasetLearningFleetResponse = {
+  datasets: DatasetLearningFleetRow[];
+  learned?: DatasetRecord[];
+  activeJobs?: DatasetJob[];
+  total?: number;
+  limit?: number;
+  truth?: Record<string, unknown>;
+};
+
+export type ListDatasetJobsParams = {
+  datasetId?: string;
+  status?: string;
+  jobType?: string;
+  createdAfter?: string;
+  createdBefore?: string;
+  limit?: number;
+  offset?: number;
+};
+
+export type ListDatasetJobsResult = {
+  jobs: DatasetJob[];
+  total?: number;
+  limit?: number;
+  offset?: number;
+  nextOffset?: number | null;
+  hasMore?: boolean;
 };
 
 export type DatasetBulkResultItem = {
