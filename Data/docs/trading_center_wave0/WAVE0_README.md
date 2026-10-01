@@ -1,82 +1,41 @@
 # Trading Center WAVE 0 — Capability Discovery
 
-**Status:** WAVE 0 discovery complete (matrices frozen for migration planning)  
-**Date:** 2026-09-30  
-**Branch intent:** Inventarise backend + legacy UI before consolidating into **exactly four** workspaces.
+**Status:** WAVE 0 discovery complete; **4→3 consolidation in progress** (see [`WAVE0_4TO3_MIGRATION_MAP.md`](./WAVE0_4TO3_MIGRATION_MAP.md)).  
+**Date:** 2026-09-30 (four-workspace freeze); 2026-10-01 (three-page target)  
+**Branch intent:** Inventarise backend + legacy UI before consolidating into **exactly three** primary pages (Agent Overzicht, Live Agents, Research Centrum).
 
 ## Goal
 
 The new Trading Center is a **functional SUPERSET** of:
 
-1. All supported legacy Trading Center UI capabilities (9 routes), **and**
-2. Production-capable MarketSim/Trading backend capabilities that previously had weak or no UI.
+1. All supported legacy Trading Center UI capabilities, **and**
+2. The four native workspaces (Command Hub / Strategy Lab / Trading Desk / Market Data), **and**
+3. Production-capable MarketSim/Trading backend capabilities that previously had weak or no UI.
 
-Screenshots define **layout / density / design language**.  
+Screenshots define **layout / density / design language** (`Data/docs/ui_reference/trading-center-3page/`).  
 The repository defines **functional scope**.
 
-## Four-workspace architecture (absolute)
+## Three-page architecture (absolute — current target)
 
-| Workspace | Operator job | Absorbs legacy routes |
+| Page | Route | Operator job |
 |---|---|---|
-| **Command Hub** | Cross-system oversight, session composition, qualification/promotion attention, institutional truth | `/trading/onderzoek`, `/trading/control-room`, overview pieces of simulatie/paper |
-| **Strategy Lab** | Discovery → validation → qualification ladder | `/trading/lab`, `/trading/strategieen`, `/trading/simulatie` |
-| **Trading Desk** | Paper execution, portfolios, wallets, risk, fleet | `/trading/paper`, `/trading/portefeuille`, `/trading/broker` (boundary only) |
-| **Market Data** | Offline datasets, live feeds, certification, quality, replay sampling | `/trading/marktdata` (+ feed/replay APIs) |
+| **Agent Overzicht** | `/trading/agents` | Inventory, wallets/funding, portfolios, sessions, risk, orchestra, control room |
+| **Live Agents** | `/trading/live-agents` | Realtime/offline paper execution console |
+| **Research Centrum** | `/trading/research` | Discovery, lab, qualification, datasets |
 
-No fifth Trading Center page.
+No fourth primary Trading Center page.
 
 ## Artifacts in this folder
 
 | File | Purpose |
 |---|---|
-| [`BACKEND_CAPABILITY_MATRIX.md`](./BACKEND_CAPABILITY_MATRIX.md) | Per-capability inventory (authority → API → status → workspace) |
-| [`backend_capability_matrix.json`](./backend_capability_matrix.json) | Machine-readable matrix for coverage gates |
-| [`LEGACY_FEATURE_PARITY_MATRIX.md`](./LEGACY_FEATURE_PARITY_MATRIX.md) | Old UI feature → new workspace/surface mapping |
-| [`PROGRESSIVE_DISCLOSURE.md`](./PROGRESSIVE_DISCLOSURE.md) | PRIMARY / SECONDARY / ADVANCED surface plan |
-| [`BEYOND_LEGACY_UI.md`](./BEYOND_LEGACY_UI.md) | Backend capabilities discovered beyond legacy UI |
-
-## Classification rules (4C)
-
-A capability is only **COMPLETE** when this chain traces:
-
-```
-UI/action → API contract → canonical authority → execution path → durable state/result → error semantics
-```
-
-| Class | Meaning |
-|---|---|
-| **COMPLETE** | Full chain; safe to expose as operational |
-| **PARTIAL** | Real authority + API, but evidence/UI/family gaps remain; expose honestly or finish in-migration |
-| **STUB** | Boundary/refuse-only code — do **not** present as working |
-| **BLOCKED** | Explicitly prevented (e.g. live money) — show as blocked truth |
-| **UNAVAILABLE** | NOT_IMPLEMENTED / FEATURE_GATED with no production path |
-
-**Non-capabilities:** test fixtures, TODOs, dead code, manifest-only declarations, `AVAILABLE` without READY execution.
-
-## Coverage gate (4F) — pre-deletion checklist
-
-See [`WAVE4_COVERAGE_GATE.md`](./WAVE4_COVERAGE_GATE.md) for the frozen assessment.
-
-- [x] All production-capable trading backend functions assessed (BACKEND matrix) — WAVE 0
-- [x] No hidden fifth workspace — WAVE 1
-- [x] STUB/UNAVAILABLE not shown as operational — W1–W3 truth badges
-- [x] No backend capability lost by consolidation (reachable via surfaces/redirects) — WAVE 1
-- [~] 100% legacy UI densified to screenshot PRIMARY — REACHABLE via embed; pixel densify ongoing
-- [~] All COMPLETE operator capabilities fully polished — most wired; thin items listed in WAVE 4
-- [x] Relevant PARTIAL reported as blockers — WAVE 0 + WAVE 4
-
-## Canonical code anchors
-
-| Concern | Path |
-|---|---|
-| Control plane | `Data/modules/market_sim/service.py` (`MarketSimControlPlane`) |
-| Capabilities | `Data/modules/market_sim/capabilities.py` |
-| Action matrix | `Data/modules/market_sim/trading_action_matrix.py` |
-| Institutional gaps | `Data/modules/market_sim/institutional_core/gap_ledger.py` |
-| HTTP | `Data/backend/routes/market_sim.py`, `trading_orchestra.py`, `research_command.py` |
-| Legacy UI | `Data/frontend/src/pages/trading/` (9 routes) |
-| Workers | `Data/modules/workers/entrypoints/market_sim.py` |
+| [`WAVE0_4TO3_MIGRATION_MAP.md`](./WAVE0_4TO3_MIGRATION_MAP.md) | **Current** 4→3 ownership / deletion / gap map |
+| [`BACKEND_CAPABILITY_MATRIX.md`](./BACKEND_CAPABILITY_MATRIX.md) | Per-capability inventory |
+| [`backend_capability_matrix.json`](./backend_capability_matrix.json) | Machine-readable matrix |
+| [`LEGACY_FEATURE_PARITY_MATRIX.md`](./LEGACY_FEATURE_PARITY_MATRIX.md) | Old UI feature mapping (retarget to 3 pages during migration) |
+| [`PROGRESSIVE_DISCLOSURE.md`](./PROGRESSIVE_DISCLOSURE.md) | PRIMARY / SECONDARY / ADVANCED plan |
+| [`BEYOND_LEGACY_UI.md`](./BEYOND_LEGACY_UI.md) | Backend beyond legacy UI |
 
 ## Live-money invariant
 
-`LIVE_TRADING_AVAILABLE = BLOCKED` always. Broker UI is a **boundary surface**, never an enablement path. All new workspaces must preserve this truth.
+`LIVE_TRADING_AVAILABLE = BLOCKED` always. Broker UI is a **boundary surface**, never an enablement path. All new pages must preserve this truth.

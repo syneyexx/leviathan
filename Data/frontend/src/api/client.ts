@@ -3341,6 +3341,37 @@ export const api = {
     });
   },
 
+  listOfflineScenarioPresets(): Promise<{
+    presets: Array<{ id: string; segments: Array<Record<string, unknown>> }>;
+    truth: Record<string, unknown>;
+  }> {
+    return request("/api/market-sim/scenarios/presets");
+  },
+
+  createOfflineScenario(payload: {
+    symbol?: string;
+    timeframe?: string;
+    seed?: number;
+    preset?: string | null;
+    startPrice?: number;
+    startTs?: string;
+    segments?: Array<Record<string, unknown>>;
+    narrative?: string;
+    prompt?: string;
+    modelId?: string | null;
+    modelConstraints?: Record<string, unknown> | null;
+    scenarioId?: string;
+  }): Promise<{
+    scenario: Record<string, unknown>;
+    source: MarketDataSource;
+    truth: Record<string, unknown>;
+  }> {
+    return request("/api/market-sim/scenarios", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
   listMarketStrategies(limit = 100): Promise<{ strategies: MarketStrategy[] }> {
     return request(`/api/market-sim/strategies?limit=${encodeURIComponent(String(limit))}`);
   },

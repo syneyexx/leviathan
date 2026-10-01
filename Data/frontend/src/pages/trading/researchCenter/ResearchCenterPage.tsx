@@ -1,9 +1,7 @@
 /**
- * Research Centrum — PAGE shell (Wave 1 IA).
- * Full SCREEN 3 composition lands in Wave 4. Mounts Strategy Lab under the
- * new route; Market Data / Research Command deep-links open via section query.
+ * Research Centrum — PAGE 3 of Trading Center (SCREEN 3).
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AppShell } from "../../../layouts/AppShell";
 import { TradingContextBar } from "../workspaces/TradingContextBar";
@@ -14,7 +12,6 @@ import {
   CompareDrawer,
   CreateLabRunDrawer,
 } from "../workspaces/strategyLab/StrategyLabDrawers";
-import { StrategyLabView } from "../workspaces/strategyLab/StrategyLabView";
 import type { DiscoveryRow } from "../workspaces/strategyLab/useStrategyLabData";
 import { useStrategyLabData } from "../workspaces/strategyLab/useStrategyLabData";
 import {
@@ -27,15 +24,17 @@ import { MarketDataView } from "../workspaces/marketData/MarketDataView";
 import type { LibraryRow } from "../workspaces/marketData/useMarketDataWorkspace";
 import { useMarketDataWorkspace } from "../workspaces/marketData/useMarketDataWorkspace";
 import { getTradingWorkspace } from "../workspaces/workspaceConfig";
+import { ResearchCenterView } from "./ResearchCenterView";
 import "../../../styles/trading-workspaces.css";
 import "../../../styles/trading-strategy-lab.css";
 import "../../../styles/trading-market-data-workspace.css";
+import "../../../styles/trading-command-hub.css";
 
 export function ResearchCenterPage() {
   const ctx = useTradingContext();
   const data = useStrategyLabData();
   const marketData = useMarketDataWorkspace();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const ws = getTradingWorkspace("research_center");
   const section = params.get("section");
   const strategyId = params.get("strategy");
@@ -49,7 +48,7 @@ export function ResearchCenterPage() {
   const [showCreateRun, setShowCreateRun] = useState(false);
   const [showCompare, setShowCompare] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(
-    section === "lab" || section === "backtest" || section === "research-command",
+    section === "lab" || section === "backtest" || section === "research-command" || tab === "backtest",
   );
   const [advancedLabId, setAdvancedLabId] = useState<string | null>(null);
 
@@ -61,8 +60,12 @@ export function ResearchCenterPage() {
   const [certifyRow, setCertifyRow] = useState<LibraryRow | null>(null);
   const [replayRow, setReplayRow] = useState<LibraryRow | null>(null);
 
+  useEffect(() => {
+    if (strategyId) setSelectedRowId(strategyId);
+  }, [strategyId]);
+
   const selectedRow = useMemo<DiscoveryRow | null>(
-    () => data.discovery.find((r) => r.id === selectedRowId) ?? null,
+    () => data.discovery.find((r) => r.id === selectedRowId || r.strategyId === selectedRowId) ?? null,
     [data.discovery, selectedRowId],
   );
 
@@ -89,6 +92,12 @@ export function ResearchCenterPage() {
     const rawLabId = selectedRow?.labId ?? (matchedLab ? matchedLab.lab_id : null);
     setAdvancedLabId(rawLabId != null ? String(rawLabId) : null);
     setShowAdvanced(true);
+  }
+
+  function openMarketDataSection() {
+    const next = new URLSearchParams(params);
+    next.set("section", "market-data");
+    setParams(next, { replace: true });
   }
 
   return (
@@ -145,11 +154,7 @@ export function ResearchCenterPage() {
             {showImport ? <ImportDrawer data={marketData} onClose={() => setShowImport(false)} /> : null}
             {showFeeds ? <FeedsDrawer data={marketData} onClose={() => setShowFeeds(false)} /> : null}
             {showCertify ? (
-              <CertifyDrawer
-                data={marketData}
-                initialRow={certifyRow}
-                onClose={() => setShowCertify(false)}
-              />
+              <CertifyDrawer data={marketData} initialRow={certifyRow} onClose={() => setShowCertify(false)} />
             ) : null}
             {showReplay ? (
               <ReplayDrawer data={marketData} initialRow={replayRow} onClose={() => setShowReplay(false)} />
@@ -165,19 +170,19 @@ export function ResearchCenterPage() {
                 </button>
               </p>
             ) : null}
-            <StrategyLabView
+            <ResearchCenterView
               data={data}
+              marketData={marketData}
               selectedRow={selectedRow}
               onSelectRow={(row) => setSelectedRowId(row.id)}
               compareIds={compareIds}
               onToggleCompare={(id) =>
-                setCompareIds((prev) =>
-                  prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-                )
+                setCompareIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
               }
               onOpenCreateRun={() => setShowCreateRun(true)}
               onOpenCompare={() => setShowCompare(true)}
               onOpenAdvanced={openAdvanced}
+              onOpenMarketData={openMarketDataSection}
             />
           </>
         )}

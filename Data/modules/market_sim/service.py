@@ -798,6 +798,94 @@ class MarketSimControlPlane:
         source = self.data.register_file(relative_path, symbol=symbol, timeframe=timeframe)
         return source.public_dict()
 
+    def create_offline_scenario(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Generate a deterministic offline replay dataset from a structured scenario spec.
+
+        Optional ``modelConstraints`` may refine segments/narrative. LLMs must never
+        supply freehand OHLCV rows — only structured constraints.
+        """
+        self._require_enabled()
+        from .scenario_generator import (
+            maybe_enrich_spec_from_model_constraints,
+            materialize_scenario,
+            spec_from_request,
+            validate_spec,
+        )
+
+        spec = spec_from_request(dict(body or {}))
+        constraints = body.get("modelConstraints") or body.get("model_constraints")
+        if isinstance(constraints, dict):
+            spec = maybe_enrich_spec_from_model_constraints(spec, constraints)
+            if body.get("modelId") or body.get("model_id"):
+                spec.model_id = str(body.get("modelId") or body.get("model_id"))
+        errors = validate_spec(spec)
+        if errors:
+            raise MarketSimError("INVALID_SCENARIO_SPEC", ",".join(errors), http_status=400)
+
+        root = self.data.ensure_root()
+        materialized = materialize_scenario(markets_root=root, spec=spec)
+        source = self.data.register_file(
+            materialized["relativePath"],
+            symbol=spec.symbol,
+            timeframe=spec.timeframe,
+        )
+        source.metadata = {
+            **(source.metadata or {}),
+            "provider_id": "scenario_generator",
+            "scenario": True,
+            "scenario_id": spec.scenario_id,
+            "dataset_hash": materialized.get("datasetHash"),
+            "generator_version": materialized.get("generatorVersion"),
+            "seed": spec.seed,
+            "model_id": spec.model_id,
+            "paper_replay_only": True,
+            "ai_generated": bool(spec.model_id or constraints),
+            "prompt": spec.prompt or None,
+            "narrative": spec.narrative or None,
+        }
+        self.store.upsert_source(source)
+        self._emit_event(
+            "market_data.scenario_generated",
+            {
+                "scenario_id": spec.scenario_id,
+                "source_id": source.source_id,
+                "bars": materialized.get("barCount"),
+            },
+        )
+        return {
+            "scenario": materialized,
+            "source": source.public_dict(),
+            "truth": {
+                "deterministic_from_spec": True,
+                "llm_does_not_emit_ohlcv_rows": True,
+                "paper_replay_only": True,
+                "not_live_money": True,
+            },
+        }
+
+    def list_offline_scenario_presets(self) -> dict[str, Any]:
+        from .scenario_generator import PRESETS
+
+        return {
+            "presets": [
+                {
+                    "id": key,
+                    "segments": [
+                        {
+                            "name": s.name,
+                            "bars": s.bars,
+                            "driftBps": s.drift_bps,
+                            "volBps": s.vol_bps,
+                            "shockBps": s.shock_bps,
+                        }
+                        for s in segs
+                    ],
+                }
+                for key, segs in PRESETS.items()
+            ],
+            "truth": {"fixtures_are_deterministic": True, "not_live_money": True},
+        }
+
     # --- Strategies ---
 
     def create_strategy(

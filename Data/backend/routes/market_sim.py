@@ -34,6 +34,23 @@ class SealDatasetRequest(BaseModel):
     role: str = "SEALED_TEST"
 
 
+class OfflineScenarioCreate(BaseModel):
+    """Structured offline replay scenario (deterministic OHLCV from constraints)."""
+
+    symbol: str = "BTCUSDT"
+    timeframe: str = "1h"
+    seed: int = 42
+    preset: str | None = None
+    startPrice: float | None = None
+    startTs: str | None = None
+    segments: list[dict[str, Any]] | None = None
+    narrative: str = ""
+    prompt: str = ""
+    modelId: str | None = None
+    modelConstraints: dict[str, Any] | None = None
+    scenarioId: str | None = None
+
+
 class StrategyCreate(BaseModel):
     name: str = Field(min_length=1, max_length=240)
     description: str = ""
@@ -379,6 +396,22 @@ def build_market_sim_router(
                 "no_fastapi_recursive_scan": True,
             },
         }
+
+    @router.get("/api/market-sim/scenarios/presets")
+    def list_scenario_presets() -> dict:
+        try:
+            return service.list_offline_scenario_presets()
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/scenarios")
+    def create_offline_scenario(payload: OfflineScenarioCreate) -> dict:
+        """Generate deterministic offline replay dataset from structured scenario spec."""
+        try:
+            body = payload.model_dump(exclude_none=True)
+            return service.create_offline_scenario(body)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
 
     @router.post("/api/market-sim/data/register")
     def register_data(payload: RegisterDataRequest, response: Response) -> dict:

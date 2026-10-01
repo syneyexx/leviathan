@@ -115,7 +115,7 @@ Tests include `shellStatus.test.ts` / `useShellStatus.test.ts` and page-specific
 | Hades AI | Chatten, Coding Agent, Taken |
 | LLM | Modellen, Agents, Training, Statistieken |
 | Media Control | Overview, YouTube, TikTok, Instagram, Facebook, Queue, Viral Radar, Calendar, Analytics, Library, Personas |
-| TradingCenter | Command Hub, Strategy Lab, Trading Desk, Market Data (WAVE 1 four-workspace IA; legacy routes redirect) |
+| TradingCenter | Agent Overzicht, Live Agents, Research Centrum (3-page IA; former four workspaces + legacy nine routes redirect) |
 | Onderzoek & Kennis | Research, Brain, Geheugen, Knowledge, Evidence, Datasets |
 | Runtime & Tools | Performance, Tools, Modules, Skills, MCP, Workflows, Console |
 | Settings | General plus behavior, studio, security, benchmarks, media, storage, runtime, logs, RAG, cognition, agents, tools, market-sim and data/research sections |
@@ -164,16 +164,18 @@ The “Hades AI” navigation label is UI naming. It does not make `Data/HADES/`
 
 Trading pages are lazy-loaded and rendered inside Suspense/ErrorBoundary.
 
-WAVE 1 four-workspace architecture (`src/pages/trading/workspaces/`). Discovery matrices: `Data/docs/trading_center_wave0/`.
+**Canonical 3-page IA** (`src/pages/trading/agentOverview|liveAgents|researchCenter/`). Migration map: `Data/docs/trading_center_wave0/WAVE0_4TO3_MIGRATION_MAP.md`. Visual refs: `Data/docs/ui_reference/trading-center-3page/`.
 
 | Route | Page |
 |---|---|
-| `/trading` | redirect to `/trading/command-hub` |
-| `/trading/command-hub` | `CommandHubPage` (Research Command + Control Room surfaces) |
-| `/trading/strategy-lab` | `StrategyLabWorkspacePage` (Lab + Strategies + Simulation) |
-| `/trading/trading-desk` | `TradingDeskPage` (Paper + Portefeuille + Broker boundary) |
-| `/trading/market-data` | `MarketDataWorkspacePage` (Marktdata library) |
-| Legacy `/trading/{simulatie,strategieen,lab,marktdata,portefeuille,paper,broker,onderzoek,control-room}` | redirect into the matching workspace `?surface=` |
+| `/trading` | redirect to `/trading/agents` |
+| `/trading/agents` | `AgentOverviewPage` — agent registry, wallets/funding, portfolios, risk, orchestra, control-room drawer |
+| `/trading/live-agents` | `LiveAgentsPage` — realtime feed / offline replay + PAPER execution, orders, kill switch, AI scenarios |
+| `/trading/research` | `ResearchCenterPage` — strategies, lab, qualification, datasets (`?section=market-data`) |
+| Former four `/trading/{command-hub,strategy-lab,trading-desk,market-data}` | redirect into the three pages (query preserved) |
+| Legacy `/trading/{simulatie,strategieen,lab,marktdata,portefeuille,paper,broker,onderzoek,control-room}` | redirect into the three pages with `section`/`drawer` query |
+
+**Safety:** LIVE MARKET DATA is allowed; LIVE MONEY remains BLOCKED. Paper wallet funding (`POST /api/market-sim/portfolios/{id}/funding`) never alters trading PnL. Offline AI scenarios use structured constraints → deterministic OHLCV (`market_sim.scenario_generator`), never freehand LLM candles.
 
 ## Research/knowledge
 

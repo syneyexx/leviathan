@@ -946,3 +946,224 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ===== Live Agents (3-page IA) — lv-la-* ===== */
+.lv-la-page {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 0.9rem 1.1rem 1.75rem;
+}
+
+.lv-la {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.lv-la-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(280px, 0.85fr);
+  gap: 0.85rem;
+  align-items: start;
+}
+
+.lv-la-grid-wrap,
+.lv-la-control {
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 0.65rem;
+  background: linear-gradient(180deg, rgba(8, 16, 32, 0.95), rgba(5, 10, 22, 0.98));
+  padding: 0.75rem 0.85rem;
+  min-width: 0;
+}
+
+.lv-la-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.65rem;
+}
+
+.lv-la-card {
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 0.55rem;
+  padding: 0.65rem;
+  background: rgba(15, 23, 42, 0.55);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.lv-la-card.is-selected {
+  border-color: rgba(103, 232, 249, 0.55);
+  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.2);
+}
+
+.lv-la-card header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.lv-la-card__stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem;
+  margin: 0;
+}
+
+.lv-la-card__stats div {
+  display: flex;
+  flex-direction: column;
+}
+
+.lv-la-card__stats dt {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+}
+
+.lv-la-card__stats dd {
+  margin: 0;
+  color: #e2e8f0;
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.lv-la-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.lv-la-control__block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-top: 0.65rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.lv-la-control__block h4 {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #e2e8f0;
+}
+
+.lv-la-control__block label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  color: #94a3b8;
+  font-size: 0.72rem;
+}
+
+.lv-la-control__block input,
+.lv-la-control__block select {
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: #e2e8f0;
+  border-radius: 0.4rem;
+  padding: 0.35rem 0.5rem;
+}
+
+.lv-la-check {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 0.45rem !important;
+}
+
+.lv-hub-btn--danger {
+  border-color: rgba(248, 113, 113, 0.45) !important;
+  color: #fecaca !important;
+  background: rgba(127, 29, 29, 0.35) !important;
+}
+
+.lv-la-bottom {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+@media (max-width: 1200px) {
+  .lv-la-bottom {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .lv-la-main,
+  .lv-la-bottom {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ===== Research Centrum (3-page IA) — lv-rc-* ===== */
+.lv-rc-page {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 0.9rem 1.1rem 1.75rem;
+}
+
+.lv-rc {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.lv-rc-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.9fr);
+  gap: 0.85rem;
+  align-items: start;
+}
+
+.lv-rc-bottom {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.lv-rc-pipeline {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.lv-rc-pipe {
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 0.45rem;
+  padding: 0.45rem 0.5rem;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.lv-rc-pipe strong {
+  font-size: 0.72rem;
+  color: #e2e8f0;
+}
+
+.lv-rc-pipe span {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #c084fc;
+}
+
+@media (max-width: 1200px) {
+  .lv-rc-bottom {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .lv-rc-main,
+  .lv-rc-bottom {
+    grid-template-columns: 1fr;
+  }
+}
