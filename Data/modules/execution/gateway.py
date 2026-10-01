@@ -289,7 +289,6 @@ class ExecutionGateway:
         )
 
         # Idempotent claim / replay before policy/dispatch — no second side-effect.
-        idem_claim: str | None = None
         if request.idempotency_key:
             early = self._begin_idempotent(
                 request,
@@ -302,11 +301,9 @@ class ExecutionGateway:
                 # Either a terminal replay / conflict / in-flight response, or a claim marker.
                 if isinstance(early, CapabilityResult):
                     return early
-                idem_claim = "claimed"
 
         authority_decision = "pending"
         approval_reserved = False
-        side_effect_started = False
         try:
             self._validate_args(definition, request.arguments)
             request = self._confine_filesystem_args(request)
@@ -395,7 +392,6 @@ class ExecutionGateway:
             )
 
         try:
-            side_effect_started = True
             output = self._dispatch(definition, request)
         except GatewayRejection as exc:
             # Provider rejected before completing — treat as no irreversible effect when
