@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import inspect
+import json
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -9,6 +12,7 @@ from typing import Any, Protocol
 from Data.modules.function_runtime.types import FunctionCallStatus, SideEffect
 
 from .catalog import CapabilityCatalog
+from .idempotency import CapabilityIdempotencyStore, execution_fingerprint
 from .receipts import CapabilityReceiptStore, build_receipt_from_result
 from .types import (
     CapabilityDefinition,
@@ -186,10 +190,13 @@ class ExecutionGateway:
     voice_executor: VoiceExecutor | None = None
     module_executor: ModuleExecutor | None = None
     receipt_store: CapabilityReceiptStore | None = None
+    # Durable request-bound idempotency (fingerprint + claim). Optional; derived
+    # from observation_store.db_path when omitted.
+    idempotency_store: CapabilityIdempotencyStore | None = None
     # When set, path-bearing args are confined under this root (Round 8).
     filesystem_root: str | Path | None = None
     effect_ledger: list[EffectRecord] = field(default_factory=list)
-    # Process-local COMPLETED replay cache keyed by idempotency_key.
+    # Process-local COMPLETED replay cache keyed by idempotency_key+fingerprint.
     _idempotency_cache: dict[str, CapabilityResult] = field(default_factory=dict, repr=False)
     telemetry: dict[str, Any] = field(
         default_factory=lambda: {
@@ -203,8 +210,36 @@ class ExecutionGateway:
             "observations_recorded": 0,
             "receipts_recorded": 0,
             "idempotent_replays": 0,
+            "idempotency_conflicts": 0,
+            "idempotency_in_flight": 0,
         }
     )
+
+    def _resolve_idempotency_store(self) -> CapabilityIdempotencyStore | None:
+        if self.idempotency_store is not None:
+            return self.idempotency_store
+        store = self.observation_store
+        db_path = getattr(store, "db_path", None) if store is not None else None
+        if db_path is None:
+            return None
+        resolved = CapabilityIdempotencyStore(Path(db_path))
+        try:
+            resolved.initialize()
+        except Exception:  # noqa: BLE001 — initialize best-effort; claim will surface errors
+            pass
+        self.idempotency_store = resolved
+        return resolved
+
+    @staticmethod
+    def _callable_accepts_kwarg(fn: Any, name: str) -> bool:
+        try:
+            sig = inspect.signature(fn)
+        except (TypeError, ValueError):
+            return False
+        params = sig.parameters
+        if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            return True
+        return name in params
 
     def list_capabilities(self) -> list[CapabilityDefinition]:
         return self.catalog.list()
@@ -229,10 +264,12 @@ class ExecutionGateway:
                 authority_decision="rejected_unknown",
             )
 
-        # Strip audit-only client fields before schema validation — never authority.
+        # Strip audit-only / forgeable client fields before schema validation —
+        # never authority. Gateway re-injects `_trusted_authority` after approval.
         arguments = dict(request.arguments)
         arguments.pop("approved_by_user", None)
         arguments.pop("_approved_by_user", None)
+        arguments.pop("_trusted_authority", None)
         request = CapabilityRequest(
             capability_id=request.capability_id,
             arguments=arguments,
@@ -245,17 +282,36 @@ class ExecutionGateway:
             idempotency_key=request.idempotency_key,
         )
 
-        # Idempotent replay before policy/dispatch — no second side-effect.
+        fingerprint = execution_fingerprint(
+            request,
+            schema_hash=definition.resolved_schema_hash(),
+            schema_version=str((definition.normalized_metadata() or {}).get("schema_version") or ""),
+        )
+
+        # Idempotent claim / replay before policy/dispatch — no second side-effect.
+        idem_claim: str | None = None
         if request.idempotency_key:
-            replay = self._replay_idempotent(request, request_id=request_id, started=started)
-            if replay is not None:
-                return replay
+            early = self._begin_idempotent(
+                request,
+                request_id=request_id,
+                started=started,
+                fingerprint=fingerprint,
+                definition=definition,
+            )
+            if early is not None:
+                # Either a terminal replay / conflict / in-flight response, or a claim marker.
+                if isinstance(early, CapabilityResult):
+                    return early
+                idem_claim = "claimed"
 
         authority_decision = "pending"
+        approval_reserved = False
+        side_effect_started = False
         try:
             self._validate_args(definition, request.arguments)
             request = self._confine_filesystem_args(request)
         except GatewayRejection as exc:
+            self._fail_idempotent_claim(request, fingerprint=fingerprint, result=None)
             return self._reject(
                 request_id,
                 definition.id,
@@ -269,6 +325,7 @@ class ExecutionGateway:
             )
 
         if not definition.available:
+            self._fail_idempotent_claim(request, fingerprint=fingerprint, result=None)
             return self._reject(
                 request_id,
                 definition.id,
@@ -285,6 +342,7 @@ class ExecutionGateway:
         try:
             self._enforce_external_workload(definition, request)
         except GatewayRejection as exc:
+            self._fail_idempotent_claim(request, fingerprint=fingerprint, result=None)
             return self._reject(
                 request_id,
                 definition.id,
@@ -303,6 +361,27 @@ class ExecutionGateway:
         except GatewayRejection as exc:
             if exc.reason == "approval_required":
                 self.telemetry["approval_required"] += 1
+            self._fail_idempotent_claim(request, fingerprint=fingerprint, result=None)
+            return self._reject(
+                request_id,
+                definition.id,
+                str(exc),
+                reason=exc.reason,
+                started=started,
+                definition=definition,
+                approval_id=request.approval_id,
+                request=request,
+                authority_decision=f"rejected_{exc.reason}",
+            )
+
+        # Inject non-forgeable trusted authority after approval verification.
+        request = self._inject_trusted_authority(definition, request)
+
+        # Atomic single-use approval reservation — must succeed before side effects.
+        try:
+            approval_reserved = self._reserve_approval(definition, request)
+        except GatewayRejection as exc:
+            self._fail_idempotent_claim(request, fingerprint=fingerprint, result=None)
             return self._reject(
                 request_id,
                 definition.id,
@@ -316,9 +395,14 @@ class ExecutionGateway:
             )
 
         try:
+            side_effect_started = True
             output = self._dispatch(definition, request)
         except GatewayRejection as exc:
-            return self._reject(
+            # Provider rejected before completing — treat as no irreversible effect when
+            # the rejection is pre-dispatch style; still release reservation.
+            if approval_reserved:
+                self._release_approval(request, uncertain=False)
+            rejected = self._reject(
                 request_id,
                 definition.id,
                 str(exc),
@@ -329,7 +413,12 @@ class ExecutionGateway:
                 request=request,
                 authority_decision=f"rejected_{exc.reason}",
             )
+            self._fail_idempotent_claim(request, fingerprint=fingerprint, result=rejected)
+            return rejected
         except Exception as exc:  # noqa: BLE001 — normalized into CapabilityResult
+            # Dispatch may have started irreversible work — never pretend clean pre-exec failure.
+            if approval_reserved:
+                self._release_approval(request, uncertain=True)
             result = CapabilityResult(
                 request_id=request_id,
                 capability_id=definition.id,
@@ -339,10 +428,14 @@ class ExecutionGateway:
                 provider_kind=definition.provider_kind.value,
                 provider_ref=definition.provider_ref,
                 approval_id=request.approval_id,
-                telemetry={"duration_ms": (time.perf_counter() - started) * 1000},
+                telemetry={
+                    "duration_ms": (time.perf_counter() - started) * 1000,
+                    "approval_reservation_uncertain": bool(approval_reserved),
+                },
             )
             self.telemetry["failed"] += 1
             self._record_effect(result, request=request, authority_decision=authority_decision)
+            self._fail_idempotent_claim(request, fingerprint=fingerprint, result=result)
             return result
 
         if isinstance(output, CapabilityResult):
@@ -357,9 +450,9 @@ class ExecutionGateway:
                 "duration_ms": (time.perf_counter() - started) * 1000,
             }
             self._bump_status(output.status)
-            self._maybe_consume_approval(request, output)
+            self._finalize_approval(request, output, reserved=approval_reserved)
             self._record_effect(output, request=request, authority_decision=authority_decision)
-            self._remember_idempotent(request, output)
+            self._remember_idempotent(request, output, fingerprint=fingerprint)
             return output
 
         result = CapabilityResult(
@@ -374,80 +467,143 @@ class ExecutionGateway:
             telemetry={"duration_ms": (time.perf_counter() - started) * 1000},
         )
         self.telemetry["completed"] += 1
-        self._maybe_consume_approval(request, result)
+        self._finalize_approval(request, result, reserved=approval_reserved)
         self._record_effect(result, request=request, authority_decision=authority_decision)
-        self._remember_idempotent(request, result)
+        self._remember_idempotent(request, result, fingerprint=fingerprint)
         return result
 
-    def _replay_idempotent(
+    def _begin_idempotent(
         self,
         request: CapabilityRequest,
         *,
         request_id: str,
         started: float,
-    ) -> CapabilityResult | None:
+        fingerprint: str,
+        definition: CapabilityDefinition,
+    ) -> CapabilityResult | str | None:
+        """Claim or replay durable idempotency. Returns result, ``'claimed'``, or None."""
         key = request.idempotency_key
         if not key:
             return None
-        cached = self._idempotency_cache.get(key)
+
+        cache_key = f"{key}:{fingerprint}"
+        cached = self._idempotency_cache.get(cache_key)
         if cached is not None and cached.capability_id == request.capability_id:
             return self._mark_replay(cached, request_id=request_id, started=started, source="memory")
 
-        # Durable observation ledger (same process restart / multi-gateway share DB).
-        store = self.observation_store
-        getter = getattr(store, "get_completed_by_idempotency_key", None) if store else None
-        if callable(getter):
-            try:
-                prior = getter(key)
-            except Exception:  # noqa: BLE001 — lookup must not block execution
-                prior = None
-            if prior is not None:
-                observation, effect = prior
-                if observation.capability_id != request.capability_id:
-                    return self._reject(
-                        request_id,
-                        request.capability_id,
-                        f"Idempotency key {key!r} already used for capability "
-                        f"{observation.capability_id!r}",
-                        reason="idempotency_conflict",
-                        started=started,
-                        request=request,
-                        authority_decision="rejected_idempotency_conflict",
-                    )
-                from Data.modules.function_runtime.types import SideEffect as _SE
+        durable = self._resolve_idempotency_store()
+        has_side_effects = any(effect not in _AUTO_ALLOWED_EFFECTS for effect in definition.side_effects)
+        if durable is None:
+            if has_side_effects:
+                return self._reject(
+                    request_id,
+                    request.capability_id,
+                    "Durable idempotency authority unavailable for side-effecting capability",
+                    reason="idempotency_authority_unavailable",
+                    started=started,
+                    definition=definition,
+                    request=request,
+                    authority_decision="rejected_idempotency_authority_unavailable",
+                )
+            # READ-only may proceed with memory-only semantics.
+            return "claimed"
 
-                side_effects: tuple[Any, ...] = ()
-                try:
-                    side_effects = tuple(
-                        _SE(s) if not isinstance(s, _SE) else s for s in observation.side_effects
-                    )
-                except Exception:  # noqa: BLE001
-                    side_effects = ()
-                rebuilt = CapabilityResult(
-                    request_id=request_id,
-                    capability_id=observation.capability_id,
-                    status=CapabilityStatus.COMPLETED,
-                    output=observation.output,
-                    error=observation.error,
-                    side_effects=side_effects,  # type: ignore[arg-type]
-                    provider_kind=observation.provider_kind,
-                    provider_ref=observation.provider_ref,
-                    approval_id=observation.approval_id,
-                    telemetry={
-                        "duration_ms": (time.perf_counter() - started) * 1000,
-                        "observation_id": observation.observation_id,
-                        "effect_id": effect.effect_id,
-                        "idempotent_replay": True,
-                        "idempotent_replay_source": "observation_store",
-                    },
+        try:
+            outcome, record = durable.claim(
+                idempotency_key=key,
+                fingerprint=fingerprint,
+                capability_id=request.capability_id,
+                request_id=request_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            if has_side_effects:
+                return self._reject(
+                    request_id,
+                    request.capability_id,
+                    f"Durable idempotency claim failed: {exc}",
+                    reason="idempotency_authority_unavailable",
+                    started=started,
+                    definition=definition,
+                    request=request,
+                    authority_decision="rejected_idempotency_authority_unavailable",
                 )
-                self._idempotency_cache[key] = rebuilt
-                self.telemetry["idempotent_replays"] = (
-                    int(self.telemetry.get("idempotent_replays", 0)) + 1
-                )
-                self.telemetry["completed"] += 1
-                return rebuilt
-        return None
+            return "claimed"
+
+        if outcome == "claimed":
+            return "claimed"
+        if outcome == "conflict":
+            self.telemetry["idempotency_conflicts"] = (
+                int(self.telemetry.get("idempotency_conflicts", 0)) + 1
+            )
+            return self._reject(
+                request_id,
+                request.capability_id,
+                f"Idempotency key {key!r} already bound to a different request fingerprint",
+                reason="idempotency_conflict",
+                started=started,
+                definition=definition,
+                request=request,
+                authority_decision="rejected_idempotency_conflict",
+            )
+        if outcome == "in_flight":
+            self.telemetry["idempotency_in_flight"] = (
+                int(self.telemetry.get("idempotency_in_flight", 0)) + 1
+            )
+            return CapabilityResult(
+                request_id=request_id,
+                capability_id=request.capability_id,
+                status=CapabilityStatus.REJECTED,
+                error=f"Idempotent request already in flight (request_id={record.request_id})",
+                side_effects=definition.side_effects,
+                provider_kind=definition.provider_kind.value,
+                provider_ref=definition.provider_ref,
+                approval_id=request.approval_id,
+                telemetry={
+                    "reason": "idempotency_in_flight",
+                    "duration_ms": (time.perf_counter() - started) * 1000,
+                    "in_flight_request_id": record.request_id,
+                    "idempotency_key": key,
+                    "fingerprint": fingerprint,
+                },
+            )
+        # replay
+        rebuilt = CapabilityIdempotencyStore.result_from_record(record, request_id=request_id)
+        if rebuilt is None:
+            # Completed record without payload — treat as conflict rather than re-execute.
+            return self._reject(
+                request_id,
+                request.capability_id,
+                f"Idempotency key {key!r} completed without durable payload",
+                reason="idempotency_conflict",
+                started=started,
+                definition=definition,
+                request=request,
+                authority_decision="rejected_idempotency_conflict",
+            )
+        return self._mark_replay(
+            rebuilt,
+            request_id=request_id,
+            started=started,
+            source="capability_idempotency",
+        )
+
+    def _fail_idempotent_claim(
+        self,
+        request: CapabilityRequest,
+        *,
+        fingerprint: str,
+        result: CapabilityResult | None,
+    ) -> None:
+        key = request.idempotency_key
+        if not key:
+            return
+        durable = self._resolve_idempotency_store()
+        if durable is None:
+            return
+        try:
+            durable.fail(key, result=result, request_id=request.request_id)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _mark_replay(
         self,
@@ -472,7 +628,8 @@ class ExecutionGateway:
                 "duration_ms": (time.perf_counter() - started) * 1000,
                 "idempotent_replay": True,
                 "idempotent_replay_source": source,
-                "original_request_id": prior.request_id,
+                "original_request_id": (prior.telemetry or {}).get("original_request_id")
+                or prior.request_id,
             },
         )
         self.telemetry["idempotent_replays"] = int(self.telemetry.get("idempotent_replays", 0)) + 1
@@ -480,10 +637,137 @@ class ExecutionGateway:
             self.telemetry["completed"] += 1
         return replayed
 
-    def _remember_idempotent(self, request: CapabilityRequest, result: CapabilityResult) -> None:
-        if not request.idempotency_key or result.status != CapabilityStatus.COMPLETED:
+    def _remember_idempotent(
+        self,
+        request: CapabilityRequest,
+        result: CapabilityResult,
+        *,
+        fingerprint: str,
+    ) -> None:
+        if not request.idempotency_key:
             return
-        self._idempotency_cache[request.idempotency_key] = result
+        cache_key = f"{request.idempotency_key}:{fingerprint}"
+        durable = self._resolve_idempotency_store()
+        if result.status == CapabilityStatus.COMPLETED:
+            self._idempotency_cache[cache_key] = result
+            if durable is not None:
+                try:
+                    durable.complete(
+                        request.idempotency_key,
+                        result=result,
+                        request_id=result.request_id,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            return
+        if durable is not None:
+            try:
+                durable.fail(
+                    request.idempotency_key,
+                    result=result,
+                    request_id=result.request_id,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _inject_trusted_authority(
+        self, definition: CapabilityDefinition, request: CapabilityRequest
+    ) -> CapabilityRequest:
+        """After approval verification, inject non-forgeable authority for module dispatch."""
+        if definition.provider_kind != CapabilityProviderKind.MODULE:
+            return request
+        args = dict(request.arguments)
+        args.pop("_trusted_authority", None)
+        if request.approval_id:
+            args["_trusted_authority"] = {
+                "approval_id": request.approval_id,
+                # Echo explicit client intent only after gateway verified approval.
+                "allow_system_deps": bool(request.arguments.get("allow_system_deps")),
+            }
+        return CapabilityRequest(
+            capability_id=request.capability_id,
+            arguments=args,
+            request_id=request.request_id,
+            run_id=request.run_id,
+            job_id=request.job_id,
+            approval_id=request.approval_id,
+            requested_by=request.requested_by,
+            trace_id=request.trace_id,
+            idempotency_key=request.idempotency_key,
+        )
+
+    def _reserve_approval(
+        self, definition: CapabilityDefinition, request: CapabilityRequest
+    ) -> bool:
+        """Atomically reserve single-use approval before side effects. Returns True if reserved."""
+        needs_approval = any(effect not in _AUTO_ALLOWED_EFFECTS for effect in definition.side_effects)
+        if not needs_approval or not request.approval_id:
+            return False
+        reserve = getattr(self.approval_checker, "reserve_for_execution", None)
+        if not callable(reserve):
+            # Legacy checkers without reserve — consume-after remains best-effort.
+            return False
+        # Digests were computed without gateway-injected _trusted_authority.
+        args_for_digest = {
+            k: v for k, v in request.arguments.items() if k != "_trusted_authority"
+        }
+        digest = hashlib.sha256(
+            json.dumps(args_for_digest, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+        kwargs: dict[str, Any] = {
+            "capability_id": definition.id,
+            "arguments": args_for_digest,
+            "arguments_digest": digest,
+        }
+        if not self._callable_accepts_kwarg(reserve, "arguments"):
+            kwargs.pop("arguments", None)
+        if not self._callable_accepts_kwarg(reserve, "arguments_digest"):
+            kwargs.pop("arguments_digest", None)
+        reserved = reserve(request.approval_id, **kwargs)
+        if reserved is None:
+            raise GatewayRejection(
+                f"Approval {request.approval_id!r} could not be reserved for "
+                f"capability {definition.id!r} (already reserved/consumed or mismatch)",
+                reason="approval_denied",
+            )
+        return True
+
+    def _release_approval(self, request: CapabilityRequest, *, uncertain: bool) -> None:
+        if not request.approval_id:
+            return
+        if uncertain:
+            # Irreversible effect may have occurred — leave RESERVED for repair.
+            return
+        release = getattr(self.approval_checker, "release_reservation", None)
+        if not callable(release):
+            return
+        try:
+            release(request.approval_id)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _finalize_approval(
+        self,
+        request: CapabilityRequest,
+        result: CapabilityResult,
+        *,
+        reserved: bool,
+    ) -> None:
+        if not request.approval_id:
+            return
+        if result.status == CapabilityStatus.COMPLETED:
+            self._maybe_consume_approval(request, result)
+            return
+        if not reserved:
+            return
+        # Non-success after reservation: release when outcome is clean cancel/reject;
+        # mark uncertain for FAILED (side effect may have partially occurred).
+        if result.status in {CapabilityStatus.REJECTED, CapabilityStatus.CANCELLED}:
+            self._release_approval(request, uncertain=False)
+            result.telemetry["approval_released"] = True
+            return
+        result.telemetry["approval_reservation_uncertain"] = True
+        # Leave RESERVED for operator repair — never pretend clean pre-exec failure.
 
     def _maybe_consume_approval(self, request: CapabilityRequest, result: CapabilityResult) -> None:
         if result.status != CapabilityStatus.COMPLETED or not request.approval_id:
@@ -496,6 +780,7 @@ class ExecutionGateway:
             result.telemetry["approval_consumed"] = True
         except Exception as exc:  # noqa: BLE001 — do not fail completed work on ledger consume
             result.telemetry["approval_consume_error"] = str(exc)
+            result.telemetry["approval_reservation_uncertain"] = True
 
     def _confine_filesystem_args(self, request: CapabilityRequest) -> CapabilityRequest:
         """Refuse path escape when filesystem_root is configured (Round 8)."""
@@ -596,20 +881,13 @@ class ExecutionGateway:
                 "Approval checker not configured; cannot verify gated capability",
                 reason="approval_denied",
             )
-        try:
-            approved = self.approval_checker.is_approved(
-                request.approval_id,
-                capability_id=definition.id,
-                side_effects=definition.side_effects,
-                arguments=request.arguments,
-            )
-        except TypeError:
-            # Older checkers without an arguments parameter remain compatible.
-            approved = self.approval_checker.is_approved(
-                request.approval_id,
-                capability_id=definition.id,
-                side_effects=definition.side_effects,
-            )
+        kwargs: dict[str, Any] = {
+            "capability_id": definition.id,
+            "side_effects": definition.side_effects,
+        }
+        if self._callable_accepts_kwarg(self.approval_checker.is_approved, "arguments"):
+            kwargs["arguments"] = request.arguments
+        approved = self.approval_checker.is_approved(request.approval_id, **kwargs)
         if not approved:
             raise GatewayRejection(
                 f"Approval {request.approval_id!r} is not valid for capability {definition.id!r}",
@@ -641,7 +919,7 @@ class ExecutionGateway:
 
     def _dispatch_browser(
         self, definition: CapabilityDefinition, request: CapabilityRequest
-    ) -> dict[str, Any]:
+    ) -> Any:
         if self.browser_executor is None:
             raise RuntimeError("Browser executor not configured on ExecutionGateway")
         action = definition.provider_ref
@@ -663,13 +941,21 @@ class ExecutionGateway:
                 str(result.get("detail") or "Browser action unsupported"),
                 reason="browser_unsupported",
             )
+        if status == "CANCELLED":
+            return CapabilityResult(
+                request_id=request.request_id or "",
+                capability_id=definition.id,
+                status=CapabilityStatus.CANCELLED,
+                output=result if isinstance(result, dict) else {"value": result},
+                error=str(result.get("error") or result.get("detail") or "Browser cancelled"),
+            )
         if status == "FAILED":
             raise RuntimeError(str(result.get("error") or result.get("detail") or "Browser failed"))
         return result
 
     def _dispatch_media(
         self, definition: CapabilityDefinition, request: CapabilityRequest
-    ) -> dict[str, Any]:
+    ) -> Any:
         if self.media_executor is None:
             raise RuntimeError("Media executor not configured on ExecutionGateway")
         result = self.media_executor.execute(
@@ -689,13 +975,21 @@ class ExecutionGateway:
                 str(result.get("detail") or "Media action unsupported"),
                 reason="media_unsupported",
             )
+        if status == "CANCELLED":
+            return CapabilityResult(
+                request_id=request.request_id or "",
+                capability_id=definition.id,
+                status=CapabilityStatus.CANCELLED,
+                output=result if isinstance(result, dict) else {"value": result},
+                error=str(result.get("error") or result.get("detail") or "Media cancelled"),
+            )
         if status == "FAILED":
             raise RuntimeError(str(result.get("error") or result.get("detail") or "Media failed"))
         return result
 
     def _dispatch_voice(
         self, definition: CapabilityDefinition, request: CapabilityRequest
-    ) -> dict[str, Any]:
+    ) -> Any:
         if self.voice_executor is None:
             raise RuntimeError("Voice executor not configured on ExecutionGateway")
         result = self.voice_executor.execute(
@@ -710,11 +1004,16 @@ class ExecutionGateway:
                 str(result.get("error") or result.get("detail") or "Voice rejected"),
                 reason="voice_rejected",
             )
-        if status in {"UNSUPPORTED", "CANCELLED"}:
-            # CANCELLED is an honest barge-in outcome — surface as rejected for policy
-            # but preserve payload for callers that inspect output via public_dict paths.
-            if status == "CANCELLED":
-                return result
+        if status == "CANCELLED":
+            # Honest barge-in — typed CANCELLED (never wrap as COMPLETED via plain dict).
+            return CapabilityResult(
+                request_id=request.request_id or "",
+                capability_id=definition.id,
+                status=CapabilityStatus.CANCELLED,
+                output=result if isinstance(result, dict) else {"value": result},
+                error=str(result.get("error") or result.get("detail") or "Voice cancelled"),
+            )
+        if status == "UNSUPPORTED":
             raise GatewayRejection(
                 str(result.get("detail") or "Voice action unsupported"),
                 reason="voice_unsupported",
@@ -747,37 +1046,23 @@ class ExecutionGateway:
         args.pop("_cancel_check", None)
         if cancel_check is None and callable(request.arguments.get("_cancel_check")):
             cancel_check = request.arguments.get("_cancel_check")
-        try:
-            return self.module_executor.execute_module_capability(
-                definition.id,
-                definition.provider_ref,
-                args,
-                request_id=request.request_id or "",
-                run_id=request.run_id,
-                job_id=job_id,
-                cancel_check=cancel_check,
-                progress=progress,
-            )
-        except TypeError:
-            # Backward-compatible executors without job_id/cancel_check/progress kwargs.
-            try:
-                return self.module_executor.execute_module_capability(
-                    definition.id,
-                    definition.provider_ref,
-                    args,
-                    request_id=request.request_id or "",
-                    run_id=request.run_id,
-                    job_id=job_id,
-                    cancel_check=cancel_check,
-                )
-            except TypeError:
-                return self.module_executor.execute_module_capability(
-                    definition.id,
-                    definition.provider_ref,
-                    args,
-                    request_id=request.request_id or "",
-                    run_id=request.run_id,
-                )
+        fn = self.module_executor.execute_module_capability
+        kwargs: dict[str, Any] = {
+            "request_id": request.request_id or "",
+            "run_id": request.run_id,
+        }
+        if self._callable_accepts_kwarg(fn, "job_id"):
+            kwargs["job_id"] = job_id
+        if self._callable_accepts_kwarg(fn, "cancel_check"):
+            kwargs["cancel_check"] = cancel_check
+        if self._callable_accepts_kwarg(fn, "progress"):
+            kwargs["progress"] = progress
+        return fn(
+            definition.id,
+            definition.provider_ref,
+            args,
+            **kwargs,
+        )
 
     def _dispatch_mcp(
         self, definition: CapabilityDefinition, request: CapabilityRequest
@@ -1026,59 +1311,35 @@ class ExecutionGateway:
                     if request and result.status == CapabilityStatus.COMPLETED
                     else None
                 )
-                observation, durable = self.observation_store.record_execution(
-                    request_id=result.request_id,
-                    capability_id=result.capability_id,
-                    status=result.status.value,
-                    side_effects=side_effects,
-                    provider_kind=result.provider_kind,
-                    provider_ref=result.provider_ref,
-                    approval_id=result.approval_id,
-                    run_id=run_id,
-                    job_id=job_id,
-                    output=result.output,
-                    error=result.error,
-                    duration_ms=duration_ms,
-                    metadata={
+                record_kwargs: dict[str, Any] = {
+                    "request_id": result.request_id,
+                    "capability_id": result.capability_id,
+                    "status": result.status.value,
+                    "side_effects": side_effects,
+                    "provider_kind": result.provider_kind,
+                    "provider_ref": result.provider_ref,
+                    "approval_id": result.approval_id,
+                    "run_id": run_id,
+                    "job_id": job_id,
+                    "output": result.output,
+                    "error": result.error,
+                    "duration_ms": duration_ms,
+                    "metadata": {
                         "reason": (result.telemetry or {}).get("reason"),
                         "trace_id": request.trace_id if request else None,
                     },
-                    idempotency_key=idem_for_ledger,
-                    trace_id=request.trace_id if request else None,
-                )
+                }
+                fn = self.observation_store.record_execution
+                if self._callable_accepts_kwarg(fn, "idempotency_key"):
+                    record_kwargs["idempotency_key"] = idem_for_ledger
+                if self._callable_accepts_kwarg(fn, "trace_id"):
+                    record_kwargs["trace_id"] = request.trace_id if request else None
+                observation, durable = fn(**record_kwargs)
                 observation_id = observation.observation_id
                 effect_id = durable.effect_id
                 self.telemetry["observations_recorded"] += 1
                 result.telemetry["observation_id"] = observation_id
                 result.telemetry["effect_id"] = effect_id
-            except TypeError:
-                # Older ObservationRecorder protocol without idempotency kwargs.
-                try:
-                    observation, durable = self.observation_store.record_execution(
-                        request_id=result.request_id,
-                        capability_id=result.capability_id,
-                        status=result.status.value,
-                        side_effects=side_effects,
-                        provider_kind=result.provider_kind,
-                        provider_ref=result.provider_ref,
-                        approval_id=result.approval_id,
-                        run_id=run_id,
-                        job_id=job_id,
-                        output=result.output,
-                        error=result.error,
-                        duration_ms=duration_ms,
-                        metadata={
-                            "reason": (result.telemetry or {}).get("reason"),
-                            "trace_id": request.trace_id if request else None,
-                        },
-                    )
-                    observation_id = observation.observation_id
-                    effect_id = durable.effect_id
-                    self.telemetry["observations_recorded"] += 1
-                    result.telemetry["observation_id"] = observation_id
-                    result.telemetry["effect_id"] = effect_id
-                except Exception as exc:  # noqa: BLE001
-                    result.telemetry["observation_persist_error"] = str(exc)
             except Exception as exc:  # noqa: BLE001 — never fail execution on ledger write
                 result.telemetry["observation_persist_error"] = str(exc)
 

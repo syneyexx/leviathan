@@ -114,10 +114,12 @@ class ExternalModuleExecutor:
             activate = bool(arguments["activate"]) if "activate" in arguments else True
             lifecycle_action = str(arguments.get("action") or capability_id.rsplit(".", 1)[-1])
             action = "install_version" if arguments.get("ref") and not activate else lifecycle_action
-            # After gateway verified approval (plan_hash present), allow privileged system deps.
-            allow_system_deps = bool(arguments.get("allow_system_deps"))
-            if arguments.get("plan_hash") and not allow_system_deps:
-                allow_system_deps = True
+            # Privilege elevation only from gateway-injected `_trusted_authority`
+            # (never from client plan_hash or bare allow_system_deps).
+            trusted = arguments.get("_trusted_authority")
+            allow_system_deps = False
+            if isinstance(trusted, dict):
+                allow_system_deps = bool(trusted.get("allow_system_deps"))
             # Update/upgrade reuse the canonical InstallationService lifecycle (re-install/plan).
             force = bool(arguments.get("force", False))
             if lifecycle_action in {"update", "upgrade"}:
@@ -378,10 +380,25 @@ class ExternalModuleExecutor:
 
         try:
             try:
-                self.module_manager.ensure_ready(module_id)
+                ready = self.module_manager.ensure_ready(module_id)
             except ModuleManagerError:
                 if hasattr(self.module_manager, "ensure_ready"):
                     raise
+                ready = None
+            if isinstance(ready, dict) and ready.get("ready") is False:
+                return CapabilityResult(
+                    request_id=request_id or "",
+                    capability_id=capability_id,
+                    status=CapabilityStatus.FAILED,
+                    error=f"ensure_ready failed: {ready.get('code') or ready.get('detail') or 'not_ready'}",
+                    output=normalize_capability_parts(
+                        summary="ensure_ready failed",
+                        error={"code": "ENSURE_READY_FAILED", "detail": ready},
+                        metadata={"module_id": module_id, "operation": operation, "run_id": run_id},
+                    ),
+                    provider_kind="module",
+                    provider_ref=provider_ref,
+                )
             if job_id:
                 self.module_manager.register_job(module_id, job_id)
 
@@ -391,9 +408,38 @@ class ExternalModuleExecutor:
             adapter = getattr(inst, "_adapter", None) if inst is not None else None
             if adapter is not None and hasattr(adapter, "invoke") and (cancel_check or progress):
                 try:
-                    adapter.ensure_ready()
-                except Exception:  # noqa: BLE001
-                    pass
+                    adapter_ready = adapter.ensure_ready()
+                except Exception as exc:  # noqa: BLE001 — fail the invoke; do not ignore
+                    return CapabilityResult(
+                        request_id=request_id or "",
+                        capability_id=capability_id,
+                        status=CapabilityStatus.FAILED,
+                        error=f"ensure_ready failed: {exc}",
+                        output=normalize_capability_parts(
+                            summary=f"ensure_ready failed: {exc}",
+                            error={"code": "ENSURE_READY_FAILED", "detail": str(exc)},
+                            metadata={"module_id": module_id, "operation": operation, "run_id": run_id},
+                        ),
+                        provider_kind="module",
+                        provider_ref=provider_ref,
+                    )
+                if isinstance(adapter_ready, dict) and adapter_ready.get("ready") is False:
+                    return CapabilityResult(
+                        request_id=request_id or "",
+                        capability_id=capability_id,
+                        status=CapabilityStatus.FAILED,
+                        error=(
+                            f"ensure_ready failed: "
+                            f"{adapter_ready.get('code') or adapter_ready.get('detail') or 'not_ready'}"
+                        ),
+                        output=normalize_capability_parts(
+                            summary="ensure_ready failed",
+                            error={"code": "ENSURE_READY_FAILED", "detail": adapter_ready},
+                            metadata={"module_id": module_id, "operation": operation, "run_id": run_id},
+                        ),
+                        provider_kind="module",
+                        provider_ref=provider_ref,
+                    )
                 result = adapter.invoke(operation, args, progress=progress, cancel_check=cancel_check)
             else:
                 result = self.module_manager.execute(module_id, operation, args)

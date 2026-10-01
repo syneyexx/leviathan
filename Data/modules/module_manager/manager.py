@@ -786,10 +786,20 @@ class ModuleManager:
         managed.desired_state = "STOPPED"
         try:
             if hasattr(managed.instance, "stop"):
+                import inspect
+
+                stop_fn = managed.instance.stop
                 try:
-                    result = managed.instance.stop(expected_generation=expected_generation)
-                except TypeError:
-                    result = managed.instance.stop()
+                    sig = inspect.signature(stop_fn)
+                    accepts_gen = "expected_generation" in sig.parameters or any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+                    )
+                except (TypeError, ValueError):
+                    accepts_gen = False
+                if accepts_gen:
+                    result = stop_fn(expected_generation=expected_generation)
+                else:
+                    result = stop_fn()
             else:
                 result = {"status": "STOPPED", "detail": "stop_noop"}
             if not isinstance(result, dict):

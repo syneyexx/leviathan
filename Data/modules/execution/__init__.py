@@ -5,6 +5,7 @@ from Data.modules.function_runtime.types import SideEffect
 from .builtins import build_default_catalog
 from .catalog import CapabilityCatalog
 from .gateway import EffectRecord, ExecutionGateway, GatewayRejection
+from .idempotency import CapabilityIdempotencyStore, execution_fingerprint
 from .manifest import (
     FrontierCapabilityManifest,
     ManifestAvailability,
@@ -36,6 +37,7 @@ __all__ = [
     "CapabilityCallReceipt",
     "CapabilityCatalog",
     "CapabilityDefinition",
+    "CapabilityIdempotencyStore",
     "CapabilityProviderKind",
     "CapabilityReceiptStore",
     "CapabilityRequest",
@@ -56,6 +58,7 @@ __all__ = [
     "classify_capability",
     "classify_request_workload",
     "execution_class_metadata",
+    "execution_fingerprint",
     "externalize_api_enabled",
     "is_external_required",
     "normalize_capability_metadata",

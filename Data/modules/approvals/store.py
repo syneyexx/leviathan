@@ -180,18 +180,31 @@ class ApprovalStore:
             if row is None:
                 return None
             current = ApprovalStatus(row["status"])
-            if current in {ApprovalStatus.CONSUMED, ApprovalStatus.EXPIRED}:
+            if current in {
+                ApprovalStatus.CONSUMED,
+                ApprovalStatus.EXPIRED,
+                ApprovalStatus.REVOKED,
+            }:
                 raise ValueError(f"Cannot change status of {current.value} approval")
             allowed: dict[ApprovalStatus, set[ApprovalStatus]] = {
                 ApprovalStatus.PENDING: {
                     ApprovalStatus.APPROVED,
                     ApprovalStatus.DENIED,
                     ApprovalStatus.EXPIRED,
+                    ApprovalStatus.REVOKED,
                 },
                 ApprovalStatus.APPROVED: {
                     ApprovalStatus.DENIED,
                     ApprovalStatus.EXPIRED,
                     ApprovalStatus.CONSUMED,
+                    ApprovalStatus.RESERVED,
+                    ApprovalStatus.REVOKED,
+                },
+                ApprovalStatus.RESERVED: {
+                    ApprovalStatus.APPROVED,
+                    ApprovalStatus.CONSUMED,
+                    ApprovalStatus.EXPIRED,
+                    ApprovalStatus.REVOKED,
                 },
                 ApprovalStatus.DENIED: {ApprovalStatus.APPROVED, ApprovalStatus.EXPIRED},
             }
@@ -212,6 +225,84 @@ class ApprovalStore:
             ).fetchone()
         return self._from_row(row) if row else None
 
+    def reserve_for_execution(
+        self,
+        approval_id: str,
+        *,
+        capability_id: str,
+        arguments_digest: str | None = None,
+    ) -> ApprovalRecord | None:
+        """Atomically APPROVED → RESERVED for single-use execution.
+
+        Returns the reserved record when this caller won the race (rowcount==1),
+        otherwise ``None``. Multi-use approvals are returned unchanged without
+        transitioning when still APPROVED and matching.
+        """
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                "SELECT * FROM approvals WHERE approval_id = ?",
+                (approval_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            if row["capability_id"] != capability_id:
+                return None
+            if row["arguments_digest"] is not None and arguments_digest is not None:
+                if row["arguments_digest"] != arguments_digest:
+                    return None
+            if not row["single_use"]:
+                if row["status"] != ApprovalStatus.APPROVED.value:
+                    return None
+                return self._from_row(row)
+            now = utc_now()
+            cur = conn.execute(
+                """
+                UPDATE approvals
+                SET status = ?, decided_at = COALESCE(decided_at, ?)
+                WHERE approval_id = ? AND status = ?
+                """,
+                (
+                    ApprovalStatus.RESERVED.value,
+                    now,
+                    approval_id,
+                    ApprovalStatus.APPROVED.value,
+                ),
+            )
+            if cur.rowcount != 1:
+                return None
+            row = conn.execute(
+                "SELECT * FROM approvals WHERE approval_id = ?",
+                (approval_id,),
+            ).fetchone()
+        return self._from_row(row) if row else None
+
+    def release_reservation(self, approval_id: str) -> ApprovalRecord | None:
+        """RESERVED → APPROVED when side effects did not begin."""
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            now = utc_now()
+            cur = conn.execute(
+                """
+                UPDATE approvals
+                SET status = ?, decided_at = COALESCE(decided_at, ?)
+                WHERE approval_id = ? AND status = ?
+                """,
+                (
+                    ApprovalStatus.APPROVED.value,
+                    now,
+                    approval_id,
+                    ApprovalStatus.RESERVED.value,
+                ),
+            )
+            if cur.rowcount != 1:
+                return None
+            row = conn.execute(
+                "SELECT * FROM approvals WHERE approval_id = ?",
+                (approval_id,),
+            ).fetchone()
+        return self._from_row(row) if row else None
+
     def consume(self, approval_id: str) -> ApprovalRecord | None:
         with self.connect() as conn:
             self._ensure_schema(conn)
@@ -221,19 +312,32 @@ class ApprovalStore:
             ).fetchone()
             if row is None:
                 return None
-            if row["status"] != ApprovalStatus.APPROVED.value:
-                raise ValueError("Only APPROVED approvals can be consumed")
+            status = row["status"]
+            # Prefer RESERVED (atomic single-use path); allow legacy APPROVED consume.
+            if status not in {
+                ApprovalStatus.RESERVED.value,
+                ApprovalStatus.APPROVED.value,
+            }:
+                raise ValueError("Only RESERVED or APPROVED approvals can be consumed")
             if not row["single_use"]:
                 return self._from_row(row)
             now = utc_now()
-            conn.execute(
+            cur = conn.execute(
                 """
                 UPDATE approvals
                 SET status = ?, decided_at = COALESCE(decided_at, ?)
-                WHERE approval_id = ?
+                WHERE approval_id = ? AND status IN (?, ?)
                 """,
-                (ApprovalStatus.CONSUMED.value, now, approval_id),
+                (
+                    ApprovalStatus.CONSUMED.value,
+                    now,
+                    approval_id,
+                    ApprovalStatus.RESERVED.value,
+                    ApprovalStatus.APPROVED.value,
+                ),
             )
+            if cur.rowcount != 1:
+                raise ValueError("Approval consume race lost")
             row = conn.execute(
                 "SELECT * FROM approvals WHERE approval_id = ?",
                 (approval_id,),

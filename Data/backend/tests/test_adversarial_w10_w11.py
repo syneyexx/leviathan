@@ -138,11 +138,12 @@ class GatewayUnauthorizedAndIdempotencyTests(unittest.TestCase):
         artifact_id = first.output.get("artifact_id") or first.output.get("id")
 
         # Second call must replay without creating another artifact / effect.
+        # Fingerprint includes approval_id — replay requires the same request binding.
         second = self.gateway.execute(
             CapabilityRequest(
                 capability_id="artifact.create_text",
                 arguments={"content": "same-payload", "filename": "idem.txt"},
-                approval_id="should-not-matter",
+                approval_id=approved.approval_id,
                 idempotency_key=key,
             )
         )
@@ -193,12 +194,13 @@ class GatewayUnauthorizedAndIdempotencyTests(unittest.TestCase):
             CapabilityRequest(
                 capability_id="artifact.create_text",
                 arguments={"content": "durable", "filename": "d.txt"},
+                approval_id=approved.approval_id,
                 idempotency_key=key,
             )
         )
         self.assertEqual(replay.status, CapabilityStatus.COMPLETED)
         self.assertTrue(replay.telemetry.get("idempotent_replay"))
-        self.assertEqual(replay.telemetry.get("idempotent_replay_source"), "observation_store")
+        self.assertEqual(replay.telemetry.get("idempotent_replay_source"), "capability_idempotency")
         self.assertEqual(_artifact_count(self.artifacts), 1)
 
 

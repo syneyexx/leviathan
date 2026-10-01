@@ -144,8 +144,51 @@ class ApprovalService:
     def consume_if_single_use(self, approval_id: str) -> ApprovalRecord | None:
         return self.store.consume(approval_id)
 
+    def reserve_for_execution(
+        self,
+        approval_id: str,
+        *,
+        capability_id: str,
+        arguments: dict[str, Any] | None = None,
+        arguments_digest: str | None = None,
+    ) -> ApprovalRecord | None:
+        digest = arguments_digest
+        if digest is None and arguments is not None:
+            digest = hashlib.sha256(
+                json.dumps(arguments, sort_keys=True, default=str).encode("utf-8")
+            ).hexdigest()
+        return self.store.reserve_for_execution(
+            approval_id,
+            capability_id=capability_id,
+            arguments_digest=digest,
+        )
+
+    def release_reservation(self, approval_id: str) -> ApprovalRecord | None:
+        return self.store.release_reservation(approval_id)
+
+    def revoke(
+        self,
+        approval_id: str,
+        *,
+        decided_by: str = "operator",
+        reason: str | None = None,
+    ) -> ApprovalRecord:
+        record = self.store.set_status(
+            approval_id,
+            ApprovalStatus.REVOKED,
+            decided_by=decided_by,
+            reason=reason,
+        )
+        if record is None:
+            raise KeyError(f"Unknown approval: {approval_id}")
+        return record
+
     def _expire_if_needed(self, record: ApprovalRecord) -> ApprovalRecord:
-        if record.status not in {ApprovalStatus.PENDING, ApprovalStatus.APPROVED}:
+        if record.status not in {
+            ApprovalStatus.PENDING,
+            ApprovalStatus.APPROVED,
+            ApprovalStatus.RESERVED,
+        }:
             return record
         if not record.expires_at:
             return record

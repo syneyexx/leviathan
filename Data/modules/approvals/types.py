@@ -8,9 +8,11 @@ from typing import Any
 class ApprovalStatus(str, Enum):
     PENDING = "PENDING"
     APPROVED = "APPROVED"
+    RESERVED = "RESERVED"
     DENIED = "DENIED"
     EXPIRED = "EXPIRED"
     CONSUMED = "CONSUMED"
+    REVOKED = "REVOKED"
 
 
 @dataclass(frozen=True)

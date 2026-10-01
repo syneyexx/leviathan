@@ -4692,6 +4692,28 @@ def _m64_mcp_catalog_generation(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m65_capability_idempotency(conn: sqlite3.Connection) -> None:
+    """Request-bound durable idempotency records for the execution gateway."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS capability_idempotency (
+            idempotency_key TEXT PRIMARY KEY,
+            fingerprint TEXT NOT NULL,
+            capability_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            request_id TEXT NOT NULL,
+            result_json TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_capability_idempotency_capability "
+        "ON capability_idempotency(capability_id, status)"
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -4844,6 +4866,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=64,
         name="mcp_catalog_generation",
         apply=_m64_mcp_catalog_generation,
+    ),
+    Migration(
+        version=65,
+        name="capability_idempotency",
+        apply=_m65_capability_idempotency,
     ),
 )
 
