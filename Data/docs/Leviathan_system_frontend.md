@@ -665,19 +665,15 @@ Operational numbers use backend telemetry and domain read models. Zero is a meas
 
 Primary tree: `src/pages/trading/`.
 
-Shared page support: `src/pages/trading/shared.tsx` and trading-specific view-model/helper folders. Backend authority is MarketSim; the UI does not calculate canonical PnL/qualification itself.
+**Canonical pages (exactly three):**
 
-Current top-level pages:
+- `agentOverview/` — Agent Overzicht (`/trading/agents`)
+- `liveAgents/` — Live Agents (`/trading/live-agents`)
+- `researchCenter/` — Research Centrum (`/trading/research`)
 
-- `SimulatiePage.tsx` — simulation;
-- `StrategieenPage.tsx` — strategy definitions/versions;
-- `MarktdataPage.tsx` — data registration/inspection;
-- `PortefeuillePage.tsx` — portfolio;
-- `PaperTradingPage.tsx` — paper execution/operator page;
-- `BrokerTradingPage.tsx` — explicit live broker boundary;
-- `OnderzoekPage.tsx` — re-exports Research Command page;
-- `researchLab/ResearchLabPage.tsx` — autonomous Research Lab;
-- institutional Control Room page under trading tree.
+Shared libraries retained under `workspaces/` (strategyLab / tradingDesk / marketData hooks+drawers), plus embedded `researchLab/` and `researchCommand/` modules opened via Research Centrum sections. Redirects: `TradingLegacyRedirect.tsx` + `workspaceConfig.ts`.
+
+Backend authority is MarketSim; the UI does not calculate canonical PnL/qualification itself.
 
 `/api/market-sim/capabilities` is the UI capability authority: family support, operating modes, execution granularity and action matrix. BAR_OHLCV must never be drawn/labeled as L2/L3. Unknown/unmeasured/blocked capability uses neutral/degraded styling.
 
