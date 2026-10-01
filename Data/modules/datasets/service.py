@@ -70,6 +70,11 @@ from .huggingface import (
 from .importers import copy_immutable_raw, inspect_local_file, reject_traversal_components, resolve_import_path
 from .indexing import index_version_file
 from .jobs import DatasetJobRunner, enqueue_kernel_for_domain_job, kernel_idempotency_key
+from .knowledge_identity import (
+    is_legacy_ambiguous_source,
+    knowledge_source_for_version,
+    resolve_index_scope,
+)
 from .materialize import (
     iter_version_records,
     load_materialized_jsonl,
@@ -1579,6 +1584,69 @@ class DatasetService:
             learning_ladder=self.learning_ladder_for_dataset(dataset_id),
         )
         return state.public_dict()
+
+    def migrate_legacy_knowledge_sources(
+        self,
+        *,
+        dataset_id: str | None = None,
+        limit: int = 5_000,
+    ) -> dict[str, Any]:
+        """Remap legacy ``dataset:dataset`` Knowledge rows to canonical sources.
+
+        Uses each document's ``trust_metadata.datasetId`` / ``versionId``.
+        Documents lacking that provenance are skipped — never remapped blindly
+        across datasets. Safe to re-run (idempotent once sources are canonical).
+        """
+        from Data.modules.knowledge.store import utc_now as knowledge_utc_now
+
+        if self.knowledge is None:
+            return {
+                "migrated": 0,
+                "skipped": 0,
+                "reason": "knowledge_unavailable",
+            }
+        migrated = 0
+        skipped = 0
+        remapped_ids: list[str] = []
+        for legacy in ("dataset:dataset", "dataset"):
+            docs = self.knowledge.list_documents_by_source(legacy, limit=limit)
+            for doc in docs:
+                trust = dict(doc.trust_metadata or {})
+                did = str(trust.get("datasetId") or trust.get("dataset_id") or "")
+                vid = str(trust.get("versionId") or trust.get("version_id") or "")
+                if dataset_id and did and did != dataset_id:
+                    skipped += 1
+                    continue
+                if not did or not vid:
+                    skipped += 1
+                    continue
+                target = knowledge_source_for_version(did, vid)
+                with self.knowledge.connect() as conn:
+                    self.knowledge._ensure_schema(conn)
+                    conn.execute(
+                        "UPDATE knowledge_documents SET source = ?, updated_at = ? WHERE id = ?",
+                        (target, knowledge_utc_now(), doc.document_id),
+                    )
+                    conn.commit()
+                migrated += 1
+                if len(remapped_ids) < 20:
+                    remapped_ids.append(doc.document_id)
+                for idx in self.store.list_indexes(did):
+                    if idx.version_id == vid and (
+                        not idx.knowledge_scope
+                        or is_legacy_ambiguous_source(idx.knowledge_scope)
+                        or idx.knowledge_scope == "dataset"
+                    ):
+                        self.store.update_index(idx.index_id, knowledge_scope=target)
+        return {
+            "migrated": migrated,
+            "skipped": skipped,
+            "documentIdsSample": remapped_ids,
+            "truth": {
+                "canonical_source": "dataset:<dataset_id>:<version_id>",
+                "legacy_dataset_dataset_remapped_via_trust_metadata": True,
+            },
+        }
 
     def brain_status_for_dataset(self, dataset_id: str) -> dict[str, Any]:
         """Map existing index/job state into Brain-ingestion truth for the UI.
@@ -5802,7 +5870,11 @@ class DatasetService:
                 code="storage_not_file",
                 http_status=400,
             )
-        scope = str(job.config.get("scope") or "dataset")
+        scope = resolve_index_scope(
+            dataset_id=job.dataset_id,
+            version_id=ver.version_id,
+            requested_scope=str(job.config.get("scope") or "") or None,
+        )
         max_records = job.config.get("maxRecords")
         offline_only = bool(job.config.get("offlineOnly"))
         source_fingerprint = job.config.get("sourceFingerprint")
@@ -5836,6 +5908,7 @@ class DatasetService:
                 "requestedVersionId": requested_version_id,
                 "resolvedVersionId": ver.version_id,
                 "learnToBrain": bool(job.config.get("learnToBrain")),
+                "canonicalKnowledgeSource": scope,
             },
         )
         try:

@@ -18,6 +18,7 @@ from Data.modules.knowledge.hashing import content_sha256
 from Data.modules.knowledge.types import IngestStatus
 
 from .materialize import iter_materialized_jsonl
+from .knowledge_identity import resolve_index_scope
 from .relations import (
     RELATION_EXTRACTOR_VERSION,
     build_verified_relation_atoms_for_record,
@@ -97,7 +98,7 @@ def index_records(
     *,
     dataset_id: str,
     version_id: str,
-    scope: str = "dataset",
+    scope: str | None = None,
     max_records: int | None = None,
     progress_cb: ProgressCb | None = None,
     cancel_cb: Callable[[], bool] | None = None,
@@ -112,12 +113,15 @@ def index_records(
     Skips re-chunking when an existing READY document has the same content hash
     (idempotent re-learn of unchanged rows).
 
-    Relation persistence uses KnowledgeStore bounded batch transactions
-    (``LEVIATHAN_DATASET_INDEX_BATCH_SIZE`` / ``write_batch_size``).
-    Unchanged READY documents skip relation rebuild only when the relation
-    input fingerprint matches and atoms already exist.
+    Knowledge ``source`` is the canonical contract
+    ``dataset:<dataset_id>:<version_id>`` (see knowledge_identity.py).
     """
     knowledge.initialize()
+    scope = resolve_index_scope(
+        dataset_id=dataset_id,
+        version_id=version_id,
+        requested_scope=scope,
+    )
     embedding_info = _embedding_truth(knowledge)
     doc_ids: list[str] = []
     skipped = 0
@@ -276,7 +280,7 @@ def index_records(
         doc = knowledge.upsert_document(
             title=title,
             content=text,
-            source=f"dataset:{scope}",
+            source=scope,
             document_id=document_id,
             trust_metadata=trust,
             source_type="dataset",
@@ -360,7 +364,7 @@ def index_version_file(
     *,
     dataset_id: str,
     version_id: str,
-    scope: str = "dataset",
+    scope: str | None = None,
     max_records: int | None = None,
     progress_cb: ProgressCb | None = None,
     cancel_cb: Callable[[], bool] | None = None,

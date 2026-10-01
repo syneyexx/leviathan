@@ -1228,6 +1228,74 @@ class KnowledgeStore:
                 ).fetchall()
         return [self._row_to_document(row) for row in rows]
 
+    def remap_document_sources(
+        self,
+        *,
+        from_source: str,
+        to_source: str,
+        limit: int = 5_000,
+    ) -> dict[str, Any]:
+        """Remap Knowledge document ``source`` values (bounded batch).
+
+        Used to migrate legacy ambiguous dataset sources (``dataset:dataset``)
+        to the canonical ``dataset:<id>:<version>`` contract. Does not rewrite
+        chunk content — only the durable source filter field.
+        """
+        if not from_source or not to_source:
+            raise ValueError("from_source and to_source are required")
+        if from_source == to_source:
+            return {"updated": 0, "from": from_source, "to": to_source, "exhausted": True}
+        now = utc_now()
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            rows = conn.execute(
+                """
+                SELECT id FROM knowledge_documents
+                WHERE source = ?
+                ORDER BY updated_at ASC, id
+                LIMIT ?
+                """,
+                (from_source, max(1, int(limit))),
+            ).fetchall()
+            ids = [str(r["id"]) for r in rows]
+            for doc_id in ids:
+                conn.execute(
+                    """
+                    UPDATE knowledge_documents
+                    SET source = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (to_source, now, doc_id),
+                )
+            conn.commit()
+        return {
+            "updated": len(ids),
+            "from": from_source,
+            "to": to_source,
+            "documentIdsSample": ids[:20],
+            "exhausted": len(ids) < max(1, int(limit)),
+        }
+
+    def list_documents_by_source(
+        self,
+        source: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[DocumentRecord]:
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            rows = conn.execute(
+                """
+                SELECT * FROM knowledge_documents
+                WHERE source = ?
+                ORDER BY updated_at DESC, id
+                LIMIT ? OFFSET ?
+                """,
+                (source, limit, max(0, offset)),
+            ).fetchall()
+        return [self._row_to_document(row) for row in rows]
+
     @staticmethod
     def _replace_document_tags(
         conn: sqlite3.Connection,
