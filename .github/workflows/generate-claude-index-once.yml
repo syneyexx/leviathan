@@ -1,0 +1,125 @@
+name: Generate Claude repository index once
+
+on:
+  push:
+    branches:
+      - docs/claude-github-file-index
+
+permissions:
+  contents: write
+
+jobs:
+  generate-index:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      - name: Generate Data/docs/claude.MD
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from urllib.parse import quote
+          import subprocess
+
+          repo = "syneyexx/leviathan"
+          branch = "main"
+          target = "Data/docs/claude.MD"
+          transient_workflow = ".github/workflows/generate-claude-index-once.yml"
+
+          raw = subprocess.check_output(["git", "ls-files", "-z"])
+          paths = {
+              p
+              for p in raw.decode("utf-8", "surrogateescape").split("\0")
+              if p
+          }
+
+          # The generated index must describe the final repository state, not
+          # this transient generator workflow. HADES is deliberately excluded.
+          paths.discard(transient_workflow)
+          paths = {
+              p
+              for p in paths
+              if p != "Data/HADES" and not p.startswith("Data/HADES/")
+          }
+          paths.add(target)
+          ordered = sorted(paths, key=lambda p: (p.casefold(), p))
+
+          lines = [
+              "# Leviathan — Claude GitHub File Index",
+              "",
+              "Complete file index for `syneyexx/leviathan` on the `main` branch.",
+              "",
+              "- `Data/HADES` is intentionally excluded.",
+              "- Every other tracked Leviathan file is listed exactly once.",
+              "- `GitHub` opens the normal repository view; `Raw` returns the file contents directly and is usually the easiest URL for Claude to fetch.",
+              f"- Indexed files: **{len(ordered)}**",
+              "",
+              "## Files",
+              "",
+          ]
+
+          for path in ordered:
+              encoded = quote(path, safe="/")
+              github_url = f"https://github.com/{repo}/blob/{branch}/{encoded}"
+              raw_url = f"https://raw.githubusercontent.com/{repo}/{branch}/{encoded}"
+              label = path.replace("`", "\\`")
+              lines.append(f"- [`{label}`]({github_url}) · [Raw]({raw_url})")
+
+          lines.append("")
+          Path(target).parent.mkdir(parents=True, exist_ok=True)
+          Path(target).write_text("\n".join(lines), encoding="utf-8", newline="\n")
+          PY
+
+      - name: Validate generated index
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          import subprocess
+
+          target = Path("Data/docs/claude.MD")
+          transient_workflow = ".github/workflows/generate-claude-index-once.yml"
+          text = target.read_text(encoding="utf-8")
+
+          raw = subprocess.check_output(["git", "ls-files", "-z"])
+          expected = {
+              p
+              for p in raw.decode("utf-8", "surrogateescape").split("\0")
+              if p
+              and p != transient_workflow
+              and p != "Data/HADES"
+              and not p.startswith("Data/HADES/")
+          }
+          expected.add(target.as_posix())
+
+          listed = re.findall(r"^- \[`(.+?)`\]\(https://github\.com/syneyexx/leviathan/blob/main/", text, flags=re.MULTILINE)
+          listed_set = {p.replace("\\`", "`") for p in listed}
+
+          if len(listed) != len(listed_set):
+              raise SystemExit("Duplicate file entries found in generated index")
+          if listed_set != expected:
+              missing = sorted(expected - listed_set)
+              extra = sorted(listed_set - expected)
+              raise SystemExit(f"Index mismatch. missing={missing[:20]!r} extra={extra[:20]!r}")
+          if "Data/HADES" in text or "/Data/HADES/" in text:
+              raise SystemExit("HADES unexpectedly present in generated index")
+          if f"Indexed files: **{len(expected)}**" not in text:
+              raise SystemExit("Indexed file count does not match expected count")
+          print(f"Validated {len(expected)} indexed files with zero duplicates and no HADES entries.")
+          PY
+
+      - name: Commit generated index and remove transient workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/generate-claude-index-once.yml
+          git add Data/docs/claude.MD
+          git commit -m "docs: add Claude GitHub file index"
+          git push origin HEAD:${GITHUB_REF_NAME}
