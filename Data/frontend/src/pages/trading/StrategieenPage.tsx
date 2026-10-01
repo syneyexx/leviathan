@@ -9,7 +9,7 @@ import { Panel, TradingHero, hashShort } from "./shared";
 const BUILDER_TABS = ["Visual Builder", "Code View", "Parameters"] as const;
 const RULE_KINDS = ["ma_cross", "mean_reversion"] as const;
 
-export function StrategieenPage() {
+export function StrategieenPage({ embedded = false }: { embedded?: boolean } = {}) {
   const toast = useAppToast();
   const [strategies, setStrategies] = useState<MarketStrategy[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -112,15 +112,8 @@ export function StrategieenPage() {
 
   const activeCount = strategies.filter((s) => s.status === "ACTIVE").length;
 
-  return (
-    <AppShell
-      activeMode="explore"
-      modeLabel="Strategies Mode"
-      searchPlaceholder="Search strategies, assets, indicators, models..."
-      systemItems={["PAPER STRATEGIES", "SANDBOXED DSL"]}
-      layout="wide"
-      pageClass="lv-app--trading"
-    >
+  const body = (
+    <>
       <main className="lv-main lv-tp-main">
         <TradingHero
           title="TRADING STRATEGIEËN"
@@ -354,6 +347,20 @@ export function StrategieenPage() {
           </Panel>
         </section>
       </main>
+        </>
+  );
+
+  if (embedded) return body;
+  return (
+    <AppShell
+      activeMode="explore"
+      modeLabel="Strategies Mode"
+      searchPlaceholder="Search strategies, assets, indicators, models..."
+      systemItems={["PAPER STRATEGIES", "SANDBOXED DSL"]}
+      layout="wide"
+      pageClass="lv-app--trading"
+    >
+      {body}
     </AppShell>
   );
 }

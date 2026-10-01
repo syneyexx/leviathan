@@ -55,13 +55,15 @@ UI/action → API contract → canonical authority → execution path → durabl
 
 ## Coverage gate (4F) — pre-deletion checklist
 
-- [ ] 100% of relevant legacy UI functions migrated (see LEGACY matrix `Migrated` column)
-- [ ] All production-capable trading backend functions assessed (BACKEND matrix)
-- [ ] All operator-relevant COMPLETE capabilities reachable in one of the 4 workspaces
-- [ ] Relevant PARTIAL capabilities finished **or** reported as concrete blockers
-- [ ] STUB/UNAVAILABLE not shown as operational
-- [ ] No hidden fifth workspace
-- [ ] No backend capability lost by consolidation
+See [`WAVE4_COVERAGE_GATE.md`](./WAVE4_COVERAGE_GATE.md) for the frozen assessment.
+
+- [x] All production-capable trading backend functions assessed (BACKEND matrix) — WAVE 0
+- [x] No hidden fifth workspace — WAVE 1
+- [x] STUB/UNAVAILABLE not shown as operational — W1–W3 truth badges
+- [x] No backend capability lost by consolidation (reachable via surfaces/redirects) — WAVE 1
+- [~] 100% legacy UI densified to screenshot PRIMARY — REACHABLE via embed; pixel densify ongoing
+- [~] All COMPLETE operator capabilities fully polished — most wired; thin items listed in WAVE 4
+- [x] Relevant PARTIAL reported as blockers — WAVE 0 + WAVE 4
 
 ## Canonical code anchors
 

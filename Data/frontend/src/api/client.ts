@@ -3716,6 +3716,13 @@ export const api = {
     });
   },
 
+  portfolioKillSwitch(portfolioId: string, armed = true): Promise<{ portfolio: PaperPortfolio }> {
+    const q = new URLSearchParams({ armed: armed ? "true" : "false" });
+    return request(`/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}/kill-switch?${q}`, {
+      method: "POST",
+    });
+  },
+
   createQualificationRun(body: Record<string, unknown>): Promise<Record<string, unknown>> {
     return request(`/api/market-sim/qualification-runs`, {
       method: "POST",

@@ -120,13 +120,23 @@ describe("navigation menu", () => {
     expect(findSubMenuItem(media, "/media/distributie")?.label).toBe("Distributie");
     // Deep platform routes remain under Media Control even when not in primary submenu.
     expect(findMainMenuByPath("/media/youtube").id).toBe("media");
-    expect(findMainMenuByPath("/trading/simulatie").id).toBe("trading");
-    expect(findMainMenuByPath("/trading/simulatie").label).toBe("Trading Center");
-    expect(findSubMenuItem(findMainMenuByPath("/trading/simulatie"), "/trading/simulatie")?.label).toBe(
-      "Markt Simulatie",
+    expect(findMainMenuByPath("/trading/command-hub").id).toBe("trading");
+    expect(findMainMenuByPath("/trading/command-hub").label).toBe("Trading Center");
+    expect(findSubMenuItem(findMainMenuByPath("/trading/command-hub"), "/trading/command-hub")?.label).toBe(
+      "Command Hub",
     );
-    expect(findSubMenuItem(findMainMenuByPath("/trading/paper"), "/trading/paper")?.id).toBe("paper");
-    expect(findSubMenuItem(findMainMenuByPath("/trading/paper"), "/trading/paper")?.label).toBe("PAPER Trading");
+    expect(findSubMenuItem(findMainMenuByPath("/trading/trading-desk"), "/trading/trading-desk")?.id).toBe(
+      "trading-desk",
+    );
+    expect(findSubMenuItem(findMainMenuByPath("/trading/strategy-lab"), "/trading/strategy-lab")?.label).toBe(
+      "Strategy Lab",
+    );
+    expect(findSubMenuItem(findMainMenuByPath("/trading/market-data"), "/trading/market-data")?.label).toBe(
+      "Market Data",
+    );
+    // Legacy paths still belong to Trading Center section via /trading prefix match.
+    expect(findMainMenuByPath("/trading/paper").id).toBe("trading");
+    expect(findMainMenuByPath("/trading/simulatie").id).toBe("trading");
     expect(findMainMenuByPath("/evidence").id).toBe("research");
     expect(findSubMenuItem(findMainMenuByPath("/evidence"), "/evidence")?.label).toBe("Evidence Vault");
   });

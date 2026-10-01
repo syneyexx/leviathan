@@ -145,7 +145,7 @@ function ProgressBar({ index, total }: { index: number; total: number }) {
   );
 }
 
-export function SimulatiePage() {
+export function SimulatiePage({ embedded = false }: { embedded?: boolean } = {}) {
   const [status, setStatus] = useState<MarketSimStatusResponse | null>(null);
   const [runs, setRuns] = useState<MarketSimRun[]>([]);
   const [live, setLive] = useState<MarketSimLiveState | null>(null);
@@ -364,15 +364,8 @@ export function SimulatiePage() {
         label: w.owner_id,
       }));
 
-  return (
-    <AppShell
-      activeMode="explore"
-      modeLabel="Market Sim Mode"
-      searchPlaceholder="Search runs, strategies, sources, agents..."
-      systemItems={["PAPER ONLY", "CAUSAL FILLS", "MULTI-AGENT"]}
-      layout="wide"
-      pageClass="lv-app--trading lv-app--trading-sim-ref"
-    >
+  const body = (
+    <>
       <main className="lv-main ts-main">
         <section className="ts-hero ts-hero-live">
           <img src={tradingHeroes.simulatie} alt="" />
@@ -920,6 +913,20 @@ export function SimulatiePage() {
           paper only · live trading blocked · KPIs show UNMEASURED when not computed
         </p>
       </main>
+        </>
+  );
+
+  if (embedded) return body;
+  return (
+    <AppShell
+      activeMode="explore"
+      modeLabel="Market Sim Mode"
+      searchPlaceholder="Search runs, strategies, sources, agents..."
+      systemItems={["PAPER ONLY", "CAUSAL FILLS", "MULTI-AGENT"]}
+      layout="wide"
+      pageClass="lv-app--trading lv-app--trading-sim-ref"
+    >
+      {body}
     </AppShell>
   );
 }

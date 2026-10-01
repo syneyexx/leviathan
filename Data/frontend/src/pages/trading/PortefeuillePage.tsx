@@ -210,7 +210,7 @@ function AnalysisModal({
   );
 }
 
-export function PortefeuillePage() {
+export function PortefeuillePage({ embedded = false }: { embedded?: boolean } = {}) {
   const toast = useAppToast();
   const [portfolios, setPortfolios] = useState<PaperPortfolio[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
@@ -480,8 +480,8 @@ export function PortefeuillePage() {
   const kpis = dash?.kpis;
   const status = dash?.portfolio.status || portfolios.find((p) => p.portfolio_id === selectedId)?.status;
 
-  return (
-    <AppShell layout="wide" pageClass="lv-app--trading">
+  const body = (
+    <>
       <main className="lv-main lv-tp-main lv-portefeuille-page">
         <header className="lv-portefeuille-header">
           <div className="lv-portefeuille-brand">
@@ -1115,6 +1115,13 @@ export function PortefeuillePage() {
         />
         <AnalysisModal open={analysisOpen} dash={dash} onClose={() => setAnalysisOpen(false)} />
       </main>
+        </>
+  );
+
+  if (embedded) return body;
+  return (
+    <AppShell layout="wide" pageClass="lv-app--trading">
+      {body}
     </AppShell>
   );
 }

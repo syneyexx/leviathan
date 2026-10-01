@@ -5,7 +5,7 @@ import { AppShell } from "../../layouts/AppShell";
 import { ControlRoomView, type ControlRoomPhase } from "./controlRoom/ControlRoomView";
 import { buildControlRoomModel } from "./controlRoom/viewModel";
 
-export function InstitutionalControlRoomPage() {
+export function InstitutionalControlRoomPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [snap, setSnap] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -46,8 +46,8 @@ export function InstitutionalControlRoomPage() {
   const model = useMemo(() => (snap ? buildControlRoomModel(snap) : null), [snap]);
   const phase: ControlRoomPhase = model ? "ready" : error ? "error" : loading ? "loading" : "empty";
 
-  return (
-    <AppShell layout="wide" pageClass="lv-app--trading">
+  const body = (
+    <>
       <main className="lv-main lv-tp-main">
         <ControlRoomView
           phase={phase}
@@ -60,6 +60,13 @@ export function InstitutionalControlRoomPage() {
           onRefresh={() => void load()}
         />
       </main>
+        </>
+  );
+
+  if (embedded) return body;
+  return (
+    <AppShell layout="wide" pageClass="lv-app--trading">
+      {body}
     </AppShell>
   );
 }

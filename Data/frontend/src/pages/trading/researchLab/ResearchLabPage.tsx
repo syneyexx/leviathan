@@ -21,7 +21,7 @@ import { ResearchLabCreateModal } from "./components/ResearchLabCreateModal";
 import { ResearchLabStatusFooter } from "./components/ResearchLabStatusFooter";
 import "../../../styles/trading-research-lab.css";
 
-export function ResearchLabPage() {
+export function ResearchLabPage({ embedded = false }: { embedded?: boolean } = {}) {
   const {
     state,
     overviewModel,
@@ -47,8 +47,8 @@ export function ResearchLabPage() {
   const centerBusy = state.learningLoading && !state.learning;
   const apiHealthy = state.error == null;
 
-  return (
-    <AppShell layout="wide" pageClass="lv-app--trading">
+  const body = (
+    <>
       <main className="lv-main lv-tp-main lv-rl-page">
         <TradingHero
           title="RESEARCH LAB"
@@ -138,6 +138,15 @@ export function ResearchLabPage() {
                   ) : null}
                   {state.tab === "population" ? (
                     <ResearchLabPopulationPanel
+                      labId={
+                        state.selectedLab
+                          ? String(
+                              (state.selectedLab as { lab_id?: string; id?: string }).lab_id ||
+                                (state.selectedLab as { id?: string }).id ||
+                                "",
+                            ) || null
+                          : null
+                      }
                       candidates={state.candidates}
                       populationRefs={populationRefs}
                       loading={centerBusy}
@@ -209,6 +218,13 @@ export function ResearchLabPage() {
           onSubmit={() => void submitCreate()}
         />
       ) : null}
+        </>
+  );
+
+  if (embedded) return body;
+  return (
+    <AppShell layout="wide" pageClass="lv-app--trading">
+      {body}
     </AppShell>
   );
 }
