@@ -8,6 +8,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from Data.modules.execution import CapabilityStatus
+
 
 class SkillEnableRequest(BaseModel):
     enabled: bool = True
@@ -18,6 +20,26 @@ class SkillExecuteRequest(BaseModel):
 
     capability_id: str | None = None
     arguments: dict[str, Any] = Field(default_factory=dict)
+    approval_id: str | None = None
+    run_id: str | None = None
+    job_id: str | None = None
+    requested_by: str = "skills_page"
+    trace_id: str | None = None
+    idempotency_key: str | None = None
+
+
+def _gateway_status_http_code(status: CapabilityStatus | str) -> int | None:
+    """Map gateway result statuses that must not return HTTP 200."""
+    value = status.value if isinstance(status, CapabilityStatus) else str(status or "").upper()
+    if value == CapabilityStatus.REJECTED.value:
+        return 422
+    if value == CapabilityStatus.TIMEOUT.value:
+        return 504
+    if value == CapabilityStatus.CANCELLED.value:
+        return 409
+    if value == CapabilityStatus.FAILED.value:
+        return 500
+    return None
 
 
 def build_skills_router(
@@ -81,6 +103,33 @@ def build_skills_router(
             return "tools"
         return "core"
 
+    def _module_snapshot(module_id: str) -> dict[str, Any] | None:
+        if module_manager is None:
+            return None
+        try:
+            if hasattr(module_manager, "get_module"):
+                snap = module_manager.get_module(str(module_id))
+                if isinstance(snap, dict):
+                    return snap
+            if hasattr(module_manager, "get"):
+                managed = module_manager.get(str(module_id))
+                if managed is not None and hasattr(managed, "public_dict"):
+                    return managed.public_dict()
+            if hasattr(module_manager, "snapshot"):
+                snap_all = module_manager.snapshot()
+            elif hasattr(module_manager, "public_snapshot"):
+                snap_all = module_manager.public_snapshot()
+            else:
+                return None
+            modules = (snap_all.get("modules") if isinstance(snap_all, dict) else None) or []
+            for row in modules:
+                mid = (row.get("manifest") or {}).get("module_id") or row.get("module_id")
+                if mid == module_id:
+                    return row if isinstance(row, dict) else None
+        except Exception:  # noqa: BLE001
+            return None
+        return None
+
     def _compatibility_projection(skill: dict[str, Any]) -> dict[str, Any]:
         required = [str(x) for x in (skill.get("required_capabilities") or []) if str(x).strip()]
         if not required:
@@ -101,12 +150,16 @@ def build_skills_router(
             }
 
         known: set[str] = set()
+        available_map: dict[str, bool] = {}
+        enabled_map: dict[str, bool] = {}
         if capability_catalog is not None:
             try:
                 for item in list(capability_catalog.search("", limit=500) or []):
                     cid = str(getattr(item, "id", "") or "")
                     if cid:
                         known.add(cid)
+                        available_map[cid] = bool(getattr(item, "available", True))
+                        enabled_map[cid] = bool(getattr(item, "enabled", True))
             except Exception:  # noqa: BLE001
                 known = set()
         if not known and execution_gateway is not None:
@@ -115,6 +168,8 @@ def build_skills_router(
                     cid = str(getattr(item, "id", "") or getattr(item, "capability_id", "") or "")
                     if cid:
                         known.add(cid)
+                        available_map[cid] = bool(getattr(item, "available", True))
+                        enabled_map[cid] = bool(getattr(item, "enabled", True))
             except Exception:  # noqa: BLE001
                 known = set()
 
@@ -124,13 +179,19 @@ def build_skills_router(
             ok = cap_id in known
             if ok:
                 present += 1
+            row_status = "COMPATIBLE" if ok else "INCOMPATIBLE"
+            if ok and (not available_map.get(cap_id, True) or not enabled_map.get(cap_id, True)):
+                row_status = "INCOMPATIBLE"
+                present -= 1
             cap_rows.append(
                 {
                     "id": cap_id,
-                    "status": "COMPATIBLE" if ok else "INCOMPATIBLE",
+                    "status": row_status,
+                    "available": available_map.get(cap_id) if ok else False,
+                    "enabled": enabled_map.get(cap_id) if ok else False,
                 }
             )
-        if present == len(required):
+        if present == len(required) and present > 0:
             status = "COMPATIBLE"
         elif present == 0:
             status = "INCOMPATIBLE"
@@ -140,47 +201,32 @@ def build_skills_router(
         # Runtimes: derive from owning module adapter when module_manager is available.
         runtimes: list[dict[str, Any]] = []
         module_id = skill.get("module_id")
-        if module_id and module_manager is not None:
-            try:
-                snap = module_manager.get_module(str(module_id)) if hasattr(module_manager, "get_module") else None
-                if snap is None and hasattr(module_manager, "snapshot"):
-                    # Fallback: scan snapshot list.
-                    modules = []
-                    snap_all = module_manager.snapshot()
-                    if isinstance(snap_all, dict):
-                        modules = snap_all.get("modules") or []
-                    for row in modules:
-                        mid = (row.get("manifest") or {}).get("module_id") or row.get("module_id")
-                        if mid == module_id:
-                            snap = row
-                            break
-                if isinstance(snap, dict):
-                    adapter = (
-                        (snap.get("adapter") or "")
-                        or ((snap.get("manifest") or {}).get("external") or {}).get("adapter")
-                        or ""
-                    )
-                    status_s = str(snap.get("status") or snap.get("runtime_state") or "")
-                    runtimes.append(
-                        {
-                            "id": str(module_id),
-                            "adapter": str(adapter) if adapter else None,
-                            "status": "Required",
-                            "module_status": status_s or None,
-                        }
-                    )
-            except Exception:  # noqa: BLE001
-                runtimes = []
-
-        if not runtimes and module_id:
-            runtimes.append(
-                {
-                    "id": str(module_id),
-                    "adapter": None,
-                    "status": "Required",
-                    "module_status": None,
-                }
-            )
+        if module_id:
+            snap = _module_snapshot(str(module_id))
+            if isinstance(snap, dict):
+                adapter = (
+                    (snap.get("adapter") or "")
+                    or ((snap.get("manifest") or {}).get("external") or {}).get("adapter")
+                    or ""
+                )
+                status_s = str(snap.get("status") or snap.get("runtime_state") or "")
+                runtimes.append(
+                    {
+                        "id": str(module_id),
+                        "adapter": str(adapter) if adapter else None,
+                        "status": "Required",
+                        "module_status": status_s or None,
+                    }
+                )
+            else:
+                runtimes.append(
+                    {
+                        "id": str(module_id),
+                        "adapter": None,
+                        "status": "Required",
+                        "module_status": None,
+                    }
+                )
 
         return {
             "status": status,
@@ -191,10 +237,19 @@ def build_skills_router(
             "truth": {
                 "recommended_agents_unsupported": True,
                 "compatibility_from_required_capabilities": True,
+                "partial_or_unmeasured_is_not_pass": True,
             },
         }
 
     def _test_skill(skill: dict[str, Any]) -> dict[str, Any]:
+        """Fail-closed skill readiness test.
+
+        COMPATIBLE = pass. PARTIAL / UNMEASURED / INCOMPATIBLE = not pass.
+        ModuleManager required but unavailable → not pass.
+        Disabled/unavailable capability → not pass.
+        Unhealthy module → not pass for execution-readiness.
+        Never ok=true from incomplete evidence.
+        """
         from Data.modules.module_manager.external.skills import load_skill_instructions
 
         checks: list[dict[str, Any]] = []
@@ -217,6 +272,11 @@ def build_skills_router(
             bool(str(skill.get("content_hash") or "").strip()),
             str(skill.get("content_hash") or "")[:16],
         )
+        add(
+            "skill_enabled",
+            bool(skill.get("enabled")),
+            "enabled" if skill.get("enabled") else "disabled — not execution-ready",
+        )
 
         catalog_only = bool(skill.get("catalog_only"))
         source_path = str(skill.get("source_path") or "").strip()
@@ -225,6 +285,12 @@ def build_skills_router(
                 "catalog_metadata",
                 True,
                 "Catalog-only entry — instructions are not prompt-injected",
+            )
+            # Catalog-only is not execution-ready.
+            add(
+                "execution_readiness",
+                False,
+                "Catalog-only skill has no executable surface",
             )
         else:
             path_ok = bool(source_path) and Path(source_path).is_file()
@@ -243,35 +309,72 @@ def build_skills_router(
 
         required = [str(x) for x in (skill.get("required_capabilities") or []) if str(x).strip()]
         if not required:
-            add("required_capabilities", True, "none declared")
-        else:
-            compat = _compatibility_projection(skill)
+            # Incomplete evidence for execution-readiness — not a pass.
             add(
                 "required_capabilities",
-                compat.get("status") in {"COMPATIBLE", "PARTIAL", "UNMEASURED"},
-                f"status={compat.get('status')}",
+                False,
+                "none declared — UNMEASURED is not pass",
             )
-            if compat.get("status") == "INCOMPATIBLE":
-                ok = False
+        else:
+            compat = _compatibility_projection(skill)
+            compat_status = str(compat.get("status") or "UNMEASURED").upper()
+            # Fail-closed: only COMPATIBLE passes.
+            add(
+                "required_capabilities",
+                compat_status == "COMPATIBLE",
+                f"status={compat_status} (COMPATIBLE required; PARTIAL/UNMEASURED/INCOMPATIBLE != pass)",
+            )
+            for cap_row in compat.get("capabilities") or []:
+                if not isinstance(cap_row, dict):
+                    continue
+                if cap_row.get("available") is False or cap_row.get("enabled") is False:
+                    add(
+                        f"capability_{cap_row.get('id')}_enabled_available",
+                        False,
+                        "disabled or unavailable capability is not pass",
+                    )
 
         module_id = skill.get("module_id")
-        if module_id and module_manager is not None:
-            try:
-                found = False
-                if hasattr(module_manager, "get_module"):
-                    found = module_manager.get_module(str(module_id)) is not None
-                elif hasattr(module_manager, "snapshot"):
-                    snap = module_manager.snapshot()
-                    modules = (snap.get("modules") if isinstance(snap, dict) else None) or []
-                    found = any(
-                        ((m.get("manifest") or {}).get("module_id") or m.get("module_id")) == module_id
-                        for m in modules
-                    )
+        if module_id:
+            if module_manager is None:
+                add(
+                    "owning_module_available",
+                    False,
+                    f"{module_id} — ModuleManager required but unavailable (not pass)",
+                )
+            else:
+                snap = _module_snapshot(str(module_id))
+                found = snap is not None
                 add("owning_module_available", found, str(module_id))
-            except Exception as exc:  # noqa: BLE001
-                add("owning_module_available", False, str(exc))
-        elif module_id:
-            add("owning_module_available", True, f"{module_id} (module manager not wired — presence unchecked)")
+                if found and isinstance(snap, dict):
+                    module_status = str(snap.get("status") or snap.get("runtime_state") or "").upper()
+                    healthy = module_status in {
+                        "READY",
+                        "RUNNING",
+                        "INSTALLED",
+                        "INITIALIZED",
+                        "BUSY",
+                        "EXECUTING",
+                        "DEGRADED",
+                    }
+                    add(
+                        "owning_module_healthy",
+                        healthy,
+                        f"module_status={module_status or 'UNMEASURED'}",
+                    )
+                    # Prefer live health when present on snapshot.
+                    health = snap.get("health") if isinstance(snap.get("health"), dict) else None
+                    if health is not None:
+                        h_status = str(health.get("status") or "").upper()
+                        freshness = str(health.get("freshness") or snap.get("health_freshness") or "")
+                        health_ok = h_status not in {"ERROR", "FAILED", "UNHEALTHY", "STALE"} and freshness != "UNMEASURED"
+                        if freshness == "UNMEASURED":
+                            health_ok = False
+                        add(
+                            "owning_module_health_evidence",
+                            health_ok,
+                            f"health={h_status or 'UNMEASURED'} freshness={freshness or 'UNMEASURED'}",
+                        )
         else:
             add("owning_module_available", True, "no module_id on record")
 
@@ -282,6 +385,10 @@ def build_skills_router(
             "truth": {
                 "not_mocked_pass": True,
                 "skills_are_not_shell_authority": True,
+                "fail_closed": True,
+                "compatible_only_is_pass": True,
+                "unmeasured_is_not_pass": True,
+                "incomplete_evidence_is_not_ok": True,
             },
         }
 
@@ -383,12 +490,15 @@ def build_skills_router(
         """Execute only via a declared required capability through ExecutionGateway.
 
         Instruction-only skills are rejected — skills are not shell authority.
+        HTTP 200 must not mean success when result is REJECTED/FAILED/TIMEOUT/CANCELLED.
         """
         if external_store is None:
             raise HTTPException(status_code=503, detail="External capability store unavailable")
         skill = external_store.get_skill(skill_id)
         if skill is None:
             raise HTTPException(status_code=404, detail=f"Unknown skill: {skill_id}")
+        if not skill.get("enabled"):
+            raise HTTPException(status_code=403, detail="Skill is disabled")
         if skill.get("catalog_only"):
             raise HTTPException(
                 status_code=422,
@@ -409,8 +519,18 @@ def build_skills_router(
             )
         if execution_gateway is None:
             raise HTTPException(status_code=503, detail="Execution gateway unavailable")
-        if capability_catalog is not None and capability_id not in capability_catalog:
-            raise HTTPException(status_code=404, detail=f"Unknown capability: {capability_id}")
+        if capability_catalog is not None:
+            if capability_id not in capability_catalog:
+                raise HTTPException(status_code=404, detail=f"Unknown capability: {capability_id}")
+            definition = capability_catalog.get(capability_id)
+            if definition is not None:
+                if not bool(getattr(definition, "enabled", True)):
+                    raise HTTPException(status_code=403, detail=f"Capability disabled: {capability_id}")
+                if not bool(getattr(definition, "available", True)):
+                    raise HTTPException(
+                        status_code=503,
+                        detail=f"Capability unavailable: {capability_id}",
+                    )
 
         from Data.modules.execution import CapabilityRequest
 
@@ -418,8 +538,16 @@ def build_skills_router(
             CapabilityRequest(
                 capability_id=capability_id,
                 arguments=dict(payload.arguments or {}),
-                requested_by="skills_page",
+                approval_id=payload.approval_id,
+                run_id=payload.run_id,
+                job_id=payload.job_id,
+                requested_by=payload.requested_by or "skills_page",
+                trace_id=payload.trace_id,
+                idempotency_key=payload.idempotency_key,
             )
+        )
+        status_value = getattr(getattr(result, "status", None), "value", None) or str(
+            getattr(result, "status", "")
         )
         if observability is not None:
             observability.emit(
@@ -428,20 +556,38 @@ def build_skills_router(
                 payload={
                     "skill_id": skill_id,
                     "capability_id": capability_id,
-                    "status": getattr(getattr(result, "status", None), "value", None),
+                    "status": status_value,
+                    "request_id": getattr(result, "request_id", None),
                 },
             )
-        status_value = getattr(getattr(result, "status", None), "value", None) or str(
-            getattr(result, "status", "")
-        )
-        return {
+        body = {
             "skill_id": skill_id,
             "capability_id": capability_id,
             "result": result.public_dict() if hasattr(result, "public_dict") else {"status": status_value},
             "truth": {
                 "skills_are_not_shell_authority": True,
                 "execution_via_gateway": True,
+                "http_200_is_not_rejected_or_failed": True,
+                "provenance_via_gateway_receipt": True,
             },
         }
+        # Align with capabilities route: non-success gateway statuses are not HTTP 200.
+        if isinstance(getattr(result, "status", None), CapabilityStatus):
+            status_enum = result.status
+        else:
+            try:
+                status_enum = CapabilityStatus(str(status_value).upper())
+            except ValueError:
+                status_enum = None
+        if status_enum is not None:
+            code = _gateway_status_http_code(status_enum)
+            if code is not None:
+                # Prefer approval-oriented 403 when gateway says so.
+                if status_enum == CapabilityStatus.REJECTED:
+                    reason = (getattr(result, "telemetry", None) or {}).get("reason")
+                    if reason in {"approval_required", "approval_denied"}:
+                        code = 403
+                raise HTTPException(status_code=code, detail=body)
+        return body
 
     return router

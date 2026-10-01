@@ -6,8 +6,19 @@ source run ids, measured success rate.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import hashlib
+import uuid
+from dataclasses import dataclass
 from typing import Any, Sequence
+
+
+def stable_skill_id(key: str) -> str:
+    """Persistent skill id — never use Python hash() (randomized per process)."""
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+    # UUIDv5 namespace for cross-system stability of the same key.
+    ns = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")  # URL namespace
+    named = uuid.uuid5(ns, key)
+    return f"skill:{digest}:{named.hex[:8]}"
 
 
 @dataclass
@@ -98,7 +109,7 @@ class SkillLibrary:
                     c = str(cap)
                     if c and c not in caps:
                         caps.append(c)
-            skill_id = f"skill:{abs(hash(key)) % 10_000_000:07d}"
+            skill_id = stable_skill_id(key)
             skill = Skill(
                 skill_id=skill_id,
                 name=f"{domain}:{goal[:40]}" if goal else domain,

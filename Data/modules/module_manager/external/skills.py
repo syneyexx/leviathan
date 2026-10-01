@@ -135,6 +135,11 @@ class SkillImporter:
         content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
         skill_id = _stable_skill_id(name=name, source_repo=source_repo, content_hash=content_hash, path=path)
 
+        metadata: dict[str, Any] = {"frontmatter_keys": sorted(k for k in frontmatter.keys() if not str(k).startswith("_"))}
+        if frontmatter.get("_import_diagnostic"):
+            metadata["import_diagnostic"] = str(frontmatter.get("_import_diagnostic"))
+            metadata["frontmatter_error"] = str(frontmatter.get("_frontmatter_error") or "")[:240]
+
         return SkillRecord(
             skill_id=skill_id,
             name=name,
@@ -152,7 +157,7 @@ class SkillImporter:
             enabled=not catalog_only,
             catalog_only=catalog_only,
             module_id=module_id,
-            metadata={"frontmatter_keys": sorted(frontmatter.keys())},
+            metadata=metadata,
         )
 
     def import_tree(
@@ -366,25 +371,55 @@ def parse_skill_declarations(record: SkillRecord | dict[str, Any]) -> dict[str, 
 
 
 def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+    """Parse SKILL.md YAML frontmatter with bounded safe YAML.
+
+    Malformed frontmatter yields empty metadata plus an import diagnostic —
+    never raises into discovery callers.
+    """
     match = FRONTMATTER_RE.match(text)
     if not match:
         return {}, text
     raw_fm, body = match.group(1), match.group(2)
+    # Bound parse cost for adversarial/huge frontmatter blocks.
+    if len(raw_fm) > 64_000:
+        return (
+            {"_import_diagnostic": "frontmatter_too_large", "_frontmatter_error": "exceeds_64kib"},
+            body,
+        )
     data: dict[str, Any] = {}
-    for line in raw_fm.splitlines():
-        if ":" not in line:
-            continue
-        key, _, value = line.partition(":")
-        key = key.strip()
-        value = value.strip().strip("\"'")
-        if not key:
-            continue
-        # Minimal YAML-ish list support: [a, b]
-        if value.startswith("[") and value.endswith("]"):
-            inner = value[1:-1].strip()
-            data[key] = [part.strip().strip("\"'") for part in inner.split(",") if part.strip()] if inner else []
+    try:
+        import yaml  # type: ignore[import-not-found]
+
+        loaded = yaml.safe_load(raw_fm)
+        if loaded is None:
+            data = {}
+        elif isinstance(loaded, dict):
+            data = {str(k): v for k, v in loaded.items()}
         else:
-            data[key] = value
+            data = {
+                "_import_diagnostic": "frontmatter_not_mapping",
+                "_frontmatter_error": f"expected mapping, got {type(loaded).__name__}",
+            }
+    except Exception as exc:  # noqa: BLE001 — malformed YAML → diagnostics, not crash
+        # Fallback: minimal line parser for simple key: value forms.
+        data = {"_import_diagnostic": "frontmatter_yaml_error", "_frontmatter_error": str(exc)[:240]}
+        for line in raw_fm.splitlines():
+            if ":" not in line or line.strip().startswith("#"):
+                continue
+            key, _, value = line.partition(":")
+            key = key.strip()
+            value = value.strip().strip("\"'")
+            if not key or key.startswith("_"):
+                continue
+            if value.startswith("[") and value.endswith("]"):
+                inner = value[1:-1].strip()
+                data[key] = (
+                    [part.strip().strip("\"'") for part in inner.split(",") if part.strip()]
+                    if inner
+                    else []
+                )
+            elif value:
+                data[key] = value
     return data, body
 
 
