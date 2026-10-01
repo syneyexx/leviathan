@@ -8,7 +8,7 @@ const hook = readFileSync(resolve(__dirname, "researchCommand/useResearchCommand
 const drawers = readFileSync(resolve(__dirname, "researchCommand/ResearchCommandDrawers.tsx"), "utf8");
 const css = readFileSync(resolve(__dirname, "../../styles/trading-research-command.css"), "utf8");
 const api = readFileSync(resolve(__dirname, "../../api/domains/researchCommand.ts"), "utf8");
-const entry = readFileSync(resolve(__dirname, "OnderzoekPage.tsx"), "utf8");
+const researchCenter = readFileSync(resolve(__dirname, "researchCenter/ResearchCenterPage.tsx"), "utf8");
 
 const forbidden = [
   "127,438",
@@ -22,8 +22,9 @@ const forbidden = [
 ];
 
 describe("Research Command page contracts", () => {
-  it("keeps the onderzoek route on the research command content area", () => {
-    expect(entry).toContain("ResearchCommandPage");
+  it("keeps research command content reachable (embedded via Research Centrum)", () => {
+    expect(researchCenter).toContain("ResearchCommandPage");
+    expect(researchCenter).toContain('section === "research-command"');
     expect(page).toContain('className="lv-main lv-tp-main lv-rc-page"');
     expect(page).toContain("Research Command");
     expect(page).not.toContain("AppSidebar");
@@ -70,7 +71,7 @@ describe("Research Command page contracts", () => {
     expect(api).toContain("/api/market-sim/research-command");
     expect(api).toContain("/flatten");
     expect(api).toContain("FLATTEN_PAPER");
-    expect(hook).toContain('navigate("/trading/paper")');
+    expect(hook).toContain('navigate("/trading/live-agents');
     expect(hook).toContain("researchCommandStart");
     expect(hook).toContain("researchCommandPause");
     expect(hook).toContain("researchCommandFlatten");
@@ -82,7 +83,7 @@ describe("Research Command page contracts", () => {
     expect(drawers).toContain("Confirm PAPER flatten");
     expect(panels).toContain("Live order submission remains blocked");
     expect(panels).toContain("Arm kill switch");
-    expect(hook).toContain("/agents?agent=");
+    expect(hook).toContain("/trading/agents?agent=");
   });
 
   it("does not hardcode screenshot values", () => {

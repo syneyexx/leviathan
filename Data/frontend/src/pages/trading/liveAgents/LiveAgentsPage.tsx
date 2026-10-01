@@ -81,9 +81,8 @@ export function LiveAgentsPage() {
         <TradingContextBar ctx={ctx} />
         <LiveAgentsView
           data={data}
-          onOpenAdvanced={() => {
-            setShowDeploy(true);
-          }}
+          onOpenDeploy={() => setShowDeploy(true)}
+          onOpenAdvanced={() => setShowAdvanced(true)}
         />
         {showDeploy ? <DeployPaperDrawer data={desk} onClose={() => setShowDeploy(false)} /> : null}
         {showAdvanced ? <AdvancedDrawer data={desk} onClose={() => setShowAdvanced(false)} /> : null}

@@ -2,7 +2,7 @@
  * Research Centrum — PAGE 3 of Trading Center (SCREEN 3).
  */
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { AppShell } from "../../../layouts/AppShell";
 import { TradingContextBar } from "../workspaces/TradingContextBar";
 import { tradingCenterStatusRows } from "../workspaces/tradingStatusRows";
@@ -23,17 +23,26 @@ import {
 import { MarketDataView } from "../workspaces/marketData/MarketDataView";
 import type { LibraryRow } from "../workspaces/marketData/useMarketDataWorkspace";
 import { useMarketDataWorkspace } from "../workspaces/marketData/useMarketDataWorkspace";
+import { DeployPaperDrawer } from "../workspaces/tradingDesk/TradingDeskDrawers";
+import { useTradingDeskData } from "../workspaces/tradingDesk/useTradingDeskData";
+import { ResearchCommandPage } from "../researchCommand/ResearchCommandPage";
+import { ResearchLabPage } from "../researchLab/ResearchLabPage";
 import { getTradingWorkspace } from "../workspaces/workspaceConfig";
 import { ResearchCenterView } from "./ResearchCenterView";
 import "../../../styles/trading-workspaces.css";
 import "../../../styles/trading-strategy-lab.css";
 import "../../../styles/trading-market-data-workspace.css";
 import "../../../styles/trading-command-hub.css";
+import "../../../styles/trading-desk-workspace.css";
+import "../../../styles/trading-research-command.css";
+import "../../../styles/trading-research-lab.css";
 
 export function ResearchCenterPage() {
   const ctx = useTradingContext();
   const data = useStrategyLabData();
   const marketData = useMarketDataWorkspace();
+  const desk = useTradingDeskData(ctx.market, ctx.timeframe);
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const ws = getTradingWorkspace("research_center");
   const section = params.get("section");
@@ -47,9 +56,10 @@ export function ResearchCenterPage() {
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [showCreateRun, setShowCreateRun] = useState(false);
   const [showCompare, setShowCompare] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(
-    section === "lab" || section === "backtest" || section === "research-command" || tab === "backtest",
-  );
+  const [showAssign, setShowAssign] = useState(false);
+  const [showResearchCommand, setShowResearchCommand] = useState(section === "research-command");
+  const [showResearchLab, setShowResearchLab] = useState(section === "lab");
+  const [showAdvanced, setShowAdvanced] = useState(section === "backtest" || tab === "backtest");
   const [advancedLabId, setAdvancedLabId] = useState<string | null>(null);
 
   const [selectedMdRow, setSelectedMdRow] = useState<LibraryRow | null>(null);
@@ -63,6 +73,14 @@ export function ResearchCenterPage() {
   useEffect(() => {
     if (strategyId) setSelectedRowId(strategyId);
   }, [strategyId]);
+
+  useEffect(() => {
+    setShowResearchCommand(section === "research-command");
+    setShowResearchLab(section === "lab");
+    if (section === "backtest" || tab === "backtest") {
+      setShowAdvanced(true);
+    }
+  }, [section, tab]);
 
   const selectedRow = useMemo<DiscoveryRow | null>(
     () => data.discovery.find((r) => r.id === selectedRowId || r.strategyId === selectedRowId) ?? null,
@@ -84,7 +102,13 @@ export function ResearchCenterPage() {
   }, [section, ws.subtitle]);
 
   async function refreshAll() {
-    await Promise.all([data.refresh(), marketData.refresh(), marketData.refreshProviders(), ctx.refresh()]);
+    await Promise.all([
+      data.refresh(),
+      marketData.refresh(),
+      marketData.refreshProviders(),
+      desk.refresh(),
+      ctx.refresh(),
+    ]);
   }
 
   function openAdvanced() {
@@ -98,6 +122,26 @@ export function ResearchCenterPage() {
     const next = new URLSearchParams(params);
     next.set("section", "market-data");
     setParams(next, { replace: true });
+  }
+
+  const strategyOptions = useMemo(
+    () =>
+      data.strategies.map((s) => ({
+        id: s.strategy_id,
+        label: `${s.name} (v${s.current_version})`,
+      })),
+    [data.strategies],
+  );
+
+  function handleAssigned(result: Record<string, unknown>) {
+    const deploymentId = String(
+      (result as { deployment?: { deployment_id?: string } }).deployment?.deployment_id ??
+        result.deployment_id ??
+        "",
+    );
+    const q = new URLSearchParams({ mode: "realtime", section: "broker-boundary" });
+    if (deploymentId) q.set("deployment", deploymentId);
+    navigate(`/trading/live-agents?${q.toString()}`);
   }
 
   return (
@@ -160,6 +204,44 @@ export function ResearchCenterPage() {
               <ReplayDrawer data={marketData} initialRow={replayRow} onClose={() => setShowReplay(false)} />
             ) : null}
           </>
+        ) : showResearchCommand ? (
+          <div className="lv-rc-command-embed" data-section="research-command">
+            <header className="lv-ao-panel__head">
+              <h3>Research Command</h3>
+              <button
+                type="button"
+                className="lv-hub-btn"
+                onClick={() => {
+                  setShowResearchCommand(false);
+                  const next = new URLSearchParams(params);
+                  next.delete("section");
+                  setParams(next, { replace: true });
+                }}
+              >
+                Terug naar inventaris
+              </button>
+            </header>
+            <ResearchCommandPage embedded />
+          </div>
+        ) : showResearchLab ? (
+          <div className="lv-rc-lab-embed" data-section="lab">
+            <header className="lv-ao-panel__head">
+              <h3>Research Lab</h3>
+              <button
+                type="button"
+                className="lv-hub-btn"
+                onClick={() => {
+                  setShowResearchLab(false);
+                  const next = new URLSearchParams(params);
+                  next.delete("section");
+                  setParams(next, { replace: true });
+                }}
+              >
+                Terug naar inventaris
+              </button>
+            </header>
+            <ResearchLabPage embedded />
+          </div>
         ) : (
           <>
             {data.error ? (
@@ -183,9 +265,20 @@ export function ResearchCenterPage() {
               onOpenCompare={() => setShowCompare(true)}
               onOpenAdvanced={openAdvanced}
               onOpenMarketData={openMarketDataSection}
+              onAssignToAgent={() => setShowAssign(true)}
             />
           </>
         )}
+
+        {showAssign ? (
+          <DeployPaperDrawer
+            data={desk}
+            initialStrategyId={selectedRow?.strategyId ?? ""}
+            strategyOptions={strategyOptions}
+            onClose={() => setShowAssign(false)}
+            onDeployed={handleAssigned}
+          />
+        ) : null}
 
         {showCreateRun ? (
           <CreateLabRunDrawer

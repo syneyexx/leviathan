@@ -4,18 +4,18 @@ import { describe, expect, it } from "vitest";
 
 const typesPath = resolve(__dirname, "../../types/api.ts");
 const clientPath = resolve(__dirname, "../../api/client.ts");
-const paperHookPath = resolve(__dirname, "paper/hooks/usePaperTradingOperator.ts");
-const paperPagePath = resolve(__dirname, "paper/PaperTradingPage.tsx");
-const controlRoomPath = resolve(__dirname, "InstitutionalControlRoomPage.tsx");
-const controlRoomModelPath = resolve(__dirname, "controlRoom/viewModel.ts");
+const liveHookPath = resolve(__dirname, "liveAgents/useLiveAgentsData.ts");
+const livePagePath = resolve(__dirname, "liveAgents/LiveAgentsPage.tsx");
+const controlDrawerPath = resolve(__dirname, "agentOverview/AgentOverviewDrawers.tsx");
+const controlModelPath = resolve(__dirname, "controlRoom/viewModel.ts");
 
 describe("Trading Center typed capability contracts", () => {
   const types = readFileSync(typesPath, "utf8");
   const client = readFileSync(clientPath, "utf8");
-  const paper = readFileSync(paperHookPath, "utf8");
-  const paperPage = readFileSync(paperPagePath, "utf8");
-  const controlRoom = readFileSync(controlRoomPath, "utf8");
-  const controlRoomModel = readFileSync(controlRoomModelPath, "utf8");
+  const live = readFileSync(liveHookPath, "utf8");
+  const livePage = readFileSync(livePagePath, "utf8");
+  const controlDrawer = readFileSync(controlDrawerPath, "utf8");
+  const controlRoomModel = readFileSync(controlModelPath, "utf8");
 
   it("declares MarketSimCapabilities and granularity types", () => {
     expect(types).toContain("export type MarketSimCapabilities");
@@ -35,17 +35,17 @@ describe("Trading Center typed capability contracts", () => {
     expect(client).toContain('"/api/market-sim/capabilities"');
   });
 
-  it("Paper Trading consumes backend capabilities without fabricating Sharpe", () => {
-    expect(paper).toContain("marketSimCapabilities");
-    expect(paperPage).toContain("lv-main lv-tp-main");
-    expect(paper).not.toMatch(/sharpe\s*[:=]\s*1\.[0-9]/i);
-    expect(paper).not.toContain("institutional ready");
-    expect(paperPage).not.toContain("institutional ready");
+  it("Live Agents consumes paper deployments without fabricating Sharpe", () => {
+    expect(live).toContain("listPaperDeployments");
+    expect(livePage).toContain("PAPER");
+    expect(live).not.toMatch(/sharpe\s*[:=]\s*1\.[0-9]/i);
+    expect(live).not.toContain("institutional ready");
+    expect(livePage).not.toContain("institutional ready");
   });
 
-  it("Control Room treats live trading as blocked by default", () => {
-    expect(controlRoom).toContain("marketSimInstitutionalControlRoom");
-    expect(controlRoom).not.toContain("setInterval");
+  it("Control Room drawer treats live trading as blocked by default", () => {
+    expect(controlDrawer).toContain("marketSimInstitutionalControlRoom");
+    expect(controlDrawer).not.toContain("setInterval");
     expect(controlRoomModel).toContain("LIVE_TRADING_AVAILABLE");
     expect(controlRoomModel).toContain("BLOCKED");
   });

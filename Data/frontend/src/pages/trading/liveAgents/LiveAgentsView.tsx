@@ -28,9 +28,11 @@ function Spark({ values }: { values: number[] }) {
 
 export function LiveAgentsView({
   data,
+  onOpenDeploy,
   onOpenAdvanced,
 }: {
   data: LiveAgentsData;
+  onOpenDeploy: () => void;
   onOpenAdvanced: () => void;
 }) {
   const sel = data.selected;
@@ -87,8 +89,11 @@ export function LiveAgentsView({
                 value={data.search}
                 onChange={(e) => data.setSearch(e.target.value)}
               />
+              <button type="button" className="lv-hub-btn" onClick={onOpenDeploy}>
+                Paper deploy
+              </button>
               <button type="button" className="lv-hub-btn" onClick={onOpenAdvanced}>
-                Advanced deploy
+                Advanced
               </button>
             </div>
           </header>
@@ -262,8 +267,11 @@ export function LiveAgentsView({
               RiskGuard path (always on for paper orders)
             </label>
             <div className="lv-la-card__actions">
-              <button type="button" className="lv-hub-btn lv-hub-btn--primary" onClick={onOpenAdvanced}>
+              <button type="button" className="lv-hub-btn lv-hub-btn--primary" onClick={onOpenDeploy}>
                 Start paper trading / deploy
+              </button>
+              <button type="button" className="lv-hub-btn" onClick={onOpenAdvanced}>
+                Fleet / broker advanced
               </button>
               <button
                 type="button"

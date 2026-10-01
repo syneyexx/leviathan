@@ -15,6 +15,7 @@ export function ResearchCenterView({
   onOpenCreateRun,
   onOpenAdvanced,
   onOpenMarketData,
+  onAssignToAgent,
   compareIds,
   onToggleCompare,
   onOpenCompare,
@@ -26,6 +27,8 @@ export function ResearchCenterView({
   onOpenCreateRun: () => void;
   onOpenAdvanced: () => void;
   onOpenMarketData: () => void;
+  /** Opens DeployPaperDrawer with selected strategy — real paper deployment assignment. */
+  onAssignToAgent: () => void;
   compareIds: string[];
   onToggleCompare: (id: string) => void;
   onOpenCompare: () => void;
@@ -263,12 +266,19 @@ export function ResearchCenterView({
                 >
                   Naar sandbox / Live Agents
                 </Link>
-                <Link
+                <button
+                  type="button"
                   className="lv-hub-btn"
-                  to={`/trading/agents`}
+                  onClick={onAssignToAgent}
+                  disabled={!selectedRow.strategyId}
+                  title={
+                    selectedRow.strategyId
+                      ? "Maakt een echte paper deployment via market_sim"
+                      : "Selecteer een strategie met strategyId"
+                  }
                 >
                   Toewijzen aan agent
-                </Link>
+                </button>
               </div>
             </div>
           ) : (
@@ -280,9 +290,15 @@ export function ResearchCenterView({
             <button type="button" className="lv-hub-btn" onClick={onOpenAdvanced}>
               Offline replay / backtest
             </button>
-            <button type="button" className="lv-hub-btn" onClick={onOpenAdvanced}>
+            <Link className="lv-hub-btn" to="/trading/live-agents?mode=realtime">
               Realtime sandbox (PAPER)
-            </button>
+            </Link>
+            <Link className="lv-hub-btn" to="/trading/research?section=lab">
+              Research Lab
+            </Link>
+            <Link className="lv-hub-btn" to="/trading/research?section=research-command">
+              Research Command
+            </Link>
           </div>
         </aside>
       </div>

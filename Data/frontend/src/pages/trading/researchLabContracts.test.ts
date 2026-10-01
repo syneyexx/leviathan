@@ -3,7 +3,6 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const pagePath = resolve(__dirname, "researchLab/ResearchLabPage.tsx");
-const entryPath = resolve(__dirname, "ResearchLabPage.tsx");
 const cssPath = resolve(__dirname, "../../styles/trading-research-lab.css");
 const apiPath = resolve(__dirname, "../../api/domains/marketSimLab.ts");
 const hookPath = resolve(__dirname, "researchLab/hooks/useResearchLab.ts");
@@ -11,10 +10,10 @@ const vmPath = resolve(__dirname, "researchLab/viewModels.ts");
 const modalPath = resolve(__dirname, "researchLab/components/ResearchLabCreateModal.tsx");
 const hypPath = resolve(__dirname, "researchLab/components/ResearchLabHypothesesPanel.tsx");
 const percPath = resolve(__dirname, "researchLab/components/ResearchLabPerceptionPanel.tsx");
+const researchCenterPath = resolve(__dirname, "researchCenter/ResearchCenterPage.tsx");
 
 describe("Research Lab page contracts", () => {
   const page = readFileSync(pagePath, "utf8");
-  const entry = readFileSync(entryPath, "utf8");
   const css = readFileSync(cssPath, "utf8");
   const api = readFileSync(apiPath, "utf8");
   const hook = readFileSync(hookPath, "utf8");
@@ -22,11 +21,13 @@ describe("Research Lab page contracts", () => {
   const modal = readFileSync(modalPath, "utf8");
   const hyp = readFileSync(hypPath, "utf8");
   const perc = readFileSync(percPath, "utf8");
+  const researchCenter = readFileSync(researchCenterPath, "utf8");
 
-  it("keeps Research Lab route entry and wraps lv-main", () => {
-    expect(entry).toContain('from "./researchLab/ResearchLabPage"');
+  it("keeps Research Lab modules as shared authority (entry via Research Centrum)", () => {
     expect(page).toContain('className="lv-main lv-tp-main lv-rl-page"');
     expect(page).toContain("RESEARCH LAB");
+    expect(researchCenter).toContain("ResearchLabPage");
+    expect(researchCenter).toMatch(/section === "lab"/);
   });
 
   it("scopes styles under lv-rl-* and imports dedicated stylesheet", () => {
