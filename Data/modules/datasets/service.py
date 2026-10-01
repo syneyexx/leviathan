@@ -329,10 +329,59 @@ class DatasetService:
         self.runner.jobs = job_runtime
 
     def _queue_domain_job(self, **kwargs: Any) -> DatasetJob:
-        """Create domain dataset_jobs row and enqueue linked kernel job when available."""
+        """Create domain dataset_jobs row and link a runnable kernel job when bound.
+
+        Option A (P0-005): when JobRuntime is bound, a QUEUED domain job is only
+        accepted if kernel enqueue succeeds. Enqueue failure marks the domain job
+        FAILED with a truthful execution-unavailable code and raises — never leave
+        an orphan QUEUED domain row without execution authority.
+        """
         job = self.store.create_job(**kwargs)
-        if job.status == DatasetJobStatus.QUEUED and self.jobs is not None:
-            enqueue_kernel_for_domain_job(self.jobs, job)
+        if job.status != DatasetJobStatus.QUEUED:
+            return job
+        if self.jobs is None:
+            # Legacy/test path: domain drain owns execution; no kernel required.
+            return job
+        try:
+            kernel = enqueue_kernel_for_domain_job(self.jobs, job, raise_on_error=True)
+        except Exception as exc:  # noqa: BLE001
+            self.store.update_job(
+                job.job_id,
+                status=DatasetJobStatus.FAILED,
+                error=redact_secrets(
+                    f"[DATASET_EXECUTION_UNAVAILABLE] JobRuntime enqueue failed: {exc}"
+                )[:4000],
+                finished_at=utc_now(),
+                phase="enqueue_failed",
+            )
+            raise DatasetError(
+                "Dataset job accepted but JobRuntime could not enqueue execution; "
+                "refusing false QUEUED success",
+                code="DATASET_EXECUTION_UNAVAILABLE",
+                http_status=503,
+                details={
+                    "datasetJobId": job.job_id,
+                    "reason": "kernel_enqueue_failed",
+                    "error": redact_secrets(str(exc))[:500],
+                },
+            ) from exc
+        if kernel is None:
+            self.store.update_job(
+                job.job_id,
+                status=DatasetJobStatus.FAILED,
+                error="[DATASET_EXECUTION_UNAVAILABLE] JobRuntime enqueue returned no kernel job",
+                finished_at=utc_now(),
+                phase="enqueue_failed",
+            )
+            raise DatasetError(
+                "Dataset job could not obtain a runnable JobKernel lease",
+                code="DATASET_EXECUTION_UNAVAILABLE",
+                http_status=503,
+                details={
+                    "datasetJobId": job.job_id,
+                    "reason": "kernel_enqueue_returned_none",
+                },
+            )
         return job
 
     def _kernel_for_domain(self, domain_job_id: str) -> JobRecord | None:
@@ -2402,9 +2451,101 @@ class DatasetService:
 
                 if kernel.state not in TERMINAL_JOB_STATES:
                     self.jobs.cancel(kernel.job_id, reason="dataset domain cancel")
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                # Domain cancel is durable; record the kernel sync failure honestly
+                # rather than pretending bidirectional cancel succeeded.
+                cancelled = self.store.update_job(
+                    job_id,
+                    error=redact_secrets(
+                        f"domain cancelled; kernel cancel sync failed: {exc}"
+                    )[:4000],
+                    phase="cancel_kernel_sync_failed",
+                )
         return cancelled
+
+    def reconcile_orphan_queued_jobs(self, *, limit: int = 100) -> list[DatasetJob]:
+        """Recover QUEUED domain jobs that lack a runnable kernel lease.
+
+        When JobRuntime is bound, every accepted QUEUED domain job must have a
+        kernel job. Orphans (crash between domain insert and enqueue, or legacy
+        rows) are either re-linked exactly once or marked FAILED truthfully.
+
+        Also reconciles cancel split-brain: kernel CANCELLED/CANCEL_REQUESTED
+        while domain remains non-terminal → domain CANCELLED.
+        """
+        if self.jobs is None:
+            return []
+        from Data.modules.jobs.states import JobState, TERMINAL_JOB_STATES
+
+        recovered: list[DatasetJob] = []
+        for job in self.store.list_jobs(status=DatasetJobStatus.QUEUED, limit=limit):
+            kernel = self._kernel_for_domain(job.job_id)
+            if kernel is not None:
+                if kernel.state == JobState.CANCELLED:
+                    cancelled = self.store.update_job(
+                        job.job_id,
+                        status=DatasetJobStatus.CANCELLED,
+                        cancel_requested=True,
+                        finished_at=utc_now(),
+                        error="reconciled: linked kernel job CANCELLED",
+                        phase="cancelled",
+                        worker_pid=None,
+                    )
+                    recovered.append(cancelled)
+                    continue
+                if kernel.state == JobState.CANCEL_REQUESTED:
+                    cancelled = self.store.update_job(
+                        job.job_id,
+                        status=DatasetJobStatus.CANCELLED,
+                        cancel_requested=True,
+                        finished_at=utc_now(),
+                        error="reconciled: linked kernel job CANCEL_REQUESTED",
+                        phase="cancelled",
+                        worker_pid=None,
+                    )
+                    recovered.append(cancelled)
+                    continue
+                if kernel.state in TERMINAL_JOB_STATES and kernel.state != JobState.CANCELLED:
+                    # COMPLETED/FAILED kernel with QUEUED domain is also split-brain
+                    failed = self.store.update_job(
+                        job.job_id,
+                        status=DatasetJobStatus.FAILED
+                        if kernel.state == JobState.FAILED
+                        else DatasetJobStatus.COMPLETED,
+                        finished_at=utc_now(),
+                        error=f"reconciled: linked kernel already {kernel.state.value}",
+                        phase="reconciled_terminal",
+                        worker_pid=None,
+                    )
+                    recovered.append(failed)
+                    continue
+                continue
+            try:
+                linked = enqueue_kernel_for_domain_job(self.jobs, job, raise_on_error=True)
+            except Exception as exc:  # noqa: BLE001
+                failed = self.store.update_job(
+                    job.job_id,
+                    status=DatasetJobStatus.FAILED,
+                    error=redact_secrets(
+                        f"[DATASET_EXECUTION_UNAVAILABLE] orphan reconcile enqueue failed: {exc}"
+                    )[:4000],
+                    finished_at=utc_now(),
+                    phase="orphan_enqueue_failed",
+                )
+                recovered.append(failed)
+                continue
+            if linked is None:
+                failed = self.store.update_job(
+                    job.job_id,
+                    status=DatasetJobStatus.FAILED,
+                    error="[DATASET_EXECUTION_UNAVAILABLE] orphan reconcile returned no kernel",
+                    finished_at=utc_now(),
+                    phase="orphan_enqueue_failed",
+                )
+                recovered.append(failed)
+            else:
+                recovered.append(job)
+        return recovered
 
     def production_dataset_inline_forbidden(self) -> bool:
         """True when this service must not execute dataset handlers in-process.
@@ -2452,6 +2593,10 @@ class DatasetService:
         try:
             updated.extend(self.reconcile_stale_learning_jobs())
         except Exception:  # noqa: BLE001 — stale learning reconcile must not block
+            pass
+        try:
+            updated.extend(self.reconcile_orphan_queued_jobs())
+        except Exception:  # noqa: BLE001 — orphan reconcile must not block
             pass
         if not include_heavy:
             return updated
