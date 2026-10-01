@@ -84,6 +84,12 @@ def build_artifacts_router(*, artifacts: Any, runs: Any) -> APIRouter:
             producer=payload.producer.strip(),
             filename=name,
             run_id=payload.run_id,
+            metadata={
+                "filename": name,
+                "declared_mime_type": payload.mime_type,
+                "conversation_id": payload.conversation_id,
+                "content_base64": bool(payload.content_base64),
+            },
         )
         public = record.public_dict()
         if payload.conversation_id:

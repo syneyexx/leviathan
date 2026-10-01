@@ -140,13 +140,19 @@ export function ChatComposer({
         <ul className="lv-v2-composer__attachments" aria-label="Bijlagen">
           {attachments.map((att) => (
             <li key={att.localId} className={`lv-v2-composer__attachment is-${att.state}`}>
-              <span>
-                {att.fileName} · {(att.sizeBytes / 1024).toFixed(1)} KiB · {att.mimeType || "unknown"} ·{" "}
+              <span className="lv-v2-composer__attachment-name">
+                {att.fileName} · {(att.sizeBytes / 1024).toFixed(1)} KiB · {att.mimeType || "unknown"}
+              </span>
+              <span className="lv-v2-composer__attachment-state">
                 {att.state}
                 {att.error ? ` — ${att.error}` : null}
               </span>
               {att.state !== "uploading" && onRemoveAttachment ? (
-                <button type="button" onClick={() => onRemoveAttachment(att.localId)}>
+                <button
+                  type="button"
+                  className="lv-v2-composer__attachment-remove"
+                  onClick={() => onRemoveAttachment(att.localId)}
+                >
                   Verwijder
                 </button>
               ) : null}

@@ -1,5 +1,6 @@
 /**
  * useChatInspectorData — derived inspector fields from last turn + system telemetry.
+ * Never invent preferences/project labels — only surface measured/backend values.
  */
 import { useMemo } from "react";
 import type {
@@ -14,13 +15,37 @@ export type ChatInspectorData = {
   knowledgeSources: KnowledgeSource[];
   verification: string | null;
   lastTurnTelemetry: AssistantTurnTelemetry | null;
+  /** Measured behavior profile label when available; null → UI shows unavailable. */
+  preferencesLabel: string | null;
+  /** Measured project/context label when available; null → UI shows none. */
+  projectContext: string | null;
 };
 
 export type TurnMetaForInspector = {
   knowledgeSources?: KnowledgeSource[];
   verification?: string | null;
   telemetry?: AssistantTurnTelemetry | null;
+  behaviorProfileId?: string | null;
+  behaviorVersion?: string | null;
+  projectContext?: string | null;
 };
+
+function behaviorLabel(tel: AssistantTurnTelemetry | null, meta: TurnMetaForInspector): string | null {
+  const id =
+    meta.behaviorProfileId ||
+    tel?.behavior_profile_id ||
+    null;
+  const version =
+    meta.behaviorVersion ||
+    tel?.behavior_version ||
+    null;
+  const hash = tel?.behavior_hash || null;
+  if (!id && !version && !hash) return null;
+  const bits = [id, version ? `v${version}` : null, hash ? `hash:${String(hash).slice(0, 8)}` : null].filter(
+    Boolean,
+  );
+  return bits.length ? bits.join(" · ") : null;
+}
 
 export function useChatInspectorData(opts: {
   lastTurn: TurnMetaForInspector;
@@ -37,6 +62,8 @@ export function useChatInspectorData(opts: {
       knowledgeSources: lastTurn.knowledgeSources ?? [],
       verification: lastTurn.verification ?? null,
       lastTurnTelemetry: tel,
+      preferencesLabel: behaviorLabel(tel, lastTurn),
+      projectContext: lastTurn.projectContext?.trim() || null,
     };
   }, [lastTurn, contextWindow]);
 }

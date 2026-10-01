@@ -23,6 +23,7 @@ export type ConversationHistoryPanelProps = {
   /** Mobile drawer open — adds is-drawer-open for CSS. */
   drawerOpen?: boolean;
   searchInputRef?: RefObject<HTMLInputElement | null>;
+  panelRef?: RefObject<HTMLElement | null>;
   /** Injected clock (visual tests / frozen now). */
   now?: Date;
 };
@@ -42,6 +43,7 @@ export function ConversationHistoryPanel({
   loadingMore = false,
   drawerOpen = false,
   searchInputRef,
+  panelRef,
   now,
 }: ConversationHistoryPanelProps) {
   const [localQuery, setLocalQuery] = useState("");
@@ -62,8 +64,11 @@ export function ConversationHistoryPanel({
 
   return (
     <aside
+      ref={panelRef}
       className={`lv-v2-chat-col lv-v2-chat-col--history${drawerOpen ? " is-drawer-open" : ""}`}
       aria-label="Gesprekshistorie"
+      role={drawerOpen ? "dialog" : undefined}
+      aria-modal={drawerOpen ? true : undefined}
     >
       <div className="lv-v2-chat-col__head">
         <h2 className="lv-v2-chat-col__title">Gesprekshistorie</h2>

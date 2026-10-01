@@ -159,6 +159,7 @@ export function useChatWorkspace() {
   const newChatMenuRef = useRef<HTMLDivElement | null>(null);
   const manageMenuRef = useRef<HTMLDivElement | null>(null);
   const conversationIdRef = useRef<string | null>(null);
+  const drawerTriggerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     conversationIdRef.current = conversationId;
@@ -225,7 +226,14 @@ export function useChatWorkspace() {
   });
 
   const inspector = useChatInspectorData({
-    lastTurn: turn.lastTurn,
+    lastTurn: {
+      knowledgeSources: turn.lastTurn.knowledgeSources,
+      verification: turn.lastTurn.verification,
+      telemetry: turn.lastTurn.telemetry,
+      behaviorProfileId: turn.lastTurn.telemetry?.behavior_profile_id ?? null,
+      behaviorVersion: turn.lastTurn.telemetry?.behavior_version ?? null,
+      projectContext: null,
+    },
     contextWindow: config.contextWindow,
     systemTelemetry,
   });
@@ -404,10 +412,12 @@ export function useChatWorkspace() {
       if (event.key !== "Escape") return;
       if (historyDrawerOpen) {
         setHistoryDrawerOpen(false);
+        requestAnimationFrame(() => drawerTriggerRef.current?.focus());
         return;
       }
       if (inspectorDrawerOpen) {
         setInspectorDrawerOpen(false);
+        requestAnimationFrame(() => drawerTriggerRef.current?.focus());
       }
     }
     document.addEventListener("keydown", onKey);
@@ -430,12 +440,41 @@ export function useChatWorkspace() {
     }
   }, [inspectorDrawerOpen]);
 
+  // Focus trap while a mobile drawer is open.
+  useEffect(() => {
+    const open = historyDrawerOpen || inspectorDrawerOpen;
+    if (!open) return;
+    const panel = historyDrawerOpen ? historyPanelRef.current : inspectorPanelRef.current;
+    if (!panel) return;
+
+    function onTab(event: KeyboardEvent) {
+      if (event.key !== "Tab" || !panel) return;
+      const focusable = panel.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+    document.addEventListener("keydown", onTab);
+    return () => document.removeEventListener("keydown", onTab);
+  }, [historyDrawerOpen, inspectorDrawerOpen]);
+
   const openHistoryDrawer = useCallback(() => {
+    drawerTriggerRef.current = document.activeElement as HTMLElement | null;
     setInspectorDrawerOpen(false);
     setHistoryDrawerOpen(true);
   }, []);
 
   const openInspectorDrawer = useCallback(() => {
+    drawerTriggerRef.current = document.activeElement as HTMLElement | null;
     setHistoryDrawerOpen(false);
     setInspectorDrawerOpen(true);
   }, []);
@@ -443,6 +482,7 @@ export function useChatWorkspace() {
   const closeDrawers = useCallback(() => {
     setHistoryDrawerOpen(false);
     setInspectorDrawerOpen(false);
+    requestAnimationFrame(() => drawerTriggerRef.current?.focus());
   }, []);
 
   const copyLocalLink = useCallback(

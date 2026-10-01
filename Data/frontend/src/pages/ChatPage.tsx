@@ -107,6 +107,14 @@ export function ChatPage() {
       >
         Gesprekken
       </button>
+      <button
+        type="button"
+        className="lv-v2-topbar__action-btn"
+        onClick={ws.openInspectorDrawer}
+        aria-expanded={ws.inspectorDrawerOpen}
+      >
+        Context
+      </button>
     </>
   );
 
@@ -164,23 +172,18 @@ export function ChatPage() {
             loadingMore={ws.catalog.loadingMore}
             drawerOpen={ws.historyDrawerOpen}
             searchInputRef={ws.historySearchRef}
+            panelRef={ws.historyPanelRef}
             now={ws.frozen ?? undefined}
           />
 
           <div className="lv-v2-chat-col lv-v2-chat-center">
-            {ws.thread.hasMoreOlder ? (
-              <div className="lv-v2-chat-load-older">
-                <button
-                  type="button"
-                  disabled={ws.thread.loadingOlder || ws.turn.busy}
-                  onClick={() => void ws.thread.loadOlder()}
-                >
-                  {ws.thread.loadingOlder ? "Oudere berichten laden…" : "Oudere berichten"}
-                </button>
-              </div>
-            ) : null}
             <MessageList
               messages={ws.thread.messages}
+              turnsByMessageId={ws.thread.turnsByMessageId}
+              hasMoreOlder={ws.thread.hasMoreOlder}
+              loadingOlder={ws.thread.loadingOlder}
+              onLoadOlder={() => void ws.thread.loadOlder()}
+              onOpenInspector={ws.openInspectorDrawer}
               lastTurn={{
                 reasoning: ws.turn.lastTurn.reasoning,
                 cognitionPhase: ws.turn.lastTurn.cognitionPhase,
@@ -254,13 +257,14 @@ export function ChatPage() {
             tokenUsage={ws.inspector.tokenUsage}
             contextBudget={ws.inspector.contextBudget}
             memoryCount={ws.memoryCount}
-            preferencesLabel={null}
-            projectContext={null}
+            preferencesLabel={ws.inspector.preferencesLabel}
+            projectContext={ws.inspector.projectContext}
             knowledgeSources={ws.inspector.knowledgeSources}
             verification={ws.inspector.verification}
             systemTelemetry={ws.systemTelemetry}
             lastTurnTelemetry={ws.inspector.lastTurnTelemetry}
             drawerOpen={ws.inspectorDrawerOpen}
+            panelRef={ws.inspectorPanelRef}
           />
         </div>
       </main>

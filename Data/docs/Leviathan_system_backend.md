@@ -308,6 +308,11 @@ request (+ optional idempotency_key, artifact_ids)
 Conversation catalog: cursor pagination + server search (`GET /api/conversations`).
 Message history: recent window + `before_id` pages; optional `turns` hydration by assistant message id.
 
+Multimodal attachments: client uploads via `POST /api/artifacts` (ArtifactStore). Chat accepts
+`artifact_ids` on `POST /api/chat`, validates via ArtifactStore, persists IDs on `chat_turns`,
+registers a MultimodalSession, and injects typed `parts` + text excerpts into ContextBuilder
+history (no parallel upload pipeline; no raw filesystem paths from the browser).
+
 `Data/modules/reasoning/` is the legacy lightweight intent/retrieval-classification seam. **CognitiveRuntime** in `Data/modules/cognition/` is the deep orchestration owner.
 
 See ADR: `Data/docs/adr/ADR-chat-turn-institutional.md`.

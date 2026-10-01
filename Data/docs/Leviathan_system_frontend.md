@@ -284,6 +284,10 @@ Current Chat surfaces:
 
 - conversation history with **server-side search** + **load more** (cursor pagination);
 - draft New Chat until first send (no premature `POST /api/conversations`);
+- mobile **Gesprekken** + **Context** drawers (mutually exclusive; Escape/backdrop; focus trap);
+- ArtifactStore attachments with honest vision gating;
+- historic per-assistant-message turn chips (model/mode/owner/hits when measured);
+- SafeMarkdown rendering (no raw HTML; blocked `javascript:`/`data:`/`vbscript:`);
 - requested/effective reasoning information when returned (incl. **standard**);
 - Direct vs TEAM collaboration selector (orthogonal to reasoning depth);
 - model identity/status;

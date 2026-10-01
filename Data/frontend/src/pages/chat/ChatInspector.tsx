@@ -162,6 +162,8 @@ export function ChatInspector({
         drawerOpen ? " is-drawer-open" : ""
       }`}
       aria-label="Context inspector"
+      role={drawerOpen ? "dialog" : undefined}
+      aria-modal={drawerOpen ? true : undefined}
     >
       <section className="lv-v2-inspector-card" aria-labelledby="inspector-context-title">
         <div className="lv-v2-inspector-card__head">

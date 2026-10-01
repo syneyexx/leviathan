@@ -151,11 +151,18 @@ function TurnMetaChip({ turn }: { turn: ChatTurn }) {
   const model = turn.effective_model || turn.requested_model;
   const mode = turn.effective_reasoning_mode || turn.requested_reasoning_mode;
   const state = turn.run_state;
-  const bits = [model, mode, state].filter(Boolean);
-  if (!bits.length) return null;
+  const owner = turn.response_owner;
+  const collab = turn.collaboration_strategy;
+  const bits = [model, mode, owner, collab, state].filter(Boolean);
+  const measured: string[] = [];
+  if (turn.knowledge_hit_count != null) measured.push(`knowledge=${turn.knowledge_hit_count}`);
+  if (turn.memory_hit_count != null) measured.push(`memory=${turn.memory_hit_count}`);
+  if (turn.evidence_hit_count != null) measured.push(`evidence=${turn.evidence_hit_count}`);
+  if (turn.verification_state) measured.push(`verify=${turn.verification_state}`);
+  if (!bits.length && !measured.length) return null;
   return (
     <div className="lv-v2-msg__meta" style={{ opacity: 0.75 }}>
-      {bits.join(" · ")}
+      {[...bits, ...measured].join(" · ")}
     </div>
   );
 }
@@ -170,6 +177,7 @@ export function MessageList({
   loadingOlder = false,
   onLoadOlder,
   onActivityModeChange,
+  onOpenInspector,
 }: MessageListProps) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [nearBottom, setNearBottom] = useState(true);
@@ -228,10 +236,9 @@ export function MessageList({
       }}
     >
       {hasMoreOlder ? (
-        <div style={{ display: "flex", justifyContent: "center", padding: "8px 0" }}>
+        <div className="lv-v2-chat-load-older">
           <button
             type="button"
-            className="lv-v2-topbar__action-btn"
             disabled={loadingOlder}
             onClick={() => onLoadOlder?.()}
           >
@@ -305,6 +312,18 @@ export function MessageList({
                 <div className="lv-v2-msg__meta">
                   {formatMessageTime(message.created_at) ||
                     (message.pending ? "bezig…" : "")}
+                  {message.role === "assistant" && onOpenInspector ? (
+                    <>
+                      {" · "}
+                      <button
+                        type="button"
+                        className="lv-v2-msg__inspector-link"
+                        onClick={onOpenInspector}
+                      >
+                        Inspector
+                      </button>
+                    </>
+                  ) : null}
                 </div>
               </div>
             </article>

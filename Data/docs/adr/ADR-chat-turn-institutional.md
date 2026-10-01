@@ -21,9 +21,20 @@ needed durable recording.
    turn state machine, safe markdown, telemetry unknown≠zero, draft New Chat until first send.
 6. Response contract normalizes on `assistant_message`; legacy `message` alias kept temporarily
    with `_compatibility` marker for verified older clients.
+7. Multimodal attachments use ArtifactStore IDs only. Chat resolves IDs into
+   MultimodalSession / ContextBuilder `parts` (text inlined when readable; images as
+   typed parts). Vision understanding is claimed only when a vision-capable path exists.
+8. Historic assistant messages hydrate per-message `ChatTurn` metadata; live Activity
+   remains on the active turn. Missing metrics stay UNMEASURED (never coerced to zero).
+9. Mobile drawers (history + inspector) are mutually exclusive, Escape/backdrop close,
+   focus enters the panel, Tab is trapped, focus restores to the trigger.
 
 ## Consequences
 - Old conversations/messages remain readable without turn rows.
 - New turns hydrate per-assistant-message metadata on reload.
 - Startup reconciles stale ACCEPTED/RUNNING/STREAMING turns → INTERRUPTED.
 - CANCELLED ≠ FAILED is durable and idempotent.
+- Empty New Chat does not create a durable conversation until first Send (or scoped
+  attachment requiring identity).
+- Attachment MIME from the browser is treated as untrusted; server stores declared MIME
+  as metadata and classifies artifact_type independently.

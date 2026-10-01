@@ -215,6 +215,11 @@ from Data.modules.chat import (
     cancel_chat_turn,
     normalize_chat_response,
 )
+from Data.modules.chat.artifacts_context import (
+    attach_parts_to_history,
+    register_turn_multimodal_session,
+    resolve_artifact_parts,
+)
 from Data.backend.routes.browser import build_browser_router
 from Data.backend.routes.platform import build_platform_router
 from Data.backend.routes.media import build_media_router
@@ -3421,18 +3426,24 @@ async def chat(payload: ChatRequest, request: Request):
         behavior_version=getattr(behavior_snapshot, "version", None),
         behavior_hash=getattr(behavior_snapshot, "settings_hash", None),
     )
+    # Multimodal attachments → ArtifactStore IDs only; resolve into ContextBuilder parts.
+    attachment_ctx: dict = {
+        "safe_ids": [],
+        "parts": [],
+        "text_excerpts": [],
+        "vision_parts": 0,
+        "unavailable": [],
+        "sync_id": None,
+        "session_id": None,
+    }
     if payload.artifact_ids:
-        # Validate artifact existence via ArtifactStore — never trust client IDs blindly.
-        safe_ids: list[str] = []
-        for aid in payload.artifact_ids[:20]:
-            aid_s = str(aid or "").strip()
-            if not aid_s:
-                continue
-            try:
-                if artifacts.get(aid_s):
-                    safe_ids.append(aid_s)
-            except Exception:  # noqa: BLE001
-                continue
+        attachment_ctx = resolve_artifact_parts(
+            artifact_store=artifacts,
+            artifact_ids=list(payload.artifact_ids),
+            conversation_id=conversation_id,
+            run_id=run.run_id,
+        )
+        safe_ids = list(attachment_ctx.get("safe_ids") or [])
         if safe_ids:
             import json as _json
 
@@ -3441,6 +3452,25 @@ async def chat(payload: ChatRequest, request: Request):
                 artifact_ids_json=_json.dumps(safe_ids),
             )
             durable_turn = chat_turn_store.get(durable_turn.turn_id) or durable_turn
+            attachment_ctx["session_id"] = register_turn_multimodal_session(
+                multimodal_sessions,
+                conversation_id=conversation_id,
+                run_id=run.run_id,
+                user_text=message,
+                parts=list(attachment_ctx.get("parts") or []),
+            )
+            runs.append_event(
+                run.run_id,
+                EventType.ACTIVITY,
+                {
+                    "kind": "chat.attachments",
+                    "artifact_ids": safe_ids,
+                    "part_count": len(attachment_ctx.get("parts") or []),
+                    "vision_parts": attachment_ctx.get("vision_parts") or 0,
+                    "multimodal_session_id": attachment_ctx.get("session_id"),
+                    "unavailable": attachment_ctx.get("unavailable") or [],
+                },
+            )
     turn_id = durable_turn.turn_id
     request_id = getattr(request.state, "request_id", None) or run.run_id
 
@@ -3815,6 +3845,11 @@ async def chat(payload: ChatRequest, request: Request):
                 for m in history_rows
                 if m.get("role") in {"user", "assistant"} and m.get("content")
             ]
+            history = attach_parts_to_history(
+                history,
+                parts=list(attachment_ctx.get("parts") or []),
+                text_excerpts=list(attachment_ctx.get("text_excerpts") or []),
+            )
             cognition_meta = cognition_runtime.submit(
                 message,
                 conversation_id=conversation_id,
@@ -3925,6 +3960,11 @@ async def chat(payload: ChatRequest, request: Request):
             )
         history_rows = db.get_messages(conversation_id, limit=live_settings().max_history_messages)
         history = [{"role": row["role"], "content": row["content"]} for row in history_rows]
+        history = attach_parts_to_history(
+            history,
+            parts=list(attachment_ctx.get("parts") or []),
+            text_excerpts=list(attachment_ctx.get("text_excerpts") or []),
+        )
     else:
         if plan.use_knowledge:
             # All successful retrieval strategies must converge here:
@@ -4098,6 +4138,11 @@ async def chat(payload: ChatRequest, request: Request):
 
         history_rows = db.get_messages(conversation_id, limit=live_settings().max_history_messages)
         history = [{"role": row["role"], "content": row["content"]} for row in history_rows]
+        history = attach_parts_to_history(
+            history,
+            parts=list(attachment_ctx.get("parts") or []),
+            text_excerpts=list(attachment_ctx.get("text_excerpts") or []),
+        )
         memory_hits = []
         if (
             behavior_profile.memory_enabled
