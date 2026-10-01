@@ -207,8 +207,9 @@ class McpSecretHandlingTests(unittest.TestCase):
             conn.close()
 
     def test_migration_runner_head_includes_scrub(self) -> None:
-        self.assertEqual(MIGRATIONS[-1].version, 67)
-        self.assertEqual(MIGRATIONS[-1].name, "mcp_scrub_plaintext_secrets")
+        scrub = next(m for m in MIGRATIONS if m.version == 67)
+        self.assertEqual(scrub.name, "mcp_scrub_plaintext_secrets")
+        self.assertGreaterEqual(MIGRATIONS[-1].version, 67)
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "full.db"
             applied = MigrationRunner(path).apply_all()
