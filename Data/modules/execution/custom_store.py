@@ -29,8 +29,19 @@ _ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{1,118}$")
 PROTECTED_CUSTOM_METADATA_KEYS = frozenset(
     {
         "origin",
+        "provider_kind",
+        "provider_ref",
         "wraps_capability_id",
         "delegates_to",
+        "side_effects",
+        "execution_class",
+        "worker_kind",
+        "worker_pool",
+        "trust",
+        "authorization",
+        "security_classification",
+        "domain",
+        "domains",
         "version",
         "revision",
         "capability_id",
@@ -55,13 +66,16 @@ def _sanitize_custom_metadata(
         if key_s in PROTECTED_CUSTOM_METADATA_KEYS:
             continue
         base[key_s] = value
-    # Strip any protected keys that somehow landed in client payload copies.
-    for protected in PROTECTED_CUSTOM_METADATA_KEYS:
-        if protected in base and protected not in (existing or {}):
-            # Allow system to set origin etc. via existing; drop fresh client injects.
-            if protected not in {"origin"}:  # origin may be set by hydrate, not create path
-                pass
     return base
+
+
+def _display_metadata_only(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    """User display metadata safe to overlay during catalog hydrate."""
+    return {
+        k: v
+        for k, v in dict(metadata or {}).items()
+        if str(k) not in PROTECTED_CUSTOM_METADATA_KEYS
+    }
 
 
 def _utc_now() -> str:
@@ -349,7 +363,7 @@ class CustomCapabilityStore:
                         "delegates_to": record.wraps_capability_id,
                         "domains": ["system"],
                         "tags": ["custom"],
-                        **dict(record.metadata),
+                        **_display_metadata_only(record.metadata),
                     },
                 )
             else:
@@ -383,7 +397,7 @@ class CustomCapabilityStore:
                         "tags": list(
                             dict.fromkeys([*(target.normalized_metadata().get("tags") or []), "custom"])
                         ),
-                        **dict(record.metadata),
+                        **_display_metadata_only(record.metadata),
                     },
                 )
             catalog.upsert(definition)

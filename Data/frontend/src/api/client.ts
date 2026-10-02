@@ -3399,8 +3399,11 @@ export const api = {
     });
   },
 
-  mcpDeleteServer(serverId: string): Promise<{ ok: boolean }> {
-    return request(`/api/mcp/servers/${encodeURIComponent(serverId)}`, { method: "DELETE" });
+  mcpDeleteServer(serverId: string, opts?: { force?: boolean }): Promise<{ ok: boolean }> {
+    return request(
+      `/api/mcp/servers/${encodeURIComponent(serverId)}${opts?.force ? "?force=true" : ""}`,
+      { method: "DELETE" },
+    );
   },
 
   mcpTools(serverId?: string): Promise<{
