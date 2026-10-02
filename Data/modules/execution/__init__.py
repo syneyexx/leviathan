@@ -5,6 +5,7 @@ from Data.modules.function_runtime.types import SideEffect
 from .builtins import build_default_catalog
 from .catalog import CapabilityCatalog
 from .gateway import EffectRecord, ExecutionGateway, GatewayRejection
+from .http_status import gateway_status_http_code
 from .idempotency import CapabilityIdempotencyStore, execution_fingerprint
 from .manifest import (
     FrontierCapabilityManifest,
@@ -66,6 +67,7 @@ __all__ = [
     "execution_class_metadata",
     "execution_fingerprint",
     "externalize_api_enabled",
+    "gateway_status_http_code",
     "is_external_required",
     "normalize_capability_metadata",
     "running_in_worker_process",

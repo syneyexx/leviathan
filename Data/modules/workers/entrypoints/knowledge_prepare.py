@@ -86,13 +86,27 @@ def _fail(ctx: dict[str, Any], job: Any, error: str) -> dict[str, Any]:
 
 def _progress(ctx: dict[str, Any], job: Any, *, phase: str, message: str = "", **extra: Any) -> None:
     store = ctx.get("job_store")
-    if store is not None and hasattr(store, "update_progress"):
-        try:
-            store.update_progress(job.job_id, phase=phase, message=message, **extra)
-        except TypeError:
-            store.update_progress(job.job_id, phase=phase, message=message)
-        except Exception:  # noqa: BLE001
-            pass
+    if store is None or not hasattr(store, "update_progress"):
+        return
+    import inspect
+
+    update = store.update_progress
+    kwargs: dict[str, Any] = {"phase": phase, "message": message, **extra}
+    try:
+        sig = inspect.signature(update)
+        params = sig.parameters
+        accepts_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+        if not accepts_var_kw:
+            # Drop extras the store does not declare — never speculative double-call.
+            allowed = set(params) - {"self"}
+            # First positional after self is job_id.
+            kwargs = {k: v for k, v in kwargs.items() if k in allowed}
+    except (TypeError, ValueError):
+        kwargs = {"phase": phase, "message": message}
+    try:
+        update(job.job_id, **kwargs)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _enqueue_embedding_batches(

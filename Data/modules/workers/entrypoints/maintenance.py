@@ -49,13 +49,24 @@ def _reconcile(ctx: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     recovered = 0
     remaining = False
     if hasattr(store, "recover_expired_leases"):
-        # Prefer bounded recovery when available.
+        # Prefer bounded recovery when available — negotiate signature before call.
+        import inspect
+
+        recover = store.recover_expired_leases
+        use_limit = False
         try:
-            recovered_list = store.recover_expired_leases(limit=batch)
+            sig = inspect.signature(recover)
+            use_limit = "limit" in sig.parameters or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            )
+        except (TypeError, ValueError):
+            use_limit = False
+        if use_limit:
+            recovered_list = recover(limit=batch)
             recovered = len(recovered_list)
             remaining = len(recovered_list) >= batch
-        except TypeError:
-            all_recovered = store.recover_expired_leases()
+        else:
+            all_recovered = recover()
             recovered = min(len(all_recovered), batch)
             remaining = len(all_recovered) > batch
     elif hasattr(store, "list_expired_leases"):

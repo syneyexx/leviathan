@@ -22,6 +22,8 @@ class ApprovalCreateRequest(BaseModel):
 class ApprovalDecisionRequest(BaseModel):
     decided_by: str = "operator"
     reason: str | None = None
+    # Operator-only privilege grant — never accepted on create/request.
+    allow_system_deps: bool = False
 
 
 def build_approvals_router(
@@ -91,6 +93,7 @@ def build_approvals_router(
                 approval_id,
                 decided_by=payload.decided_by,
                 reason=payload.reason,
+                allow_system_deps=bool(payload.allow_system_deps),
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Approval not found") from exc

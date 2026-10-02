@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from Data.modules.execution import CapabilityStatus
+from Data.modules.execution.http_status import gateway_status_http_code
 
 
 class SkillEnableRequest(BaseModel):
@@ -26,24 +27,6 @@ class SkillExecuteRequest(BaseModel):
     requested_by: str = "skills_page"
     trace_id: str | None = None
     idempotency_key: str | None = None
-
-
-def _gateway_status_http_code(status: CapabilityStatus | str) -> int | None:
-    """Map gateway result statuses that must not return HTTP 200."""
-    value = status.value if isinstance(status, CapabilityStatus) else str(status or "").upper()
-    if value == CapabilityStatus.APPROVAL_REQUIRED.value:
-        return 403
-    if value == CapabilityStatus.REJECTED.value:
-        return 422
-    if value == CapabilityStatus.QUEUED.value:
-        return 202
-    if value == CapabilityStatus.TIMEOUT.value:
-        return 504
-    if value == CapabilityStatus.CANCELLED.value:
-        return 409
-    if value == CapabilityStatus.FAILED.value:
-        return 500
-    return None
 
 
 def build_skills_router(
@@ -584,13 +567,11 @@ def build_skills_router(
             except ValueError:
                 status_enum = None
         if status_enum is not None:
-            code = _gateway_status_http_code(status_enum)
+            reason = (getattr(result, "telemetry", None) or {}).get("reason")
+            code = gateway_status_http_code(
+                status_enum, reject_reason=str(reason) if reason else None
+            )
             if code is not None:
-                # Prefer approval-oriented 403 when gateway says so.
-                if status_enum == CapabilityStatus.REJECTED:
-                    reason = (getattr(result, "telemetry", None) or {}).get("reason")
-                    if reason in {"approval_required", "approval_denied"}:
-                        code = 403
                 if code == 202:
                     return body
                 raise HTTPException(status_code=code, detail=body)

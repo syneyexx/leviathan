@@ -498,6 +498,7 @@ class ModuleManager:
         arguments: Mapping[str, Any] | None = None,
         *,
         cancel_check: Callable[[], bool] | None = None,
+        progress: Any = None,
         expected_generation: int | None = None,
     ) -> ModuleResult:
         managed = self._require(module_id)
@@ -603,7 +604,13 @@ class ModuleManager:
                     action="execute",
                     detail="cancelled",
                 )
-            result = managed.instance.execute(operation, args)
+            result = self._invoke_instance(
+                managed.instance,
+                operation,
+                args,
+                cancel_check=cancel_check,
+                progress=progress,
+            )
             if not isinstance(result, ModuleResult):
                 raise ModuleManagerError("Module execute must return ModuleResult")
             managed.last_result = result
@@ -630,6 +637,34 @@ class ModuleManager:
             )
             managed.last_result = result
             return result
+
+    def _invoke_instance(
+        self,
+        instance: Any,
+        operation: str,
+        args: dict[str, Any],
+        *,
+        cancel_check: Callable[[], bool] | None = None,
+        progress: Any = None,
+    ) -> ModuleResult:
+        """Single invocation service — negotiate cancel/progress before execute."""
+        import inspect
+
+        execute_fn = instance.execute
+        kwargs: dict[str, Any] = {}
+        try:
+            sig = inspect.signature(execute_fn)
+            params = sig.parameters
+            accepts_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+            if cancel_check is not None and ("cancel_check" in params or accepts_var_kw):
+                kwargs["cancel_check"] = cancel_check
+            if progress is not None and ("progress" in params or accepts_var_kw):
+                kwargs["progress"] = progress
+        except (TypeError, ValueError):
+            kwargs = {}
+        if kwargs:
+            return execute_fn(operation, args, **kwargs)
+        return execute_fn(operation, args)
 
     def shutdown(self, module_id: str) -> ManagedModule:
         managed = self._require(module_id)
