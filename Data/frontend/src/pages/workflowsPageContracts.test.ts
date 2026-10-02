@@ -5,6 +5,8 @@ import {
   WORKFLOWS_V2_VISUAL_FIXTURE,
   isWorkflowsVisualFixtureActive,
 } from "../mocks/workflowsV2VisualFixture";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   definitionIsActive,
   definitionIsInactive,
@@ -71,6 +73,13 @@ describe("workflows V2 page contracts", () => {
     expect(WORKFLOWS_V2_VISUAL_FIXTURE.selectedWorkflowId).toBe("wf-research-pipeline");
   });
 
+  it("API client exposes workflow execution resume for WAITING_APPROVAL", () => {
+    const client = readFileSync(resolve(__dirname, "../api/client.ts"), "utf8");
+    expect(client).toContain("resumeWorkflowExecution");
+    expect(client).toContain("/api/workflow-executions/");
+    expect(client).toContain("/resume");
+  });
+
   it("status helpers treat definition status separately from execution state", () => {
     expect(definitionIsActive("ACTIVE")).toBe(true);
     expect(definitionIsActive("RUNNING")).toBe(false);
@@ -80,6 +89,7 @@ describe("workflows V2 page contracts", () => {
     expect(statusLabelNl("INACTIVE")).toBe("Inactief");
     expect(executionStateLabelNl("COMPLETED")).toBe("Succesvol");
     expect(executionStateLabelNl("FAILED")).toBe("Gefaald");
+    expect(executionStateLabelNl("WAITING_APPROVAL")).toBe("Wacht");
     expect(formatDurationMs(138_000)).toBe("2.3 min");
   });
 });

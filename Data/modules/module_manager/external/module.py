@@ -110,7 +110,14 @@ class ExternalCapabilityModule:
                         last_error="eager_start_failed",
                     )
 
-    def execute(self, operation: str, arguments: Mapping[str, Any]) -> ModuleResult:
+    def execute(
+        self,
+        operation: str,
+        arguments: Mapping[str, Any],
+        *,
+        cancel_check: Any = None,
+        progress: Any = None,
+    ) -> ModuleResult:
         if not self._initialized or self._adapter is None:
             return ModuleResult(
                 module_id=self._manifest.module_id,
@@ -181,7 +188,37 @@ class ExternalCapabilityModule:
                 status="FAILED",
                 error=f"ensure_ready failed: {exc}",
             )
-        return self._adapter.invoke(operation, arguments)
+        return self._invoke_adapter(
+            operation, arguments, cancel_check=cancel_check, progress=progress
+        )
+
+    def _invoke_adapter(
+        self,
+        operation: str,
+        arguments: Mapping[str, Any],
+        *,
+        cancel_check: Any = None,
+        progress: Any = None,
+    ) -> ModuleResult:
+        """Canonical adapter invoke — negotiate cancel/progress before the call."""
+        import inspect
+
+        assert self._adapter is not None
+        invoke = self._adapter.invoke
+        kwargs: dict[str, Any] = {}
+        try:
+            sig = inspect.signature(invoke)
+            params = sig.parameters
+            accepts_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+            if cancel_check is not None and ("cancel_check" in params or accepts_var_kw):
+                kwargs["cancel_check"] = cancel_check
+            if progress is not None and ("progress" in params or accepts_var_kw):
+                kwargs["progress"] = progress
+        except (TypeError, ValueError):
+            kwargs = {}
+        if kwargs:
+            return invoke(operation, arguments, **kwargs)
+        return invoke(operation, arguments)
 
     def shutdown(self) -> None:
         if self._adapter is not None:

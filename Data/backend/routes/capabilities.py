@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from Data.modules.execution import CapabilityRequest, CapabilityStatus
+from Data.modules.execution.http_status import gateway_status_http_code
 from Data.modules.execution.overview import (
     build_capability_detail_projection,
     build_tools_library,
@@ -331,20 +332,12 @@ def build_capabilities_router(
             },
             level="info" if result.status.value == "COMPLETED" else "warn",
         )
-        status_code = 200
-        if result.status == CapabilityStatus.APPROVAL_REQUIRED:
-            status_code = 403
-        elif result.status == CapabilityStatus.REJECTED:
-            reason = (result.telemetry or {}).get("reason")
-            status_code = 403 if reason in {"approval_required", "approval_denied"} else 422
-        elif result.status == CapabilityStatus.QUEUED:
-            status_code = 202
-        elif result.status == CapabilityStatus.TIMEOUT:
-            status_code = 504
-        elif result.status == CapabilityStatus.CANCELLED:
-            status_code = 409
-        elif result.status == CapabilityStatus.FAILED:
-            status_code = 500
+        reject_reason = (result.telemetry or {}).get("reason")
+        status_code = gateway_status_http_code(
+            result.status, reject_reason=str(reject_reason) if reject_reason else None
+        )
+        if status_code is None:
+            status_code = 200
         if status_code == 202:
             return {"result": result.public_dict()}
         if status_code != 200:

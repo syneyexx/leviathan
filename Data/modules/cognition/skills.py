@@ -2,6 +2,12 @@
 
 No hidden CoT. Skill contains trigger, preconditions, capabilities, steps,
 source run ids, measured success rate.
+
+This in-memory ``SkillLibrary`` is the cognition *agent-derived* skill memory.
+It is NOT the production executable skill authority — that is the durable
+``external_skills`` table owned by ExternalCapabilityStore / ``/api/skills``.
+Do not add an alternate execution path here; execution always goes through
+ExecutionGateway via required capabilities declared on external skills.
 """
 
 from __future__ import annotations

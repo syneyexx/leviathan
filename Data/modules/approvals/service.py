@@ -60,12 +60,22 @@ class ApprovalService:
         *,
         decided_by: str = "operator",
         reason: str | None = None,
+        allow_system_deps: bool = False,
+        metadata_grants: dict[str, Any] | None = None,
     ) -> ApprovalRecord:
+        """Operator approve. Privilege grants belong here — never on create/request."""
+        grants: dict[str, Any] = {}
+        if metadata_grants:
+            grants.update(dict(metadata_grants))
+        # Only the approve path may set system-dep privilege (not client request).
+        if allow_system_deps:
+            grants["allow_system_deps"] = True
         record = self.store.set_status(
             approval_id,
             ApprovalStatus.APPROVED,
             decided_by=decided_by,
             reason=reason,
+            metadata_grants=grants or None,
         )
         if record is None:
             raise KeyError(f"Unknown approval: {approval_id}")

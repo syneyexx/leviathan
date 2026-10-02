@@ -320,7 +320,10 @@ export function useModulesWorkspace() {
           toast("Approval id missing from install plan");
           return;
         }
-        await api.approveApproval(approvalId, `Approve install plan ${plan.planHash.slice(0, 12)}`);
+        await api.approveApproval(approvalId, `Approve install plan ${plan.planHash.slice(0, 12)}`, {
+          // Operator grant only — plan_hash alone never elevates system deps.
+          allow_system_deps: Array.isArray(plan.privilegedMutations) && plan.privilegedMutations.length > 0,
+        });
       }
       const res = await api.installModule(id, {
         ref: plan.requestedRef || versionRef.trim() || undefined,

@@ -669,29 +669,27 @@ def _project_module_activity(
 ) -> list[dict[str, Any]]:
     raw: list[dict[str, Any]] = []
     if observability is not None and hasattr(observability, "query_history"):
+        import inspect
+
+        query = observability.query_history
+        kwargs: dict[str, Any] = {
+            "limit": max(limit * 3, 60),
+            "category": "module_manager",
+            "newest_first": True,
+        }
         try:
-            raw = list(
-                observability.query_history(
-                    limit=max(limit * 3, 60),
-                    category="module_manager",
-                    module_id=module_id,
-                    newest_first=True,
-                )
-                or []
-            )
-        except TypeError:
-            # Older query_history without module_id kwarg — filter client-side.
-            try:
-                raw = list(
-                    observability.query_history(
-                        limit=max(limit * 5, 100),
-                        category="module_manager",
-                        newest_first=True,
-                    )
-                    or []
-                )
-            except Exception:  # noqa: BLE001
-                raw = []
+            sig = inspect.signature(query)
+            params = sig.parameters
+            accepts_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+            if "module_id" in params or accepts_var_kw:
+                kwargs["module_id"] = module_id
+                kwargs["limit"] = max(limit * 3, 60)
+            else:
+                kwargs["limit"] = max(limit * 5, 100)
+        except (TypeError, ValueError):
+            kwargs["limit"] = max(limit * 5, 100)
+        try:
+            raw = list(query(**kwargs) or [])
         except Exception:  # noqa: BLE001
             raw = []
     out: list[dict[str, Any]] = []

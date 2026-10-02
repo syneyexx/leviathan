@@ -169,6 +169,7 @@ class ApprovalStore:
         *,
         decided_by: str | None = None,
         reason: str | None = None,
+        metadata_grants: dict[str, Any] | None = None,
     ) -> ApprovalRecord | None:
         now = utc_now()
         with self.connect() as conn:
@@ -210,14 +211,28 @@ class ApprovalStore:
             }
             if status not in allowed.get(current, set()):
                 raise ValueError(f"Cannot transition approval {current.value} → {status.value}")
+            meta_json = row["metadata_json"]
+            if metadata_grants:
+                try:
+                    existing = json.loads(meta_json) if meta_json else {}
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    existing = {}
+                if not isinstance(existing, dict):
+                    existing = {}
+                # Operator grants only — never copy client forgeables wholesale.
+                for key in ("allow_system_deps", "grant_system_deps"):
+                    if key in metadata_grants:
+                        existing[key] = bool(metadata_grants[key])
+                meta_json = json.dumps(existing, sort_keys=True, default=str)
             conn.execute(
                 """
                 UPDATE approvals
                 SET status = ?, decided_by = COALESCE(?, decided_by),
-                    decided_at = ?, reason = COALESCE(?, reason)
+                    decided_at = ?, reason = COALESCE(?, reason),
+                    metadata_json = ?
                 WHERE approval_id = ?
                 """,
-                (status.value, decided_by, now, reason, approval_id),
+                (status.value, decided_by, now, reason, meta_json, approval_id),
             )
             row = conn.execute(
                 "SELECT * FROM approvals WHERE approval_id = ?",

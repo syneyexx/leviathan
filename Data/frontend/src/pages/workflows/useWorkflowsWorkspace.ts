@@ -556,6 +556,28 @@ export function useWorkflowsWorkspace() {
     }
   }, [loadDetailPanels, selectedId, toast]);
 
+  const resumeExecution = useCallback(
+    async (executionId: string, decision: "approved" | "denied" | "cancelled" = "approved") => {
+      if (!executionId) return;
+      setBusy(true);
+      try {
+        if (isWorkflowsVisualFixtureActive()) {
+          toast("Executie hervat (fixture)");
+          return;
+        }
+        await api.resumeWorkflowExecution(executionId, { decision });
+        toast(decision === "approved" ? "Executie hervat" : "Executie geweigerd");
+        if (selectedId) await loadDetailPanels(selectedId);
+        void load({ quiet: true });
+      } catch (err) {
+        toast(errMsg(err, "Hervatten mislukt"));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [load, loadDetailPanels, selectedId, toast],
+  );
+
   const duplicate = useCallback(async () => {
     if (!selectedId) return;
     setBusy(true);
@@ -759,6 +781,7 @@ export function useWorkflowsWorkspace() {
     save,
     run,
     cancelSelected,
+    resumeExecution,
     duplicate,
     remove,
     create,

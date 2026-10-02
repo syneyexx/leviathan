@@ -849,10 +849,18 @@ export const api = {
     return request<{ approvals: unknown[] }>(`/api/approvals${query}`);
   },
 
-  approveApproval(approvalId: string, reason?: string): Promise<{ approval: unknown }> {
+  approveApproval(
+    approvalId: string,
+    reason?: string,
+    opts?: { allow_system_deps?: boolean; decided_by?: string },
+  ): Promise<{ approval: unknown }> {
     return request(`/api/approvals/${encodeURIComponent(approvalId)}/approve`, {
       method: "POST",
-      body: JSON.stringify({ reason: reason ?? null }),
+      body: JSON.stringify({
+        reason: reason ?? null,
+        decided_by: opts?.decided_by ?? "operator",
+        allow_system_deps: Boolean(opts?.allow_system_deps),
+      }),
     });
   },
 
@@ -1532,6 +1540,16 @@ export const api = {
   ): Promise<{ execution?: import("../types/api").WorkflowExecution; workflow: WorkflowRecord }> {
     return request(`/api/workflow-executions/${encodeURIComponent(executionId)}/cancel`, {
       method: "POST",
+    });
+  },
+
+  resumeWorkflowExecution(
+    executionId: string,
+    payload?: { approval_id?: string; decision?: "approved" | "denied" | "cancelled" },
+  ): Promise<{ execution?: import("../types/api").WorkflowExecution; workflow: WorkflowRecord }> {
+    return request(`/api/workflow-executions/${encodeURIComponent(executionId)}/resume`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
     });
   },
 
@@ -3381,8 +3399,11 @@ export const api = {
     });
   },
 
-  mcpDeleteServer(serverId: string): Promise<{ ok: boolean }> {
-    return request(`/api/mcp/servers/${encodeURIComponent(serverId)}`, { method: "DELETE" });
+  mcpDeleteServer(serverId: string, opts?: { force?: boolean }): Promise<{ ok: boolean }> {
+    return request(
+      `/api/mcp/servers/${encodeURIComponent(serverId)}${opts?.force ? "?force=true" : ""}`,
+      { method: "DELETE" },
+    );
   },
 
   mcpTools(serverId?: string): Promise<{

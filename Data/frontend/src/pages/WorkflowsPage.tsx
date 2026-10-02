@@ -106,6 +106,7 @@ export function WorkflowsPage() {
             nowMs={ws.nowMs}
             onSave={() => void ws.save()}
             onRun={() => void ws.run()}
+            onResumeExecution={(executionId) => void ws.resumeExecution(executionId)}
             onUpdateDraft={ws.updateDraft}
             onGraphChange={ws.setGraph}
           />

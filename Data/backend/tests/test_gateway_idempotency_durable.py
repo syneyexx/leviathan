@@ -427,6 +427,169 @@ class PlanHashDoesNotGrantPrivilegeTests(unittest.TestCase):
         self.assertEqual(result2.status, CapabilityStatus.COMPLETED)
         self.assertTrue(seen.get("allow_system_deps"))
 
+    def test_gateway_strips_client_allow_system_deps_without_operator_grant(self) -> None:
+        """Client allow_system_deps + approved approval must NOT elevate without operator grant."""
+        from Data.modules.approvals import ApprovalService, ApprovalStore, PolicyEngine
+        from Data.modules.execution import (
+            CapabilityCatalog,
+            CapabilityDefinition,
+            CapabilityProviderKind,
+            CapabilityRequest,
+            CapabilityStatus,
+            ExecutionGateway,
+            SideEffect,
+        )
+        from Data.modules.module_manager.external.executor import ExternalModuleExecutor
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            db = Path(td) / "a.db"
+            store = ApprovalStore(db)
+            service = ApprovalService(store, PolicyEngine())
+            seen: dict[str, Any] = {}
+
+            class _Mgr:
+                def install(self, module_id: str, **kwargs: Any) -> dict[str, Any]:
+                    seen["allow_system_deps"] = kwargs.get("allow_system_deps")
+                    return {"ok": True, "module_id": module_id}
+
+                def register_job(self, *a: Any, **k: Any) -> None:
+                    return None
+
+                def unregister_job(self, *a: Any, **k: Any) -> None:
+                    return None
+
+                def get(self, module_id: str) -> None:
+                    return None
+
+                def ensure_ready(self, module_id: str) -> dict[str, Any]:
+                    return {"ready": True}
+
+                def execute(self, *a: Any, **k: Any) -> Any:
+                    raise AssertionError("install path should not call execute")
+
+            catalog = CapabilityCatalog()
+            catalog.register(
+                CapabilityDefinition(
+                    id="external.module.install",
+                    name="install",
+                    description="install",
+                    side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+                    provider_kind=CapabilityProviderKind.MODULE,
+                    provider_ref="external.module.install",
+                    input_schema={"type": "object", "additionalProperties": True},
+                    output_schema={"type": "object"},
+                    available=True,
+                    enabled=True,
+                    metadata={"execution_class": "INLINE_SAFE"},
+                )
+            )
+            gateway = ExecutionGateway(
+                catalog,
+                module_executor=ExternalModuleExecutor(_Mgr()),  # type: ignore[arg-type]
+                approval_checker=service,
+            )
+            approval = service.request(
+                capability_id="external.module.install",
+                side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+                arguments={
+                    "module_id": "demo-mod",
+                    "plan_hash": "deadbeef" * 8,
+                    # Even if client tried to put allow_system_deps in args, gateway strips it.
+                },
+            )
+            # Approve WITHOUT operator grant.
+            service.approve(approval.approval_id, decided_by="operator", allow_system_deps=False)
+            result = gateway.execute(
+                CapabilityRequest(
+                    capability_id="external.module.install",
+                    arguments={
+                        "module_id": "demo-mod",
+                        "plan_hash": "deadbeef" * 8,
+                        "allow_system_deps": True,  # forge attempt
+                    },
+                    approval_id=approval.approval_id,
+                )
+            )
+            self.assertEqual(result.status, CapabilityStatus.COMPLETED)
+            self.assertFalse(seen.get("allow_system_deps"))
+
+            # Fresh approval with operator grant.
+            seen.clear()
+            approval2 = service.request(
+                capability_id="external.module.install",
+                side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+                arguments={"module_id": "demo-mod", "plan_hash": "deadbeef" * 8},
+            )
+            service.approve(approval2.approval_id, decided_by="operator", allow_system_deps=True)
+            result2 = gateway.execute(
+                CapabilityRequest(
+                    capability_id="external.module.install",
+                    arguments={"module_id": "demo-mod", "plan_hash": "deadbeef" * 8},
+                    approval_id=approval2.approval_id,
+                )
+            )
+            self.assertEqual(result2.status, CapabilityStatus.COMPLETED)
+            self.assertTrue(seen.get("allow_system_deps"))
+
+
+class CanonicalModuleInvokePipelineTests(unittest.TestCase):
+    def test_executor_forwards_cancel_progress_through_module_manager(self) -> None:
+        from Data.modules.module_manager.external.executor import ExternalModuleExecutor
+        from Data.modules.module_manager.types import ModuleResult
+
+        seen: dict[str, Any] = {}
+
+        class _Mgr:
+            def ensure_ready(self, module_id: str) -> dict[str, Any]:
+                return {"ready": True}
+
+            def register_job(self, *a: Any, **k: Any) -> None:
+                return None
+
+            def unregister_job(self, *a: Any, **k: Any) -> None:
+                return None
+
+            def get(self, module_id: str) -> None:
+                return None
+
+            def execute(
+                self,
+                module_id: str,
+                operation: str,
+                arguments: Any = None,
+                *,
+                cancel_check: Any = None,
+                progress: Any = None,
+                expected_generation: Any = None,
+            ) -> ModuleResult:
+                seen["cancel_check"] = cancel_check
+                seen["progress"] = progress
+                seen["via"] = "module_manager.execute"
+                return ModuleResult(
+                    module_id=module_id,
+                    operation=operation,
+                    status="COMPLETED",
+                    output={"ok": True},
+                )
+
+        executor = ExternalModuleExecutor(_Mgr())  # type: ignore[arg-type]
+        cancel = lambda: False  # noqa: E731
+        progress = lambda **kw: None  # noqa: E731
+        result = executor.execute_module_capability(
+            "mod.op",
+            "module:demo",
+            {"x": 1},
+            request_id="r1",
+            cancel_check=cancel,
+            progress=progress,
+        )
+        self.assertEqual(result.status, CapabilityStatus.COMPLETED)
+        self.assertEqual(seen.get("via"), "module_manager.execute")
+        self.assertIs(seen.get("cancel_check"), cancel)
+        self.assertIs(seen.get("progress"), progress)
+
 
 if __name__ == "__main__":
     unittest.main()

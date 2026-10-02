@@ -259,11 +259,14 @@ class ExecutionGateway:
             )
 
         # Strip audit-only / forgeable client fields before schema validation —
-        # never authority. Gateway re-injects `_trusted_authority` after approval.
+        # never authority. Gateway re-injects `_trusted_authority` after approval
+        # reservation using operator-granted approval metadata only.
         arguments = dict(request.arguments)
         arguments.pop("approved_by_user", None)
         arguments.pop("_approved_by_user", None)
         arguments.pop("_trusted_authority", None)
+        # Privilege elevation is never taken from user-controlled request fields.
+        arguments.pop("allow_system_deps", None)
         request = CapabilityRequest(
             capability_id=request.capability_id,
             arguments=arguments,
@@ -365,12 +368,10 @@ class ExecutionGateway:
                 authority_decision=f"rejected_{exc.reason}",
             )
 
-        # Inject non-forgeable trusted authority after approval verification.
-        request = self._inject_trusted_authority(definition, request)
-
         # Atomic single-use approval reservation — must succeed before side effects.
+        reserved_record: Any = None
         try:
-            approval_reserved = self._reserve_approval(definition, request)
+            approval_reserved, reserved_record = self._reserve_approval(definition, request)
         except GatewayRejection as exc:
             self._fail_idempotent_claim(request, fingerprint=fingerprint, result=None)
             return self._reject(
@@ -384,6 +385,12 @@ class ExecutionGateway:
                 request=request,
                 authority_decision=f"rejected_{exc.reason}",
             )
+
+        # Inject non-forgeable trusted authority only after reservation, using
+        # operator-granted approval metadata (never client allow_system_deps).
+        request = self._inject_trusted_authority(
+            definition, request, approval_record=reserved_record
+        )
 
         try:
             output = self._dispatch(definition, request)
@@ -660,19 +667,37 @@ class ExecutionGateway:
             except Exception:  # noqa: BLE001
                 pass
 
+    def _approval_grants_system_deps(self, approval_record: Any) -> bool:
+        """True only when operator-set approval metadata grants system-dep installs."""
+        if approval_record is None:
+            return False
+        meta = getattr(approval_record, "metadata", None)
+        if not isinstance(meta, dict):
+            return False
+        return bool(meta.get("allow_system_deps") or meta.get("grant_system_deps"))
+
     def _inject_trusted_authority(
-        self, definition: CapabilityDefinition, request: CapabilityRequest
+        self,
+        definition: CapabilityDefinition,
+        request: CapabilityRequest,
+        *,
+        approval_record: Any = None,
     ) -> CapabilityRequest:
-        """After approval verification, inject non-forgeable authority for module dispatch."""
+        """After approval reservation, inject non-forgeable authority for module dispatch.
+
+        ``allow_system_deps`` is taken exclusively from operator-granted approval
+        metadata — never from client arguments, plan_hash, or forged
+        ``_trusted_authority`` payloads.
+        """
         if definition.provider_kind != CapabilityProviderKind.MODULE:
             return request
         args = dict(request.arguments)
         args.pop("_trusted_authority", None)
+        args.pop("allow_system_deps", None)
         if request.approval_id:
             args["_trusted_authority"] = {
                 "approval_id": request.approval_id,
-                # Echo explicit client intent only after gateway verified approval.
-                "allow_system_deps": bool(request.arguments.get("allow_system_deps")),
+                "allow_system_deps": self._approval_grants_system_deps(approval_record),
             }
         return CapabilityRequest(
             capability_id=request.capability_id,
@@ -688,18 +713,33 @@ class ExecutionGateway:
 
     def _reserve_approval(
         self, definition: CapabilityDefinition, request: CapabilityRequest
-    ) -> bool:
-        """Atomically reserve single-use approval before side effects. Returns True if reserved."""
+    ) -> tuple[bool, Any]:
+        """Atomically reserve single-use approval before side effects.
+
+        Returns ``(reserved, approval_record)``. ``approval_record`` carries
+        operator metadata used for privilege injection when reservation succeeds.
+        """
         needs_approval = any(effect not in _AUTO_ALLOWED_EFFECTS for effect in definition.side_effects)
         if not needs_approval or not request.approval_id:
-            return False
+            return False, None
         reserve = getattr(self.approval_checker, "reserve_for_execution", None)
         if not callable(reserve):
             # Legacy checkers without reserve — consume-after remains best-effort.
-            return False
-        # Digests were computed without gateway-injected _trusted_authority.
+            # Still surface the approval record for privilege metadata when available.
+            record = None
+            getter = getattr(self.approval_checker, "get", None)
+            if callable(getter):
+                try:
+                    record = getter(request.approval_id)
+                except Exception:  # noqa: BLE001
+                    record = None
+            return False, record
+        # Digests were computed without gateway-injected _trusted_authority /
+        # allow_system_deps (both stripped before fingerprint/policy).
         args_for_digest = {
-            k: v for k, v in request.arguments.items() if k != "_trusted_authority"
+            k: v
+            for k, v in request.arguments.items()
+            if k not in {"_trusted_authority", "allow_system_deps"}
         }
         digest = hashlib.sha256(
             json.dumps(args_for_digest, sort_keys=True, default=str).encode("utf-8")
@@ -720,7 +760,7 @@ class ExecutionGateway:
                 f"capability {definition.id!r} (already reserved/consumed or mismatch)",
                 reason="approval_denied",
             )
-        return True
+        return True, reserved
 
     def _release_approval(self, request: CapabilityRequest, *, uncertain: bool) -> None:
         if not request.approval_id:

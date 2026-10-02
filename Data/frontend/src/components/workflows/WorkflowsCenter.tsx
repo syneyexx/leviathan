@@ -25,6 +25,7 @@ type Props = {
   nowMs: number;
   onSave: () => void;
   onRun: () => void;
+  onResumeExecution?: (executionId: string) => void;
   onUpdateDraft: (patch: Partial<EditorDraft>) => void;
   onGraphChange: EditorDraft extends never
     ? never
@@ -47,6 +48,7 @@ export function WorkflowsCenter({
   nowMs,
   onSave,
   onRun,
+  onResumeExecution,
   onUpdateDraft,
   onGraphChange,
 }: Props) {
@@ -164,6 +166,16 @@ export function WorkflowsCenter({
                   {formatRelativeNl(ex.started_at ?? ex.created_at, nowMs)}
                 </time>
                 <span>{formatDurationMs(ex.duration_ms)}</span>
+                {String(ex.state).toUpperCase() === "WAITING_APPROVAL" && onResumeExecution ? (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => onResumeExecution(ex.execution_id)}
+                  >
+                    Hervatten
+                  </Button>
+                ) : null}
               </div>
             ))}
           </div>

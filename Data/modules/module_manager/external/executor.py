@@ -402,47 +402,16 @@ class ExternalModuleExecutor:
             if job_id:
                 self.module_manager.register_job(module_id, job_id)
 
-            # Prefer adapter invoke with cancel/progress when available.
-            managed = self.module_manager.get(module_id)
-            inst = managed.instance if managed else None
-            adapter = getattr(inst, "_adapter", None) if inst is not None else None
-            if adapter is not None and hasattr(adapter, "invoke") and (cancel_check or progress):
-                try:
-                    adapter_ready = adapter.ensure_ready()
-                except Exception as exc:  # noqa: BLE001 — fail the invoke; do not ignore
-                    return CapabilityResult(
-                        request_id=request_id or "",
-                        capability_id=capability_id,
-                        status=CapabilityStatus.FAILED,
-                        error=f"ensure_ready failed: {exc}",
-                        output=normalize_capability_parts(
-                            summary=f"ensure_ready failed: {exc}",
-                            error={"code": "ENSURE_READY_FAILED", "detail": str(exc)},
-                            metadata={"module_id": module_id, "operation": operation, "run_id": run_id},
-                        ),
-                        provider_kind="module",
-                        provider_ref=provider_ref,
-                    )
-                if isinstance(adapter_ready, dict) and adapter_ready.get("ready") is False:
-                    return CapabilityResult(
-                        request_id=request_id or "",
-                        capability_id=capability_id,
-                        status=CapabilityStatus.FAILED,
-                        error=(
-                            f"ensure_ready failed: "
-                            f"{adapter_ready.get('code') or adapter_ready.get('detail') or 'not_ready'}"
-                        ),
-                        output=normalize_capability_parts(
-                            summary="ensure_ready failed",
-                            error={"code": "ENSURE_READY_FAILED", "detail": adapter_ready},
-                            metadata={"module_id": module_id, "operation": operation, "run_id": run_id},
-                        ),
-                        provider_kind="module",
-                        provider_ref=provider_ref,
-                    )
-                result = adapter.invoke(operation, args, progress=progress, cancel_check=cancel_check)
-            else:
-                result = self.module_manager.execute(module_id, operation, args)
+            # One canonical pipeline: ModuleManager.execute → ExternalModule.execute
+            # → adapter.invoke. Cancel/progress are forwarded; never bypass readiness
+            # or ModuleManager telemetry by calling adapter.invoke directly.
+            result = self.module_manager.execute(
+                module_id,
+                operation,
+                args,
+                cancel_check=cancel_check,
+                progress=progress,
+            )
         except ModuleManagerError as exc:
             self._metric("external.failures", {"module_id": module_id, "capability_id": capability_id})
             return CapabilityResult(

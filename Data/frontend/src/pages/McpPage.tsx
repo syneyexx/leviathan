@@ -658,8 +658,16 @@ export function McpPage() {
   }
 
   async function onDelete(server: McpServerPublic) {
-    if (!window.confirm(`Delete MCP server “${server.display_name}”?`)) return;
-    await withBusy(server.server_id, () => api.mcpDeleteServer(server.server_id).then(() => undefined), `${server.display_name} verwijderd`);
+    const configOwned = String(server.source_kind || "").toLowerCase() === "config";
+    const prompt = configOwned
+      ? `Config-managed server “${server.display_name}” requires an authorized override to delete. Continue with force delete?`
+      : `Delete MCP server “${server.display_name}”?`;
+    if (!window.confirm(prompt)) return;
+    await withBusy(
+      server.server_id,
+      () => api.mcpDeleteServer(server.server_id, { force: configOwned }).then(() => undefined),
+      `${server.display_name} verwijderd`,
+    );
   }
 
   async function onCreateServer() {

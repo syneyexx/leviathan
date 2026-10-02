@@ -44,12 +44,46 @@ class CustomCapabilityHardeningTests(unittest.TestCase):
             description="d",
             wraps_capability_id="base.read",
             capability_id="custom.wrap",
-            metadata={"origin": "evil", "tags": ["ok"], "owner": "attacker"},
+            metadata={
+                "origin": "evil",
+                "tags": ["ok"],
+                "owner": "attacker",
+                "provider_kind": "MCP",
+                "side_effects": ["DELETE"],
+                "execution_class": "INLINE_SAFE",
+                "trust": "verified",
+            },
         )
         self.assertNotIn("origin", record.metadata)
         self.assertNotIn("owner", record.metadata)
+        self.assertNotIn("provider_kind", record.metadata)
+        self.assertNotIn("side_effects", record.metadata)
+        self.assertNotIn("execution_class", record.metadata)
+        self.assertNotIn("trust", record.metadata)
         self.assertEqual(record.metadata.get("tags"), ["ok"])
         self.assertTrue("origin" in PROTECTED_CUSTOM_METADATA_KEYS)
+
+    def test_hydrate_metadata_cannot_weaken_security_fields(self) -> None:
+        record = self.store.create(
+            name="Wrap",
+            description="d",
+            wraps_capability_id="base.read",
+            capability_id="custom.sec",
+            metadata={
+                "provider_kind": "EXTERNAL",
+                "side_effects": ["DELETE", "EXECUTE"],
+                "execution_class": "INLINE_SAFE",
+                "label": "display-only",
+            },
+        )
+        self.store.hydrate_into_catalog(self.catalog)
+        definition = self.catalog.get("custom.sec")
+        self.assertIsNotNone(definition)
+        assert definition is not None
+        self.assertEqual(definition.provider_kind, CapabilityProviderKind.INTERNAL)
+        self.assertEqual(definition.side_effects, (SideEffect.READ,))
+        self.assertEqual(definition.metadata.get("label"), "display-only")
+        self.assertNotEqual(definition.metadata.get("provider_kind"), "EXTERNAL")
 
     def test_atomic_revision_update(self) -> None:
         record = self.store.create(
